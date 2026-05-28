@@ -1,0 +1,42 @@
+# ローカル環境固有ファイル
+*.local.md
+*.local.json
+*.local.env
+.env
+.env.local
+.env.production
+.envrc
+
+# Dev
+plugin-test/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# Node.js
+node_modules/
+dist/
+.wrangler/
+
+# SQLite
+*.db
+*.sqlite
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Playwright CLI logs
+.playwright-cli/
+
+# IDE
+.idea/
+.vscode/
+
+# Claude Code runtime state
+.claude/*.lock

@@ -1,0 +1,261 @@
+---
+name: lead-ace
+description: "Use when `/lead-ace` is typed. Classifies intent, then answers inline, delegates to a skill, or runs the onboarding chain (env check + strategy drafting from a homepage URL) for first-time users. Also \"LeadAce overview / version / skills\"."
+argument-hint: "[free-form question, instruction, or homepage URL]"
+allowed-tools:
+  - Bash
+  - Read
+  - WebFetch
+  - AskUserQuestion
+  - mcp__plugin_lead-ace_api__get_server_version
+  - mcp__plugin_lead-ace_api__list_projects
+  - mcp__plugin_lead-ace_api__get_gmail_status
+  - mcp__plugin_lead-ace_api__setup_project
+  - mcp__plugin_lead-ace_api__get_document
+  - mcp__plugin_lead-ace_api__list_documents
+  - mcp__plugin_lead-ace_api__save_document
+  - mcp__plugin_lead-ace_api__get_master_document
+  - mcp__plugin_lead-ace_api__get_project_settings
+  - mcp__plugin_lead-ace_api__update_project_settings
+  - mcp__plugin_lead-ace_api__get_evaluation_history
+  - mcp__plugin_lead-ace_api__get_tenant_settings
+  - mcp__plugin_lead-ace_api__update_tenant_settings
+  - mcp__plugin_lead-ace_api__list_subject_variants
+  - mcp__plugin_lead-ace_api__upsert_subject_variant
+---
+
+# Lead-Ace - General Catch-All & Onboarding Skill
+
+The primary entry point for LeadAce. Three behaviors:
+
+1. **Overview mode** (no argument): version + project list + skill catalog + suggested next step.
+2. **Free-form mode** (text argument): classify intent, answer directly or delegate to a specific skill.
+3. **Onboarding chain** (URL argument or first-time user): run env check + strategy drafting end-to-end so the user can go from "just installed the plugin" to "ready for `/daily-cycle`" in one command.
+
+After this skill, day-to-day use needs only `/daily-cycle` (which itself fans out to `/check-results`, `/evaluate`, `/outbound`, and `/build-list` when prospects run low). Other skills (`/setup`, `/strategy`, `/build-list`, `/outbound`, `/check-results`, `/evaluate`, `/import-prospects`, `/match-prospects`, `/setup-cron`, `/delete-project`) remain available as advanced shortcuts and as routing targets for this skill.
+
+**Before starting:** `Read` `${CLAUDE_PLUGIN_ROOT}/references/workspace-conventions.md` and follow the cross-cutting conventions there (data storage, MCP error handling, document writes, output discipline).
+
+## Steps
+
+### 1. Gather Context (always)
+
+Run these in parallel:
+
+- **Plugin version**: `Read` `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and take `version`.
+- **Server version + min plugin**: `mcp__plugin_lead-ace_api__get_server_version` -> `{ serverVersion, minPluginVersion }`.
+- **Project list**: `mcp__plugin_lead-ace_api__list_projects` (may be empty).
+- **Gmail SaaS status**: `mcp__plugin_lead-ace_api__get_gmail_status` -> `{ connected, email? }`.
+- **Current date/time**: `Bash` `date '+%Y-%m-%d %H:%M %Z'`.
+- **Runtime detect** (best-effort): `Bash` `printf '%s|%s|%s\n' "${CLAUDE_PLUGIN_ROOT:-?}" "$(command -v codex 2>/dev/null || echo none)" "$([ -d "$HOME/.claude" ] && echo y || echo n)"`. Classify as `claude_code` (most common — `~/.claude` exists), `codex` (codex command found), or `other`.
+
+If `get_server_version` or `list_projects` fails:
+- Network/unreachable -> "Cannot reach the LeadAce MCP server. Check network access to https://mcp.leadace.ai (or `LEADACE_MCP_URL` for self-hosters)."
+- Auth/401 -> "MCP authentication failed. Sign in again at https://app.leadace.ai, then retry."
+
+Compare plugin version to `minPluginVersion` (split on `.`, parse each as integer, compare component-wise). If plugin version is **less than** `minPluginVersion`, prepend a prominent warning recommending `/plugin update lead-ace@lead-ace`. Continue answering — do not abort.
+
+Hold for the rest of the skill:
+- `PLUGIN_VERSION`, `SERVER_VERSION`, `MIN_PLUGIN_VERSION`
+- `PROJECTS` (array)
+- `GMAIL` (`{ connected, email? }`)
+- `RUNTIME` (`claude_code` / `codex` / `other`)
+- `NOW`
+
+### 2. Classify Intent
+
+Examine `$0` (the user's free-form input) together with `PROJECTS` and `GMAIL`. Pick exactly one intent label from the table below. Do not use a separate classifier — judge directly.
+
+| Intent | Trigger condition | What to do (Step 3) |
+|---|---|---|
+| `onboarding` | `$0` looks like a URL (matches `https?://` or a bare domain like `example.com`), or `$0` says "start" / "始めたい" / "onboard" / "first time", or `$0` is empty AND `PROJECTS` is empty | Onboarding chain (Step 4) |
+| `info_overview` | `$0` empty AND `PROJECTS` not empty; or `$0` says "overview" / "状況" / "skills" / "version" / "what can it do" | Overview mode (Step 3a) |
+| `info_query` | `$0` is a question about state ("how many prospects?", "誰に送った?", "結果は?") | Inline answer (Step 3b) |
+| `delegate_setup` | "environment", "connection", "Gmail", "MCP", "再接続" | Suggest `/setup` (Step 3c) |
+| `delegate_strategy` | "strategy", "戦略", "target", "messaging", "ターゲット" | Suggest `/strategy` (Step 3c) |
+| `delegate_build_list` | "list", "prospects", "more leads", "リスト追加", "もっと集めて" | Suggest `/build-list` (Step 3c) |
+| `delegate_outbound` | "send", "outreach", "送信", "送って" | Suggest `/outbound` — **always confirm before** (Step 3c, with extra caution) |
+| `delegate_daily` | "daily", "今日のサイクル", "run cycle" | Suggest `/daily-cycle` (Step 3c) |
+| `delegate_evaluate` | "evaluate", "results", "評価", "改善" | Suggest `/evaluate` (Step 3c) |
+| `delegate_import` | "CSV", "file", "ファイル", "取り込み", "import" | Suggest `/import-prospects` (Step 3c) |
+| `delegate_match` | "existing prospects", "tenant assets", "プロジェクトに移動" | Suggest `/match-prospects` (Step 3c) |
+| `delegate_check_feedback` | "feedback", "PMF", "feature gap", "competitor" | Suggest `/check-feedback` (Step 3c) |
+| `out_of_scope` | Unrelated to LeadAce (e.g., "write me a poem") | One-line reject (Step 3d) |
+
+Bias rules:
+- URL + 0 projects -> `onboarding` (no ambiguity).
+- URL + ≥1 project -> ask via `AskUserQuestion`: "Use this URL to (a) create a new project, or (b) something else?" Default to `onboarding` on (a).
+- Quoted phrases like "list X" or "send to Y" -> consider the verb, not the object.
+- Ambiguous + projects exist -> `info_overview` (safe default).
+
+Hold the chosen label as `INTENT`.
+
+### 3. Branch on Intent (non-onboarding)
+
+#### 3a. info_overview — Overview Mode
+
+Print, in this order:
+
+1. **Header**: `LeadAce overview - <NOW>`
+2. **Version line**: `Plugin v<PLUGIN_VERSION> | Server v<SERVER_VERSION> | Required >= v<MIN_PLUGIN_VERSION>`
+   - If plugin is behind, append: ` (UPGRADE: run /plugin update lead-ace@lead-ace)`
+3. **Projects**: bullet list of `name (id)`. If empty: `(no projects yet — start with /lead-ace <your-homepage-URL>)`.
+4. **Gmail status**: one line — `Gmail: connected as <email>` or `Gmail: not connected — sign in at https://app.leadace.ai`.
+5. **Skill catalog** (Section 5 below, verbatim) + the self-host footer.
+6. **Suggested next step**:
+   - 0 projects -> "Run `/lead-ace <your-homepage-URL>` to set up your first project end-to-end."
+   - ≥1 project, no recent activity assumed -> "Run `/daily-cycle <project-name>` for the daily run."
+
+Then stop.
+
+#### 3b. info_query — Inline Answer
+
+Answer the user's question using the context already gathered (`PROJECTS`, `GMAIL`). If the question requires data not in context, call the relevant MCP tool for the most likely project (or ask which project if ambiguous):
+
+- "結果は?" / "evaluation" / "改善案" / past evaluation history → `get_evaluation_history`
+- Project documents (business / sales_strategy / env_status / etc.) → `get_document` / `list_documents`
+- Project / tenant settings → `get_project_settings` / `get_tenant_settings`
+
+Keep the answer to a few lines. Do not invoke other skills.
+
+#### 3c. delegate_* — Skill Delegation
+
+Tell the user the skill that fits and the args needed, e.g.:
+
+> That sounds like `/build-list <project-name>`. Want to run it?
+
+Wait for confirmation before suggesting they invoke it. Do **not** run another skill from inside this one — Claude Code does not support skill-from-skill invocation, and even if it did, an explicit user-typed slash command keeps the audit trail clear.
+
+For `delegate_outbound` and `delegate_daily`, add an extra line about side effects:
+
+> This sends real emails. Run `/outbound <project>` (or `/daily-cycle <project>`) when you're ready — it has its own pre-send confirmation.
+
+#### 3d. out_of_scope
+
+One polite line: "That's outside what LeadAce does. I can help with sales-automation tasks via `/lead-ace`, `/setup`, `/strategy`, `/build-list`, `/outbound`, `/check-results`, `/evaluate`, or `/daily-cycle`." Stop.
+
+### 4. Onboarding Chain (intent = onboarding)
+
+Goal: from "user just typed `/lead-ace https://example.com`" to "project + business + sales_strategy saved, ready for `/daily-cycle`".
+
+**Initial-state-or-not handling**:
+- 0 projects -> proceed straight into the chain.
+- ≥1 project + URL provided -> per Step 2 bias rules, the user has chosen "create a new project" (or has been asked).
+- ≥1 project + no URL + user said "start" -> ask for the URL via `AskUserQuestion` ("Paste your homepage URL — we'll use it to draft the strategy.").
+- 0 projects + no URL -> ask for the URL.
+
+Hold the URL as `URL`.
+
+#### 4.1 Confirm the chain
+
+Print a 4-line preview and ask Y/N:
+
+```
+I'll set you up end-to-end:
+  1. Verify your environment (Gmail, MCP)
+  2. Create a project from this URL and draft business + sales strategy
+Then you'll run /daily-cycle <project> for the actual outreach.
+Proceed? [Y/n]
+```
+
+If N: tell the user how to do it manually (`/setup` then `/strategy`) and stop.
+
+#### 4.2 Run env_check
+
+`Read` `${CLAUDE_PLUGIN_ROOT}/references/onboarding/env_check.md` and execute its full procedure (Steps 1-5). Pass:
+- `$0` = empty (the chain derives the project name from the URL in env_check Step 3-2)
+- `$URL` = `URL` (the homepage URL the user provided)
+
+The reference allows defaulting Gmail-MCP and Chrome-extension answers to `unsure` in chain context — apply that default here so the chain stays smooth. Mention in the final summary that the user can re-run `/setup` for explicit confirmation.
+
+After this, you have `PROJECT_NAME` and the capability summary.
+
+#### 4.3 Run strategy_drafting (Mode B)
+
+`Read` `${CLAUDE_PLUGIN_ROOT}/references/onboarding/strategy_drafting.md` and execute its full procedure (Steps 1-8) using **Mode B (URL-driven inference)**. Pass:
+- `$0` = `PROJECT_NAME`
+- `$URL` = `URL`
+
+Mode B fetches the URL with the local fetch tool, infers business / target / features / pricing / track-record from page content, then asks the user for sender info (4B-3 step 1), notification email (4B-3 step 2), and inquiry landing optional polish (4B-3 step 3 — video / PDF / brand color / logo / CTA: scheduling URL or SaaS sign up URL, all skippable). It applies sensible defaults for the rest (`outboundMode: draft`, `inquiryCtaType: meeting` notify-only when neither CTA URL is supplied, prospect-discovery sources from `tpl_targeting_guide`, response definition (1)(2)(3)).
+
+#### 4.4 Completion Summary
+
+Print:
+
+1. **Header**: `Setup complete - <PROJECT_NAME>`
+2. **What was created**: project, `business` doc, `sales_strategy` doc, env_status doc, sender info in project settings, initial `inquiry_chat_brief`.
+3. **Capability summary** from env_check (4 lines).
+4. **Recipient delivery scope**: a one-line note that recipient delivery is **currently limited to US / CA / JP** (so the operator's targeting matches the send-time guardrail).
+5. **Defaults you can change later**: outbound mode is `draft` so nothing sends without your review; the AI inquiry chat is live on the recipient landing page (the inquiry landing defaults to enabled — toggle it off in the Web UI if you don't want recipient links to surface) — edit settings via the Web UI (Inquiry page, sidebar) or re-run `/strategy <project>` to refine messaging.
+6. **Next steps**:
+   - `/daily-cycle <project>` — runs initial prospect collection (`/build-list` is auto-triggered when the list is empty), drafts outreach, and shows you the queue.
+   - `/setup-cron <project>` (optional) — schedule the daily cycle to run on its own.
+7. **Memory snippet** (Section 4.5).
+
+#### 4.5 Runtime Memory Snippet
+
+Print a short snippet the user can paste into their runtime's persistent memory so future sessions know LeadAce is set up. Show the snippet for the detected `RUNTIME` only:
+
+- `claude_code`:
+
+  ```
+  Append this to ~/.claude/CLAUDE.md (or your project's CLAUDE.md):
+
+  ## LeadAce
+  Sales automation plugin. Default project: <PROJECT_NAME>.
+  Daily flow: /daily-cycle <PROJECT_NAME>.
+  Setup / strategy / advanced: /lead-ace, /setup, /strategy, /build-list, /outbound, /check-results, /evaluate, /import-prospects, /match-prospects, /setup-cron, /delete-project.
+  Outbound is irreversible — always confirm before /outbound or /daily-cycle.
+  ```
+
+- `codex`:
+
+  ```
+  Add to ~/.codex/AGENTS.md (or equivalent):
+  [same text as above]
+  ```
+
+- `other`:
+
+  ```
+  Save this to your runtime's memory / custom instructions:
+  [same text as above]
+  ```
+
+Do not write the file automatically in this version — present it for the user to paste. (Auto-write is deferred to a later release once we've confirmed the safe path per runtime.)
+
+### 5. Skill Catalog (used in overview mode, referenced in delegation)
+
+Three tiers — daily use only needs the first two. Print under sub-headings so users see the entry points first.
+
+**Daily** — these are all you need once set up.
+
+| Skill | One-line purpose |
+|---|---|
+| `/lead-ace` | This skill — catch-all + onboarding entry point. |
+| `/daily-cycle` | The daily run: `check-results` -> `evaluate` -> `outbound`, plus auto-`build-list` when prospects run low. |
+
+**Advanced** — direct access to the steps `/daily-cycle` runs, plus list-management entry points.
+
+| Skill | One-line purpose |
+|---|---|
+| `/setup` | Verify MCP/Gmail/local-tool connectivity and pick or create a project. Re-run when environment changes. |
+| `/strategy` | Interactive Q&A to author or update `BUSINESS.md` and `SALES_STRATEGY.md` for a project. |
+| `/build-list` | Web-search-driven prospect collection based on the project's strategy; registers candidates in the DB. |
+| `/outbound` | Execute outreach (email / contact form / SNS DM) against the project's prospect list. |
+| `/check-results` | Detect replies and scheduling notifications, record them as `responses`. |
+| `/evaluate` | Analyze response-rate data and propose strategy / targeting / messaging improvements. |
+| `/import-prospects` | Load prospects from a file (CSV / Excel / SQLite / text) — either as tenant assets or linked to a project. |
+| `/match-prospects` | Pull existing tenant-wide prospects into a project that fits the targeting. |
+| `/check-feedback` | PMF-oriented review of rejection feedback (Pro-tier introspection). |
+| `/setup-cron` | Install a schedule (`/schedule` / OS LaunchAgent / Task Scheduler / cron) that runs `/daily-cycle` daily. |
+
+**Maintenance**
+
+| Skill | One-line purpose |
+|---|---|
+| `/delete-project` | Permanently delete a project and its data from the server. |
+
+**Footer (always print after the catalog in overview mode):** `LeadAce is open source — host it yourself on Cloudflare + Supabase: https://github.com/aitit-inc/leadace/blob/main/docs/self-host.md`
+
+Keep this catalog up to date when adding or removing skills.

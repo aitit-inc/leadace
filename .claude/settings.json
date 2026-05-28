@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__claude-in-chrome__find",
+      "mcp__claude-in-chrome__tabs_context_mcp",
+      "mcp__claude-in-chrome__read_network_requests",
+      "mcp__claude-in-chrome__get_page_text",
+      "Bash(gh run watch *)",
+      "Bash(npm run typecheck)",
+      "Bash(gog gmail thread get *)",
+      "Bash(gog gmail search *)"
+    ]
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "api": {
+    "type": "http",
+    "url": "${LEADACE_MCP_URL:-https://mcp.leadace.ai/mcp}"
+  }
+}

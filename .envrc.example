@@ -1,0 +1,31 @@
+# direnv .envrc template — copy to .envrc and fill in.
+#
+#   cp .envrc.example .envrc
+#   # edit .envrc
+#   direnv allow
+#
+# Why direnv: `npx supabase start` reads env vars from the parent shell when
+# resolving `env(...)` interpolation in supabase/config.toml. There is no
+# built-in dotenv support and no --env-file flag for `supabase start`.
+# direnv loads .envrc into the shell automatically when you cd into the repo,
+# so subsequent `npx supabase start` invocations pick the values up without
+# manual `export`s.
+#
+# Install direnv (one-time):
+#   brew install direnv
+#   echo 'eval "$(direnv hook zsh)"' >> ~/.zshrc      # or bash equivalent
+#   exec zsh                                          # reload your shell
+#
+# .envrc is gitignored — secrets stay local.
+
+# --- Local Supabase Auth: Google provider ----------------------------------
+# Read by supabase/config.toml's [auth.external.google] block. Create a Web
+# OAuth client in Google Cloud Console; see docs/self-host.md → Local
+# development for the redirect URI it expects.
+export SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID=""
+export SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET=""
+
+# Note: the same client id / secret also belong in backend/.dev.vars as
+# GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET so the API Worker can do the
+# Gmail-send refresh-token exchange. Wrangler dev does not auto-forward
+# arbitrary shell env vars, so .dev.vars stays separate.

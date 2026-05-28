@@ -1,0 +1,1 @@
+ALTER TYPE "public"."prospect_status" ADD VALUE 'deferred';

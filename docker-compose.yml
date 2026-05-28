@@ -1,0 +1,29 @@
+# SCOPE: bare Postgres only — NOT the standard local dev stack.
+#
+# Standard local dev uses `npx supabase start` (Postgres on 54322 + Auth +
+# Studio etc.). This file is the fallback for self-hosters who want to run
+# the backend against plain Postgres instead of Supabase. It does NOT ship
+# the `auth.*` schema that the backend's JWT middleware reads, so you must
+# swap the auth verifier before this stack is usable end-to-end.
+#
+# Do not run this alongside `supabase start` — the bare Postgres on 5432
+# isn't read by anything in the default stack and only adds confusion.
+services:
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: leadace
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

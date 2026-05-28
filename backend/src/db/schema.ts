@@ -1,0 +1,780 @@
+import { z } from 'zod'
+import {
+  boolean,
+  check,
+  customType,
+  foreignKey,
+  index,
+  integer,
+  jsonb,
+  pgEnum,
+  pgTable,
+  primaryKey,
+  smallint,
+  text,
+  timestamp,
+  unique,
+  uniqueIndex,
+} from 'drizzle-orm/pg-core'
+import { sql } from 'drizzle-orm'
+
+const bytea = customType<{ data: Uint8Array; driverData: Uint8Array }>({
+  dataType() {
+    return 'bytea'
+  },
+})
+
+export const prospectStatusEnum = pgEnum('prospect_status', [
+  'new',
+  'contacted',
+  'responded',
+  'converted',
+  'rejected',
+  'inactive',
+  'deferred',
+])
+
+export type ProspectStatus = (typeof prospectStatusEnum.enumValues)[number]
+
+// Statuses that are eligible to be sent outreach: never-contacted plus
+// time-deferred prospects whose recontact window has passed (the latter is
+// gated additionally by prospects.next_outreach_after at query time).
+export const REACHABLE_STATUSES: readonly ProspectStatus[] = ['new', 'deferred']
+
+// `project_prospects.priority` is constrained to 1-5 by chk_priority. Drizzle
+// types the column as `number`; the Zod schema narrows external input to
+// `Priority` at the boundary, so insert/update sites pass `Priority` (a
+// subtype of `number`) without an `as` cast.
+export type Priority = 1 | 2 | 3 | 4 | 5
+export const prioritySchema = z.literal([1, 2, 3, 4, 5])
+export const priorityCoerceSchema = z.coerce.number().pipe(prioritySchema)
+
+export const channelEnum = pgEnum('channel', [
+  'email',
+  'form',
+  'sns_twitter',
+  'sns_linkedin',
+])
+
+export type Channel = (typeof channelEnum.enumValues)[number]
+
+// 'pre_send' is the optimistic-allocation state for skill-driven channels
+// (form / SNS DM): the row is reserved BEFORE the skill submits so that an
+// inquiry-landing token can be FK-bound to it, but the prospect is NOT yet
+// flipped to 'contacted' and quota is reserved (counted toward used) but
+// only confirmed-spent on the 'sent' transition. The skill calls
+// updateOutreachStatus('sent') on submit success or ('failed') on submit
+// failure. A 'pre_send' row that never resolves is treated as in-flight by
+// listReachable (NOT EXISTS) and counts against quota until cleared.
+export const outreachStatusEnum = pgEnum('outreach_status', ['sent', 'failed', 'pending_review', 'pre_send'])
+export type OutreachStatus = (typeof outreachStatusEnum.enumValues)[number]
+
+// Statuses that represent allocated-but-not-yet-confirmed outreach: the row
+// exists in outreach_logs but the channel has neither delivered nor failed.
+// Readers that surface "real outreach activity" (recent feed) and
+// "candidates to contact" (listReachable NOT EXISTS) treat both members the
+// same. Typed as readonly OutreachStatus[] (not `as const` tuple) so it can
+// be passed directly to drizzle's inArray / notInArray — same pattern as
+// REACHABLE_STATUSES above.
+export const IN_FLIGHT_OUTREACH_STATUSES: readonly OutreachStatus[] = ['pending_review', 'pre_send']
+
+// Self-cleanup TTL for pre_send rows. If the skill / Chrome MCP crashes
+// between recordOutreachWithInquiry and updateOutreachStatus, the pre_send
+// row would otherwise hold quota and exclude the prospect from listReachable
+// forever. After this window we stop counting the row toward both — the row
+// itself is left in place (audit trail) but treated as abandoned. Tuned at
+// the high end of realistic form-fill / SNS-compose time + margin.
+export const PRE_SEND_TTL_MINUTES = 30
+
+export const sentimentEnum = pgEnum('sentiment', ['positive', 'neutral', 'negative'])
+
+export const responseTypeEnum = pgEnum('response_type', [
+  'reply',
+  'auto_reply',
+  'bounce',
+  'meeting_request',
+  'rejection',
+])
+
+export const formTypeEnum = pgEnum('form_type', [
+  'google_forms',
+  'native_html',
+  'wordpress_cf7',
+  'iframe_embed',
+  'with_captcha',
+])
+
+export const planEnum = pgEnum('plan', ['free', 'starter', 'pro', 'scale', 'unlimited'])
+
+export const tenantRoleEnum = pgEnum('tenant_role', ['owner', 'admin', 'member'])
+
+// Trust ranking for country values: manual is authoritative; tld_inferred is
+// deterministic but coarse; ai_inferred is best-effort.
+export const COUNTRY_SOURCES = ['tld_inferred', 'manual', 'ai_inferred'] as const
+export type CountrySource = (typeof COUNTRY_SOURCES)[number]
+export const countrySourceEnum = pgEnum('country_source', COUNTRY_SOURCES)
+
+export const OUTBOUND_MODES = ['send', 'draft'] as const
+export type OutboundMode = (typeof OUTBOUND_MODES)[number]
+export const outboundModeEnum = pgEnum('outbound_mode', OUTBOUND_MODES)
+
+// Mirrors channelEnum; stored as text[] in project_settings, no DB enum.
+export const OUTBOUND_CHANNELS = ['email', 'form', 'sns_twitter', 'sns_linkedin'] as const
+export type OutboundChannel = (typeof OUTBOUND_CHANNELS)[number]
+
+// Outcome semantics and the responses-row write rules: design §6.3.
+// 'signup_clicked' is the self-serve counterpart to 'lead' — landing CTA
+// configured as 'signup' redirects to a SaaS signup page instead of a
+// meeting request, so the visitor never enters human-sales follow-up.
+export const INQUIRY_OUTCOMES = ['opened', 'inquired', 'lead', 'signup_clicked', 'unsubscribed'] as const
+export type InquiryOutcome = (typeof INQUIRY_OUTCOMES)[number]
+export const inquiryOutcomeEnum = pgEnum('inquiry_outcome', INQUIRY_OUTCOMES)
+
+// Inquiry landing CTA mode — selects which call-to-action the landing
+// page renders. 'meeting' is the human-sales path (Book a meeting /
+// Request a meeting); 'signup' is the self-serve path (Sign up button
+// linking to inquiryCtaUrl). The two modes are mutually exclusive per
+// project — landing renders one CTA, never both.
+export const INQUIRY_CTA_TYPES = ['meeting', 'signup'] as const
+export type InquiryCtaType = (typeof INQUIRY_CTA_TYPES)[number]
+export const inquiryCtaTypeEnum = pgEnum('inquiry_cta_type', INQUIRY_CTA_TYPES)
+
+export const INQUIRY_MESSAGE_ROLES = ['user', 'assistant'] as const
+export type InquiryMessageRole = (typeof INQUIRY_MESSAGE_ROLES)[number]
+export const inquiryMessageRoleEnum = pgEnum('inquiry_message_role', INQUIRY_MESSAGE_ROLES)
+
+// NULL unless outcome='lead'; distinguishes button-click from AI-derived leads.
+export const MEETING_REQUEST_SOURCES = ['button', 'chat'] as const
+export type MeetingRequestSource = (typeof MEETING_REQUEST_SOURCES)[number]
+export const meetingRequestSourceEnum = pgEnum('meeting_request_source', MEETING_REQUEST_SOURCES)
+
+// Per-session frozen context for inquiry chat. Synthesized once at session
+// open from project_settings.inquiry_chat_brief + prospects.hypothesis +
+// orgSignalsGlobal.signals; subsequent chat turns read this snapshot
+// verbatim so the LLM context stays stable across the conversation.
+export type InquirySessionContextSnapshot = {
+  brief: string
+  prospectHints?: {
+    contactName?: string
+    organizationName?: string
+    hypothesizedPain?: string[]
+    timingSignals?: string[]
+  }
+  // Freshest input that fed into `brief` — surfaced for future snapshot
+  // invalidation (not currently used).
+  sourceUpdatedAt: string
+}
+
+export type SnsAccounts = {
+  x?: string
+  linkedin?: string
+  instagram?: string
+  facebook?: string
+}
+
+// Generated initially by /build-list, refined just before send by combining
+// with org_signals_global.signals. Fields are all optional — a partially
+// filled hypothesis is still useful (the LLM gracefully degrades).
+export type ProspectHypothesis = {
+  targetDepartment?: string
+  targetRolePattern?: string
+  hypothesizedPain?: string[]
+  valueMapping?: string[]
+  timingSignals?: string[]
+  bestChannel?: string
+  bestKeyperson?: string
+}
+
+export const REJECTION_PRIMARY_REASONS = [
+  'not_relevant',
+  'wrong_timing',
+  'budget',
+  'feature_gap',
+  'already_have_solution',
+  'competitor_locked',
+  'not_decision_maker',
+  'unsubscribe_request',
+  'other',
+] as const
+
+export const REJECTION_RECONTACT_WINDOWS = [
+  'never',
+  '3_months',
+  '6_months',
+  '12_months',
+  'unspecified',
+] as const
+
+export type RejectionPrimaryReason = (typeof REJECTION_PRIMARY_REASONS)[number]
+export type RejectionRecontactWindow = (typeof REJECTION_RECONTACT_WINDOWS)[number]
+
+// Wire format mirrors landing/public/schema/rejection-feedback-v1.json.
+// Keep field names snake_case to match the published JSON Schema URI.
+export type RejectionFeedbackV1 = {
+  version: 1
+  primary_reason: RejectionPrimaryReason
+  secondary_reasons?: RejectionPrimaryReason[]
+  free_text?: string
+  decision_maker_pointer?: { name?: string; email?: string; role?: string }
+  preferred_recontact_window?: RejectionRecontactWindow
+  consent?: {
+    gdpr_erasure_request?: boolean
+    ccpa_opt_out?: boolean
+    marketing_opt_out?: boolean
+  }
+  submitted_at: string
+  tenant_signature?: string
+}
+
+export type EvaluationMetrics = {
+  totalOutreach: number
+  channelCounts: Array<{ channel: string; count: number }>
+  responseCounts: { totalResponses: number; uniqueResponders: number }
+  sentimentBreakdown: Array<{ sentiment: string; responseType: string; count: number }>
+  priorityResponseRate: Array<{
+    priority: number
+    total: number
+    responses: number
+    rate: number
+  }>
+  statusCounts: Array<{ status: string; count: number }>
+  channelResponseRate: Array<{
+    channel: string
+    total: number
+    responses: number
+    rate: number
+  }>
+  // Inquiry-landing outcomes per project. Captures self-serve conversions
+  // ('signup_clicked') and chat-only engagement ('inquired') that the
+  // response-axis metrics above miss — responses are written for
+  // meeting_request / unsubscribe but not for chat-only or signup-CTA paths.
+  inquiryOutcomeCounts: Record<InquiryOutcome, number>
+}
+
+export const tenants = pgTable('tenants', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull().default('My Workspace'),
+  // Compliance-mandated tenant identity (CAN-SPAM / CASL footer, CASL §6
+  // sender identification). Nullable at the DB level because tenants are
+  // auto-provisioned on first API access and the user fills these in via
+  // the Tenant Settings UI; backend send paths gate on
+  // assertTenantComplianceReady before any actual outreach.
+  legalName: text('legal_name'),
+  physicalAddress: text('physical_address'),
+  contactEmail: text('contact_email'),
+  // ISO 3166-1 alpha-2 (e.g. 'US'). The tenant's own country, used for
+  // future jurisdiction-specific footer rendering and per-country audit. Not
+  // the recipient's country (that lives on prospects / organizations).
+  defaultSenderCountry: text('default_sender_country'),
+  privacyPolicyUrl: text('privacy_policy_url'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+})
+
+export const tenantMembers = pgTable('tenant_members', {
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  userId: text('user_id').notNull(),
+  role: tenantRoleEnum('role').notNull().default('owner'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.tenantId, table.userId] }),
+  // 1 user = 1 tenant (current product design). DB-enforced to prevent race conditions
+  // in auth middleware auto-provisioning. Remove if/when teams (many users → 1 tenant) ship.
+  unique('uq_tenant_members_user').on(table.userId),
+  index('idx_tenant_members_user').on(table.userId),
+])
+
+// Gmail OAuth refresh tokens for `gmail.send` SaaS sending.
+// Per (tenant, user) pair. refresh_token is pgp_sym_encrypt'd at write time
+// using the GMAIL_TOKEN_ENCRYPTION_KEY worker secret; the DB only ever sees
+// the encrypted bytea blob.
+export const gmailCredentials = pgTable('gmail_credentials', {
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  userId: text('user_id').notNull(),
+  refreshToken: bytea('refresh_token').notNull(),
+  scope: text('scope').notNull(),
+  email: text('email').notNull(),
+  grantedAt: timestamp('granted_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.tenantId, table.userId] }),
+  index('idx_gmail_credentials_tenant').on(table.tenantId),
+])
+
+export const tenantPlans = pgTable('tenant_plans', {
+  tenantId: text('tenant_id')
+    .primaryKey()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  plan: planEnum('plan').notNull().default('free'),
+  stripeCustomerId: text('stripe_customer_id'),
+  stripeSubscriptionId: text('stripe_subscription_id'),
+  currentPeriodStart: timestamp('current_period_start', { withTimezone: true }),
+  currentPeriodEnd: timestamp('current_period_end', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+})
+
+export const projects = pgTable('projects', {
+  id: text('id').primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  unique('uq_project_tenant_name').on(table.tenantId, table.name),
+  // Required so project_prospects / outreach_logs etc. can declare composite
+  // (project_id, tenant_id) foreign keys that prevent cross-tenant references
+  // at write time (defense-in-depth on top of RLS).
+  unique('uq_project_id_tenant').on(table.id, table.tenantId),
+  index('idx_projects_tenant').on(table.tenantId),
+])
+
+export const projectSettings = pgTable('project_settings', {
+  projectId: text('project_id')
+    .primaryKey()
+    .references(() => projects.id, { onDelete: 'cascade' }),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  outboundMode: outboundModeEnum('outbound_mode').notNull().default('send'),
+  senderEmailAlias: text('sender_email_alias'),
+  senderDisplayName: text('sender_display_name'),
+  // Recipient-facing company / brand name (e.g. "Acme Inc."). Paired with
+  // senderDisplayName: the inquiry landing renders "From {senderDisplayName}
+  // at {senderCompanyName}". NULL omits the "at ..." suffix. Distinct from
+  // tenants.legalName (compliance footer) and tenants.name (internal
+  // workspace label that is documented as never sent to recipients).
+  senderCompanyName: text('sender_company_name'),
+  // Optional job title shown on the inquiry landing header alongside
+  // senderDisplayName / senderCompanyName: "From {name}, {role} at {company}".
+  // NULL falls back to "From {name} at {company}".
+  senderJobTitle: text('sender_job_title'),
+  unsubscribeEnabled: boolean('unsubscribe_enabled').notNull().default(true),
+  // Format checks (URL shape, hex color) live in zod, not DB CHECK
+  // constraints — those would be brittle for URL/hex evolution.
+  inquiryLandingEnabled: boolean('inquiry_landing_enabled').notNull().default(true),
+  // NULL disables the chat input but leaves the rest of the landing page
+  // (video, PDF, meeting button, unsubscribe) rendering.
+  inquiryChatBrief: text('inquiry_chat_brief'),
+  inquiryOneLiner: text('inquiry_one_liner'),
+  inquiryVideoUrl: text('inquiry_video_url'),
+  inquiryPdfUrl: text('inquiry_pdf_url'),
+  inquiryBrandColor: text('inquiry_brand_color'),
+  inquiryBrandLogoUrl: text('inquiry_brand_logo_url'),
+  // Landing CTA mode. 'meeting' renders Book/Request meeting (the
+  // human-sales path); 'signup' renders a Sign up button that redirects
+  // visitors to inquiryCtaUrl (the self-serve path, no human follow-up).
+  // The two are mutually exclusive — chosen per project, never both.
+  inquiryCtaType: inquiryCtaTypeEnum('inquiry_cta_type').notNull().default('meeting'),
+  // External CTA URL. For 'meeting' mode this is an optional scheduling
+  // URL (Calendly, TimeRex, etc.); when non-null the meeting button opens
+  // it in a new tab and still records the lead, when null the button is
+  // notify-only. For 'signup' mode this is the SaaS signup page URL and
+  // is required (the route layer rejects 'signup' + null).
+  inquiryCtaUrl: text('inquiry_cta_url'),
+  // Hard cap on rejection cycles before forcing 'rejected' + DNC ratchet.
+  maxReapproachCycles: smallint('max_reapproach_cycles').notNull().default(3),
+  // Months to defer when rejection feedback's preferred_recontact_window is
+  // 'unspecified' (no concrete date stated by the prospect).
+  unspecifiedRecontactWindowMonths: smallint('unspecified_recontact_window_months').notNull().default(3),
+  // Days after a 'sent' outreach to make the prospect re-eligible if no
+  // response arrived. Stamped onto prospects.next_outreach_after via
+  // GREATEST(existing, sentAt + days) — only advances the window forward,
+  // never shortens an explicit longer window already in place (e.g. a
+  // rejection-feedback '12_months' deferral).
+  noResponseRecycleDays: smallint('no_response_recycle_days').notNull().default(90),
+  // Round-robin cursor for subject_variants selection in /outbound. Bumped
+  // by pickSubjectVariant on each send. Wraps modulo the active variant
+  // count; meaningless when there are no active variants for the project.
+  subjectVariantCursor: smallint('subject_variant_cursor').notNull().default(0),
+  // Scoped to automated outbound (listReachable). Empty array pauses
+  // automated outbound; manual UI Send / Mark-sent bypass.
+  outboundChannels: text('outbound_channels').array().notNull()
+    .default(sql`'{"email","form","sns_twitter","sns_linkedin"}'`),
+  // Further narrows ALLOWED_SEND_COUNTRIES for automated outbound; empty =
+  // no project-level restriction. Send-time compliance gate is independent.
+  targetCountries: text('target_countries').array().notNull().default(sql`'{}'`),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_project_settings_tenant').on(table.tenantId),
+  // signup mode is meaningless without a destination. The application-level
+  // pre-check in updateProjectSettings races under concurrent partial PUTs
+  // (one PUT flips type → 'signup', another nulls the URL — both pass their
+  // own pre-check); this CHECK is the atomic guarantee.
+  check(
+    'chk_inquiry_cta_signup_requires_url',
+    sql`${table.inquiryCtaType} <> 'signup' OR ${table.inquiryCtaUrl} IS NOT NULL`,
+  ),
+])
+
+export const organizations = pgTable('organizations', {
+  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  // Apex domain (e.g. "example.com"), not the full URL.
+  domain: text('domain').notNull(),
+  name: text('name').notNull(),
+  websiteUrl: text('website_url').notNull(),
+  // ISO 3166-1 alpha-2 (e.g. 'US'). Drives the send-time country guardrail.
+  // NULL when not derivable (generic gTLD without an explicit caller hint);
+  // null is treated as warn-only at send time. countrySource records how
+  // the value was set so callers can decide how much to trust it.
+  country: text('country'),
+  countrySource: countrySourceEnum('country_source'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  unique('uq_org_tenant_domain').on(table.tenantId, table.domain),
+  index('idx_org_tenant').on(table.tenantId),
+])
+
+export const prospects = pgTable('prospects', {
+  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(),
+  contactName: text('contact_name'),
+  organizationId: integer('organization_id')
+    .notNull()
+    .references(() => organizations.id),
+  department: text('department'),
+  overview: text('overview').notNull(),
+  industry: text('industry'),
+  websiteUrl: text('website_url').notNull(),
+  email: text('email'),
+  contactFormUrl: text('contact_form_url'),
+  formType: formTypeEnum('form_type'),
+  snsAccounts: jsonb('sns_accounts').$type<SnsAccounts>(),
+  doNotContact: boolean('do_not_contact').notNull().default(false),
+  notes: text('notes'),
+  // When set in the future, get_outbound_targets skips this prospect until the
+  // timestamp passes. Populated by record_response when a rejection carries a
+  // preferred_recontact_window of 3/6/12 months.
+  nextOutreachAfter: timestamp('next_outreach_after', { withTimezone: true }),
+  // Per-prospect targeting hypothesis. /build-list seeds this from public
+  // sources; /outbound re-reads it (combined with org_signals_global) just
+  // before composing the body. NULL = not yet computed; the LLM falls back
+  // to overview alone in that case.
+  hypothesis: jsonb('hypothesis').$type<ProspectHypothesis>(),
+  // Per-prospect country override. Most prospects share the organization's
+  // country; this column is for the rare case the prospect is in a different
+  // country than the org (e.g. distributed team, regional sales rep). Send
+  // guardrail prefers prospect.country when set, otherwise falls back to
+  // organization.country.
+  country: text('country'),
+  countrySource: countrySourceEnum('country_source'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('idx_prospect_unique_email')
+    .on(table.tenantId, table.email)
+    .where(sql`${table.email} IS NOT NULL`),
+  uniqueIndex('idx_prospect_unique_form')
+    .on(table.tenantId, table.contactFormUrl)
+    .where(sql`${table.contactFormUrl} IS NOT NULL`),
+  // Required so project_prospects can declare a composite (prospect_id,
+  // tenant_id) foreign key that prevents cross-tenant references at write
+  // time (defense-in-depth on top of RLS).
+  unique('uq_prospect_id_tenant').on(table.id, table.tenantId),
+  index('idx_prospect_tenant').on(table.tenantId),
+  index('idx_prospect_org').on(table.organizationId),
+])
+
+export const projectProspects = pgTable('project_prospects', {
+  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  projectId: text('project_id').notNull(),
+  prospectId: integer('prospect_id').notNull(),
+  matchReason: text('match_reason').notNull(),
+  priority: smallint('priority').$type<Priority>().notNull().default(3),
+  status: prospectStatusEnum('status').notNull().default('new'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  unique('uq_project_prospect').on(table.projectId, table.prospectId),
+  check('chk_priority', sql`${table.priority} BETWEEN 1 AND 5`),
+  // Composite FKs require tenant_id to match across both ends, so a row in
+  // this junction table cannot reference a project / prospect in a different
+  // tenant. Single-column .references()` has been moved into these composite
+  // declarations — keeping both would duplicate the FK constraint.
+  foreignKey({
+    columns: [table.projectId, table.tenantId],
+    foreignColumns: [projects.id, projects.tenantId],
+    name: 'fk_project_prospect_project_tenant',
+  }).onDelete('cascade'),
+  foreignKey({
+    columns: [table.prospectId, table.tenantId],
+    foreignColumns: [prospects.id, prospects.tenantId],
+    name: 'fk_project_prospect_prospect_tenant',
+  }).onDelete('cascade'),
+  index('idx_pp_tenant').on(table.tenantId),
+  index('idx_pp_project').on(table.projectId),
+  index('idx_pp_prospect').on(table.prospectId),
+  index('idx_pp_status').on(table.status),
+])
+
+export const outreachLogs = pgTable('outreach_logs', {
+  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  projectId: text('project_id')
+    .notNull()
+    .references(() => projects.id, { onDelete: 'cascade' }),
+  prospectId: integer('prospect_id')
+    .notNull()
+    .references(() => prospects.id, { onDelete: 'cascade' }),
+  channel: channelEnum('channel').notNull(),
+  subject: text('subject'),
+  body: text('body').notNull(),
+  status: outreachStatusEnum('status').notNull().default('sent'),
+  sentAt: timestamp('sent_at', { withTimezone: true }).defaultNow().notNull(),
+  errorMessage: text('error_message'),
+  // Subject-line A/B variant id (free-form short slug; no FK so old/removed
+  // variants stay analysable). Populated by /outbound when the project has
+  // multiple variants registered. NULL when the email used a one-off subject.
+  variantId: text('variant_id'),
+}, (table) => [
+  index('idx_outreach_tenant').on(table.tenantId),
+  index('idx_outreach_project').on(table.projectId),
+  index('idx_outreach_prospect').on(table.prospectId),
+  index('idx_outreach_dedup').on(table.projectId, table.prospectId, table.status),
+  index('idx_outreach_quota').on(table.tenantId, table.status, table.sentAt),
+  index('idx_outreach_variant').on(table.projectId, table.variantId, table.status),
+])
+
+// Per-project library of subject-line variants. /outbound round-robins over
+// the active rows; /evaluate joins outreachLogs.variantId to compare reply
+// rates. Variants are append-only conceptually — `archivedAt` retires a slug
+// from rotation while keeping it analysable for historic outreach rows.
+export const subjectVariants = pgTable('subject_variants', {
+  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  projectId: text('project_id')
+    .notNull()
+    .references(() => projects.id, { onDelete: 'cascade' }),
+  // Short stable slug (e.g. "v1", "warm_intro", "signal_funded").
+  variantId: text('variant_id').notNull(),
+  // May include {{org}} / {{name}} / {{signal}} placeholders; the LLM
+  // substitutes at send time.
+  subjectPattern: text('subject_pattern').notNull(),
+  label: text('label'),
+  archivedAt: timestamp('archived_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  unique('uq_subject_variant_project').on(table.projectId, table.variantId),
+  index('idx_subject_variants_tenant').on(table.tenantId),
+  index('idx_subject_variants_active').on(table.projectId, table.archivedAt),
+])
+
+export const responses = pgTable('responses', {
+  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  outreachLogId: integer('outreach_log_id')
+    .notNull()
+    .references(() => outreachLogs.id, { onDelete: 'cascade' }),
+  channel: channelEnum('channel').notNull(),
+  content: text('content').notNull(),
+  sentiment: sentimentEnum('sentiment').notNull(),
+  responseType: responseTypeEnum('response_type').notNull(),
+  receivedAt: timestamp('received_at', { withTimezone: true }).defaultNow().notNull(),
+  rejectionFeedback: jsonb('rejection_feedback').$type<RejectionFeedbackV1>(),
+}, (table) => [
+  index('idx_responses_tenant').on(table.tenantId),
+  index('idx_responses_outreach').on(table.outreachLogId),
+])
+
+export const inquiryTokens = pgTable('inquiry_tokens', {
+  shortId: text('short_id').primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  prospectId: integer('prospect_id')
+    .notNull()
+    .references(() => prospects.id, { onDelete: 'cascade' }),
+  outreachLogId: integer('outreach_log_id')
+    .notNull()
+    .references(() => outreachLogs.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  // Soft delete via `revoked_at IS NOT NULL` so `inquiry_sessions` history
+  // tied to this token stays intact.
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+}, (table) => [
+  index('idx_inquiry_tokens_tenant').on(table.tenantId),
+  index('idx_inquiry_tokens_outreach').on(table.outreachLogId),
+])
+
+export const inquirySessions = pgTable('inquiry_sessions', {
+  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  prospectId: integer('prospect_id')
+    .notNull()
+    .references(() => prospects.id, { onDelete: 'cascade' }),
+  outreachLogId: integer('outreach_log_id')
+    .notNull()
+    .references(() => outreachLogs.id, { onDelete: 'cascade' }),
+  shortId: text('short_id')
+    .notNull()
+    .references(() => inquiryTokens.shortId, { onDelete: 'cascade' }),
+  // ON DELETE SET NULL keeps inquiry_sessions readable as audit trail if
+  // its referenced responses row is later removed.
+  responseId: integer('response_id').references(() => responses.id, { onDelete: 'set null' }),
+  outcome: inquiryOutcomeEnum('outcome').notNull().default('opened'),
+  meetingRequestSource: meetingRequestSourceEnum('meeting_request_source'),
+  derivedSummary: text('derived_summary'),
+  chatTurnsUsed: smallint('chat_turns_used').notNull().default(0),
+  // Per-prospect chat brief composed at session open. NULL on legacy rows
+  // and on sessions whose project has no inquiry_chat_brief configured;
+  // buildSystemPrompt falls back to project_settings.inquiry_chat_brief.
+  contextSnapshot: jsonb('context_snapshot').$type<InquirySessionContextSnapshot>(),
+  openedAt: timestamp('opened_at', { withTimezone: true }).defaultNow().notNull(),
+  closedAt: timestamp('closed_at', { withTimezone: true }),
+}, (table) => [
+  index('idx_inquiry_session_tenant').on(table.tenantId),
+  index('idx_inquiry_session_prospect').on(table.prospectId),
+  index('idx_inquiry_session_outreach').on(table.outreachLogId),
+  index('idx_inquiry_session_quota').on(table.tenantId, table.openedAt),
+  // At most one open session per token — collapses the concurrent-first-visit
+  // race in openLandingSession to a single row.
+  uniqueIndex('idx_inquiry_session_open')
+    .on(table.shortId)
+    .where(sql`${table.closedAt} IS NULL`),
+  // Required so inquiry_messages can declare a composite (session_id,
+  // tenant_id) foreign key that prevents cross-tenant references at write
+  // time (defense-in-depth on top of RLS).
+  unique('uq_inquiry_session_id_tenant').on(table.id, table.tenantId),
+])
+
+export const inquiryMessages = pgTable('inquiry_messages', {
+  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+  // Denormalized to match every other tenant-scoped table — keeps the RLS
+  // policy uniform and avoids a subquery on inquiry_sessions per row read.
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  sessionId: integer('session_id').notNull(),
+  role: inquiryMessageRoleEnum('role').notNull(),
+  content: text('content').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_inquiry_messages_session').on(table.sessionId, table.createdAt),
+  index('idx_inquiry_messages_tenant').on(table.tenantId),
+  // Composite FK ties session_id + tenant_id together, so a row in
+  // inquiry_messages cannot point at an inquiry_sessions row in a different
+  // tenant. The single-column .references() has been moved into this
+  // composite declaration — keeping both would duplicate the FK constraint.
+  foreignKey({
+    columns: [table.sessionId, table.tenantId],
+    foreignColumns: [inquirySessions.id, inquirySessions.tenantId],
+    name: 'fk_inquiry_messages_session_tenant',
+  }).onDelete('cascade'),
+])
+
+export const projectDocuments = pgTable('project_documents', {
+  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  projectId: text('project_id')
+    .notNull()
+    .references(() => projects.id, { onDelete: 'cascade' }),
+  // Known values: "business", "sales_strategy", "search_notes".
+  slug: text('slug').notNull(),
+  content: text('content').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_doc_tenant').on(table.tenantId),
+  index('idx_doc_latest').on(table.projectId, table.slug, table.createdAt),
+])
+
+// Global master documents (not tenant-scoped) — populated by SaaS-side seed,
+// read by all tenants.
+export const masterDocuments = pgTable('master_documents', {
+  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+  // Known values: "tpl_business", "tpl_email_guidelines", etc.
+  slug: text('slug').notNull().unique(),
+  content: text('content').notNull(),
+  version: integer('version').notNull().default(1),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+})
+
+// All fields optional — daily fetchers fill what they can and the LLM
+// gracefully degrades when fields are missing. Recency is tracked separately
+// in signalsUpdatedAt.
+export type OrgSignals = {
+  pressReleases?: Array<{ title: string; url?: string; publishedAt?: string }>
+  funding?: { round?: string; amount?: string; investors?: string[]; announcedAt?: string }
+  hiring?: { totalOpen?: number; departments?: string[]; sampleTitles?: string[]; sourceUrl?: string }
+  leadership?: Array<{ name: string; role?: string; sourceUrl?: string }>
+  // Free-form notes the LLM may surface verbatim (e.g. "Just launched product
+  // X on 2026-04-01"). Kept short to fit comfortably in /outbound prompt.
+  highlights?: string[]
+}
+
+// Cross-tenant signal cache, keyed on apex domain — global, no RLS,
+// populated by SaaS-side daily batch. Multiple tenants pointing to the same
+// organization share one cache entry so a tenant that just added an org gets
+// the recent signals immediately.
+export const orgSignalsGlobal = pgTable('org_signals_global', {
+  domain: text('domain').primaryKey(),
+  signals: jsonb('signals').$type<OrgSignals>(),
+  signalsUpdatedAt: timestamp('signals_updated_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+})
+
+export const evaluations = pgTable('evaluations', {
+  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  projectId: text('project_id')
+    .notNull()
+    .references(() => projects.id, { onDelete: 'cascade' }),
+  evaluationDate: timestamp('evaluation_date', { withTimezone: true }).defaultNow().notNull(),
+  metrics: jsonb('metrics').$type<EvaluationMetrics>().notNull(),
+  findings: text('findings').notNull(),
+  improvements: text('improvements').notNull(),
+}, (table) => [
+  index('idx_evaluations_tenant').on(table.tenantId),
+  index('idx_evaluations_project').on(table.projectId),
+])
+
+// Reviewed out-of-band by the maintainer — no admin UI yet.
+export const BUG_REPORT_CATEGORIES = ['bug', 'feedback', 'idea'] as const
+export type BugReportCategory = (typeof BUG_REPORT_CATEGORIES)[number]
+export const bugReportCategoryEnum = pgEnum('bug_report_category', BUG_REPORT_CATEGORIES)
+
+export const bugReports = pgTable('bug_reports', {
+  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  // Diagnostic context only — RLS is tenant-scoped, not user-scoped.
+  userId: text('user_id').notNull(),
+  category: bugReportCategoryEnum('category').notNull(),
+  title: text('title').notNull(),
+  body: text('body').notNull(),
+  // Caller-supplied; the schema doesn't constrain shape so it can evolve
+  // without migrations.
+  context: jsonb('context').$type<Record<string, unknown>>(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_bug_reports_tenant_created').on(table.tenantId, table.createdAt),
+])

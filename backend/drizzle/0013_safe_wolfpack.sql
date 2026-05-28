@@ -1,0 +1,1 @@
+ALTER TABLE "prospects" ADD COLUMN "next_outreach_after" timestamp with time zone;

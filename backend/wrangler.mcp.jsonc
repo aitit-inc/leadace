@@ -1,0 +1,26 @@
+{
+  "name": "lead-ace-mcp",
+  "main": "src/mcp/index.ts",
+  "compatibility_date": "2026-04-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "ENVIRONMENT": "development",
+    "FRONTEND_URL": "http://localhost:5173"
+  },
+  // Secrets (set via wrangler secret or .dev.vars):
+  //   WEB_API_URL         (e.g. http://localhost:8787 for local dev, https://api.leadace.ai for prod)
+  //   SUPABASE_JWT_SECRET (REQUIRED since 0.5.38 — used by oauth.ts:mintAccessJwt to sign HS256
+  //                        access tokens, and by verifySupabaseJwt to validate them on incoming
+  //                        MCP requests. Without it, /token returns a broken JWT and every
+  //                        subsequent tool call hits a DataError on importKey. Use the same
+  //                        value as on lead-ace-api; pull it from Supabase Dashboard → Settings → API.)
+  //   SUPABASE_URL
+  //   SUPABASE_ANON_KEY
+  // Local dev: wrangler simulates KV in-memory regardless of the id.
+  "kv_namespaces": [
+    {
+      "binding": "MCP_OAUTH_STORE",
+      "id": "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+    }
+  ],
+}

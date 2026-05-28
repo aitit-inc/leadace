@@ -1,0 +1,38 @@
+version: 2
+
+# Keep GitHub Actions and the four npm workspaces patched. SHA-pinned
+# action references are kept current automatically — Dependabot rewrites
+# the SHA and updates the trailing "# v5.0.1" comment to match.
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: npm
+    directory: /backend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      backend-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      frontend-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+

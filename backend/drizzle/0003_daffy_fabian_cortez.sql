@@ -1,0 +1,1 @@
+ALTER TABLE "tenant_plans" ADD COLUMN "is_unlimited" boolean DEFAULT false NOT NULL;

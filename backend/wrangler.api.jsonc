@@ -1,0 +1,44 @@
+{
+  "name": "lead-ace-api",
+  "main": "src/api/index.ts",
+  "compatibility_date": "2026-04-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "ENVIRONMENT": "development",
+    "APP_URL": "http://localhost:5173",
+    // Default for local dev. Production env redeclares this as "cloud".
+    // Anything other than "cloud" disables Stripe routes and resolves every
+    // tenant to the 'unlimited' plan. See backend/src/domain/edition.ts.
+    "LEADACE_EDITION": "self-hosted"
+  },
+  // Secrets (set via wrangler secret or .dev.vars):
+  //   DATABASE_URL
+  //   SUPABASE_JWT_SECRET   (REQUIRED — needed to verify HS256 access tokens minted by lead-ace-mcp.
+  //                          Supabase-issued frontend tokens go through the JWKS path first and don't
+  //                          need this, but MCP-forwarded requests carry HS256 tokens that only the
+  //                          HS256 fallback in verifySupabaseJwt can validate. Use the same value as
+  //                          on lead-ace-mcp; pull it from Supabase Dashboard → Settings → API → JWT Secret.)
+  //   SUPABASE_URL
+  //   STRIPE_SECRET_KEY
+  //   STRIPE_WEBHOOK_SECRET
+  //   SUPABASE_SERVICE_ROLE_KEY   (cloud only; REQUIRED on cloud for DELETE
+  //                                /me/account. Self-host can omit. Supabase
+  //                                Dashboard → Settings → API → service_role.)
+  //   GOOGLE_CLIENT_ID            (Google Cloud Console → OAuth Client → Web application)
+  //   GOOGLE_CLIENT_SECRET        (paired with GOOGLE_CLIENT_ID, used for refresh_token exchange)
+  //   GMAIL_TOKEN_ENCRYPTION_KEY  (random 32+ char passphrase; used as pgp_sym_encrypt key)
+  //   UNSUBSCRIBE_TOKEN_SECRET    (REQUIRED — random 32+ char passphrase; HMAC-SHA256 key for signing
+  //                                /unsubscribe/:token links embedded in outbound emails. Tokens are
+  //                                long-lived — never rotate this in place once emails are out;
+  //                                rotation invalidates every prior unsubscribe link.)
+  //   OPENAI_API_KEY              (REQUIRED for inquiry-chat — sk-... key from
+  //                                platform.openai.com. Used by services/inquiry-chat.ts +
+  //                                inquiry-summarize.ts; chat is disabled if absent.)
+  // Daily org-signal refresh: runs the signal extractor across all stale
+  // organizations once a day. The handler is `scheduled` in src/api/index.ts.
+  // 03:00 UTC stays out of US/EU business hours; the per-run cap inside
+  // runDailySignalRefresh prevents a multi-hour run on large tenants.
+  "triggers": {
+    "crons": ["0 3 * * *"]
+  },
+}

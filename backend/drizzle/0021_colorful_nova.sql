@@ -1,0 +1,1 @@
+ALTER TABLE "project_settings" ADD COLUMN "sender_company_name" text;

@@ -1,0 +1,14 @@
+{
+  "name": "lead-ace",
+  "owner": {
+    "name": "SurpassOne Inc."
+  },
+  "description": "Autonomous lead generation plugin for Claude Code.",
+  "plugins": [
+    {
+      "name": "lead-ace",
+      "source": "./plugin",
+      "description": "Autonomous lead generation plugin. Builds prospect lists, runs outbound outreach, and iterates on strategy — all hands-free."
+    }
+  ]
+}

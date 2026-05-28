@@ -1,0 +1,72 @@
+# Copy this file to .dev.vars for local development.
+# wrangler dev reads it automatically. Both API and MCP workers share this file.
+# In production, use `wrangler secret put <NAME>` instead — `.dev.vars` is for
+# local dev only. See docs/self-host.md for the full table and what each var
+# is required for.
+
+# --- API Worker (required) ---
+# Run `npx supabase status` to get the DB URL
+DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+# URL of the frontend (used in outbound-email links and inquiry landing pages)
+APP_URL="http://localhost:5173"
+
+# --- MCP Worker (required) ---
+WEB_API_URL="http://localhost:8787"
+# URL of the frontend (used by the OAuth handshake)
+FRONTEND_URL="http://localhost:5173"
+
+# --- Shared (both workers, required) ---
+# Run `npx supabase status` to get the JWT secret and keys
+SUPABASE_JWT_SECRET="super-secret-jwt-token-with-at-least-32-characters-long"
+SUPABASE_URL="http://127.0.0.1:54321"
+SUPABASE_ANON_KEY="your-supabase-anon-key-here"
+# From `npx supabase status` (Dashboard → Settings → API → service_role).
+# Required on cloud installs (DELETE /me/account uses it to drop the auth.users
+# row). Self-host can leave empty — tenant data is still wiped, but the operator
+# deletes the auth.users row against their own Supabase.
+SUPABASE_SERVICE_ROLE_KEY=""
+ENVIRONMENT="development"
+# 'cloud' enables Stripe routes and plan caps. 'self-hosted' (default)
+# disables billing endpoints and runs every tenant on the unlimited tier.
+LEADACE_EDITION="self-hosted"
+
+# --- Outbound (Gmail-send) ---
+# Required for the OAuth refresh-token flow that lets the API send mail on
+# behalf of users. Create a Web-application OAuth client in Google Cloud
+# Console (paired with the Google sign-in provider configured in your
+# Supabase project), add `gmail.send` to both the Supabase provider's
+# Additional Scopes and the OAuth consent screen, and paste the Client ID /
+# Secret here. The redirect URI Google needs is the Supabase one — there
+# is no API-Worker callback. Without these, sign-in still works but
+# /outreach/send and the inquiry-landing reply path return 412.
+GOOGLE_CLIENT_ID=""
+GOOGLE_CLIENT_SECRET=""
+# pgp_sym_encrypt key for stored Gmail tokens. Any 32+ char passphrase.
+# Once data is encrypted with this key, do not change it without re-encrypting
+# the existing rows.
+GMAIL_TOKEN_ENCRYPTION_KEY=""
+
+# --- Outbound (unsubscribe links) ---
+# HMAC-SHA256 key for /unsubscribe/:token. Any 32+ char passphrase.
+# NEVER rotate once outbound emails have been sent — rotation invalidates
+# every prior unsubscribe link.
+UNSUBSCRIBE_TOKEN_SECRET=""
+
+# --- Inquiry chat (optional) ---
+# Powers the inquiry-landing AI chat and org-signal extraction. Chat is
+# disabled if absent; the rest of the API still works.
+OPENAI_API_KEY=""
+
+# --- Stripe (cloud edition only) ---
+# Required only when LEADACE_EDITION=cloud. Self-hosted ignores them and
+# 404s the /me/checkout, /me/portal, /stripe/webhook routes.
+STRIPE_SECRET_KEY=""
+STRIPE_WEBHOOK_SECRET=""
+
+# --- E2E test harness (optional, never set in production) ---
+# When set, every outbound Gmail call rewrites To: / Cc: / Bcc: to this
+# single mailbox and preserves the originals in an X-E2E-Original-To
+# header for test introspection. Lets the e2e/ harness drive a real Gmail
+# send + receive loop without touching real prospects. Leave empty for
+# normal local dev so emails go to their actual recipients.
+E2E_RECIPIENT_OVERRIDE=""

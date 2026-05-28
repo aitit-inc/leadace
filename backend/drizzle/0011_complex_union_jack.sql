@@ -1,0 +1,1 @@
+ALTER TYPE "public"."outreach_status" ADD VALUE 'pending_review';

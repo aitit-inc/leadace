@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<link rel="alternate icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+		<link rel="alternate icon" type="image/x-icon" href="/favicon.ico" />
+		<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+		<meta name="theme-color" content="#E87462" />
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+		<title>LeadAce</title>
+		<meta property="og:title" content="LeadAce" />
+		<meta property="og:description" content="Outbound sales, autopiloted." />
+		<meta property="og:type" content="website" />
+		<meta property="og:url" content="https://app.leadace.ai" />
+		<meta property="og:image" content="https://app.leadace.ai/og.png" />
+		<meta property="og:image:width" content="1200" />
+		<meta property="og:image:height" content="630" />
+		<meta name="twitter:card" content="summary_large_image" />
+		<meta name="twitter:image" content="https://app.leadace.ai/og.png" />
+		<script>
+			(function () {
+				try {
+					var t = localStorage.getItem('leadace.theme');
+					var dark = t === 'dark' || (t !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+					if (dark) document.documentElement.classList.add('dark');
+				} catch (e) {}
+			})();
+		</script>
+		%sveltekit.head%
+	</head>
+	<body data-sveltekit-preload-data="hover">
+		<div style="display: contents">%sveltekit.body%</div>
+	</body>
+</html>

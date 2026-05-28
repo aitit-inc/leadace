@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+/* Class-based dark mode: <html class="dark"> enables dark variant */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  /* Canvas & surfaces */
+  --color-page: #F4F2F0;
+  --color-surface: #EBE8E6;
+  --color-surface-2: #DEDBDA;
+  --color-border: #E1DEDE;
+
+  /* Text */
+  --color-text: #333333;
+  --color-text-secondary: #676162;
+  --color-text-muted: #948D8A;
+
+  /* Brand accent (single-color system) */
+  --color-accent: #E87462;
+  --color-accent-strong: #C05248;
+
+  /* Semantic (muted, used sparingly for state) */
+  --color-success: #507040;
+  --color-warning: #96702A;
+  --color-danger: #C05248;
+  --color-info: #2A827E;
+
+  /* Typography */
+  --font-sans: "Geist", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", "Fira Code", ui-monospace, monospace;
+}
+
+.dark {
+  --color-page: #1A1B24;
+  --color-surface: #22232B;
+  --color-surface-2: #2C2D33;
+  --color-border: #32333A;
+
+  --color-text: #DEE0E5;
+  --color-text-secondary: #969AA0;
+  --color-text-muted: #64656A;
+
+  --color-accent: #E8755E;
+  --color-accent-strong: #F08A72;
+
+  --color-success: #8B9E78;
+  --color-warning: #D4A76A;
+  --color-danger: #E8755E;
+  --color-info: #6EADB0;
+
+  color-scheme: dark;
+}
+
+html {
+  font-family: var(--font-sans);
+  color: var(--color-text);
+  background: var(--color-page);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "cv11", "ss01";
+}
+
+/* Tabular numerals for data tables and numeric displays */
+.tabular,
+table,
+.font-mono {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Minimal scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}

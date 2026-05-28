@@ -1,0 +1,202 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1776347356472,
+      "tag": "0000_fat_beast",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1776519600000,
+      "tag": "0001_rls_policies",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1776520000000,
+      "tag": "0002_flimsy_weapon_omega",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1776527547999,
+      "tag": "0003_daffy_fabian_cortez",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1776611982847,
+      "tag": "0004_material_tinkerer",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1777107181495,
+      "tag": "0005_confused_lady_bullseye",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1777107444652,
+      "tag": "0006_vengeful_molten_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1777181255151,
+      "tag": "0007_naive_nightcrawler",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1777181300000,
+      "tag": "0008_gmail_credentials_security",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1777199500000,
+      "tag": "0009_grant_app_rls_extensions",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1777389771272,
+      "tag": "0010_ambitious_reavers",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1777393135837,
+      "tag": "0011_complex_union_jack",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1777768537155,
+      "tag": "0012_flippant_cobalt_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1777798717825,
+      "tag": "0013_safe_wolfpack",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1777802085538,
+      "tag": "0014_wet_skaar",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1777949178547,
+      "tag": "0015_natural_retro_girl",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1777983758331,
+      "tag": "0016_fantastic_storm",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1778042716491,
+      "tag": "0017_shocking_the_enforcers",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1778050171951,
+      "tag": "0018_plain_sasquatch",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1778070241114,
+      "tag": "0019_groovy_spectrum",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1778071146125,
+      "tag": "0020_parched_slyde",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1778116263335,
+      "tag": "0021_colorful_nova",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1778254432896,
+      "tag": "0022_silent_blue_blade",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1778387389540,
+      "tag": "0023_add_inquiry_cta_mode",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1778387420034,
+      "tag": "0024_drop_inquiry_scheduling_url",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1778395163668,
+      "tag": "0025_chk_inquiry_cta_signup_requires_url",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1778504241870,
+      "tag": "0026_minor_wraith",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1779588516083,
+      "tag": "0027_opposite_famine",
+      "breakpoints": true
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+# Open Source License
+
+LeadAce is licensed under a modified version of the Apache License 2.0,
+with the following additional conditions:
+
+1. LeadAce may be utilized commercially, including as part of a service
+   that is used by your own organization or by individuals you employ.
+   Should the conditions below be met, a commercial license must be
+   obtained from the producer:
+
+   a. Multi-tenant service: Unless explicitly authorized by SurpassOne Inc.
+      in writing, you may not use the LeadAce source code to operate a
+      multi-tenant service for third parties. A "multi-tenant service" is
+      any deployment in which separate, isolated workspaces or accounts
+      are made available to people or organizations other than your own.
+      Self-hosting LeadAce for a single organization (including its
+      employees and contractors) is not a multi-tenant service.
+
+   b. LOGO and copyright information: In the process of using LeadAce's
+      frontend, you may not remove or modify the LOGO or copyright
+      information in the LeadAce console, application, or any
+      user-facing surface.
+      - Frontend Definition: For the purposes of this license, the
+        "frontend" of LeadAce includes all components located in the
+        `frontend/` directory of the source tree, the `landing/`
+        directory, and any compiled artifact derived from those
+        directories.
+
+   To request a commercial license that lifts these restrictions, contact
+   leo.uno@surpassone.com.
+
+2. As a contributor, you should agree that:
+
+   a. The producer (SurpassOne Inc.) can adjust the open-source agreement
+      to be more strict or relaxed as deemed necessary.
+   b. Your contributed code may be used for commercial purposes,
+      including but not limited to its cloud business operations.
+
+Apart from the specific conditions mentioned above, all other rights and
+restrictions follow the Apache License 2.0. Detailed information about
+the Apache License 2.0 can be found at
+http://www.apache.org/licenses/LICENSE-2.0.
+
+© 2026 SurpassOne Inc.

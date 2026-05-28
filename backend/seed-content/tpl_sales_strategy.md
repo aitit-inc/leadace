@@ -1,0 +1,124 @@
+# SALES_STRATEGY.md Template
+
+Generate `<project-dir>/SALES_STRATEGY.md` with the following structure:
+
+```markdown
+# Sales & Marketing Strategy
+
+## Elevator Pitch
+(A one-liner that can be delivered in 30 seconds)
+
+## Problems Solved
+(The challenges your target faces and how you solve them)
+
+## Target
+### Primary Target
+(Industry/domain, size, role, characteristics)
+### Secondary Target
+
+## Value Proposition
+(Why customers should choose you)
+
+## Track Record / Social Proof
+(Specific track records, numbers, and case studies that can be referenced in emails. Prepare at least one.)
+
+Examples:
+- Adoption: "Deployed at XX companies", "Currently piloting at X companies in beta"
+- Outcome numbers: "Generate XX leads per month", "Reduced sales workload by XX hours/week", "Reduced cost by XX%"
+- Customer testimonials: "○○ was improved" (with permission)
+- Own track record: "Used in our own sales process, resulting in XX meetings booked"
+- Awards/media: "Winner of ○○ Award", "Featured in ○○"
+
+※ Even at an early stage with no case studies yet, include estimated effects based on self-usage track records or feature capabilities
+
+## Outreach Mode
+
+Set one of the following. Choose based on the project's goals and target.
+
+- **precision** — High-value, targeted approach. Deep personalization referencing specific news, job postings, funding rounds, and initiatives for each prospect. No expense spared per contact; maximize response rate. Best for high-value targets
+- **volume** — Efficiency-focused. Semi-personalized based on company name, industry, and business overview. Use the email template in SALES_STRATEGY.md as a base, adjusting the opening and problem framing per prospect. Best for broad market testing and awareness building
+
+Default: `precision`
+
+## Sales Channels
+(Channel ordering, tone, sub-channel preferences. Optional.)
+
+## Sender Information
+- Sender name: (Name displayed as email sender)
+- Sender email address: (Used for gog send --account)
+- Signature: (Signature block appended to emails. Organization name, full name, title, phone number, URL, etc.)
+- Scheduling link: (Timerex / Calendly / Cal.com URL. In meeting CTA mode, the inquiry-landing page uses this URL behind its "Book a meeting" button. If inquiry landing is disabled, this URL is also embedded inline in email CTAs as the meeting fallback.)
+- Signup URL: (SaaS self-serve signup / "Get started" / "Start your trial" URL. In signup CTA mode, the inquiry-landing page uses this URL behind its "Sign up" button. **Never embedded in email bodies** — the recipient reaches the signup page through the inquiry-landing footer link. Mutually exclusive with the scheduling link — the project picks one CTA mode.)
+
+## Messaging
+### First Outreach (Email/Form)
+(Template-like structure: subject line patterns, opening hook, problem framing, solution presentation, CTA)
+### Email Template
+The following is a reference template for first outreach emails. Customize for each prospect.
+
+```
+Subject: {specific subject line that addresses the recipient's challenge}
+
+{Recipient's organization name}
+
+{Opening: 1-2 lines on why you're reaching out}
+
+{Problem framing: 2-3 lines on the specific challenge the recipient likely faces}
+
+{Solution: 2-3 lines on how your service solves it}
+
+{Track record / proof: 1-2 lines with numbers or case studies if available}
+
+{CTA: One next action only. When inquiry landing is enabled (typical), invite the recipient to the inquiry-landing conversation — the landing URL is appended automatically as the email footer, do NOT paste any URL inline. When inquiry landing is disabled (meeting-only legacy mode), include the scheduling link with a question framing. The signup URL is never embedded in the email body in any mode — it is reached through the inquiry-landing Sign up button.}
+
+{Signature}
+```
+
+### Inquiry Landing CTA Mode
+
+The project picks one CTA mode for the inquiry-landing page (`/q/<short_id>`):
+
+- **meeting** (default): the landing page renders a "Book a meeting" / "Request a meeting" button. The recipient who arrives at the landing page can request a meeting in-place; backend records it as a `lead` outcome
+- **signup** (SaaS self-serve): the landing page renders a "Sign up" button linking to the project's signup URL. The recipient who arrives at the landing page can self-serve via the signup URL; backend records it as a `signup_clicked` outcome
+
+The two modes are mutually exclusive per project — the inquiry-settings page enforces a single CTA URL. The CTA mode shapes the landing-page button only; outbound email bodies link only to the inquiry-landing page (backend-appended footer) and never to the scheduling or signup URL directly. Email CTA framing details are in the `tpl_email_guidelines` master document.
+### SNS Messages
+(Short and concise. Self-introduction → value proposition → action.)
+- **Prerequisite:** If using SNS DMs, log into each enabled SNS account in Chrome beforehand
+
+## Response Definition
+- What counts as a response: (Direct email reply, scheduling completion notification, reply via contact form, etc.)
+- Scheduling service in use: (Service name and notification sender email. Example: Timerex — notifications@timerex.net)
+- Other response signals: (Notifications from specific services, etc. List if applicable.)
+
+## Notification Settings
+- daily-cycle completion notification recipient: (Email address to receive completion reports. "None" if not needed.)
+
+## KPI
+(Metrics to track: number of sends, open rate, response rate, meeting conversion rate, etc.)
+
+## Search Keywords
+(Keyword list for finding prospects. Industry names, service categories, related terms, etc.)
+
+## Prospect Discovery Sources
+(Platforms and directories for finding prospect candidates. List sources relevant to your target market and region.)
+- Press release / news sites: (e.g., PR Newswire, Business Wire, GlobeNewswire, TechCrunch, or country-specific equivalents)
+- Company databases / directories: (e.g., LinkedIn, Crunchbase, Apollo, ZoomInfo, industry association member lists)
+- Startup / VC databases: (e.g., Crunchbase, AngelList, PitchBook, Product Hunt — if targeting startups)
+- Trade show / event exhibitor lists: (if applicable)
+- Country/region-specific directories: (if applicable)
+```
+
+(Tool / environment status lives in the separate `env_status` document — saved by `/setup` or by the `/lead-ace` onboarding chain (both run env_check), read directly by `/strategy` and downstream skills. **Do not duplicate it here.** Channel tool capability is also surfaced in env_status; the outbound allowlist is Project Settings → `outboundChannels`.)
+
+**Generation guidelines:**
+- Keep the elevator pitch specific and concise. Avoid jargon; make it easy to understand
+- Make targets as specific as possible (not "small businesses" but "SaaS companies with 50-200 employees in the US"; not "retailers" but "DTC e-commerce brands with under 50 employees")
+- Structure messaging to lead with recipient benefits
+- List at least 10 search keywords
+- **Sales Channels section rules:**
+  - Channel on/off (`email` / `form` / `sns_twitter` / `sns_linkedin`) is owned by Project Settings (`outboundChannels`) and read by `/outbound` and `/build-list`. **Never restate enablement / disablement here.**
+  - This section may carry tactical preferences Project Settings can't express: channel ordering ("SNS DM before email for consumer-facing prospects"), tone, sub-channel preferences ("prefer named-personal emails over generic"). `/outbound` reads the order from here when present.
+  - **Do not** write sub-channel exclusions like "info@-style addresses: not contacted". The plugin's default policy collects every reachable email and demotes generic addresses at the outbound channel-ladder stage. A *preference* ("prefer named over generic") is fine; an *exclusion* breaks the default collection behavior.
+- **SNS Messages section rules:**
+  - Which SNS platforms are enabled (`sns_twitter` / `sns_linkedin`) is owned by Project Settings `outboundChannels`. **Do not restate enablement here** (no "SNS used: X / LinkedIn / Both" line). The section is for DM message style / tone only.

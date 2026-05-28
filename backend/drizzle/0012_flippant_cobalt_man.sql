@@ -1,0 +1,1 @@
+ALTER TABLE "responses" ADD COLUMN "rejection_feedback" jsonb;

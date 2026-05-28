@@ -1,0 +1,2 @@
+ALTER TABLE "project_settings" ADD COLUMN "outbound_channels" text[] DEFAULT '{"email","form","sns_twitter","sns_linkedin"}' NOT NULL;--> statement-breakpoint
+ALTER TABLE "project_settings" ADD COLUMN "target_countries" text[] DEFAULT '{}' NOT NULL;

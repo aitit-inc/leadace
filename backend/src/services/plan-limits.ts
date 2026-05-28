@@ -1,0 +1,334 @@
+import { eq, and, or, sql, gte } from 'drizzle-orm'
+import {
+  tenantPlans,
+  outreachLogs,
+  prospects,
+  inquirySessions,
+  PRE_SEND_TTL_MINUTES,
+} from '../db/schema'
+import type { createDb } from '../db/connection'
+import type { ServiceError } from '../services/result'
+import type { Edition } from '../domain/edition'
+import type { TenantId } from '../domain/ids'
+
+// 'unlimited' is internal-only (no Stripe price), set manually in the DB for
+// staff / complimentary accounts. The Stripe webhook must never overwrite it.
+export type PlanTier = 'free' | 'starter' | 'pro' | 'scale' | 'unlimited'
+
+export type OutreachWindowKind = 'daily' | 'lifetime' | 'monthly'
+
+// Plans can apply zero or more caps simultaneously. null = cap doesn't apply.
+// Free uses daily + lifetime (whichever runs out first blocks send); paid uses monthly.
+export interface PlanLimits {
+  maxProjects: number | null
+  maxOutreachPerDay: number | null
+  maxOutreachLifetime: number | null
+  maxOutreachPerMonth: number | null
+  maxProspects: number | null
+}
+
+const PLAN_LIMITS: Record<PlanTier, PlanLimits> = {
+  free:      { maxProjects: 1,    maxOutreachPerDay: 5,    maxOutreachLifetime: 50,   maxOutreachPerMonth: null,  maxProspects: 500 },
+  starter:   { maxProjects: 1,    maxOutreachPerDay: null, maxOutreachLifetime: null, maxOutreachPerMonth: 1500,  maxProspects: null },
+  pro:       { maxProjects: 5,    maxOutreachPerDay: null, maxOutreachLifetime: null, maxOutreachPerMonth: 10000, maxProspects: null },
+  scale:     { maxProjects: null, maxOutreachPerDay: null, maxOutreachLifetime: null, maxOutreachPerMonth: null,  maxProspects: null },
+  unlimited: { maxProjects: null, maxOutreachPerDay: null, maxOutreachLifetime: null, maxOutreachPerMonth: null,  maxProspects: null },
+}
+
+export function getPlanLimits(plan: PlanTier): PlanLimits {
+  return PLAN_LIMITS[plan]
+}
+
+type Db = ReturnType<typeof createDb>
+
+// Self-hosted installs short-circuit to 'unlimited'. Edition gate at this
+// single chokepoint means every downstream cap check inherits the override.
+export async function getTenantPlan(
+  db: Db,
+  tenantId: TenantId,
+  edition: Edition,
+): Promise<{
+  plan: PlanTier
+  currentPeriodStart: Date | null
+  currentPeriodEnd: Date | null
+}> {
+  if (edition !== 'cloud') {
+    return { plan: 'unlimited', currentPeriodStart: null, currentPeriodEnd: null }
+  }
+
+  const [row] = await db
+    .select({
+      plan: tenantPlans.plan,
+      currentPeriodStart: tenantPlans.currentPeriodStart,
+      currentPeriodEnd: tenantPlans.currentPeriodEnd,
+    })
+    .from(tenantPlans)
+    .where(eq(tenantPlans.tenantId, tenantId))
+    .limit(1)
+
+  if (!row) {
+    return { plan: 'free', currentPeriodStart: null, currentPeriodEnd: null }
+  }
+
+  return {
+    plan: row.plan,
+    currentPeriodStart: row.currentPeriodStart,
+    currentPeriodEnd: row.currentPeriodEnd,
+  }
+}
+
+function startOfTodayUtc(): Date {
+  const now = new Date()
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
+}
+
+// Counts the tenant's distinct prospects, not project_prospect links:
+// batchRegister allows `projectId.optional()` and writes only `prospects`
+// when omitted, so a project_prospects-based count would let a tenant
+// silently exceed the Free 500 cap by saving tenant-only prospects.
+export async function countTenantProspects(db: Db, tenantId: TenantId): Promise<number> {
+  const [result] = await db
+    .select({ total: sql<number>`COUNT(*)::int` })
+    .from(prospects)
+    .where(eq(prospects.tenantId, tenantId))
+
+  return result?.total ?? 0
+}
+
+export interface OutreachQuotaWindow {
+  used: number
+  limit: number
+  remaining: number
+}
+
+export type OutreachQuota =
+  | {
+      plan: PlanTier
+      kind: 'unlimited'
+      used: number
+    }
+  | {
+      plan: PlanTier
+      kind: 'capped'
+      used: number
+      limit: number
+      remaining: number
+      bindingConstraint: OutreachWindowKind
+      // Per-window breakdown so the frontend can show all applicable caps.
+      daily?: OutreachQuotaWindow
+      lifetime?: OutreachQuotaWindow
+      monthly?: OutreachQuotaWindow
+    }
+
+// Tie-break: pick the most "terminal" (lifetime > monthly > daily) so the UX
+// nudges toward the right action ("upgrade" beats "wait until tomorrow").
+const TIE_BREAK_ORDER: Record<OutreachWindowKind, number> = {
+  lifetime: 0,
+  monthly: 1,
+  daily: 2,
+}
+
+export async function getRemainingOutreachQuota(
+  db: Db,
+  tenantId: TenantId,
+  edition: Edition,
+): Promise<OutreachQuota> {
+  const tp = await getTenantPlan(db, tenantId, edition)
+  return getRemainingOutreachQuotaForPlan(db, tenantId, tp)
+}
+
+// Variant for callers that already loaded the tenant plan (e.g. /me/plan).
+export async function getRemainingOutreachQuotaForPlan(
+  db: Db,
+  tenantId: TenantId,
+  tp: { plan: PlanTier; currentPeriodStart: Date | null },
+): Promise<OutreachQuota> {
+  const limits = getPlanLimits(tp.plan)
+
+  const dailySince = limits.maxOutreachPerDay !== null ? startOfTodayUtc() : null
+  const monthlySince = limits.maxOutreachPerMonth !== null && tp.currentPeriodStart
+    ? tp.currentPeriodStart
+    : null
+  const includeLifetime = limits.maxOutreachLifetime !== null
+
+  if (!dailySince && !monthlySince && !includeLifetime) {
+    return { plan: tp.plan, kind: 'unlimited', used: 0 }
+  }
+
+  // Dates passed as ISO strings + ::timestamptz cast: postgres.js with
+  // prepare:false (required for Supabase pooler) can't serialize Date instances
+  // through raw sql`` interpolation — it expects string/Buffer/ArrayBuffer.
+  const dailySinceIso = dailySince?.toISOString() ?? null
+  const monthlySinceIso = monthlySince?.toISOString() ?? null
+  const [row] = await db
+    .select({
+      dailyUsed: dailySinceIso
+        ? sql<number>`COUNT(*) FILTER (WHERE ${outreachLogs.sentAt} >= ${dailySinceIso}::timestamptz)::int`
+        : sql<number>`0::int`,
+      monthlyUsed: monthlySinceIso
+        ? sql<number>`COUNT(*) FILTER (WHERE ${outreachLogs.sentAt} >= ${monthlySinceIso}::timestamptz)::int`
+        : sql<number>`0::int`,
+      lifetimeUsed: includeLifetime
+        ? sql<number>`COUNT(*)::int`
+        : sql<number>`0::int`,
+    })
+    .from(outreachLogs)
+    // 'pre_send' is an in-flight reservation: counted toward used so concurrent
+    // allocations can't race past the cap; auto-refunded when
+    // updateOutreachStatus flips to 'failed' (row stops matching). After
+    // PRE_SEND_TTL_MINUTES, unresolved pre_send rows age out so a crashed
+    // skill doesn't hold quota forever (row stays for audit).
+    .where(and(
+      eq(outreachLogs.tenantId, tenantId),
+      or(
+        eq(outreachLogs.status, 'sent'),
+        and(
+          eq(outreachLogs.status, 'pre_send'),
+          sql`${outreachLogs.sentAt} > NOW() - (${PRE_SEND_TTL_MINUTES} * INTERVAL '1 minute')`,
+        ),
+      ),
+    ))
+
+  const candidates: { kind: OutreachWindowKind; window: OutreachQuotaWindow }[] = []
+  const addWindow = (kind: OutreachWindowKind, limit: number, used: number) => {
+    candidates.push({ kind, window: { used, limit, remaining: Math.max(0, limit - used) } })
+  }
+  if (limits.maxOutreachPerDay !== null) addWindow('daily', limits.maxOutreachPerDay, row?.dailyUsed ?? 0)
+  if (includeLifetime) addWindow('lifetime', limits.maxOutreachLifetime!, row?.lifetimeUsed ?? 0)
+  if (monthlySince) addWindow('monthly', limits.maxOutreachPerMonth!, row?.monthlyUsed ?? 0)
+
+  candidates.sort((a, b) => {
+    if (a.window.remaining !== b.window.remaining) return a.window.remaining - b.window.remaining
+    return TIE_BREAK_ORDER[a.kind] - TIE_BREAK_ORDER[b.kind]
+  })
+  const binding = candidates[0]!
+
+  const result: OutreachQuota = {
+    plan: tp.plan,
+    kind: 'capped',
+    used: binding.window.used,
+    limit: binding.window.limit,
+    remaining: binding.window.remaining,
+    bindingConstraint: binding.kind,
+  }
+  for (const c of candidates) {
+    result[c.kind] = c.window
+  }
+  return result
+}
+
+export function isOutreachQuotaExhausted(quota: OutreachQuota): boolean {
+  return quota.kind === 'capped' && quota.remaining <= 0
+}
+
+export function outreachQuotaErrorIfExhausted(quota: OutreachQuota): ServiceError | null {
+  if (quota.kind !== 'capped' || quota.remaining > 0) return null
+  return {
+    ok: false,
+    code: 'FORBIDDEN',
+    error: 'Outreach limit reached',
+    detail: formatOutreachQuotaError(quota),
+  }
+}
+
+export function formatOutreachQuotaError(quota: OutreachQuota): string {
+  if (quota.kind === 'unlimited') return 'Outreach limit reached.'
+  switch (quota.bindingConstraint) {
+    case 'daily':
+      return `Your ${quota.plan} plan allows ${quota.limit} outreach per day. Try again tomorrow or upgrade for higher limits.`
+    case 'lifetime':
+      return `Your ${quota.plan} plan lifetime limit (${quota.limit}) is reached. Upgrade to keep sending.`
+    case 'monthly':
+      return `Your ${quota.plan} plan allows ${quota.limit} outreach this month. Upgrade your plan to continue.`
+  }
+}
+
+// 1 turn = 1 user message + 1 AI reply (counted on the AI reply via
+// inquiry_sessions.chat_turns_used). Free has a lifetime cap; Starter/Pro
+// reset on the Stripe billing period; Scale/unlimited have no cap.
+export type InquiryChatWindowKind = 'lifetime' | 'monthly'
+
+export type InquiryChatLimits = {
+  maxChatTurnsLifetime: number | null
+  maxChatTurnsPerMonth: number | null
+}
+
+const INQUIRY_CHAT_LIMITS: Record<PlanTier, InquiryChatLimits> = {
+  free:      { maxChatTurnsLifetime: 25,   maxChatTurnsPerMonth: null },
+  starter:   { maxChatTurnsLifetime: null, maxChatTurnsPerMonth: 500 },
+  pro:       { maxChatTurnsLifetime: null, maxChatTurnsPerMonth: 5000 },
+  scale:     { maxChatTurnsLifetime: null, maxChatTurnsPerMonth: null },
+  unlimited: { maxChatTurnsLifetime: null, maxChatTurnsPerMonth: null },
+}
+
+export type InquiryChatQuota =
+  | {
+      plan: PlanTier
+      kind: 'unlimited'
+      used: number
+    }
+  | {
+      plan: PlanTier
+      kind: 'capped'
+      used: number
+      limit: number
+      remaining: number
+      bindingConstraint: InquiryChatWindowKind
+    }
+
+export async function getRemainingChatQuota(
+  db: Db,
+  tenantId: TenantId,
+  edition: Edition,
+): Promise<InquiryChatQuota> {
+  const tp = await getTenantPlan(db, tenantId, edition)
+  const limits = INQUIRY_CHAT_LIMITS[tp.plan]
+
+  const lifetimeLimit = limits.maxChatTurnsLifetime
+  const monthlyLimit = limits.maxChatTurnsPerMonth
+  const monthlySince = monthlyLimit !== null && tp.currentPeriodStart ? tp.currentPeriodStart : null
+
+  if (lifetimeLimit === null && monthlySince === null) {
+    return { plan: tp.plan, kind: 'unlimited', used: 0 }
+  }
+
+  // Either lifetime (free) or monthly (paid) — never both.
+  const windowKind: InquiryChatWindowKind = lifetimeLimit !== null ? 'lifetime' : 'monthly'
+  const limit = (lifetimeLimit ?? monthlyLimit) as number
+  const where =
+    windowKind === 'lifetime'
+      ? eq(inquirySessions.tenantId, tenantId)
+      : and(
+          eq(inquirySessions.tenantId, tenantId),
+          gte(inquirySessions.openedAt, monthlySince as Date),
+        )
+  const [row] = await db
+    .select({ used: sql<number>`COALESCE(SUM(${inquirySessions.chatTurnsUsed}), 0)::int` })
+    .from(inquirySessions)
+    .where(where)
+
+  const used = row?.used ?? 0
+
+  return {
+    plan: tp.plan,
+    kind: 'capped',
+    used,
+    limit,
+    remaining: Math.max(0, limit - used),
+    bindingConstraint: windowKind,
+  }
+}
+
+export function isChatQuotaExhausted(quota: InquiryChatQuota): boolean {
+  return quota.kind === 'capped' && quota.remaining <= 0
+}
+
+export function formatChatQuotaError(quota: InquiryChatQuota): string {
+  if (quota.kind === 'unlimited') return 'Chat limit reached.'
+  switch (quota.bindingConstraint) {
+    case 'lifetime':
+      return `Your ${quota.plan} plan inquiry-chat lifetime limit (${quota.limit} turns) is reached. Upgrade to enable more chat conversations.`
+    case 'monthly':
+      return `Your ${quota.plan} plan allows ${quota.limit} inquiry-chat turns per month. Upgrade your plan to continue.`
+  }
+}

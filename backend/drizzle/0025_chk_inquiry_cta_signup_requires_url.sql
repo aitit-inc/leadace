@@ -1,0 +1,1 @@
+ALTER TABLE "project_settings" ADD CONSTRAINT "chk_inquiry_cta_signup_requires_url" CHECK ("project_settings"."inquiry_cta_type" <> 'signup' OR "project_settings"."inquiry_cta_url" IS NOT NULL);

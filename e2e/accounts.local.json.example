@@ -1,0 +1,6 @@
+{
+  "email": "your-test-google-account@gmail.com",
+  "tenant_id": "",
+  "user_id": "",
+  "notes": "Filled in after the one-time OAuth flow. Run a smoke once, then read the values out of local Supabase (`auth.users`, `tenant_members`)."
+}
