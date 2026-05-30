@@ -23,7 +23,7 @@
   function onQueryInput(e: Event) {
     const next = (e.currentTarget as HTMLInputElement).value.trim();
     if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => pushUrl(next, 1), 200);
+    debounceTimer = setTimeout(() => pushUrl(next, 1), 400);
   }
 
   function onPageChange(n: number) {

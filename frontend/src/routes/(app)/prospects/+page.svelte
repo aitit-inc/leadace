@@ -52,7 +52,7 @@
   function onQueryInput(e: Event) {
     const next = (e.currentTarget as HTMLInputElement).value.trim();
     if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => updateUrl({ q: next, page: 1 }), 200);
+    debounceTimer = setTimeout(() => updateUrl({ q: next, page: 1 }), 400);
   }
   function onPageChange(n: number) {
     updateUrl({ page: n });
