@@ -14,10 +14,8 @@ export type PreviewProspect = {
   organizationName: string;
 };
 
-// /q/preview is sender-side (the project owner previews the receiver
-// landing) and lives outside the (app) group, so hooks.server.ts does not
-// gate it. Gate here: unauthenticated visitors get bounced to /login with a
-// `next` so a fresh sign-in returns them to the preview.
+// /q/preview is outside the (app) group, so hooks.server.ts doesn't gate it.
+// Gate here: bounce unauthenticated visitors to /login with a `next`.
 export const load: PageServerLoad = async ({ url, fetch, locals }) => {
   const projectId = url.searchParams.get('project');
   if (!projectId) {
@@ -26,7 +24,7 @@ export const load: PageServerLoad = async ({ url, fetch, locals }) => {
       status: 400,
       message: 'Missing project parameter — open Preview from the AI Inquiry settings page.',
     };
-    return { result, projectId: null, prospects: [], selectedProspectId: null };
+    return { result, projectId: null, prospects: [], selectedProspectId: null, q: '' };
   }
 
   if (!locals.session) {
@@ -37,13 +35,13 @@ export const load: PageServerLoad = async ({ url, fetch, locals }) => {
   const prospectParam = url.searchParams.get('prospect');
   const selectedProspectId =
     prospectParam && /^\d+$/.test(prospectParam) ? Number(prospectParam) : null;
+  const q = url.searchParams.get('q')?.trim() ?? '';
 
-  // A listing failure shouldn't break the preview — fall back to no picker.
   let prospects: PreviewProspect[] = [];
   try {
     const res = await listProspects(
       projectId,
-      { page: 1, limit: 100 },
+      { page: 1, limit: 50, q: q || undefined },
       fetch,
       locals.session.access_token,
     );
@@ -63,8 +61,25 @@ export const load: PageServerLoad = async ({ url, fetch, locals }) => {
       fetch,
       locals.session.access_token,
     );
+    // Keep the selected prospect listed even when search filters it out of the
+    // 50, so the picker doesn't snap to "Generic" mid-chat. recipientOrg is
+    // non-null only for an in-project prospect.
+    if (
+      selectedProspectId !== null &&
+      landing.recipientOrganization !== null &&
+      !prospects.some((p) => p.prospectId === selectedProspectId)
+    ) {
+      prospects = [
+        {
+          prospectId: selectedProspectId,
+          contactName: landing.recipientName,
+          organizationName: landing.recipientOrganization,
+        },
+        ...prospects,
+      ];
+    }
     const result: PreviewResult = { state: 'ready', landing };
-    return { result, projectId, prospects, selectedProspectId };
+    return { result, projectId, prospects, selectedProspectId, q };
   } catch (e) {
     // 401 throws a SvelteKit error(401) inside the transport on the server,
     // so it surfaces through +error.svelte rather than this catch. Other
@@ -72,6 +87,6 @@ export const load: PageServerLoad = async ({ url, fetch, locals }) => {
     const status = e instanceof ApiError ? e.status : 0;
     const message = e instanceof Error ? e.message : 'Unable to load preview';
     const result: PreviewResult = { state: 'invalid', status, message };
-    return { result, projectId, prospects, selectedProspectId };
+    return { result, projectId, prospects, selectedProspectId, q };
   }
 };
