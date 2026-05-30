@@ -81,7 +81,7 @@ All data is isolated by tenant. Every tenant-scoped table carries a `tenant_id` 
 - **DB columns: NOT NULL by default** — make a column nullable only when `null` is a genuinely distinct state. A nullable column tends to cascade into "what if the whole row is absent" assumptions across every reader, and that assumption is much harder to retract later than to avoid up front
 - **Stick to the orthodox path**: prefer the boring, obvious implementation over a clever one. Code should read top-to-bottom without the reader having to reconstruct hidden context
 - **State names match reality, no double-duty columns**: don't overload a status / state field to carry a feature requirement (e.g., flipping `prospect.status` to `contacted` only to keep get_outbound_targets from re-picking a draft). Express the feature requirement on a separate axis (a derived query like `NOT EXISTS`, a separate column, an additional enum value) so the original state keeps its real-world meaning
-- **Testing philosophy**: rely on the type system (TypeScript strict, Zod schemas, drizzle's typed builder) + integration verification (curl, end-to-end skill runs) over boilerplate unit tests. Don't propose "let's add unit tests for each endpoint" unless asked. Add tests only when they cover behavior types cannot express (integration flows, business-logic edge cases)
+- **Testing philosophy**: rely on the type system (TypeScript strict, Zod schemas, drizzle's typed builder) as the first line of defense — anything the types can already guarantee is NOT tested. On top of that, the backend keeps a **minimal, coarse-grained** unit-test layer (Vitest, co-located `*.test.ts`) that covers only **pure business logic types cannot express**: branching / state transitions, arithmetic, ordering / tie-breaks, parsing, dedup / normalization, threshold decisions — where getting it wrong has real consequences. Where such logic is trapped inside a DB-coupled service function, extract the pure core (to `domain/`, or as an exported pure helper) and test that. Do NOT test routes, drizzle queries, or DB I/O via mocks — those stay covered by the `e2e/regression-*.sh` curl harness. Don't chase exhaustive per-endpoint coverage. Full standard: [.claude/rules/backend-architecture.md](.claude/rules/backend-architecture.md) § Testing
 - **Comments**: default to none. Write one only when *why* is non-obvious. If code needs a comment to be readable, restructure it
 
 ## Backend Development (backend/)
@@ -142,13 +142,14 @@ See `README.md` -> For Developers for full details.
 
 Architecture details (layers, `hooks.server.ts` shape, server-load vs client-load split, API client transport contract) live in [.claude/rules/frontend-architecture.md](.claude/rules/frontend-architecture.md).
 
-## Production E2E Testing
+## Local E2E Testing
 
-Project-internal skill at [.claude/skills/prod-e2e/SKILL.md](.claude/skills/prod-e2e/SKILL.md) holds the full prerequisite knowledge for running E2E tests against the live backend (Docker harness in `e2e/`, Worker log tailing, test tenant + `+`-alias scheme, cleanup SQL). Invoke it when the user asks to run a production E2E.
+Project-internal skill at [.claude/skills/local-e2e/SKILL.md](.claude/skills/local-e2e/SKILL.md) holds the prerequisite knowledge for running E2E tests against a **local** LeadAce stack (local Supabase + API/MCP Workers + frontend, real Google OAuth — same code path a self-host install runs). The harness lives in `e2e/` (see [e2e/README.md](e2e/README.md)): `smoke.sh` drives the `/lead-ace` onboarding chain headless, and the curl-only `regression-*.sh` scripts cover the dedup and send-and-record branches (including a real-Gmail happy path redirected to a test mailbox via `E2E_RECIPIENT_OVERRIDE`). Invoke it when the user asks to run a local E2E.
 
 ## Pre-Release Checklist (Required)
 
 - Backend (TypeScript): `cd backend && npm run typecheck`
+- Backend (tests): `cd backend && npm test`
 - Frontend (Svelte): `cd frontend && npm run check`
 
 ## Branch flow & Release

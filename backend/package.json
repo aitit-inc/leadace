@@ -11,22 +11,25 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed-master-documents": "tsx scripts/seed-master-documents.ts",
     "db:studio": "drizzle-kit studio",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "latest",
-    "drizzle-orm": "latest",
-    "hono": "latest",
-    "jose": "latest",
-    "postgres": "latest",
-    "zod": "latest"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.12.23",
+    "jose": "^6.2.3",
+    "postgres": "^3.4.9",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "latest",
-    "@hono/zod-validator": "latest",
-    "drizzle-kit": "latest",
-    "drizzle-zod": "latest",
-    "typescript": "latest",
-    "wrangler": "latest"
+    "@cloudflare/workers-types": "^4.20260529.1",
+    "@hono/zod-validator": "^0.8.0",
+    "drizzle-kit": "^0.31.10",
+    "drizzle-zod": "^0.8.3",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.7",
+    "wrangler": "^4.95.0"
   }
 }

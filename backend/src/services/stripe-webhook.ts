@@ -3,6 +3,7 @@ import type { Db } from '../db/connection'
 import { tenantPlans, tenantMembers } from '../db/schema'
 import { timingSafeEqual } from '../domain/timing-safe'
 import { stripeApiRequest } from './stripe-api'
+import type { PlanTier } from './plan-limits'
 
 // Lives in the service tier (not domain) because crypto.subtle and the wall
 // clock are restricted to the service layer per backend-architecture.md.
@@ -50,10 +51,24 @@ export async function verifyStripeSignature(
   return parts.signatures.some((sig) => timingSafeEqual(sig, expected))
 }
 
-function planFromMetadata(metadata: Record<string, string> | undefined): 'starter' | 'pro' | 'scale' | null {
+export type PaidPlanTier = 'starter' | 'pro' | 'scale'
+
+export function planFromMetadata(metadata: Record<string, string> | undefined): PaidPlanTier | null {
   const plan = metadata?.['plan']
   if (plan === 'starter' || plan === 'pro' || plan === 'scale') return plan
   return null
+}
+
+// A paid tier is only effective while the Stripe subscription is actually
+// active or trialing; any other status (incomplete, past_due, canceled, ...)
+// or a missing/invalid plan falls back to 'free'. Async payment methods can
+// leave checkout.session.completed in 'processing'/'incomplete', so the tier
+// is granted here only when status confirms it.
+export function effectivePlanFromStatus(
+  status: string | undefined,
+  plan: PaidPlanTier | null,
+): PlanTier {
+  return (status === 'active' || status === 'trialing') && plan ? plan : 'free'
 }
 
 // Used when we detect a critical configuration error after a successful
@@ -210,7 +225,7 @@ async function handleCheckoutSessionCompleted(
   // only grant the paid tier when status is active/trialing; otherwise leave
   // plan as 'free' and let customer.subscription.updated promote it later.
   const status = sub['status'] as string | undefined
-  const activePlan = status === 'active' || status === 'trialing' ? plan : 'free'
+  const activePlan = effectivePlanFromStatus(status, plan)
   if (activePlan === 'free') {
     console.warn(
       'checkout.session.completed: subscription not yet active; persisting IDs only, plan will be promoted by subscription.updated',
@@ -296,7 +311,7 @@ async function handleSubscriptionUpdated(
     return
   }
 
-  const activePlan = (status === 'active' || status === 'trialing') && plan ? plan : 'free'
+  const activePlan = effectivePlanFromStatus(status, plan)
 
   await db
     .update(tenantPlans)

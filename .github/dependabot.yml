@@ -35,4 +35,10 @@ updates:
         update-types:
           - minor
           - patch
+    # @types/node tracks the runtime Node major (pinned to 22 via .nvmrc);
+    # block major bumps so the types can't run ahead of the runtime.
+    ignore:
+      - dependency-name: "@types/node"
+        update-types:
+          - version-update:semver-major
 

@@ -127,7 +127,7 @@ function buildSummarizeInstructions(trigger: SummarizeTrigger): string {
   ].join('\n')
 }
 
-type ParsedSummary = {
+export type ParsedSummary = {
   summary: string
   outcome: 'inquired' | 'lead'
 }
@@ -195,7 +195,7 @@ async function notifyLeadByEmail(
   })
 }
 
-function parseSummaryJson(raw: string): ParsedSummary | null {
+export function parseSummaryJson(raw: string): ParsedSummary | null {
   // Models occasionally wrap JSON in code fences despite instructions; strip
   // them before parsing.
   const stripped = raw

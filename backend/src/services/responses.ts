@@ -24,6 +24,7 @@ import {
 import {
   feedbackForcesDoNotContact,
   reapproachWindowMonths,
+  resolveEffectiveReapproachWindow,
   rejectionFeedbackCommonSchema,
   PMF_RELEVANT_REASONS,
   FEATURE_GAP_REASON,
@@ -167,9 +168,6 @@ export async function recordResponse(
       ))
     rejectionCycle = countRow?.count ?? 0
   }
-  const cycleCapReached =
-    input.responseType === 'rejection' && rejectionCycle >= reapproachSettings.maxReapproachCycles
-
   const reapproachMonthsRaw = input.rejectionFeedback
     ? reapproachWindowMonths(input.rejectionFeedback, {
         unspecifiedMonths: reapproachSettings.unspecifiedRecontactWindowMonths,
@@ -177,7 +175,12 @@ export async function recordResponse(
     : null
   // Cap-reached rejections lose the reapproach window: straight to 'rejected'
   // + DNC, no next_outreach_after stamped.
-  const reapproachMonths = cycleCapReached ? null : reapproachMonthsRaw
+  const { cycleCapReached, effectiveWindowMonths: reapproachMonths } = resolveEffectiveReapproachWindow({
+    responseType: input.responseType,
+    rejectionCycle,
+    maxReapproachCycles: reapproachSettings.maxReapproachCycles,
+    requestedWindowMonths: reapproachMonthsRaw,
+  })
   const newStatus = nextStatusFromResponse({
     responseType: input.responseType,
     sentiment: input.sentiment,

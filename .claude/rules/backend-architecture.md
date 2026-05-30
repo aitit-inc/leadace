@@ -344,3 +344,24 @@ Extract a pure value builder when the same row-shape construction appears in 3+ 
 - **Cross-service** helpers go under `domain/<entity>.ts` (e.g., `projectProspectInsertValues` in `domain/project-prospect.ts`). Domain has zero service dependencies, so importing from there is cycle-free.
 
 Builders take an explicit `args` object (not a Zod-inferred type) and own the column-shape concern only. `.onConflictDoNothing` / `.onConflictDoUpdate` chains stay at the call site.
+
+---
+
+## Testing
+
+The type system is the first line of defense; tests are the second, and only for what types cannot express. Keep the suite **minimal and coarse-grained** — exhaustive per-endpoint coverage is a non-goal and a maintenance liability.
+
+**Framework.** Vitest, node environment (`backend/vitest.config.ts`). Tests are **co-located** with the source as `src/**/<name>.test.ts`. Import `{ describe, it, expect }` from `vitest` explicitly (no globals). Run with `npm test`; CI runs it in the `backend` job of `.github/workflows/check.yml`.
+
+**Test ONLY pure business logic types cannot express:**
+
+- State machines / transitions (`nextStatusFromResponse`), arithmetic & date math (`addMonthsUtc`), ordering / tie-breaks (quota binding selection), parsing (`parseCsv`, JSON-with-fences), dedup / normalization (`resolveDedup`, `normalizeDomain`), threshold / eligibility decisions (`isAllowedSendCountry`, reapproach windows), security predicates (URL-scheme guards, token sign/verify).
+- Bar: the logic must be **pure (or have a cleanly extractable pure core)**, **not guaranteed by the types**, and **carry real consequences if wrong** (mis-send, double-send, quota bypass, dedup miss, wrong status, compliance leak, billing error, token forgery). Each suite stays small: representative + boundary + a failure case or two. Don't enumerate every input.
+
+**Do NOT test** (covered elsewhere or not worth the maintenance):
+
+- `routes/` — thin adapters; `zValidator` + types already cover them.
+- drizzle queries, service orchestration, DB I/O — no drizzle mocks (fragile, high-maintenance). DB-level behavior (quota counting, dedup against existing rows, send-and-record) is covered by the `e2e/regression-*.sh` curl harness.
+- Trivial passthroughs / field mapping, and LLM-prompt string assembly (not deterministic logic).
+
+**Extracting trapped logic.** When genuine business logic lives inside a DB-coupled service function, pull the pure decision core out so it can be tested without a DB — this is the same move as the domain "Refactor signals" above. Placement follows the dependency rules: put it in `domain/` when its types already live there (or are schema-types only); otherwise expose it as an **exported pure helper in the same service file** and test it in place (e.g. `selectOutreachQuota` in `services/plan-limits.ts`, where the `OutreachQuota` type is service-tier and may not move to `domain/`). The SQL / DB call stays in the service and feeds plain values into the pure function.

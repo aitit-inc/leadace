@@ -128,6 +128,39 @@ const TIE_BREAK_ORDER: Record<OutreachWindowKind, number> = {
   daily: 2,
 }
 
+// The binding window is the one with the least remaining; ties break toward the
+// most terminal (lifetime > monthly > daily) so the UX nudges toward the right
+// action. No applicable windows → no caps → unlimited.
+export function selectOutreachQuota(
+  plan: PlanTier,
+  windows: { kind: OutreachWindowKind; limit: number; used: number }[],
+): OutreachQuota {
+  if (windows.length === 0) return { plan, kind: 'unlimited', used: 0 }
+
+  const candidates = windows.map((w) => ({
+    kind: w.kind,
+    window: { used: w.used, limit: w.limit, remaining: Math.max(0, w.limit - w.used) },
+  }))
+  candidates.sort((a, b) => {
+    if (a.window.remaining !== b.window.remaining) return a.window.remaining - b.window.remaining
+    return TIE_BREAK_ORDER[a.kind] - TIE_BREAK_ORDER[b.kind]
+  })
+  const binding = candidates[0]!
+
+  const result: OutreachQuota = {
+    plan,
+    kind: 'capped',
+    used: binding.window.used,
+    limit: binding.window.limit,
+    remaining: binding.window.remaining,
+    bindingConstraint: binding.kind,
+  }
+  for (const c of candidates) {
+    result[c.kind] = c.window
+  }
+  return result
+}
+
 export async function getRemainingOutreachQuota(
   db: Db,
   tenantId: TenantId,
@@ -189,32 +222,12 @@ export async function getRemainingOutreachQuotaForPlan(
       ),
     ))
 
-  const candidates: { kind: OutreachWindowKind; window: OutreachQuotaWindow }[] = []
-  const addWindow = (kind: OutreachWindowKind, limit: number, used: number) => {
-    candidates.push({ kind, window: { used, limit, remaining: Math.max(0, limit - used) } })
-  }
-  if (limits.maxOutreachPerDay !== null) addWindow('daily', limits.maxOutreachPerDay, row?.dailyUsed ?? 0)
-  if (includeLifetime) addWindow('lifetime', limits.maxOutreachLifetime!, row?.lifetimeUsed ?? 0)
-  if (monthlySince) addWindow('monthly', limits.maxOutreachPerMonth!, row?.monthlyUsed ?? 0)
+  const windows: { kind: OutreachWindowKind; limit: number; used: number }[] = []
+  if (limits.maxOutreachPerDay !== null) windows.push({ kind: 'daily', limit: limits.maxOutreachPerDay, used: row?.dailyUsed ?? 0 })
+  if (includeLifetime) windows.push({ kind: 'lifetime', limit: limits.maxOutreachLifetime!, used: row?.lifetimeUsed ?? 0 })
+  if (monthlySince) windows.push({ kind: 'monthly', limit: limits.maxOutreachPerMonth!, used: row?.monthlyUsed ?? 0 })
 
-  candidates.sort((a, b) => {
-    if (a.window.remaining !== b.window.remaining) return a.window.remaining - b.window.remaining
-    return TIE_BREAK_ORDER[a.kind] - TIE_BREAK_ORDER[b.kind]
-  })
-  const binding = candidates[0]!
-
-  const result: OutreachQuota = {
-    plan: tp.plan,
-    kind: 'capped',
-    used: binding.window.used,
-    limit: binding.window.limit,
-    remaining: binding.window.remaining,
-    bindingConstraint: binding.kind,
-  }
-  for (const c of candidates) {
-    result[c.kind] = c.window
-  }
-  return result
+  return selectOutreachQuota(tp.plan, windows)
 }
 
 export function isOutreachQuotaExhausted(quota: OutreachQuota): boolean {

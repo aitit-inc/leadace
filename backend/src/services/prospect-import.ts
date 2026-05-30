@@ -29,6 +29,13 @@ import { projectProspectInsertValues } from '../domain/project-prospect'
 import { inferCountryFromDomain } from '../domain/country'
 import { normalizeDomain } from '../domain/normalize-domain'
 import { isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG } from '../domain/url'
+import {
+  resolveDedup,
+  claimRow,
+  overwriteSourceToSkipReason,
+  type DedupIndex,
+  type DedupSkipReason,
+} from '../domain/prospect-dedup'
 
 const COUNTRY_CODE_REGEX = /^[A-Z]{2}$/
 
@@ -248,18 +255,6 @@ function prospectUpdateSet(input: ProspectInput, orgId: number, now: Date) {
   }
 }
 
-// Built once per request from the union of every candidate row's identifiers
-// — turns the per-row N+1 lookup loop into 3 IN-clause queries. The `claimed*`
-// sets implement intra-batch "first wins" semantics.
-type DedupIndex = {
-  byEmail: Map<string, { id: number; doNotContact: boolean }>
-  byForm: Map<string, { id: number }>
-  domainsInProject: Set<string>
-  claimedEmails: Set<string>
-  claimedForms: Set<string>
-  claimedDomains: Set<string>
-}
-
 async function buildDedupIndex(
   db: Db,
   tenantId: TenantId,
@@ -325,70 +320,6 @@ async function buildDedupIndex(
     claimedForms: new Set(),
     claimedDomains: new Set(),
   }
-}
-
-// Discriminated union so callers can make programmatic decisions instead of
-// parsing strings.
-type DedupSkipReason =
-  | 'do_not_contact'
-  | 'email_duplicate'
-  | 'form_url_duplicate'
-  | 'already_in_project'
-  | 'duplicate_in_batch'
-
-// `source` records which channel actually matched, so a row with both email
-// and form URL where only the form matched reports 'form_url_duplicate'.
-type DedupOverwriteSource = 'email' | 'form'
-
-type DedupResolution =
-  | { kind: 'skip'; reason: DedupSkipReason }
-  | { kind: 'insert' }
-  | { kind: 'overwrite'; existingProspectId: number; source: DedupOverwriteSource }
-
-function overwriteSourceToSkipReason(source: DedupOverwriteSource): DedupSkipReason {
-  switch (source) {
-    case 'email': return 'email_duplicate'
-    case 'form': return 'form_url_duplicate'
-  }
-}
-
-// Intra-batch claim sets implement "first wins": a later row that collides
-// with an earlier row is reported as duplicate_in_batch.
-function resolveDedup(
-  idx: DedupIndex,
-  projectId: ProjectId | undefined,
-  input: Pick<ProspectInput, 'email' | 'contactFormUrl' | 'organizationDomain'>,
-): DedupResolution {
-  if (input.email) {
-    const hit = idx.byEmail.get(input.email)
-    if (hit?.doNotContact) return { kind: 'skip', reason: 'do_not_contact' }
-    if (hit) return { kind: 'overwrite', existingProspectId: hit.id, source: 'email' }
-    if (idx.claimedEmails.has(input.email)) return { kind: 'skip', reason: 'duplicate_in_batch' }
-  }
-  if (input.contactFormUrl) {
-    const hit = idx.byForm.get(input.contactFormUrl)
-    if (hit) return { kind: 'overwrite', existingProspectId: hit.id, source: 'form' }
-    if (idx.claimedForms.has(input.contactFormUrl)) return { kind: 'skip', reason: 'duplicate_in_batch' }
-  }
-  if (projectId) {
-    if (idx.domainsInProject.has(input.organizationDomain)) {
-      return { kind: 'skip', reason: 'already_in_project' }
-    }
-    if (idx.claimedDomains.has(`${projectId} ${input.organizationDomain}`)) {
-      return { kind: 'skip', reason: 'duplicate_in_batch' }
-    }
-  }
-  return { kind: 'insert' }
-}
-
-function claimRow(
-  idx: DedupIndex,
-  projectId: ProjectId | undefined,
-  input: Pick<ProspectInput, 'email' | 'contactFormUrl' | 'organizationDomain'>,
-): void {
-  if (input.email) idx.claimedEmails.add(input.email)
-  if (input.contactFormUrl) idx.claimedForms.add(input.contactFormUrl)
-  if (projectId) idx.claimedDomains.add(`${projectId} ${input.organizationDomain}`)
 }
 
 type BatchSkipped = { name: string; reason: 'plan_limit' | DedupSkipReason }

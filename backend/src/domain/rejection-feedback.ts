@@ -5,7 +5,10 @@ import {
   type RejectionFeedbackV1,
   type RejectionPrimaryReason,
   type RejectionRecontactWindow,
+  type responseTypeEnum,
 } from '../db/schema'
+
+type ResponseType = (typeof responseTypeEnum.enumValues)[number]
 
 // Decision-maker referral payload embedded in rejectionFeedback. Shared by
 // both the wire schema (Zod) and the service-level helpers that materialise
@@ -95,4 +98,21 @@ export function reapproachWindowMonths(
   if (!fb.preferred_recontact_window) return null
   if (fb.preferred_recontact_window === 'unspecified') return opts.unspecifiedMonths
   return REAPPROACH_WINDOW_MONTHS[fb.preferred_recontact_window]
+}
+
+// Rejection cycle ratchet: once a prospect's rejection count reaches
+// maxReapproachCycles, any reapproach window is dropped. The cap is
+// rejection-specific; other response types pass their window through unchanged.
+export function resolveEffectiveReapproachWindow(args: {
+  responseType: ResponseType
+  rejectionCycle: number
+  maxReapproachCycles: number
+  requestedWindowMonths: number | null
+}): { cycleCapReached: boolean; effectiveWindowMonths: number | null } {
+  const cycleCapReached =
+    args.responseType === 'rejection' && args.rejectionCycle >= args.maxReapproachCycles
+  return {
+    cycleCapReached,
+    effectiveWindowMonths: cycleCapReached ? null : args.requestedWindowMonths,
+  }
 }

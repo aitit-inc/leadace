@@ -152,7 +152,7 @@ rm -rf e2e/.claude-state
 
 ## Phase 2 scope (not yet implemented)
 
-The following are out of scope today; tracked in `docs/tasks.local.md`:
+The following are out of scope today:
 
 - **build-list regression** — direct-mint JWT + curl tests for `check_prospect_dedup` + Phase 1.5 + normalize-domain.
 - **daily-cycle full run** — chain check-results → evaluate → outbound + build-list with real Gmail send (recipient redirected to a test mailbox).
@@ -164,4 +164,3 @@ The following are out of scope today; tracked in `docs/tasks.local.md`:
 - Harness internals: [`e2e/README.md`](../../../e2e/README.md)
 - Local dev setup: [`docs/self-host.md`](../../../docs/self-host.md) → Local development
 - Plugin skill catalog: `plugin/skills/`
-- Project-wide task tracking: [`docs/tasks.local.md`](../../../docs/tasks.local.md)
