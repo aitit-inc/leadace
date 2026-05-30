@@ -1,13 +1,14 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import type { InquiryChatMessageResult, InquiryLandingPayload, InquiryPrimaryReason } from '$lib/api/inquiry';
+  import type { InquiryChatMessageResult, InquiryChatTurn, InquiryLandingPayload, InquiryPrimaryReason } from '$lib/api/inquiry';
   import { renderInquiryMarkdown } from '$lib/markdown';
   import { EDITION } from '$lib/config';
 
   type Props = {
     landing: InquiryLandingPayload;
     mode?: 'live' | 'preview';
-    onSendChat?: (message: string) => Promise<InquiryChatMessageResult>;
+    // `history` is the confirmed turns; the live path ignores it, the preview path replays it.
+    onSendChat?: (message: string, history: InquiryChatTurn[]) => Promise<InquiryChatMessageResult>;
     onRequestMeeting?: () => Promise<void>;
     onSignupClick?: () => Promise<void>;
     onUnsubscribe?: (reason: InquiryPrimaryReason | null) => Promise<void>;
@@ -22,7 +23,6 @@
     onUnsubscribe,
   }: Props = $props();
 
-  type ChatTurn = { role: 'user' | 'assistant'; content: string };
   // Unsubscribe is a two-step flow: the first tap closes the session immediately
   // (CAN-SPAM/CASL — the opt-out must be honored even if the recipient closes
   // the tab before picking a chip). After the close, we still show chips so
@@ -56,7 +56,7 @@
   // Chat state. Initial values are read once at component mount via
   // untrack(); thereafter we update them locally from each chat response.
   const initialSession = untrack(() => landing.session);
-  let chatTurns = $state<ChatTurn[]>([]);
+  let chatTurns = $state<InquiryChatTurn[]>([]);
   let chatInput = $state('');
   let chatBusy = $state(false);
   let chatTurnsUsed = $state(initialSession?.chatTurnsUsed ?? 0);
@@ -117,9 +117,11 @@
     if (!onSendChat) return false;
     chatBusy = true;
     actionError = null;
+    // Snapshot before the optimistic echo so the preview replays real history only.
+    const history = chatTurns;
     chatTurns = [...chatTurns, { role: 'user', content: message }];
     try {
-      const res = await onSendChat(message);
+      const res = await onSendChat(message, history);
       chatTurns = [...chatTurns, { role: 'assistant', content: res.assistantMessage }];
       chatTurnsUsed = res.chatTurnsUsed;
       chatTurnsMax = res.chatTurnsMax;
@@ -137,7 +139,7 @@
   }
 
   async function handleSendChat() {
-    if (isPreview) return;
+    if (!onSendChat) return;
     const message = chatInput.trim();
     if (!message || chatBusy || reachedTurnLimit) return;
     chatInput = '';
@@ -148,7 +150,7 @@
   }
 
   async function handleFaqChip(question: string) {
-    if (isPreview || chatBusy || reachedTurnLimit) return;
+    if (!onSendChat || chatBusy || reachedTurnLimit) return;
     await postChatTurn(question);
   }
 
@@ -247,14 +249,11 @@
     }
   }
 
-  // Greeting line. Preview has no real prospect, so we show a placeholder so
-  // the sender can see how the page renders for a recipient. Live with no
-  // contact_name on file falls back to the org if available, then a generic
-  // greeting (rather than misaddressing).
+  // Preview with no prospect selected shows the {Recipient} placeholder.
   const greeting = $derived.by(() => {
-    if (isPreview) return 'Hi {Recipient},';
     if (landing.recipientName) return `Hi ${landing.recipientName},`;
     if (landing.recipientOrganization) return `Hi ${landing.recipientOrganization} team,`;
+    if (isPreview) return 'Hi {Recipient},';
     return 'Hi there,';
   });
 
@@ -295,7 +294,7 @@
 >
   {#if isPreview}
     <div class="border-b border-border bg-surface px-4 py-2 text-center text-xs text-text-muted">
-      Preview — this is what recipients see. Buttons and chat are disabled here.
+      Preview — this is what recipients see. Chat is live for testing; the action buttons are inert.
     </div>
   {/if}
   {#if safeBrandColor}
@@ -501,7 +500,7 @@
                 <button
                   type="button"
                   onclick={() => void handleFaqChip(question)}
-                  disabled={isPreview || chatBusy}
+                  disabled={chatBusy || !onSendChat}
                   class="brand-chip rounded-full border border-border bg-surface px-3 py-1.5 text-xs text-text-secondary transition-colors hover:border-text/40 hover:text-text disabled:opacity-40"
                 >
                   {question}
@@ -557,18 +556,16 @@
               <input
                 type="text"
                 bind:value={chatInput}
-                placeholder={isPreview
-                  ? 'Preview — chat is disabled here'
-                  : chatTurns.length === 0
-                    ? 'e.g. Pricing? Does it support X?'
-                    : 'Type your reply'}
-                disabled={isPreview || chatBusy}
+                placeholder={chatTurns.length === 0
+                  ? 'e.g. Pricing? Does it support X?'
+                  : 'Type your reply'}
+                disabled={chatBusy || !onSendChat}
                 maxlength={2000}
                 class="flex-1 bg-transparent py-1 text-sm text-text placeholder:text-text-muted focus:outline-none disabled:opacity-40"
               />
               <button
                 type="submit"
-                disabled={isPreview || chatBusy || !chatInput.trim()}
+                disabled={chatBusy || !chatInput.trim() || !onSendChat}
                 aria-label="Send"
                 class="text-sm text-text-muted transition-colors hover:text-text disabled:opacity-30"
               >

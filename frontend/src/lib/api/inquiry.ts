@@ -50,6 +50,8 @@ export type InquiryChatMessageResult = {
   reachedTurnLimit: boolean;
 };
 
+export type InquiryChatTurn = { role: 'user' | 'assistant'; content: string };
+
 // Mirrors backend REJECTION_PRIMARY_REASONS — frontend exposes the
 // chip-relevant subset to keep the landing chip strip honest.
 export type InquiryPrimaryReason =
@@ -94,12 +96,38 @@ export function loadLanding(
 // the public path used by loadLanding.
 export function loadInquiryPreview(
   projectId: string,
+  prospectId: number | null,
   fetchFn: RequestFetch = fetch,
   token?: string,
 ): Promise<InquiryLandingPayload> {
+  const sp = new URLSearchParams({ projectId });
+  if (prospectId !== null) sp.set('prospectId', String(prospectId));
   return request<InquiryLandingPayload>(fetchFn, {
     method: 'GET',
-    path: `/inquiry/preview?projectId=${encodeURIComponent(projectId)}`,
+    path: `/inquiry/preview?${sp}`,
+    auth: 'required',
+    token,
+  });
+}
+
+// Stateless: the server records nothing, so the client carries the transcript.
+export function sendPreviewChatMessage(
+  projectId: string,
+  prospectId: number | null,
+  transcript: InquiryChatTurn[],
+  message: string,
+  fetchFn: RequestFetch = fetch,
+  token?: string,
+): Promise<InquiryChatMessageResult> {
+  return request<InquiryChatMessageResult>(fetchFn, {
+    method: 'POST',
+    path: '/inquiry/preview/message',
+    body: {
+      projectId,
+      ...(prospectId !== null ? { prospectId } : {}),
+      transcript,
+      message,
+    },
     auth: 'required',
     token,
   });

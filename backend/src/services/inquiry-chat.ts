@@ -57,11 +57,13 @@ export type InquiryChatRunResult = {
   reachedTurnLimit: boolean
 }
 
-type ChatContext = {
-  sessionId: number
-  tenantId: TenantId
-  chatTurnsUsed: number
-  openedAt: Date
+// The fields buildSystemPrompt reads. Shared with the stateless preview chat
+// path so neither caller fabricates session state. `brief` is always required
+// (chat is gated on a non-empty project brief). Every other field is nullable
+// because each is a genuinely optional input the prompt branches on: sender_*
+// are unset until the user configures them, recipient_* are absent on the
+// no-prospect preview / legacy sessions.
+export type ChatPromptContext = {
   brief: string
   // project_settings.sender_display_name verbatim. Null when unset — the
   // system prompt then frames the AI as representing the company (or, if
@@ -81,6 +83,13 @@ type ChatContext = {
   // — buildSystemPrompt then falls back to a generic visitor framing.
   recipientName: string | null
   recipientOrganization: string | null
+}
+
+type ChatContext = ChatPromptContext & {
+  sessionId: number
+  tenantId: TenantId
+  chatTurnsUsed: number
+  openedAt: Date
 }
 
 export async function runInquiryChat(
@@ -285,7 +294,7 @@ async function idleCloseAndReject(
   )
 }
 
-function buildSystemPrompt(ctx: ChatContext, currentTurn: number): string {
+export function buildSystemPrompt(ctx: ChatPromptContext, currentTurn: number): string {
   const visitorLine = describeVisitor(ctx)
   // Pick the most specific framing the operator gave us: company+person if
   // both, either alone, otherwise a generic phrasing. We do NOT use
@@ -324,7 +333,7 @@ function buildSystemPrompt(ctx: ChatContext, currentTurn: number): string {
   ].join('\n')
 }
 
-function describeVisitor(ctx: ChatContext): string {
+function describeVisitor(ctx: ChatPromptContext): string {
   if (ctx.recipientName && ctx.recipientOrganization) {
     return `(${ctx.recipientName} from ${ctx.recipientOrganization})`
   }

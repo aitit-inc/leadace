@@ -94,7 +94,7 @@ const SIGNAL_FRESH_DAYS_FOR_SNAPSHOT = 30
 // Compose the per-session brief used as the chat system prompt. Falls back
 // gracefully when hypothesis / signals are missing — at minimum the project's
 // inquiry_chat_brief and the visiting organization's name make it through.
-function composeContextSnapshot(args: {
+export function composeContextSnapshot(args: {
   projectInquiryChatBrief: string
   contactName: string | null
   hypothesis: ProspectHypothesis | null
@@ -975,6 +975,7 @@ export async function loadLandingContext(
 
 export const inquiryPreviewQuerySchema = z.object({
   projectId: projectIdSchema,
+  prospectId: z.coerce.number().int().positive().optional(),
 })
 export type InquiryPreviewQuery = z.infer<typeof inquiryPreviewQuerySchema>
 
@@ -982,6 +983,7 @@ export async function loadPreviewContext(
   db: Db,
   tenantId: TenantId,
   projectId: ProjectId,
+  prospectId: number | null,
 ): Promise<ServiceResult<InquiryLandingPayload>> {
   const guard = await requireProject(db, projectId, tenantId)
   if (!guard.ok) return guard
@@ -997,6 +999,32 @@ export async function loadPreviewContext(
 
   if (!row) return err('NOT_FOUND', 'Project not found')
 
+  // Scoped to (project, prospect) so another project's / tenant's prospect
+  // can't be previewed; a miss falls back to the generic greeting.
+  let recipientName: string | null = null
+  let recipientOrganization: string | null = null
+  if (prospectId !== null) {
+    const [p] = await db
+      .select({
+        contactName: prospects.contactName,
+        organizationName: organizations.name,
+      })
+      .from(projectProspects)
+      .innerJoin(prospects, eq(prospects.id, projectProspects.prospectId))
+      .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
+      .where(
+        and(
+          eq(projectProspects.projectId, projectId),
+          eq(projectProspects.prospectId, prospectId),
+        ),
+      )
+      .limit(1)
+    if (p) {
+      recipientName = p.contactName
+      recipientOrganization = p.organizationName
+    }
+  }
+
   return ok({
     shortId: null,
     preview: true,
@@ -1005,9 +1033,8 @@ export async function loadPreviewContext(
     senderJobTitle: row.senderJobTitle,
     brandColor: row.inquiryBrandColor,
     brandLogoUrl: httpsOrNull(row.inquiryBrandLogoUrl),
-    // Preview has no real prospect.
-    recipientName: null,
-    recipientOrganization: null,
+    recipientName,
+    recipientOrganization,
     oneLiner: row.inquiryOneLiner,
     videoUrl: httpsOrNull(row.inquiryVideoUrl),
     pdfUrl: httpsOrNull(row.inquiryPdfUrl),

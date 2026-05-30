@@ -21,6 +21,10 @@ import {
   recordInquiryUnsubscribe,
 } from '../../services/inquiry-session'
 import { runInquiryChat } from '../../services/inquiry-chat'
+import {
+  inquiryPreviewChatBodySchema,
+  runInquiryPreviewChat,
+} from '../../services/inquiry-preview-chat'
 import { respondWithError } from '../respond'
 import type { Env, Variables } from '../types'
 
@@ -43,6 +47,27 @@ inquiryRouter.get(
       c.get('db'),
       c.get('tenantId'),
       c.req.valid('query').projectId,
+      c.req.valid('query').prospectId ?? null,
+    )
+    if (!result.ok) return respondWithError(c, result)
+    return c.json(result.value)
+  },
+)
+
+// Stateless sender-side preview chat — writes nothing. Registered before the
+// public `/inquiry/:shortId/message` route so `preview` isn't captured as a
+// shortId.
+inquiryRouter.post(
+  '/inquiry/preview/message',
+  authMiddleware,
+  rlsMiddleware,
+  zValidator('json', inquiryPreviewChatBodySchema),
+  async (c) => {
+    const result = await runInquiryPreviewChat(
+      c.get('db'),
+      { OPENAI_API_KEY: c.env.OPENAI_API_KEY },
+      c.get('tenantId'),
+      c.req.valid('json'),
     )
     if (!result.ok) return respondWithError(c, result)
     return c.json(result.value)
