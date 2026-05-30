@@ -42,10 +42,13 @@ type InquiryChatEnv = OpenAIEnv & LeadNotifyEnv
 // message so the recipient gets a clean error and can refresh.
 const INQUIRY_IDLE_TIMEOUT_MS = 30 * 60 * 1000
 
-// gpt-5.4-mini chosen for cost/latency on the chat path.
-const CHAT_MODEL = 'gpt-5.4-mini'
-const CHAT_TEMPERATURE = 0.6
-const CHAT_MAX_OUTPUT_TOKENS = 400
+// gpt-5.4-mini chosen for cost/latency on the chat path. Exported so the
+// stateless preview path (inquiry-preview-chat.ts) reuses the exact same model
+// config instead of duplicating it — the preview must mirror the live chat,
+// not drift from it.
+export const CHAT_MODEL = 'gpt-5.4-mini'
+export const CHAT_TEMPERATURE = 0.6
+export const CHAT_MAX_OUTPUT_TOKENS = 400
 
 export type InquiryChatRunResult = {
   assistantMessage: string

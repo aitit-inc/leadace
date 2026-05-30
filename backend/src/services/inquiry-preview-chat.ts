@@ -18,15 +18,19 @@ import {
 } from './openai'
 import { requireProject } from './projects'
 import { composeContextSnapshot, INQUIRY_CHAT_TURNS_MAX } from './inquiry-session'
-import { buildSystemPrompt, type ChatPromptContext } from './inquiry-chat'
+import {
+  buildSystemPrompt,
+  CHAT_MODEL,
+  CHAT_TEMPERATURE,
+  CHAT_MAX_OUTPUT_TOKENS,
+  type ChatPromptContext,
+} from './inquiry-chat'
 
 // Sender-side preview of the recipient inquiry chat. Stateless by design: it
 // writes nothing (no session, messages, outcome, response, DNC, status, or
 // lead email). The client carries the transcript on every turn, which is what
-// makes the no-persistence guarantee structural.
-const CHAT_MODEL = 'gpt-5.4-mini'
-const CHAT_TEMPERATURE = 0.6
-const CHAT_MAX_OUTPUT_TOKENS = 400
+// makes the no-persistence guarantee structural. Model config is imported from
+// inquiry-chat so the preview mirrors the live chat instead of drifting.
 
 export const inquiryPreviewChatBodySchema = z.object({
   projectId: projectIdSchema,
