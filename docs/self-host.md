@@ -101,7 +101,7 @@ npm run dev                               # → http://localhost:5173
 
 # 4. Plugin (in Claude Code)
 # /plugin marketplace add aitit-inc/leadace
-# /plugin install lead-ace@lead-ace
+# /plugin install leadace@leadace
 export LEADACE_MCP_URL=http://localhost:8788/mcp
 claude
 ```

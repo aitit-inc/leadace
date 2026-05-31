@@ -1,6 +1,6 @@
 # BUSINESS.md Template
 
-Generate `<project-dir>/BUSINESS.md` with the following structure:
+Generate the `BUSINESS.md` document with the following structure:
 
 ```markdown
 # Business & Service Information

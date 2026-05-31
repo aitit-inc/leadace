@@ -2,7 +2,7 @@
 # Run an arbitrary `/<skill>` invocation through the local E2E harness.
 #
 # Usage:
-#   ./e2e/run.sh "/lead-ace https://example.com"
+#   ./e2e/run.sh "/leadace https://example.com"
 #   ./e2e/run.sh "/build-list <project-id>"
 #
 # Pre-reqs (one-time, see e2e/README.md):

@@ -8,13 +8,13 @@ allowed-tools:
   - Agent
   - WebSearch
   - WebFetch
-  - mcp__plugin_lead-ace_api__add_prospects
-  - mcp__plugin_lead-ace_api__check_prospect_dedup
-  - mcp__plugin_lead-ace_api__get_outbound_targets
-  - mcp__plugin_lead-ace_api__get_document
-  - mcp__plugin_lead-ace_api__save_document
-  - mcp__plugin_lead-ace_api__get_master_document
-  - mcp__plugin_lead-ace_api__get_project_settings
+  - mcp__plugin_leadace_api__add_prospects
+  - mcp__plugin_leadace_api__check_prospect_dedup
+  - mcp__plugin_leadace_api__get_outbound_targets
+  - mcp__plugin_leadace_api__get_document
+  - mcp__plugin_leadace_api__save_document
+  - mcp__plugin_leadace_api__get_master_document
+  - mcp__plugin_leadace_api__get_project_settings
 ---
 
 # Build List - Prospect List Building
@@ -38,12 +38,12 @@ A skill that collects prospect candidates via web search based on the informatio
 
 Load the following documents via MCP:
 
-Call `mcp__plugin_lead-ace_api__get_document` with `projectId: "$0"` and `slug: "business"`.
-Call `mcp__plugin_lead-ace_api__get_document` with `projectId: "$0"` and `slug: "sales_strategy"`.
-Call `mcp__plugin_lead-ace_api__get_master_document` with `slug: "tpl_industries"` and keep the
+Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "business"`.
+Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "sales_strategy"`.
+Call `mcp__plugin_leadace_api__get_master_document` with `slug: "tpl_industries"` and keep the
 returned vocabulary list — every prospect's `industry` field MUST be set to one of those exact strings.
 
-Call `mcp__plugin_lead-ace_api__get_project_settings` with `projectId: "$0"` and capture:
+Call `mcp__plugin_leadace_api__get_project_settings` with `projectId: "$0"` and capture:
 
 - **`outboundChannels`** (subset of `email | form | sns_twitter | sns_linkedin`): the channels this
   project is allowed to use for outbound. Phase 2 contact retrieval should focus on the enabled
@@ -57,7 +57,7 @@ Call `mcp__plugin_lead-ace_api__get_project_settings` with `projectId: "$0"` and
   regional qualifiers, prefer country-specific portals, and drop candidates whose inferred
   country falls outside the set. When empty, use the full compliance allowlist (US / CA / JP).
 
-If either project document is not found, guide the user to run `/strategy`.
+If either project document is not found, guide the user to run `/leadace`.
 
 ### 2. Review Search Notes
 
@@ -68,7 +68,7 @@ structured `skippedDetails` with reasons (`email_duplicate`,
 `duplicate_in_batch`) so this skill can adapt mid-flight without an O(N)
 identifier dump.
 
-Call `mcp__plugin_lead-ace_api__get_document` with `projectId: "$0"` and `slug: "search_notes"`. If found, use its content. It contains knowledge from previous explorations:
+Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "search_notes"`. If found, use its content. It contains knowledge from previous explorations:
 - **Exhausted keywords** (do not repeat — they already returned heavy duplicates)
 - **Coverage matrix** (industry × region × company-size cells already covered)
 - Useful information source sites (not yet fully explored)
@@ -187,7 +187,7 @@ would reject anyway. The dedup decision needs only `organizationDomain`,
 which is already known at the end of Phase 1, so running this gate first
 saves both downstream costs.
 
-Call `mcp__plugin_lead-ace_api__check_prospect_dedup` with:
+Call `mcp__plugin_leadace_api__check_prospect_dedup` with:
 - `projectId`: "$0"
 - `candidates`: array of `{ organizationDomain, email?, contactFormUrl? }` —
   one entry per Phase 1 candidate. `organizationDomain` is the apex domain
@@ -252,7 +252,7 @@ information.
 
 Include the following in each sub-agent's prompt:
 - List of assigned candidates (name, organization_name, website_url, overview, industry, department, country, match_reason, priority)
-- Retrieve the contact enrichment procedure via `mcp__plugin_lead-ace_api__get_master_document` with `slug: "tpl_enrich_contacts"` and follow its procedure
+- Retrieve the contact enrichment procedure via `mcp__plugin_leadace_api__get_master_document` with `slug: "tpl_enrich_contacts"` and follow its procedure
 - Explore each candidate's official site to retrieve email addresses and contact form URLs
 - **Keyperson lookup is required**, not optional. Search the official site's
   team / leadership / about pages, then LinkedIn public results
@@ -263,7 +263,7 @@ Include the following in each sub-agent's prompt:
 - Use `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/fetch_url.py --url <URL> --prompt <instructions>` for page retrieval (do not use WebFetch). If `fetch_url.py` cannot run (either `python3` or the `claude` CLI is missing from PATH), fall back to WebFetch and skip any candidate the WAF blocks (403)
 - After completion, return the results as a JSON array
 
-Sub-agent allowed-tools: `Bash`, `WebSearch`, `WebFetch`, `Read`, `mcp__plugin_lead-ace_api__get_master_document`
+Sub-agent allowed-tools: `Bash`, `WebSearch`, `WebFetch`, `Read`, `mcp__plugin_leadace_api__get_master_document`
 
 Each object in the JSON array returned by the sub-agent includes the Phase 1 information (name, organization_name, overview, website_url, industry, department, country, match_reason, priority) plus the retrieved contacts (email, contact_form_url, form_type, sns_accounts, contact_name).
 
@@ -283,7 +283,7 @@ Information may be found from industry directories, press release distribution s
 
 ### 7. Database Registration
 
-Call `mcp__plugin_lead-ace_api__add_prospects` with:
+Call `mcp__plugin_leadace_api__add_prospects` with:
 - `projectId`: "$0"
 - `prospects`: array of prospect objects
 
@@ -309,7 +309,7 @@ For each prospect, construct the object as follows:
   TLD (LLM-derived from page content, address footer, etc.) and pass
   `countrySource: 'ai_inferred'`. LeadAce currently only sends to `US`,
   `CA`, and `JP` recipients; prospects from other countries register fine
-  but the send paths block them at outreach time. If `/strategy` already
+  but the send paths block them at outreach time. If the strategy already
   identified a US-, CA-, or JP-only target audience, prefer those.
 - `countrySource`: optional, one of `manual` (operator confirmed) or
   `ai_inferred`. Skip this field when leaving `country` blank.
@@ -351,7 +351,7 @@ Department within large company: name = "ABC Corp.", department = "Sales Plannin
 
 After DB registration, check reachable count:
 
-Call `mcp__plugin_lead-ace_api__get_outbound_targets` with `projectId: "$0"` and `limit: 1` to get the `total` and `byChannel` summary.
+Call `mcp__plugin_leadace_api__get_outbound_targets` with `projectId: "$0"` and `limit: 1` to get the `total` and `byChannel` summary.
 
 Report the following:
 - Number of newly registered prospects / target count
@@ -364,7 +364,7 @@ Report the following:
 
 ### 9. Update Search Notes
 
-Save search notes via `mcp__plugin_lead-ace_api__save_document` with `projectId: "$0"`, `slug: "search_notes"`. Record information useful for the next exploration in the following structure:
+Save search notes via `mcp__plugin_leadace_api__save_document` with `projectId: "$0"`, `slug: "search_notes"`. Record information useful for the next exploration in the following structure:
 
 ```markdown
 # Search Notes

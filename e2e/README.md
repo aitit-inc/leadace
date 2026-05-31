@@ -1,6 +1,6 @@
 # LeadAce local E2E harness
 
-Run `/lead-ace` and other plugin skills directly with the host `claude` CLI
+Run `/leadace` and other plugin skills directly with the host `claude` CLI
 against a **local** LeadAce stack — local Supabase, local API/MCP Workers,
 local frontend. The harness keeps its Claude state isolated under
 `e2e/.claude-state/` so the developer's host-side `~/.claude` is left
@@ -40,7 +40,7 @@ browser already expects it.
 ## What this catches
 
 - Skill loading (frontmatter, `allowed-tools`, reference links valid)
-- Skill chain orchestration (`/lead-ace <URL>` correctly delegates
+- Skill chain orchestration (`/leadace <URL>` correctly delegates
   onboarding → strategy → daily-cycle)
 - MCP tool wiring (every tool the skill calls exists, has the expected
   schema, and the backend accepts the payload)
@@ -124,13 +124,13 @@ Restart `wrangler dev` after editing `.dev.vars` so the new env propagates.
    ./e2e/setup.sh
    # Inside the resulting interactive Claude session:
    #   /login              # if not logged in yet — sign in via browser
-   #   /setup              # triggers the LeadAce MCP OAuth flow
+   #   /leadace overview     # triggers the LeadAce MCP OAuth flow
    #     ★ Verify the printed URL is http://localhost:8788/authorize?...
    #       NOT https://mcp.leadace.ai/authorize?... — staging pins to local;
    #       seeing the production host means staging is broken.
    #     ... sign in with Google, click Allow ...
    #     ... browser → http://localhost:47291/callback?... → success ...
-   #     /setup continues and lists local projects (empty on a fresh DB).
+   #     /leadace overview continues and lists local projects (empty on a fresh DB).
    #   /exit
    ```
 
@@ -162,12 +162,12 @@ any failure.
 SKIP_CLEANUP=1 ./e2e/smoke.sh        # keep the project for manual inspection
 ```
 
-`smoke.sh` runs `/lead-ace <url>` headless with a prompt that pre-resolves
+`smoke.sh` runs `/leadace <url>` headless with a prompt that pre-resolves
 every interactive Q&A (`env_check` defaults to `unsure`, sender values are
 placeholders, no outreach is sent). It parses the project id printed on
 the last line of the result and runs `/delete-project <id>` to leave the
 local tenant clean. JSON outputs go to `e2e/output/smoke-leadace-*.json`
-and `smoke-cleanup-*.json`. Exit codes: `0` all good, `1` `/lead-ace`
+and `smoke-cleanup-*.json`. Exit codes: `0` all good, `1` `/leadace`
 failed, `2` couldn't parse project id, `3` cleanup failed.
 
 ### Build-list dedup regression (curl-only, no Claude)
@@ -319,7 +319,7 @@ schema change), run `npx supabase db reset` on the host.
   30-day sliding refresh-token TTL as production, so the harness should
   rarely need re-authorizing. If `wrangler dev`'s in-memory KV is reset
   (Worker restart), refresh tokens are lost and you'll need to re-run
-  `./e2e/setup.sh` (only the `/setup` MCP OAuth step needs redoing —
+  `./e2e/setup.sh` (only the `/leadace overview` MCP OAuth step needs redoing —
   `/login` is a no-op once the subscription session is cached). This is
   a `wrangler dev` limitation, not a LeadAce limitation.
 - **`MCP_OAUTH_CALLBACK_PORT` collision.** The harness pins the OAuth

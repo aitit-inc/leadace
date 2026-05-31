@@ -144,7 +144,7 @@ Architecture details (layers, `hooks.server.ts` shape, server-load vs client-loa
 
 ## Local E2E Testing
 
-Project-internal skill at [.claude/skills/local-e2e/SKILL.md](.claude/skills/local-e2e/SKILL.md) holds the prerequisite knowledge for running E2E tests against a **local** LeadAce stack (local Supabase + API/MCP Workers + frontend, real Google OAuth — same code path a self-host install runs). The harness lives in `e2e/` (see [e2e/README.md](e2e/README.md)): `smoke.sh` drives the `/lead-ace` onboarding chain headless, and the curl-only `regression-*.sh` scripts cover the dedup and send-and-record branches (including a real-Gmail happy path redirected to a test mailbox via `E2E_RECIPIENT_OVERRIDE`). Invoke it when the user asks to run a local E2E.
+Project-internal skill at [.claude/skills/local-e2e/SKILL.md](.claude/skills/local-e2e/SKILL.md) holds the prerequisite knowledge for running E2E tests against a **local** LeadAce stack (local Supabase + API/MCP Workers + frontend, real Google OAuth — same code path a self-host install runs). The harness lives in `e2e/` (see [e2e/README.md](e2e/README.md)): `smoke.sh` drives the `/leadace` onboarding chain headless, and the curl-only `regression-*.sh` scripts cover the dedup and send-and-record branches (including a real-Gmail happy path redirected to a test mailbox via `E2E_RECIPIENT_OVERRIDE`). Invoke it when the user asks to run a local E2E.
 
 ## Pre-Release Checklist (Required)
 

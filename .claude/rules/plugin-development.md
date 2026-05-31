@@ -11,7 +11,7 @@ For plugin and skill authoring fundamentals (manifest layout, frontmatter, progr
 ## Plugin execution conventions
 
 - Use `${CLAUDE_PLUGIN_ROOT}` for path references inside skills, scripts, and `.mcp.json`; do not hard-code paths. It resolves to `plugin/` at runtime.
-- Prefer `${CLAUDE_PLUGIN_ROOT}/scripts/fetch_url.py` over `WebFetch` for web page retrieval — it avoids the freezes and SPA blind spots `WebFetch` has. When the local toolchain is incomplete (either `python3` or the `claude` CLI missing from `PATH`, as `/setup` and `/lead-ace` detect) the script is unusable; for that run, fall back to `WebFetch` and skip any candidate the WAF blocks (typically 403).
+- Prefer `${CLAUDE_PLUGIN_ROOT}/scripts/fetch_url.py` over `WebFetch` for web page retrieval — it avoids the freezes and SPA blind spots `WebFetch` has. When the local toolchain is incomplete (either `python3` or the `claude` CLI missing from `PATH`, as `/leadace` detects) the script is unusable; for that run, fall back to `WebFetch` and skip any candidate the WAF blocks (typically 403).
 
 ## SKILL.md hard limits
 

@@ -6,24 +6,24 @@ allowed-tools:
   - Bash
   - Read
   - Agent
-  - mcp__plugin_lead-ace_api__list_projects
-  - mcp__plugin_lead-ace_api__get_outbound_targets
-  - mcp__plugin_lead-ace_api__add_prospects
-  - mcp__plugin_lead-ace_api__check_prospect_dedup
-  - mcp__plugin_lead-ace_api__get_recent_outreach
-  - mcp__plugin_lead-ace_api__send_email
-  - mcp__plugin_lead-ace_api__send_email_and_record
-  - mcp__plugin_lead-ace_api__record_outreach
-  - mcp__plugin_lead-ace_api__record_response
-  - mcp__plugin_lead-ace_api__update_prospect_status
-  - mcp__plugin_lead-ace_api__get_eval_data
-  - mcp__plugin_lead-ace_api__get_evaluation_history
-  - mcp__plugin_lead-ace_api__record_evaluation
-  - mcp__plugin_lead-ace_api__get_document
-  - mcp__plugin_lead-ace_api__save_document
-  - mcp__plugin_lead-ace_api__get_master_document
-  - mcp__plugin_lead-ace_api__get_project_settings
-  - mcp__plugin_lead-ace_api__get_compliance_status
+  - mcp__plugin_leadace_api__list_projects
+  - mcp__plugin_leadace_api__get_outbound_targets
+  - mcp__plugin_leadace_api__add_prospects
+  - mcp__plugin_leadace_api__check_prospect_dedup
+  - mcp__plugin_leadace_api__get_recent_outreach
+  - mcp__plugin_leadace_api__send_email
+  - mcp__plugin_leadace_api__send_email_and_record
+  - mcp__plugin_leadace_api__record_outreach
+  - mcp__plugin_leadace_api__record_response
+  - mcp__plugin_leadace_api__update_prospect_status
+  - mcp__plugin_leadace_api__get_eval_data
+  - mcp__plugin_leadace_api__get_evaluation_history
+  - mcp__plugin_leadace_api__record_evaluation
+  - mcp__plugin_leadace_api__get_document
+  - mcp__plugin_leadace_api__save_document
+  - mcp__plugin_leadace_api__get_master_document
+  - mcp__plugin_leadace_api__get_project_settings
+  - mcp__plugin_leadace_api__get_compliance_status
 ---
 
 # Daily Cycle - Daily Sales Cycle Execution
@@ -54,16 +54,16 @@ date '+%Y-%m-%d %H:%M (%A)'
 
 Verify that the project is registered on the server:
 
-Call `mcp__plugin_lead-ace_api__list_projects` and check that `$0` appears in the list. If not found, **abort** with a message to run `/setup` first.
+Call `mcp__plugin_leadace_api__list_projects` and check that `$0` appears in the list. If not found, **abort** with a message to run `/leadace` first.
 
-**Compliance pre-flight.** Call `mcp__plugin_lead-ace_api__get_compliance_status`. If `ready: false`, **abort the cycle** before starting any phase — every send path will fail with HTTP 412 until the missing fields are filled, and there is no point running build-list / evaluate / outbound. Tell the user which fields are missing (from `missing`) and direct them to `fix_url`. Re-run `/daily-cycle` once the workspace fields are saved.
+**Compliance pre-flight.** Call `mcp__plugin_leadace_api__get_compliance_status`. If `ready: false`, **abort the cycle** before starting any phase — every send path will fail with HTTP 412 until the missing fields are filled, and there is no point running build-list / evaluate / outbound. Tell the user which fields are missing (from `missing`) and direct them to `fix_url`. Re-run `/daily-cycle` once the workspace fields are saved.
 
 ### 2. Review Previous Cycle
 
 Use DB queries to understand the state from the previous cycle:
 
-- Call `mcp__plugin_lead-ace_api__get_evaluation_history` with `projectId: "$0"` to check the latest evaluation (findings, improvements)
-- Call `mcp__plugin_lead-ace_api__get_outbound_targets` with `projectId: "$0"` and `limit: 1` to get the current reachable count
+- Call `mcp__plugin_leadace_api__get_evaluation_history` with `projectId: "$0"` to check the latest evaluation (findings, improvements)
+- Call `mcp__plugin_leadace_api__get_outbound_targets` with `projectId: "$0"` and `limit: 1` to get the current reachable count
 
 Use this information to inform subsequent steps when relevant. For example:
 - If reachable count is very low -> Run build-list earlier
@@ -71,7 +71,7 @@ Use this information to inform subsequent steps when relevant. For example:
 
 ### 3. Start Notification Email
 
-Call `mcp__plugin_lead-ace_api__get_document` with `projectId: "$0"` and `slug: "sales_strategy"` to get the notification recipient email from the "Notification Settings" section. Skip if notification is "none" or not set. (The sender is the user's connected Gmail address — no manual sender lookup needed.)
+Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "sales_strategy"` to get the notification recipient email from the "Notification Settings" section. Skip if notification is "none" or not set. (The sender is the user's connected Gmail address — no manual sender lookup needed.)
 
 Compose the email body concisely using only information already on hand -- no additional queries:
 - Execution date and time (result from step 1)
@@ -79,7 +79,7 @@ Compose the email body concisely using only information already on hand -- no ad
 - Outbound target count (`$1`)
 - Results from previous cycle (1-2 lines extracted from DAILY_CYCLE_REPORT.md in step 2; omit for first run)
 
-Call `mcp__plugin_lead-ace_api__send_email` with the notification recipient as `to`, subject `"daily-cycle started: $0"`, and the body. (Use `send_email`, not `send_email_and_record` — this notification is not prospect outreach and should not be logged.)
+Call `mcp__plugin_leadace_api__send_email` with the notification recipient as `to`, subject `"daily-cycle started: $0"`, and the body. (Use `send_email`, not `send_email_and_record` — this notification is not prospect outreach and should not be logged.)
 
 If sending fails (e.g. Gmail not connected), continue the cycle (errors will be reported in the wrap-up report).
 
@@ -109,7 +109,7 @@ After receiving the summary from the sub-agent, report it to the user.
 
 Check the number of reachable prospects (status = 'new' plus 'deferred' prospects whose recontact window has passed):
 
-Call `mcp__plugin_lead-ace_api__get_outbound_targets` with `projectId: "$0"` and `limit: 1`.
+Call `mcp__plugin_leadace_api__get_outbound_targets` with `projectId: "$0"` and `limit: 1`.
 
 Read the `total` and `byChannel` fields from the response:
 - `total`: total reachable count
@@ -144,8 +144,8 @@ You are an outbound sales agent. Please reach out to each company on the prospec
 ## Preparation (read in this order)
 
 1. First retrieve strategy documents via MCP:
-   - Call mcp__plugin_lead-ace_api__get_document with projectId "$0" and slug "business"
-   - Call mcp__plugin_lead-ace_api__get_document with projectId "$0" and slug "sales_strategy"
+   - Call mcp__plugin_leadace_api__get_document with projectId "$0" and slug "business"
+   - Call mcp__plugin_leadace_api__get_document with projectId "$0" and slug "sales_strategy"
    - (env_status is loaded later by outbound/SKILL.md step 1 — do not fetch it here)
    Understand:
    - Outreach mode (precision / volume). Default to precision if not set
@@ -158,12 +158,12 @@ You are an outbound sales agent. Please reach out to each company on the prospec
 2. Next, read `${CLAUDE_PLUGIN_ROOT}/skills/outbound/SKILL.md` and follow its procedure
 
 3. Also read these based on the channel:
-   - For email: retrieve via mcp__plugin_lead-ace_api__get_master_document with slug "tpl_email_guidelines"
+   - For email: retrieve via mcp__plugin_leadace_api__get_master_document with slug "tpl_email_guidelines"
    - For forms: read `${CLAUDE_PLUGIN_ROOT}/skills/outbound/references/form-filling.md` and `${CLAUDE_PLUGIN_ROOT}/skills/outbound/references/claude-in-chrome-guide.md`
 
 ## Required Rules for Sales Policy
 
-- **Subject lines:** Subject patterns live server-side in `subject_variants`. Per send, call `mcp__plugin_lead-ace_api__pick_subject_variant` for the next round-robin variant and forward `variantId` to `send_email_and_record` so `outreach_logs.variant_id` is stamped. If no active variants are registered, generate a one-off subject and send without `variantId`. Do not use the same subject for every prospect.
+- **Subject lines:** Subject patterns live server-side in `subject_variants`. Per send, call `mcp__plugin_leadace_api__pick_subject_variant` for the next round-robin variant and forward `variantId` to `send_email_and_record` so `outreach_logs.variant_id` is stamped. If no active variants are registered, generate a one-off subject and send without `variantId`. Do not use the same subject for every prospect.
 - **Email opening:** Reference specific characteristics, industry, or initiatives of the target company. Generic greetings like "I visited your website" alone are not acceptable
 - **Full body:** Weave prospect-specific information from overview and matchReason throughout multiple parts of the email -- write in context tailored to the recipient, not template replacement. The compliance footer (legal name, address, privacy, unsubscribe) is appended server-side; do **not** include any of those in the body.
 
@@ -172,7 +172,7 @@ You are an outbound sales agent. Please reach out to each company on the prospec
 - Project ID: $0
 - Batch number: N
 - Count: 10 (final batch may be fewer)
-- Retrieve prospects via mcp__plugin_lead-ace_api__get_outbound_targets with projectId "$0" and limit 10
+- Retrieve prospects via mcp__plugin_leadace_api__get_outbound_targets with projectId "$0" and limit 10
 - For each prospect, follow `${CLAUDE_PLUGIN_ROOT}/skills/outbound/SKILL.md`'s channel-pick + send sequence. The skill picks one MCP per channel (`send_email_and_record` for email, `record_outreach_with_inquiry` for form/SNS) and uses `record_outreach` with status='failed' only for skips and post-hoc failures — do **not** call `record_outreach` after each successful send (that path bypasses the compliance footer and would double-log).
 - Country pre-flight: skip non-US/CA/JP targets up front via `record_outreach` status='failed' with `errorMessage:"skipped: country not supported"`; do not attempt the send tool for those.
 - Return to main with **only: success count, failure count, inactive count, main failure reasons (if any), list of variantIds used**
@@ -194,7 +194,7 @@ Report progress after each batch summary (e.g., "outbound: 10/30 completed").
 
 **Retry when target not met:** After all outbound batches complete, tally each batch's results. If total successes < specified count:
 
-1. Re-check reachable remaining via `mcp__plugin_lead-ace_api__get_outbound_targets` with `limit: 1` (read `total`)
+1. Re-check reachable remaining via `mcp__plugin_leadace_api__get_outbound_targets` with `limit: 1` (read `total`)
 2. If total > 0, run the shortfall (specified count - total successes) as an additional batch (same prompt format)
 3. Retry **one round only**
 4. If total is 0, skip retry and proceed to step 8
@@ -220,11 +220,11 @@ Include the following in the prompt:
 - Read Phase 1 (steps 1-5) of `${CLAUDE_PLUGIN_ROOT}/skills/build-list/SKILL.md` and follow its procedure
 - **Contact retrieval (email, form, etc.) is not needed**. Collect candidate name, official URL, overview, industry, country, match reason, and priority
 - After completion, return the candidate list as a JSON array (each object: name, organization_name, website_url, overview, industry, country, match_reason, priority (numeric 1-5 per build-list SKILL.md definition))
-- Also update search notes via `mcp__plugin_lead-ace_api__save_document` with `projectId: "$0"`, `slug: "search_notes"`
+- Also update search notes via `mcp__plugin_leadace_api__save_document` with `projectId: "$0"`, `slug: "search_notes"`
 
 **8a2. Pre-dedup filter (main context)**
 
-Call `mcp__plugin_lead-ace_api__check_prospect_dedup` with `projectId: "$0"`
+Call `mcp__plugin_leadace_api__check_prospect_dedup` with `projectId: "$0"`
 and `candidates: [{organizationDomain, email?, contactFormUrl?}, ...]` —
 one entry per 8a candidate (`organizationDomain` is the apex domain
 extracted from `website_url`, strip `www.` and path). Drop any candidate
@@ -248,7 +248,7 @@ into **batches of 10** and launch a sub-agent for each.
 
 Include the following in each sub-agent's prompt:
 - List of assigned candidates (pass the relevant portion from 8a output)
-- Retrieve the contact enrichment procedure via `mcp__plugin_lead-ace_api__get_master_document` with `slug: "tpl_enrich_contacts"` and follow its procedure
+- Retrieve the contact enrichment procedure via `mcp__plugin_leadace_api__get_master_document` with `slug: "tpl_enrich_contacts"` and follow its procedure
 - Explore each candidate's official site to retrieve email addresses, contact form URLs, and SNS accounts
 - After completion, return results as a JSON array
 
@@ -266,7 +266,7 @@ Merge sub-agent results into the 8b result data.
 
 **8c. DB registration (main context)**
 
-Combine Phase 1 candidate info and Phase 2 contact info into complete prospect objects, then call `mcp__plugin_lead-ace_api__add_prospects` with `projectId: "$0"`.
+Combine Phase 1 candidate info and Phase 2 contact info into complete prospect objects, then call `mcp__plugin_leadace_api__add_prospects` with `projectId: "$0"`.
 
 For each prospect, construct the MCP tool fields:
 - `organizationDomain`: apex domain extracted from `website_url` (strip `www.` and path)
@@ -279,7 +279,7 @@ The server returns `skippedDetails` with `{name, reason}` for rows it dedup-reje
 
 **8d. Reachable recheck and summary output**
 
-After build-list completes, re-check reachable count via `mcp__plugin_lead-ace_api__get_outbound_targets` with `projectId: "$0"` and `limit: 1`.
+After build-list completes, re-check reachable count via `mcp__plugin_leadace_api__get_outbound_targets` with `projectId: "$0"` and `limit: 1`.
 
 Report build-list summary (added count, reachable count, etc.) to the user.
 
@@ -296,12 +296,12 @@ Include the following in the prompt:
 
 **9a. Update KPI Actual Results in SALES_STRATEGY.md**
 
-Call `mcp__plugin_lead-ace_api__get_document` with `projectId: "$0"` and `slug: "sales_strategy"`. If the document has a "KPI Actuals" section, update the following basic numbers with the latest values:
+Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "sales_strategy"`. If the document has a "KPI Actuals" section, update the following basic numbers with the latest values:
 - Total sent (contacted)
 - Total responses and response rate
 - Execution date and time
 
-Save via `mcp__plugin_lead-ace_api__save_document` with `projectId: "$0"`, `slug: "sales_strategy"`, and the updated content.
+Save via `mcp__plugin_leadace_api__save_document` with `projectId: "$0"`, `slug: "sales_strategy"`, and the updated content.
 
 This prevents KPI actuals from becoming stale even in cycles where evaluate is skipped. Leave messaging improvements, targeting changes, and other strategic analysis to the evaluate skill -- **only update numbers here**.
 
@@ -321,6 +321,6 @@ outbound: (summary)
 build-list: (summary)
 ```
 
-Call `mcp__plugin_lead-ace_api__send_email` with the notification recipient as `to`, subject `"daily-cycle completed: $0"`, and the report body. (Use `send_email`, not `send_email_and_record` — this is an internal report, not prospect outreach.)
+Call `mcp__plugin_leadace_api__send_email` with the notification recipient as `to`, subject `"daily-cycle completed: $0"`, and the report body. (Use `send_email`, not `send_email_and_record` — this is an internal report, not prospect outreach.)
 
 Sub-agent's return to main: Briefly report the KPI update status and notification email send status.

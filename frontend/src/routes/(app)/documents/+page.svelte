@@ -75,7 +75,7 @@
 <h2 class="text-lg font-semibold text-text mb-6">Documents</h2>
 
 {#if data.documents.length === 0}
-  <EmptyState message="No documents yet. Run /strategy to create business and strategy documents." />
+  <EmptyState message="No documents yet. Ask /leadace to draft your business and strategy documents." />
 {:else}
   <div class="flex flex-col md:flex-row gap-4 md:gap-6">
     <div class="md:w-48 md:shrink-0">

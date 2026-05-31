@@ -7,8 +7,8 @@ allowed-tools:
   - Read
   - Write
   - AskUserQuestion
-  - mcp__plugin_lead-ace_api__list_projects
-  - mcp__plugin_lead-ace_api__import_prospects_from_csv
+  - mcp__plugin_leadace_api__list_projects
+  - mcp__plugin_leadace_api__import_prospects_from_csv
 ---
 
 # Import Prospects - Bring Your Own List
@@ -25,7 +25,7 @@ A skill that imports existing prospect / contact lists (CSV, Excel, SQLite, plai
 ## Inputs
 
 - `$0` — path to the source file (required). Any tabular format works (CSV, TSV, XLSX, XLS, ODS, SQLite, plain text with consistent delimiters).
-- `$1` — project name (optional). If supplied, default to project-linked mode (still confirm with the user in step 1). Must already exist; create one with `/setup` first.
+- `$1` — project name (optional). If supplied, default to project-linked mode (still confirm with the user in step 1). Must already exist; create one with `/leadace <your-homepage-URL>` first.
 - `$2` — dedup policy: `skip` (default) or `overwrite`. With `skip` existing rows are left alone; with `overwrite` matched rows have their fields refreshed (and, in project mode, re-linked to the project).
 
 ## Canonical CSV schema
@@ -73,8 +73,8 @@ Options:
 
 If the user picks **Link to a project**:
 - if `$1` is given, use it as `PROJECT_NAME`.
-- otherwise call `mcp__plugin_lead-ace_api__list_projects` and ask via `AskUserQuestion` (or use the only project if there's just one).
-- if there are zero projects, abort: "No projects yet. Run `/setup <project-name>` first, or re-run this skill in tenant-asset mode."
+- otherwise call `mcp__plugin_leadace_api__list_projects` and ask via `AskUserQuestion` (or use the only project if there's just one).
+- if there are zero projects, abort: "No projects yet. Run `/leadace <your-homepage-URL>` first, or re-run this skill in tenant-asset mode."
 
 If the user picks **Save as tenant assets only**, set `PROJECT_NAME = null` and skip every project-resolution step below.
 
@@ -132,7 +132,7 @@ If `$2` is `skip` or `overwrite`, use it directly. Otherwise ask via `AskUserQue
 
 ### 7. Upload
 
-`Read` the canonical CSV file back into a string and call `mcp__plugin_lead-ace_api__import_prospects_from_csv`:
+`Read` the canonical CSV file back into a string and call `mcp__plugin_leadace_api__import_prospects_from_csv`:
 
 - **Project-linked mode**: pass `projectId: PROJECT_NAME` plus `csvText` and `dedupPolicy`.
 - **Tenant-only mode**: omit `projectId` entirely. Pass only `csvText` and `dedupPolicy`. Do not pass an empty string — leave the field out.

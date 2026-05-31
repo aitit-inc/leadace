@@ -1,6 +1,6 @@
 # Strategy Drafting (BUSINESS.md + SALES_STRATEGY.md)
 
-Shared procedure for collecting business information and generating / updating the project's strategy documents (`business`, `sales_strategy`). Used by `/strategy` (Mode A: interactive Q&A) and `/lead-ace` onboarding chain (Mode B: URL-driven inference).
+Shared procedure for collecting business information and generating / updating the project's strategy documents (`business`, `sales_strategy`). Used by `/leadace`: Mode A (interactive Q&A — the strategy intent) and Mode B (URL-driven inference — the onboarding chain).
 
 ## Table of Contents
 - [Modes](#modes)
@@ -18,12 +18,12 @@ Shared procedure for collecting business information and generating / updating t
 
 | Mode | Caller | Input style | Behavior |
 |---|---|---|---|
-| **A — Interactive Q&A** | `/strategy` | User-driven, mostly `AskUserQuestion` plus a few free-text prompts for open-ended items, 4-0..4-11 step-by-step | Full-detail collection. Supports both initial and update sub-modes (Step 3). On **initial sub-mode**, Step 4-0 first asks whether the user has a homepage URL / supporting materials; if yes, the run delegates to the Mode B inference path (§4B-1..§4B-4) so /strategy and /lead-ace share the same fast path when source material exists. |
-| **B — URL-driven inference** | `/lead-ace` onboarding chain (URL passed in) | URL fetched once, content parsed by LLM, fills sections from inference, asks only for critical gaps | Initial sub-mode only. Faster, lighter; user reviews summary at the end and can re-run `/strategy` for refinement. |
+| **A — Interactive Q&A** | `/leadace` (strategy intent) | User-driven, mostly `AskUserQuestion` plus a few free-text prompts for open-ended items, 4-0..4-11 step-by-step | Full-detail collection. Supports both initial and update sub-modes (Step 3). On **initial sub-mode**, Step 4-0 first asks whether the user has a homepage URL / supporting materials; if yes, the run delegates to the Mode B inference path (§4B-1..§4B-4) so the strategy intent and onboarding chain share the same fast path when source material exists. |
+| **B — URL-driven inference** | `/leadace` onboarding chain (URL passed in) | URL fetched once, content parsed by LLM, fills sections from inference, asks only for critical gaps | Initial sub-mode only. Faster, lighter; user reviews summary at the end and can ask `/leadace` to refine the strategy. |
 
 The caller declares mode at invocation. This document references `MODE = A | B` throughout.
 
-When `MODE = A` and Step 4-0 yields a URL, treat the rest of Step 4 as `MODE = B` (the user gets the auto-infer fast path even though they entered through `/strategy`). The `inquiry landing optional polish` step (4-11 / 4B-3 last bullet) runs in **both** paths so users can wire up landing-page video / PDF / scheduling links during onboarding rather than chasing them later in the Web UI.
+When `MODE = A` and Step 4-0 yields a URL, treat the rest of Step 4 as `MODE = B` (the user gets the auto-infer fast path even though they entered through the strategy intent). The `inquiry landing optional polish` step (4-11 / 4B-3 last bullet) runs in **both** paths so users can wire up landing-page video / PDF / scheduling links during onboarding rather than chasing them later in the Web UI.
 
 ---
 
@@ -31,35 +31,35 @@ When `MODE = A` and Step 4-0 yields a URL, treat the rest of Step 4 as `MODE = B
 
 Project ID: `$0` (required, set by the caller).
 
-Call `mcp__plugin_lead-ace_api__list_projects`. If `$0` does not exist:
-- Mode A → instruct user to run `/setup $0` first. Abort.
+Call `mcp__plugin_leadace_api__list_projects`. If `$0` does not exist:
+- Mode A → when run via `/leadace` the project is already resolved; if `$0` does not exist, abort and tell the user to run `/leadace <url>` to set it up first.
 - Mode B → the onboarding chain just created the project in env_check Step 3; this branch is unreachable. If reached, abort with internal error and ask the user to re-run.
 
 ## Step 2. Load Environment Status
 
-Call `mcp__plugin_lead-ace_api__get_document` with `projectId: "$0"` and `slug: "env_status"`.
+Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "env_status"`.
 
 If missing:
-- Mode A → abort with: "No environment status recorded for this project. Please run `/setup $0` first."
+- Mode A → `/leadace` runs env_check before this step, so env_status should exist; if it is still missing, abort with: "No environment status recorded for this project. Run `/leadace` to set up the environment first."
 - Mode B → unreachable (env_check just saved it). If reached, abort.
 
-Hold the parsed env status as `ENV`. Use it to inform the **Step 8 hand-off summary** — surface any missing-tool warning so the operator sees it once (and knows to re-run `/setup` after reconnecting the tool). `/strategy` does not collect `outboundChannels`; that field is set in the web UI. The `env_status` document itself is the authoritative source read directly by `/outbound`'s step 1 pre-flight (`/daily-cycle` does not fetch it; its sub-agent delegates to `/outbound`, which loads it there); **do not** copy it into SALES_STRATEGY.md. **Do not re-ask the user** about Gmail / Chrome here.
+Hold the parsed env status as `ENV`. Use it to inform the **Step 8 hand-off summary** — surface any missing-tool warning so the operator sees it once (and knows to ask `/leadace` to re-check the environment after reconnecting the tool). This procedure does not collect `outboundChannels`; that field is set in the web UI. The `env_status` document itself is the authoritative source read directly by `/outbound`'s step 1 pre-flight (`/daily-cycle` does not fetch it; its sub-agent delegates to `/outbound`, which loads it there); **do not** copy it into SALES_STRATEGY.md. **Do not re-ask the user** about Gmail / Chrome here.
 
 **Tool impact catalog** (use as the content of the Step 8 warning):
 - No Gmail SaaS → blocks email auto-send (send mode); drafting still works.
 - No Gmail MCP → reply checking in `/check-results` becomes manual.
 - No Claude in Chrome → blocks form / SNS auto-send (send mode); drafting still works.
-- No local fetch toolchain (`python3` + `claude` CLI) → `/build-list` and `/strategy` research falls back to `WebFetch` — **not a channel block**, just lower research quality on WAF-blocked sites.
+- No local fetch toolchain (`python3` + `claude` CLI) → `/build-list` and `/leadace` strategy research falls back to `WebFetch` — **not a channel block**, just lower research quality on WAF-blocked sites.
 - No tools at all → Outbound auto-send is effectively unusable; make the limitation prominent.
 
 ## Step 3. Check Existing Documents & Determine Sub-mode
 
 Call in parallel:
-- `mcp__plugin_lead-ace_api__get_document` with `slug: "business"`
-- `mcp__plugin_lead-ace_api__get_document` with `slug: "sales_strategy"`
-- `mcp__plugin_lead-ace_api__get_project_settings`
+- `mcp__plugin_leadace_api__get_document` with `slug: "business"`
+- `mcp__plugin_leadace_api__get_document` with `slug: "sales_strategy"`
+- `mcp__plugin_leadace_api__get_project_settings`
 
-If any document call returns "Project not found", abort and instruct the user to run `/setup $0`.
+If any document call returns "Project not found", abort and instruct the user to run `/leadace <url>` to set up the project.
 
 Hold project settings (`outboundMode`, `senderEmailAlias`, `senderDisplayName`, `senderCompanyName`, `unsubscribeEnabled`, `inquiryChatBrief`, `inquiryOneLiner`) as `SETTINGS`.
 
@@ -69,7 +69,7 @@ Hold project settings (`outboundMode`, `senderEmailAlias`, `senderDisplayName`, 
 
 **Sub-mode determination:**
 - Both documents missing → **initial** sub-mode. Both modes use this when the project is new.
-- Either document exists → **update** sub-mode. Mode A only (Mode B never enters update sub-mode; if Mode B sees existing docs, hand back to caller and let `/lead-ace` route the user to `/strategy`).
+- Either document exists → **update** sub-mode. Mode A only (Mode B never enters update sub-mode; if Mode B sees existing docs, hand back to caller and let `/leadace` continue in Mode A — its strategy intent).
 
 ### Gap Analysis (Mode A, update sub-mode)
 
@@ -92,7 +92,7 @@ Check completeness of each section in existing `SALES_STRATEGY.md`:
 | KPI | Metrics set |
 | Search keywords | 10 or more |
 
-Call `mcp__plugin_lead-ace_api__get_evaluation_history` with `projectId: "$0"`. Classify sections:
+Call `mcp__plugin_leadace_api__get_evaluation_history` with `projectId: "$0"`. Classify sections:
 
 | Category | Sections | Behavior |
 |---|---|---|
@@ -206,7 +206,7 @@ Collect 5 items in order (display name / phone / email / signature required for 
 
 After collection, **save display name + company + email to project settings**:
 ```
-mcp__plugin_lead-ace_api__update_project_settings
+mcp__plugin_leadace_api__update_project_settings
   projectId: "$0"
   senderDisplayName: <display>
   senderCompanyName: <company>   # omit the field if user said "none"
@@ -222,7 +222,7 @@ If the email is a Send-As alias **not yet verified** in Gmail (Settings → Acco
 
 Save:
 ```
-mcp__plugin_lead-ace_api__update_project_settings
+mcp__plugin_leadace_api__update_project_settings
   projectId: "$0"
   outboundMode: "send" | "draft"
 ```
@@ -231,7 +231,7 @@ mcp__plugin_lead-ace_api__update_project_settings
 #### 4-9. Scheduling and Response Definition
 - Scheduling link(s) (Calendly / Cal.com / HubSpot Meetings — URL; "None" if N/A; multiple OK).
 - Response definition: what counts as a "response". Options: (1) Direct email reply, (2) Scheduling completion notification, (3) Reply via contact form. Confirm or extend.
-- Scheduling service name(s). **Auto-resolve notification domain**: call `mcp__plugin_lead-ace_api__get_master_document` with `slug: "ref_scheduling_services"`, look up each named service, record the domain in SALES_STRATEGY.md without asking (e.g., `Calendly — calendly.com`). Only ask if not in the reference list.
+- Scheduling service name(s). **Auto-resolve notification domain**: call `mcp__plugin_leadace_api__get_master_document` with `slug: "ref_scheduling_services"`, look up each named service, record the domain in SALES_STRATEGY.md without asking (e.g., `Calendly — calendly.com`). Only ask if not in the reference list.
 - "Up to you" → defaults: (1)(2)(3).
 
 #### 4-10. Notification Settings
@@ -259,7 +259,7 @@ Parse the reply locally:
 Otherwise, save in a single call (only include fields the user actually provided):
 
 ```
-mcp__plugin_lead-ace_api__update_project_settings
+mcp__plugin_leadace_api__update_project_settings
   projectId: "$0"
   inquiryVideoUrl: <url>          # omit unless provided
   inquiryPdfUrl: <url>            # omit unless provided
@@ -322,7 +322,7 @@ Print a compact summary (10-20 lines) of all inferred + collected items, includi
 
 Save in a single `update_project_settings` call. For each inquiry-extra field, include the value when it was accepted or overridden in §4B-3 (whether the source was §4B-2 inference, the 4-0 `INQUIRY_PREFILLS`, or the user typing a fresh value). Omit the field only when the user explicitly skipped it. Do **not** send `null` for skipped fields — that would silently clear a value the operator may have set previously:
 ```
-mcp__plugin_lead-ace_api__update_project_settings
+mcp__plugin_leadace_api__update_project_settings
   projectId: "$0"
   senderDisplayName: <display>
   senderCompanyName: <company>   # omit the field if user said "none"
@@ -354,12 +354,12 @@ If the caller's `allowed-tools` does not include `WebSearch`, skip this step.
 
 ## Step 6. Generate / Update BUSINESS.md
 
-- **Initial** (both modes): Retrieve template via `mcp__plugin_lead-ace_api__get_master_document` with `slug: "tpl_business"`. Generate document following its structure, filled from collected/inferred data.
+- **Initial** (both modes): Retrieve template via `mcp__plugin_leadace_api__get_master_document` with `slug: "tpl_business"`. Generate document following its structure, filled from collected/inferred data.
 - **Update** (Mode A only): Use existing content from Step 3 `get_document`. Reflect changes / additions only. Keep unchanged sections.
 
 Save:
 ```
-mcp__plugin_lead-ace_api__save_document
+mcp__plugin_leadace_api__save_document
   projectId: "$0"
   slug: "business"
   content: <full markdown>
@@ -378,11 +378,11 @@ Also retrieve via `get_master_document` to improve quality:
 - **`tpl_targeting_guide`**: Target persona refinement, competitive analysis, USP articulation, channel selection criteria, KPI reverse calculation, search keyword design patterns.
 - **`tpl_email_templates`**: Email template selection by target industry. Auto-select the best pattern, customize to business-specific info (USP, track record, pricing). Do **not** use templates as-is.
 
-**Environment information**: The `env_status` doc (loaded in Step 2) is the single source of truth for tool / environment status and is read directly by downstream skills. **Do not** duplicate it into SALES_STRATEGY.md — the template no longer has an "Environment & Tool Status" section. If env shows a tool missing, surface it once in the Step 8 completion report (so the operator knows to re-run `/setup`); do not write it into SALES_STRATEGY. Channel on/off is managed in Project Settings (`outboundChannels`); do not encode channel exclusions into "Sales Channels".
+**Environment information**: The `env_status` doc (loaded in Step 2) is the single source of truth for tool / environment status and is read directly by downstream skills. **Do not** duplicate it into SALES_STRATEGY.md — the template no longer has an "Environment & Tool Status" section. If env shows a tool missing, surface it once in the Step 8 completion report (so the operator knows to ask `/leadace` to re-check the environment); do not write it into SALES_STRATEGY. Channel on/off is managed in Project Settings (`outboundChannels`); do not encode channel exclusions into "Sales Channels".
 
 Save:
 ```
-mcp__plugin_lead-ace_api__save_document
+mcp__plugin_leadace_api__save_document
   projectId: "$0"
   slug: "sales_strategy"
   content: <full markdown>
@@ -419,7 +419,7 @@ Mode A flow when generating: draft **both** the brief and the one-liner per the 
 
 Save:
 ```
-mcp__plugin_lead-ace_api__update_project_settings
+mcp__plugin_leadace_api__update_project_settings
   projectId: "$0"
   inquiryChatBrief: <brief>
   inquiryOneLiner: <one-liner>
@@ -439,15 +439,15 @@ Tell the user once: "You can edit the brief / one-liner later in the Web UI → 
 
 **Procedure (when seeding applies):**
 
-1. Read existing variants: `mcp__plugin_lead-ace_api__list_subject_variants` with `projectId: "$0"`. If `active.length >= 2` and the sub-mode is anything other than the user explicitly asking for new patterns, skip the rest of this step.
+1. Read existing variants: `mcp__plugin_leadace_api__list_subject_variants` with `projectId: "$0"`. If `active.length >= 2` and the sub-mode is anything other than the user explicitly asking for new patterns, skip the rest of this step.
 2. Generate 2-3 short subject patterns (each ≤ 80 chars) following these rules:
    - Distinct angles, not paraphrases of one idea (e.g., warm-intro / direct-question / signal-driven). One-shot subjects only — no follow-up wording.
    - Use placeholders sparingly: `{{org}}` for the recipient organization, `{{name}}` for the contact name, `{{signal}}` for a recent signal phrase. The skill substitutes these at send time; never invent other placeholder names.
    - Match the project's working language and tone (read `BUSINESS.md` + `SALES_STRATEGY.md` Messaging section for voice).
    - Avoid fabricating company-specific claims in the subject. Pricing, exact metrics, and unverified track record stay in the body.
-3. For each, call `mcp__plugin_lead-ace_api__upsert_subject_variant`:
+3. For each, call `mcp__plugin_leadace_api__upsert_subject_variant`:
    ```
-   mcp__plugin_lead-ace_api__upsert_subject_variant
+   mcp__plugin_leadace_api__upsert_subject_variant
      projectId: "$0"
      variantId: <stable slug, e.g. "v1" / "warm_intro" / "signal_driven">
      subjectPattern: <pattern>
@@ -462,7 +462,7 @@ Tell the user once: "Seeded N subject variants — `/outbound` will rotate throu
 
 Return:
 - A 5-10 line summary the caller can include in its completion report (sub-mode, sections completed, sections deferred, any sender-info migrations, the chosen outbound mode, whether `inquiry_chat_brief` was generated / skipped).
-- **Env-status warnings**: if Step 2 `ENV` shows any tool missing, list each unavailable tool with its impact taken from the Step 2 "Tool impact catalog". Classify per the catalog: Gmail SaaS and Claude in Chrome are channel-affecting (block outbound auto-send for their respective channels); Gmail MCP is reply-check-affecting (only degrades `/check-results` to manual, not an outbound block); local fetch toolchain is a research-quality fallback, not a channel block. Recommend re-running `/setup` after the user reconnects. Surface this here — SALES_STRATEGY.md no longer carries env status, so this is the single user-facing surfacing point.
-- For Mode B: an explicit hint that the user can re-run `/strategy <project>` later for refinement (e.g., to update messaging or fill in deferred fields).
+- **Env-status warnings**: if Step 2 `ENV` shows any tool missing, list each unavailable tool with its impact taken from the Step 2 "Tool impact catalog". Classify per the catalog: Gmail SaaS and Claude in Chrome are channel-affecting (block outbound auto-send for their respective channels); Gmail MCP is reply-check-affecting (only degrades `/check-results` to manual, not an outbound block); local fetch toolchain is a research-quality fallback, not a channel block. Recommend asking `/leadace` to re-check the environment after the user reconnects. Surface this here — SALES_STRATEGY.md no longer carries env status, so this is the single user-facing surfacing point.
+- For Mode B: an explicit hint that the user can ask `/leadace` to refine the strategy later (e.g., to update messaging or fill in deferred fields).
 
 The caller composes its own user-facing completion message; this procedure does not print one.

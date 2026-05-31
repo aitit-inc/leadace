@@ -1,4 +1,4 @@
-# lead-ace
+# LeadAce
 
 Autonomous lead generation plugin for Claude Code.
 Builds prospect lists, runs outbound outreach, and iterates on strategy — all hands-free.
@@ -20,14 +20,14 @@ In Claude Code:
 
 ```
 /plugin marketplace add aitit-inc/leadace
-/plugin install lead-ace@lead-ace
+/plugin install leadace@leadace
 ```
 
 To update later:
 
 ```
 /plugin marketplace update
-/plugin update lead-ace@lead-ace
+/plugin update leadace@leadace
 ```
 
 ### Sign in to LeadAce
@@ -39,14 +39,12 @@ for details and troubleshooting.
 
 ### Usage
 
-The first argument to every command is your project name (chosen at `/setup`).
+Most commands take your project name as the first argument (chosen during `/leadace` onboarding); `/leadace` itself takes a free-form question or homepage URL.
 
 | Command | Purpose |
 |---|---|
 | **Setup** | |
-| `/lead-ace` | Intro / hub — first-time orientation, version, skill list |
-| `/setup <name>` | Create a LeadAce project + verify env (MCP, Gmail, local tools) |
-| `/strategy <name>` | Define / update sales & marketing strategy |
+| `/leadace` | Entry point — onboarding, environment setup / re-check, strategy authoring, overview, and routing |
 | **Add prospects** (pick one) | |
 | `/build-list <name>` | Web search for new prospects |
 | `/import-prospects <name>` | Load CSV / Excel / SQLite |
@@ -71,9 +69,7 @@ https://app.leadace.ai.
 
 ```mermaid
 flowchart TD
-  LA["/lead-ace<br/>intro / hub"] -. first time .-> SU
-  SU["/setup"] --> ST["/strategy"]
-  ST --> P{add prospects}
+  LA["/leadace<br/>onboard · setup · strategy"] --> P{add prospects}
 
   P -- web search --> BL["/build-list"]
   P -- CSV / Excel --> IP["/import-prospects"]
@@ -88,7 +84,7 @@ flowchart TD
   EV -- next round --> P
 
   CR -. PMF signals .-> CF["/check-feedback"]
-  CF -. revisit product .-> ST
+  CF -. revisit strategy .-> LA
 
   DC["/daily-cycle<br/>check + outbound + build, one shot"]
   SC["/setup-cron<br/>OS schedule"] --> DC

@@ -4,7 +4,7 @@ description: "Surface PMF signals from rejection feedback: feature_gap notes and
 argument-hint: "<project-id>"
 allowed-tools:
   - Read
-  - mcp__plugin_lead-ace_api__get_rejection_feedback_summary
+  - mcp__plugin_leadace_api__get_rejection_feedback_summary
 ---
 
 # Check Feedback - PMF Signals from Rejection Feedback
@@ -25,12 +25,12 @@ Return an error if `$0` is empty.
 
 ### 2. Fetch Two Windows in Parallel
 
-Call `mcp__plugin_lead-ace_api__get_rejection_feedback_summary` twice in parallel, both with `scope: "pmf"`:
+Call `mcp__plugin_leadace_api__get_rejection_feedback_summary` twice in parallel, both with `scope: "pmf"`:
 
 1. `projectId: "$0"`, `windowDays: 30`, `scope: "pmf"` -> recent
 2. `projectId: "$0"`, `scope: "pmf"` (no `windowDays`) -> all-time
 
-If the tool returns "Project not found", instruct the user to run `/setup` first and abort.
+If the tool returns "Project not found", instruct the user to run `/leadace` first and abort.
 
 With `scope: "pmf"` the server filters to PMF-relevant reasons only and computes `total` + `percentage` within the PMF subset. `recontactWindows` is returned with all five buckets at `{count: 0, samples: []}` and `decisionMakerPointers` is an empty array — those signals are tactical and consumed by `/evaluate`, not by this skill.
 
@@ -80,8 +80,8 @@ End with one short, plain-English summary. Decide which line to write in this or
 
 Example tones:
 
-- Dominant feature_gap capability: "Multiple recent rejections cite `<feature>` — strongest PMF signal is for that. Consider `/strategy` revision or product roadmap input."
-- High competitor pressure: "A large share of rejections cite an incumbent solution or contract lock-in — competitive pressure is the dominant PMF signal. Consider differentiation messaging in `/strategy`."
+- Dominant feature_gap capability: "Multiple recent rejections cite `<feature>` — strongest PMF signal is for that. Consider a strategy revision (refine it via `/leadace`) or product roadmap input."
+- High competitor pressure: "A large share of rejections cite an incumbent solution or contract lock-in — competitive pressure is the dominant PMF signal. Consider differentiation messaging (refine the strategy via `/leadace`)."
 - Mixed: "Rejection volume is N over 30 days, no single PMF signal dominates. Continue monitoring."
 
 Do not invent product/strategy actions when the data does not support them.

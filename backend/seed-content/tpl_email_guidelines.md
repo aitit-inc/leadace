@@ -94,7 +94,7 @@ Verify that these are included in the signature block in SALES_STRATEGY.md. If t
 
 ## Sending Method
 
-Send via `gog send`, then record via `mcp__plugin_lead-ace_api__record_outreach` (see SKILL.md for instructions).
+Send and record via `mcp__plugin_leadace_api__send_email_and_record` (see SKILL.md for instructions).
 
 ## NG Patterns (Common Mistakes)
 

@@ -5,7 +5,7 @@ argument-hint: "<project-id>"
 allowed-tools:
   - Read
   - AskUserQuestion
-  - mcp__plugin_lead-ace_api__delete_project
+  - mcp__plugin_leadace_api__delete_project
 ---
 
 # Delete Project
@@ -30,7 +30,7 @@ If the user declines, abort.
 
 ### 3. Delete Project
 
-Call `mcp__plugin_lead-ace_api__delete_project` with `projectId: "$0"`.
+Call `mcp__plugin_leadace_api__delete_project` with `projectId: "$0"`.
 
 If the tool returns a "Project not found" error, report that the project does not exist and exit.
 

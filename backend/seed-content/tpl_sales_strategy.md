@@ -1,6 +1,6 @@
 # SALES_STRATEGY.md Template
 
-Generate `<project-dir>/SALES_STRATEGY.md` with the following structure:
+Generate the `SALES_STRATEGY.md` document with the following structure:
 
 ```markdown
 # Sales & Marketing Strategy
@@ -45,7 +45,7 @@ Default: `precision`
 
 ## Sender Information
 - Sender name: (Name displayed as email sender)
-- Sender email address: (Used for gog send --account)
+- Sender email address: (The From: address shown to recipients)
 - Signature: (Signature block appended to emails. Organization name, full name, title, phone number, URL, etc.)
 - Scheduling link: (Timerex / Calendly / Cal.com URL. In meeting CTA mode, the inquiry-landing page uses this URL behind its "Book a meeting" button. If inquiry landing is disabled, this URL is also embedded inline in email CTAs as the meeting fallback.)
 - Signup URL: (SaaS self-serve signup / "Get started" / "Start your trial" URL. In signup CTA mode, the inquiry-landing page uses this URL behind its "Sign up" button. **Never embedded in email bodies** — the recipient reaches the signup page through the inquiry-landing footer link. Mutually exclusive with the scheduling link — the project picks one CTA mode.)
@@ -109,7 +109,7 @@ The two modes are mutually exclusive per project — the inquiry-settings page e
 - Country/region-specific directories: (if applicable)
 ```
 
-(Tool / environment status lives in the separate `env_status` document — saved by `/setup` or by the `/lead-ace` onboarding chain (both run env_check), read directly by `/strategy` and downstream skills. **Do not duplicate it here.** Channel tool capability is also surfaced in env_status; the outbound allowlist is Project Settings → `outboundChannels`.)
+(Tool / environment status lives in the separate `env_status` document — saved when `/leadace` runs env_check, read directly by `/leadace` strategy drafting and downstream skills. **Do not duplicate it here.** Channel tool capability is also surfaced in env_status; the outbound allowlist is Project Settings → `outboundChannels`.)
 
 **Generation guidelines:**
 - Keep the elevator pitch specific and concise. Avoid jargon; make it easy to understand

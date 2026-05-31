@@ -41,16 +41,16 @@ Detailed harness setup lives in [`e2e/README.md`](../../../e2e/README.md). The s
 3. Put the same values in `backend/.dev.vars` as `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`.
 4. Run `./e2e/setup.sh` to populate the harness state dir with a Claude Code login + the LeadAce MCP OAuth grant:
    - `/login` (sign in via browser if not already)
-   - `/setup` (★ verify the OAuth dance URL is `http://localhost:8788/authorize`, click Allow, browser lands on `127.0.0.1:47291/callback`)
+   - `/leadace overview` (★ verify the OAuth dance URL is `http://localhost:8788/authorize`, click Allow, browser lands on `127.0.0.1:47291/callback`)
    - `/exit`
 
-State persists in `e2e/.claude-state/` (gitignored), so subsequent runs skip the dance. After a `wrangler dev` restart, MCP refresh tokens are lost with the in-memory KV — re-run `setup.sh` (`/login` is a no-op, `/setup` redoes the MCP OAuth only).
+State persists in `e2e/.claude-state/` (gitignored), so subsequent runs skip the dance. After a `wrangler dev` restart, MCP refresh tokens are lost with the in-memory KV — re-run `setup.sh` (`/login` is a no-op, `/leadace overview` redoes the MCP OAuth only).
 
 ## Running
 
 ### 0. Standard smoke (onboarding chain)
 
-A one-shot wrapper that runs `/lead-ace` end-to-end (intent classification + env_check Mode B + strategy_drafting Mode B + 4B-4 summary) and auto-cleans the project it created:
+A one-shot wrapper that runs `/leadace` end-to-end (intent classification + env_check Mode B + strategy_drafting Mode B + 4B-4 summary) and auto-cleans the project it created:
 
 ```bash
 ./e2e/smoke.sh                       # default URL: https://example.com
@@ -60,10 +60,10 @@ SKIP_CLEANUP=1 ./e2e/smoke.sh        # keep the project for manual inspection
 
 Behavior:
 - Prompts include "no interactive Q&A available, sensible defaults, do not send outreach" so the run is headless.
-- The `/lead-ace` result ends in `PROJECT_ID=<id>`; the shell parses it.
+- The `/leadace` result ends in `PROJECT_ID=<id>`; the shell parses it.
 - Unless `SKIP_CLEANUP=1`, the wrapper invokes `/delete-project <id>` to leave the tenant clean.
 - Output JSON: `e2e/output/smoke-leadace-*.json` and `smoke-cleanup-*.json`.
-- Exit codes: 0 = all OK, 1 = `/lead-ace` failed, 2 = couldn't parse PROJECT_ID, 3 = cleanup failed.
+- Exit codes: 0 = all OK, 1 = `/leadace` failed, 2 = couldn't parse PROJECT_ID, 3 = cleanup failed.
 
 The harness budget defaults to `--max-budget-usd 1.50` (`MAX_BUDGET_USD` env override). **The cost figure is an API-equivalent reference under subscription auth, not a real charge** — it consumes Claude Pro/Max/Team rate quota only.
 
@@ -80,7 +80,7 @@ The harness budget defaults to `--max-budget-usd 1.50` (`MAX_BUDGET_USD` env ove
 Examples:
 
 ```bash
-./e2e/run.sh "/lead-ace https://example.com"
+./e2e/run.sh "/leadace https://example.com"
 ./e2e/run.sh "/daily-cycle <project-id>"
 ```
 
@@ -138,10 +138,10 @@ rm -rf e2e/.claude-state
 - **`./e2e/preflight.sh` fails with `FAIL: API Worker` (or similar):** the named service isn't running on the host. Start it from the table above.
 - **`/authorize` returns 500 during `./e2e/setup.sh`:** the MCP Worker likely has env vars missing. Check `backend/.dev.vars` for `SUPABASE_JWT_SECRET` / `SUPABASE_URL` / `SUPABASE_ANON_KEY` / `WEB_API_URL`.
 - **Google consent screen says `redirect_uri_mismatch`:** the Web OAuth client in Google Cloud Console lacks `http://localhost:54321/auth/v1/callback`.
-- **After `wrangler dev` restart Claude says `MCP needs authorization`:** the local MCP KV is in-memory and didn't survive the restart. Re-run `./e2e/setup.sh` (only the `/setup` MCP OAuth step needs redoing).
+- **After `wrangler dev` restart Claude says `MCP needs authorization`:** the local MCP KV is in-memory and didn't survive the restart. Re-run `./e2e/setup.sh` (only the `/leadace overview` MCP OAuth step needs redoing).
 - **`MCP_OAUTH_CALLBACK_PORT` collides with another process:** override with `MCP_OAUTH_CALLBACK_PORT=<port> ./e2e/setup.sh`.
 - **Host-side `claude` is reading the harness state:** check that `CLAUDE_CONFIG_DIR` isn't still exported in the shell you're invoking `claude` from. Going through `./e2e/*.sh` always isolates correctly.
-- **`/setup` lists unfamiliar / production-looking projects:** either staging is stale, or `e2e/.claude-state` retains an old production OAuth refresh token. `rm -rf e2e/.claude-state e2e/.plugin-staging` and redo `./e2e/setup.sh`. During the OAuth dance, confirm the URL begins with `http://localhost:8788/authorize`.
+- **`/leadace overview` lists unfamiliar / production-looking projects:** either staging is stale, or `e2e/.claude-state` retains an old production OAuth refresh token. `rm -rf e2e/.claude-state e2e/.plugin-staging` and redo `./e2e/setup.sh`. During the OAuth dance, confirm the URL begins with `http://localhost:8788/authorize`.
 
 ## Do not
 

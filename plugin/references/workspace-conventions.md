@@ -4,7 +4,7 @@ Common rules for all skills and sub-agents.
 
 ## Data Storage
 
-All project data is stored on the server and accessed via MCP tools (`mcp__plugin_lead-ace_api__*`). There are no local project directories or databases.
+All project data is stored on the server and accessed via MCP tools (`mcp__plugin_leadace_api__*`). There are no local project directories or databases.
 
 - **Structured data** (prospects, outreach logs, responses, evaluations): Dedicated MCP tools (`add_prospects`, `record_outreach`, etc.)
 - **Documents** (business info, sales strategy, search notes): `get_document` / `save_document` MCP tools with slugs: `business`, `sales_strategy`, `search_notes`
@@ -18,7 +18,7 @@ All project data is stored on the server and accessed via MCP tools (`mcp__plugi
 
 ## MCP Tool Error Handling
 
-If any MCP tool call returns a "Project not found" error, instruct the user to run `/setup` first and abort the current skill.
+If any MCP tool call returns a "Project not found" error, instruct the user to run `/leadace` first and abort the current skill.
 
 ## Document Write Safeguard
 

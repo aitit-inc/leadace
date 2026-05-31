@@ -141,7 +141,7 @@
   </h3>
   <div class="rounded-md border border-border p-5">
     <p class="text-xs text-text-muted mb-4">
-      MCP clients (e.g. Claude Code's <span class="font-mono">/lead-ace</span>) that you've
+      MCP clients (e.g. Claude Code's <span class="font-mono">/leadace</span>) that you've
       authorized to call LeadAce on your behalf. Each entry holds a refresh token with full API
       access — revoke any session you no longer use or trust.
     </p>
@@ -149,7 +149,7 @@
       <p class="text-sm text-danger">{data.mcpSessions.error}</p>
     {:else if data.mcpSessions.sessions.length === 0}
       <p class="text-sm text-text-muted">
-        No active MCP sessions. Run <span class="font-mono">/setup</span> in Claude Code to create
+        No active MCP sessions. Run <span class="font-mono">/leadace</span> in Claude Code to create
         one.
       </p>
     {:else}

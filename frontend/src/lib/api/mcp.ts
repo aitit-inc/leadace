@@ -102,7 +102,7 @@ export async function getMcpAuthorizeSession(
     // already finalized). Translate to an actionable message before the
     // raw 'invalid_session' string reaches the page.
     if (e instanceof McpRequestError && e.status === 404) {
-      throw new Error('Authorization request expired. Run /setup again to start a fresh one.');
+      throw new Error('Authorization request expired. Run /leadace again to start a fresh one.');
     }
     throw e;
   }

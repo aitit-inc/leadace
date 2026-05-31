@@ -285,7 +285,7 @@ export async function handleAuthorizeGet(
   const codeChallengeMethod = params.get('code_challenge_method')
 
   if (!clientId || !codeChallenge || !redirectUri) {
-    return htmlError('Missing client_id, code_challenge, or redirect_uri. Run /setup again.', 400)
+    return htmlError('Missing client_id, code_challenge, or redirect_uri. Run /leadace again.', 400)
   }
   if (codeChallengeMethod && codeChallengeMethod !== 'S256') {
     return htmlError('Only S256 code_challenge_method is supported.', 400)

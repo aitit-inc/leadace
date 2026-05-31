@@ -6,13 +6,13 @@ allowed-tools:
   - Bash
   - Read
   - WebSearch
-  - mcp__plugin_lead-ace_api__get_eval_data
-  - mcp__plugin_lead-ace_api__get_rejection_feedback_summary
-  - mcp__plugin_lead-ace_api__get_evaluation_history
-  - mcp__plugin_lead-ace_api__record_evaluation
-  - mcp__plugin_lead-ace_api__get_document
-  - mcp__plugin_lead-ace_api__save_document
-  - mcp__plugin_lead-ace_api__get_master_document
+  - mcp__plugin_leadace_api__get_eval_data
+  - mcp__plugin_leadace_api__get_rejection_feedback_summary
+  - mcp__plugin_leadace_api__get_evaluation_history
+  - mcp__plugin_leadace_api__record_evaluation
+  - mcp__plugin_leadace_api__get_document
+  - mcp__plugin_leadace_api__save_document
+  - mcp__plugin_leadace_api__get_master_document
 ---
 
 # Evaluate - PDCA Evaluation & Improvement
@@ -28,10 +28,10 @@ A skill that analyzes sales activity result data and automatically evaluates and
 - Project ID: `$0` (required)
 
 In parallel, call:
-- `mcp__plugin_lead-ace_api__get_eval_data` with `projectId: "$0"`
-- `mcp__plugin_lead-ace_api__get_rejection_feedback_summary` with `projectId: "$0"`, `windowDays: 30`, `scope: "tactical"`
+- `mcp__plugin_leadace_api__get_eval_data` with `projectId: "$0"`
+- `mcp__plugin_leadace_api__get_rejection_feedback_summary` with `projectId: "$0"`, `windowDays: 30`, `scope: "tactical"`
 
-If `get_eval_data` returns a "Project not found" error, instruct the user to run `/setup` first and **abort**.
+If `get_eval_data` returns a "Project not found" error, instruct the user to run `/leadace` first and **abort**.
 
 `get_eval_data` response includes:
 - `metrics`: totalOutreach, channelCounts, responseCounts, sentimentBreakdown, priorityResponseRate, statusCounts, channelResponseRate, inquiryOutcomeCounts
@@ -52,16 +52,16 @@ If `get_rejection_feedback_summary` errors, continue with the eval data only and
 
 Load documents via MCP:
 
-Call `mcp__plugin_lead-ace_api__get_document` with `projectId: "$0"` and `slug: "business"`.
-Call `mcp__plugin_lead-ace_api__get_document` with `projectId: "$0"` and `slug: "sales_strategy"`.
+Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "business"`.
+Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "sales_strategy"`.
 
-Call `mcp__plugin_lead-ace_api__get_evaluation_history` with `projectId: "$0"` to retrieve past evaluation records.
+Call `mcp__plugin_leadace_api__get_evaluation_history` with `projectId: "$0"` to retrieve past evaluation records.
 
 If past evaluations exist, organize each record's `evaluationDate`, `findings`, and `improvements` chronologically to understand what has been tried, what was effective, and what was not. Use this information when deciding on improvement actions in step 4.
 
 ### 3. Multi-angle Analysis
 
-Retrieve analysis frameworks via `mcp__plugin_lead-ace_api__get_master_document` with `slug: "tpl_analysis_frameworks"` and analyze from the following perspectives:
+Retrieve analysis frameworks via `mcp__plugin_leadace_api__get_master_document` with `slug: "tpl_analysis_frameworks"` and analyze from the following perspectives:
 
 **Response Rate Analysis:**
 - Overall response rate
@@ -126,14 +126,14 @@ Before deciding on improvement actions, review the past evaluations history orga
 - Revise channel priority
 - Update KPI goals
 
-Save the updated document via `mcp__plugin_lead-ace_api__save_document` with `projectId: "$0"`, `slug: "sales_strategy"`, and the full markdown content.
+Save the updated document via `mcp__plugin_leadace_api__save_document` with `projectId: "$0"`, `slug: "sales_strategy"`, and the full markdown content.
 
 **Update search keywords:**
 - Add keywords related to high-response segments
 - Remove ineffective keywords
 
 **Reflect response patterns in SEARCH_NOTES.md:**
-Call `mcp__plugin_lead-ace_api__get_document` with `projectId: "$0"` and `slug: "search_notes"`. If found, update the `## Hints from evaluate` section (add it at the end if not present) and save via `save_document`. build-list will preserve this section during the next run and adjust its search policy.
+Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "search_notes"`. If found, update the `## Hints from evaluate` section (add it at the end if not present) and save via `save_document`. build-list will preserve this section during the next run and adjust its search policy.
 
 Content to add:
 - Industries / segments with response rates above overall average -> "XX industry has X% response rate (vs overall average Y%). Explore more of this industry"
@@ -148,7 +148,7 @@ Skip if the document is not found (build-list hasn't been run yet).
 
 ### 5. Save Evaluation Record
 
-Call `mcp__plugin_lead-ace_api__record_evaluation` with:
+Call `mcp__plugin_leadace_api__record_evaluation` with:
 - `projectId`: "$0"
 - `metrics`: the metrics object from step 1 (excluding respondedMessages and noResponseSample)
 - `findings`: analysis findings text from step 3

@@ -37,7 +37,7 @@
   $effect(() => {
     if (status !== 'loading') return;
     if (!sessionId) {
-      errorMessage = 'Missing session parameter. Run /setup again to start a fresh authorization.';
+      errorMessage = 'Missing session parameter. Run /leadace again to start a fresh authorization.';
       status = 'error';
       return;
     }

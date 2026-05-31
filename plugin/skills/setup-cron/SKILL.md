@@ -7,7 +7,7 @@ allowed-tools:
   - Read
   - Write
   - AskUserQuestion
-  - mcp__plugin_lead-ace_api__list_projects
+  - mcp__plugin_leadace_api__list_projects
 ---
 
 # Setup-cron - Schedule Daily Automation
@@ -25,7 +25,7 @@ Or, if the user prefers in-Claude-Code scheduling, it explains how to use the pl
 
 ## Prerequisites
 
-- The user has already run `/setup` and has at least one project. If not, abort and ask them to run `/setup` first.
+- The user has already run `/leadace` and has at least one project. If not, abort and ask them to run `/leadace` first.
 - The `claude` CLI is on `PATH` (required for OS-level scheduling). The skill verifies this with `which claude`.
 - The user has an active Claude Code session with a valid LeadAce MCP OAuth token. **Headless `claude` invocations cannot complete OAuth interactively** — if the token expires (currently every 30 days, sliding), the next scheduled run fails until the user signs in again.
 
@@ -33,10 +33,10 @@ Or, if the user prefers in-Claude-Code scheduling, it explains how to use the pl
 
 ### 1. Pick the project
 
-If `$0` is given, use it. Otherwise call `mcp__plugin_lead-ace_api__list_projects` and:
+If `$0` is given, use it. Otherwise call `mcp__plugin_leadace_api__list_projects` and:
 - If exactly one project exists, use it.
 - If multiple exist, ask via `AskUserQuestion`.
-- If none, abort: "No projects yet. Run `/setup <project-name>` first."
+- If none, abort: "No projects yet. Run `/leadace <your-homepage-URL>` first."
 
 Hold the chosen name in `PROJECT_NAME`.
 
@@ -82,7 +82,7 @@ If verification fails, surface the raw output and stop without claiming success.
 Print:
 - The schedule (`HH:MM` daily, OS, project name)
 - The file/task the skill installed and how to inspect/remove it
-- A reminder: "OAuth token currently expires after ~30 days of inactivity. If the scheduled run starts failing, run `/setup` again from an interactive Claude Code session to re-sign in."
+- A reminder: "OAuth token currently expires after ~30 days of inactivity. If the scheduled run starts failing, run `/leadace` again from an interactive Claude Code session to re-sign in."
 
 ---
 
@@ -183,5 +183,5 @@ Print the exact command they should run, then stop. The skill does not auto-inst
 
 ## Notes
 
-- The skill never tries to bypass safety prompts in scheduled runs. `claude --print` runs the skill non-interactively and the LLM will refuse irreversible actions if it would normally prompt. The user's plan-tier rate limits and `/setup` env_status still apply at run time.
+- The skill never tries to bypass safety prompts in scheduled runs. `claude --print` runs the skill non-interactively and the LLM will refuse irreversible actions if it would normally prompt. The user's plan-tier rate limits and `/leadace` env_status still apply at run time.
 - If the user is on a self-host backend, the schedule does not need any change — `claude` reads `LEADACE_MCP_URL` from the user's existing Claude Code config the same way as the interactive session.

@@ -1,31 +1,31 @@
 # Environment Check & Project Selection
 
-Shared procedure for verifying the LeadAce environment, picking or creating a project, and persisting environment status. Used by `/setup` (interactive) and `/lead-ace` (URL-driven onboarding chain).
+Shared procedure for verifying the LeadAce environment, picking or creating a project, and persisting environment status. Used by `/leadace` (the setup / environment intent and the URL-driven onboarding chain).
 
 The caller (the SKILL.md that `Read`s this file) provides:
 - The user-facing framing and tone (interactive Q&A vs minimal-prompt chain)
 - An optional `$0` argument (project name)
-- An optional `$URL` (the user's homepage URL; used by `/lead-ace` for project naming)
+- An optional `$URL` (the user's homepage URL; used by `/leadace` for project naming)
 
-This procedure is authoritative — execute the steps verbatim. Tools used: `mcp__plugin_lead-ace_api__*`, `Read`, `AskUserQuestion`, `Bash`.
+This procedure is authoritative — execute the steps verbatim. Tools used: `mcp__plugin_leadace_api__*`, `Read`, `AskUserQuestion`, `Bash`.
 
 ## Step 1. Verify MCP Connection & Plugin Version
 
 ### 1-1. Server version & plugin compatibility
 
-Call `mcp__plugin_lead-ace_api__get_server_version`. The response is `{ serverVersion, minPluginVersion }`.
+Call `mcp__plugin_leadace_api__get_server_version`. The response is `{ serverVersion, minPluginVersion }`.
 
 `Read` `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and take the `version` field.
 
 Compare semver component-by-component (split on `.`, parse each as integer, compare lexicographically). If the plugin version is **less than** `minPluginVersion`, **abort** with:
 
-> Your LeadAce plugin is too old (v<plugin-version>) for the current backend (requires ≥ v<minPluginVersion>). Run `/plugin update lead-ace@lead-ace` and then re-run the current command.
+> Your LeadAce plugin is too old (v<plugin-version>) for the current backend (requires ≥ v<minPluginVersion>). Run `/plugin update leadace@leadace` and then re-run the current command.
 
 Otherwise continue. Hold `SERVER_VERSION`, `PLUGIN_VERSION`, `MIN_PLUGIN_VERSION`.
 
 ### 1-2. Auth & reachability
 
-Call `mcp__plugin_lead-ace_api__list_projects`. Success proves: MCP reachable, OAuth token valid, user authenticated. Hold the result as `PROJECTS`.
+Call `mcp__plugin_leadace_api__list_projects`. Success proves: MCP reachable, OAuth token valid, user authenticated. Hold the result as `PROJECTS`.
 
 If the call fails:
 - Network/unreachable → "Cannot reach the LeadAce MCP server. Check network access to https://mcp.leadace.ai (or `LEADACE_MCP_URL` for self-hosters)." Abort.
@@ -37,7 +37,7 @@ Run automatic detection first, then ask the user only what cannot be detected.
 
 ### 2-1. Gmail SaaS connection (auto)
 
-Call `mcp__plugin_lead-ace_api__get_gmail_status`. Record `connected` (boolean) and `email` (when connected) as `GMAIL_STATUS`.
+Call `mcp__plugin_leadace_api__get_gmail_status`. Record `connected` (boolean) and `email` (when connected) as `GMAIL_STATUS`.
 
 If not connected: "Open https://app.leadace.ai — a 'Connect Gmail' banner is shown at the top of the page while disconnected; connect to enable email sending. Without this, no emails can be sent — you can still proceed with form-only or SNS-only outreach." Do **not** abort.
 
@@ -47,7 +47,7 @@ Use `AskUserQuestion`: "Have you connected the Gmail MCP in claude.ai? (Required
 
 ### 2-2b. Workspace identity / compliance footer (interactive fill)
 
-Call `mcp__plugin_lead-ace_api__get_tenant_settings`. Hold the response as `TENANT_SETTINGS`.
+Call `mcp__plugin_leadace_api__get_tenant_settings`. Hold the response as `TENANT_SETTINGS`.
 
 The mandatory fields for outbound sending are `legalName`, `physicalAddress`, and `defaultSenderCountry` — these are appended to every outgoing message's compliance footer (CAN-SPAM § 5(a)(5), CASL § 6 sender identification). When any is `(not set)`, every send-side endpoint refuses with HTTP 412.
 
@@ -68,7 +68,7 @@ Parse the user's reply locally:
 - Legal name and physical address are taken verbatim (trim whitespace).
 - Sender country: accept any ISO 3166-1 alpha-2 code (the backend stores any `^[A-Z]{2}$`). If the user typed a country name, do a best-effort map to the alpha-2 code (`Japan` / `日本` → `JP`; `United States` / `USA` / `アメリカ` → `US`; `Canada` / `カナダ` → `CA`; `Germany` / `Deutschland` / `ドイツ` → `DE`; etc.). If you can't confidently resolve it to a 2-letter code, ask once for clarification ("Could you give me the ISO alpha-2 country code? E.g. US, JP, DE."). Don't reject codes outside US/CA/JP — sender country is independent from the recipient-delivery allowlist.
 
-After parsing, call `mcp__plugin_lead-ace_api__update_tenant_settings` once with all the newly collected values in a single payload (pass `defaultSenderCountry` as the two-letter code, not the label). Trust the tool's "Compliance ready." reply or re-fetch to confirm. Refresh `TENANT_SETTINGS` in memory after the update.
+After parsing, call `mcp__plugin_leadace_api__update_tenant_settings` once with all the newly collected values in a single payload (pass `defaultSenderCountry` as the two-letter code, not the label). Trust the tool's "Compliance ready." reply or re-fetch to confirm. Refresh `TENANT_SETTINGS` in memory after the update.
 
 If the user declines to provide a value (says "skip" / "later"), record that in the Step 5 completion report as a prominent warning with the URL `https://app.leadace.ai/workspace-settings` for later self-service. Do **not** abort — build-list / strategy / evaluate work fine with compliance unset; only `/outbound` and `/daily-cycle` will be blocked.
 
@@ -78,11 +78,11 @@ Mention the current US/CA/JP recipient scope once in the completion report so th
 
 Use `AskUserQuestion`: "Are you using the Claude in Chrome extension? (Required for contact-form submission and SNS DMs in `/outbound`, plus SNS reply checking in `/check-results`.)" — options: `yes` / `no` / `unsure`. Record as `CHROME_EXT`.
 
-**Caller may relax these prompts**: when invoked from `/lead-ace`'s onboarding chain, the caller can default to `unsure` for 2-2 and 2-3 without asking, to keep the chain flowing. The user can re-run `/setup` later for explicit confirmation. State this assumption in the completion report (Step 5) when applied.
+**Caller may relax these prompts**: when invoked from `/leadace`'s onboarding chain, the caller can default to `unsure` for 2-2 and 2-3 without asking, to keep the chain flowing. The user can ask `/leadace` to re-check the environment later for explicit confirmation. State this assumption in the completion report (Step 5) when applied.
 
 ### 2-4. Local fetch toolchain (auto)
 
-`scripts/fetch_url.py` (used by `/build-list` and `/strategy` for web research) Jina-fetches a page, then shells out to the `claude` CLI for Haiku extraction. Both `python3` **and** `claude` must be on PATH. Detect each with `Bash`:
+`scripts/fetch_url.py` (used by `/build-list` and `/leadace` strategy drafting for web research) Jina-fetches a page, then shells out to the `claude` CLI for Haiku extraction. Both `python3` **and** `claude` must be on PATH. Detect each with `Bash`:
 
 ```bash
 python3 --version 2>&1
@@ -99,7 +99,7 @@ The script uses standard-library only (no `pip install`), so a working `python3`
 ### 3-1. With `$0` (project name provided)
 
 - If `$0` matches an existing project from `PROJECTS` → use it as-is. Set `PROJECT_NAME = $0`.
-- If `$0` does not exist → call `mcp__plugin_lead-ace_api__setup_project` with `name: "$0"`.
+- If `$0` does not exist → call `mcp__plugin_leadace_api__setup_project` with `name: "$0"`.
   - On `Project limit reached` → tell the user "Free plan allows 1 project. Delete the existing one with `/delete-project` or upgrade your plan." and **abort**.
   - Set `PROJECT_NAME = $0`.
 
@@ -114,14 +114,14 @@ The script uses standard-library only (no `pip install`), so a working `python3`
 
 ## Step 4. Save Environment Status
 
-Build a markdown document and save via `mcp__plugin_lead-ace_api__save_document` with `projectId: PROJECT_NAME` and `slug: "env_status"`. This is the source of truth that `/strategy` and other skills read — do not skip.
+Build a markdown document and save via `mcp__plugin_leadace_api__save_document` with `projectId: PROJECT_NAME` and `slug: "env_status"`. This is the source of truth that `/leadace` and other skills read — do not skip.
 
 Document template (substitute the fields from `GMAIL_STATUS`, `GMAIL_MCP`, `CHROME_EXT`, and the current local time):
 
 ```markdown
 # Environment & Tool Status
 
-Captured: <YYYY-MM-DD HH:MM> via /setup or /lead-ace.
+Captured: <YYYY-MM-DD HH:MM> via /leadace.
 
 | Capability | Status | Detail |
 |---|---|---|

@@ -74,7 +74,7 @@ Referenced when generating the "Messaging" section of SALES_STRATEGY.md. Select 
 
 ## Selection Guidelines
 
-When generating messaging during /strategy, select templates based on the following criteria:
+When generating messaging during `/leadace` strategy drafting, select templates based on the following criteria:
 
 1. **Clear target industry** → Base on the relevant industry-specific template
 2. **Spans multiple industries** → Base on the general template; add industry-specific adjustment notes

@@ -20,14 +20,14 @@ outbound outreach, and iterates on strategy — all hands-free.
 
 ```
 /plugin marketplace add aitit-inc/leadace
-/plugin install lead-ace@lead-ace
+/plugin install leadace@leadace
 ```
 
 To update later:
 
 ```
 /plugin marketplace update
-/plugin update lead-ace@lead-ace
+/plugin update leadace@leadace
 ```
 
 ## Sign in
@@ -61,14 +61,12 @@ The default `https://mcp.leadace.ai/mcp` is used when this variable is unset.
 
 ## Commands
 
-The first argument to every command is your project name (chosen at `/setup`).
+Most commands take your project name as the first argument (chosen during `/leadace` onboarding); `/leadace` itself takes a free-form question or homepage URL.
 
 | Command | Purpose |
 |---|---|
 | **Setup** | |
-| `/lead-ace` | Intro / hub — first-time orientation, version, skill list |
-| `/setup <name>` | Create a LeadAce project + verify env (MCP, Gmail, local tools) |
-| `/strategy <name>` | Define / update sales & marketing strategy |
+| `/leadace` | Entry point — onboarding, environment setup / re-check, strategy authoring, overview, and routing |
 | **Add prospects** (pick one) | |
 | `/build-list <name>` | Web search for new prospects |
 | `/import-prospects <name>` | Load CSV / Excel / SQLite |

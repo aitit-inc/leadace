@@ -10,20 +10,20 @@
 #
 # Inside the resulting interactive Claude session:
 #   /login                # if not logged in yet — sign in via browser
-#   /setup                # triggers the LeadAce MCP OAuth flow
+#   /leadace overview       # triggers the LeadAce MCP OAuth flow + lists projects
 #     ★ Verify the printed URL is http://localhost:8788/authorize?...
 #       NOT https://mcp.leadace.ai/authorize?... — the staged plugin pins
 #       the URL to local; if you see the production host, abort and report.
 #     Sign in with Google in your host browser, click Allow.
 #     The browser is redirected to http://localhost:47291/callback?...
-#     /setup continues automatically and lists local projects (empty on
+#     /leadace overview continues automatically and lists local projects (empty on
 #     a fresh local DB).
 #   /exit
 #
 # Re-run scenarios:
 #   - First-ever setup: this script handles everything end-to-end.
 #   - After `wrangler dev` restart (local MCP KV is in-memory and was lost):
-#     re-run this script. /login will be a no-op; /setup re-does the OAuth
+#     re-run this script. /login will be a no-op; /leadace overview re-does the OAuth
 #     dance only.
 #
 # State persists in $REPO_ROOT/e2e/.claude-state (gitignored), leaving the

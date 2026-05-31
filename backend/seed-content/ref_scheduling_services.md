@@ -1,6 +1,6 @@
 # Scheduling Services — Notification Sender Domains
 
-This document maps known scheduling services to the apex domain(s) they use for booking notification emails. Used by `/check-results` to search Gmail for booking notifications, and by `/strategy` to auto-fill the sender domain when the user names a service.
+This document maps known scheduling services to the apex domain(s) they use for booking notification emails. Used by `/check-results` to search Gmail for booking notifications, and by `/leadace` strategy drafting to auto-fill the sender domain when the user names a service.
 
 ## Why domains, not full email addresses
 
@@ -30,7 +30,7 @@ For each scheduling service the user has configured (in `SALES_STRATEGY.md` Resp
 
 Multiple schedulers in parallel are supported — search each separately.
 
-## How `/strategy` uses this
+## How `/leadace` strategy drafting uses this
 
 When the user names a scheduling service in Step 4-9:
 1. Look up the service in this list

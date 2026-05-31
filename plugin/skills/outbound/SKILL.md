@@ -16,17 +16,17 @@ allowed-tools:
   - mcp__claude-in-chrome__computer
   - mcp__claude-in-chrome__javascript_tool
   - mcp__claude-in-chrome__read_network_requests
-  - mcp__plugin_lead-ace_api__get_outbound_targets
-  - mcp__plugin_lead-ace_api__send_email_and_record
-  - mcp__plugin_lead-ace_api__record_outreach
-  - mcp__plugin_lead-ace_api__record_outreach_with_inquiry
-  - mcp__plugin_lead-ace_api__update_outreach_status
-  - mcp__plugin_lead-ace_api__update_prospect_status
-  - mcp__plugin_lead-ace_api__get_document
-  - mcp__plugin_lead-ace_api__get_master_document
-  - mcp__plugin_lead-ace_api__get_project_settings
-  - mcp__plugin_lead-ace_api__pick_subject_variant
-  - mcp__plugin_lead-ace_api__get_compliance_status
+  - mcp__plugin_leadace_api__get_outbound_targets
+  - mcp__plugin_leadace_api__send_email_and_record
+  - mcp__plugin_leadace_api__record_outreach
+  - mcp__plugin_leadace_api__record_outreach_with_inquiry
+  - mcp__plugin_leadace_api__update_outreach_status
+  - mcp__plugin_leadace_api__update_prospect_status
+  - mcp__plugin_leadace_api__get_document
+  - mcp__plugin_leadace_api__get_master_document
+  - mcp__plugin_leadace_api__get_project_settings
+  - mcp__plugin_leadace_api__pick_subject_variant
+  - mcp__plugin_leadace_api__get_compliance_status
 ---
 
 # Outbound - Outbound Sales Execution
@@ -45,7 +45,7 @@ For each prospect, sends a message via an available channel and records the resu
 - Approach count: `$1` (default: 30)
 
 **Compliance pre-flight (run before anything else).** Call
-`mcp__plugin_lead-ace_api__get_compliance_status`. If `ready: false`,
+`mcp__plugin_leadace_api__get_compliance_status`. If `ready: false`,
 **abort immediately** — do not load documents, do not call
 `get_outbound_targets`. Report to the user which fields are missing
 (from the `missing` array) and direct them to the URL in `fix_url`
@@ -56,9 +56,9 @@ saves the token cost of draft generation.
 
 Load documents via MCP:
 
-Call `mcp__plugin_lead-ace_api__get_document` with `projectId: "$0"` and `slug: "business"`.
-Call `mcp__plugin_lead-ace_api__get_document` with `projectId: "$0"` and `slug: "sales_strategy"`.
-Call `mcp__plugin_lead-ace_api__get_document` with `projectId: "$0"` and `slug: "env_status"`. Source of truth for connected tools (Gmail SaaS / Claude in Chrome), saved by `/setup` or `/lead-ace`. Hold the result as `ENV` (or `null` if the document doesn't exist). The send-mode capability gate below decides whether to abort — a missing doc is fatal in send mode (run `/setup` first) but tolerated in draft mode (no tools are invoked; surface the gap in the step 8 report).
+Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "business"`.
+Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "sales_strategy"`.
+Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "env_status"`. Source of truth for connected tools (Gmail SaaS / Claude in Chrome), saved by `/leadace`. Hold the result as `ENV` (or `null` if the document doesn't exist). The send-mode capability gate below decides whether to abort — a missing doc is fatal in send mode (run `/leadace` first) but tolerated in draft mode (no tools are invoked; surface the gap in the step 8 report).
 
 Pay particular attention to these sections in the sales_strategy document:
 - **Outreach mode**: `precision` (deep personalization) or `volume` (template-based semi-personalization). Default to `precision` if not set
@@ -73,8 +73,8 @@ Pay particular attention to these sections in the sales_strategy document:
 
 Retrieve the uncontacted prospect list and the project's send settings:
 
-- Call `mcp__plugin_lead-ace_api__get_outbound_targets` with `projectId: "$0"` and `limit: $1` (default 30).
-- Call `mcp__plugin_lead-ace_api__get_project_settings` with `projectId: "$0"`.
+- Call `mcp__plugin_leadace_api__get_outbound_targets` with `projectId: "$0"` and `limit: $1` (default 30).
+- Call `mcp__plugin_leadace_api__get_project_settings` with `projectId: "$0"`.
 
 The targets response includes `Outbound mode: send | draft`. **Capture this value** — it determines whether each channel actually delivers (`send`) or only stores a draft for the user to review and send manually from https://app.leadace.ai/drafts (`draft`). The draft path applies to all channels (email, form, SNS).
 
@@ -101,7 +101,7 @@ And surface for prospect gating (apply before picking a channel in step 2):
   entirely (no `record_outreach` audit row needed — it is a project-policy decision, not a
   per-prospect compliance refusal). If `outboundChannels` is empty, **abort the entire
   /outbound run** and tell the user that outbound is paused for this project.
-- **env_status capability** — pre-flight gate, **send mode only**. In send mode, every channel in `outboundChannels` requires its tool to be connected: `email` requires Gmail SaaS; `form` / `sns_twitter` / `sns_linkedin` require Claude in Chrome. Treat a capability whose recorded value is `unsure`, absent from `ENV`, or where `ENV` itself is `null` (env_status doc missing) as unavailable (conservative). If **any** channel in `outboundChannels` is unavailable, **abort the entire run** before processing prospects and tell the user to either connect the missing tool (run `/setup` after reconnecting if env_status was missing entirely) or remove that channel from Project Settings → `outboundChannels`, then re-run. Do **not** silently skip per-prospect: `get_outbound_targets` only knows `outboundChannels` server-side, so a skill-side filter is lossy — the backend keeps returning candidates the skill would skip, and form / SNS prospects never surface within the run's `limit`. Draft mode bypasses this entirely (server-side `pending_review`, no Gmail / browser call); surface any missing tool (or missing env_status) in the step 8 report.
+- **env_status capability** — pre-flight gate, **send mode only**. In send mode, every channel in `outboundChannels` requires its tool to be connected: `email` requires Gmail SaaS; `form` / `sns_twitter` / `sns_linkedin` require Claude in Chrome. Treat a capability whose recorded value is `unsure`, absent from `ENV`, or where `ENV` itself is `null` (env_status doc missing) as unavailable (conservative). If **any** channel in `outboundChannels` is unavailable, **abort the entire run** before processing prospects and tell the user to either connect the missing tool (run `/leadace` after reconnecting if env_status was missing entirely) or remove that channel from Project Settings → `outboundChannels`, then re-run. Do **not** silently skip per-prospect: `get_outbound_targets` only knows `outboundChannels` server-side, so a skill-side filter is lossy — the backend keeps returning candidates the skill would skip, and form / SNS prospects never surface within the run's `limit`. Draft mode bypasses this entirely (server-side `pending_review`, no Gmail / browser call); surface any missing tool (or missing env_status) in the step 8 report.
 - **`targetCountries`** (subset of `US | CA | JP`): when non-empty, treat any prospect whose
   resolved `country` (prospect.country, then organization.country) falls outside the set as
   out-of-scope and skip without recording — this is a project-policy decision, not a
@@ -121,7 +121,7 @@ Each prospect in the targets list also carries:
   is within the last 14 days. Used by the prioritisation server-side; you
   may surface it in the report.
 
-If the tool returns a "Project not found" error, instruct the user to run `/setup` first and **abort**.
+If the tool returns a "Project not found" error, instruct the user to run `/leadace` first and **abort**.
 
 ### 2. Approach Each Prospect
 
@@ -168,7 +168,7 @@ stays clean:
 1. Treat `country ∈ {null, undefined, 'US', 'CA', 'JP'}` as eligible. `null`
    is warn-only at send time; we proceed but the operator should backfill.
 2. For any other country code, do NOT call the send tool. Instead call
-   `mcp__plugin_lead-ace_api__record_outreach` with:
+   `mcp__plugin_leadace_api__record_outreach` with:
    - `channel`: the first reachable channel for this prospect from the
      default ladder above (`email` if `email` is set, else `form` if
      `contactFormUrl` is set, else `sns_linkedin` / `sns_twitter`).
@@ -195,7 +195,7 @@ shake-up implying the buyer left, post-acquisition integration freeze),
 skip outreach entirely:
 
 1. Do NOT send.
-2. Call `mcp__plugin_lead-ace_api__record_outreach` with:
+2. Call `mcp__plugin_leadace_api__record_outreach` with:
    - `channel`: the channel you were about to use (or the first reachable
      channel if you hadn't picked one yet — `email` / `form` /
      `sns_linkedin` / `sns_twitter`).
@@ -215,11 +215,11 @@ skip the skip — they own the trade-off.
 
 ### 3. Email Sending
 
-Retrieve email guidelines via `mcp__plugin_lead-ace_api__get_master_document` with `slug: "tpl_email_guidelines"` and follow them. Get the signature block from the "Sender Information" section of SALES_STRATEGY.md (append it to the body). Sender display name and `From:` address are applied automatically by `send_email_and_record` from project settings — do not pass them as arguments.
+Retrieve email guidelines via `mcp__plugin_leadace_api__get_master_document` with `slug: "tpl_email_guidelines"` and follow them. Get the signature block from the "Sender Information" section of SALES_STRATEGY.md (append it to the body). Sender display name and `From:` address are applied automatically by `send_email_and_record` from project settings — do not pass them as arguments.
 
 **Subject line variation (round-robin).** Subject patterns are stored
 server-side in `subject_variants` and rotated by the server. Per send,
-call `mcp__plugin_lead-ace_api__pick_subject_variant` with the project
+call `mcp__plugin_leadace_api__pick_subject_variant` with the project
 id; the response is `{ variantId, subjectPattern, label }` and the
 server's cursor advances by one. Render the subject by substituting
 `{{org}}` / `{{name}}` / `{{signal}}` placeholders the pattern uses,
@@ -231,7 +231,7 @@ If `pick_subject_variant` returns `NOT_FOUND` ("No active subject
 variants"), the project has no patterns registered yet — generate a
 short one-off subject, send without `variantId`, and surface the gap in
 the run-end report so the operator can add patterns via
-`upsert_subject_variant` (or via `/strategy`'s onboarding step). Do not
+`upsert_subject_variant` (or via `/leadace`'s strategy onboarding step). Do not
 fabricate a SALES_STRATEGY.md "Subject Line Patterns" section; that
 content is no longer the authoritative source.
 
@@ -282,7 +282,7 @@ retrying.
 - **Precision mode**: Refer to each prospect's `overview` and `matchReason`, and write the entire body tailored to the recipient -- not just the opening. Reference specific numbers, achievements, and initiatives of the target company. Generic openers like "I visited your website" alone are insufficient
 - **Volume mode**: Use the SALES_STRATEGY.md email template as a base, adjusting the opening (why you're reaching out) and the problem statement in 2 places based on `overview` / `matchReason`. The solution through CTA can follow the template structure as-is
 
-Always call `mcp__plugin_lead-ace_api__send_email_and_record` regardless of mode:
+Always call `mcp__plugin_leadace_api__send_email_and_record` regardless of mode:
 - `projectId: "$0"`
 - `prospectId`: the prospect's id
 - `to`: array with the recipient address
@@ -361,7 +361,7 @@ Compose the message body per the form's fields and the email guidelines (adapted
 **Allocate the row + inquiry URL.** Before opening the browser or doing any form inspection, call:
 
 ```
-mcp__plugin_lead-ace_api__record_outreach_with_inquiry
+mcp__plugin_leadace_api__record_outreach_with_inquiry
   projectId: "$0"
   prospectId: <id>
   channel: "form"
@@ -387,7 +387,7 @@ If `formType` is null (not yet determined), inspect the page with `read_page` / 
 
 **Filling the form.** Once screening passes, fill the form fields using `finalBody` as the message text (the inquiry URL is already in `finalBody` — submit it verbatim, do not strip or re-embed it), then submit per `references/form-filling.md`.
 
-**After submission verification.** Always call `mcp__plugin_lead-ace_api__update_outreach_status`:
+**After submission verification.** Always call `mcp__plugin_leadace_api__update_outreach_status`:
 - On success → `status: "sent"`. The server flips the prospect to `contacted` and confirms quota consumption.
 - On failure (HTTP 4xx/5xx, no POST observed, no thank-you state, etc.) → `status: "failed"` plus a concise `errorMessage`. The in-flight quota reservation is refunded and the server stamps `next_outreach_after` to defer re-eligibility by `noResponseRecycleDays` (default 90 days). Do not retry the form.
 
@@ -400,7 +400,7 @@ Determine the channel from the prospect's `snsAccounts` field — use `sns_twitt
 **Allocate the row + inquiry URL.** Before opening the browser (in send mode) or anything else, call:
 
 ```
-mcp__plugin_lead-ace_api__record_outreach_with_inquiry
+mcp__plugin_leadace_api__record_outreach_with_inquiry
   projectId: "$0"
   prospectId: <id>
   channel: "sns_twitter" | "sns_linkedin"
@@ -433,7 +433,7 @@ The server returns `{ outreachLogId, status, finalBody, inquiryUrl }`. `finalBod
 
 ### 6. Handle Inactive Prospects
 
-For prospects where approach failed due to a **structural reason** making future approaches impossible, call `mcp__plugin_lead-ace_api__update_prospect_status` with `status: "inactive"`.
+For prospects where approach failed due to a **structural reason** making future approaches impossible, call `mcp__plugin_leadace_api__update_prospect_status` with `status: "inactive"`.
 
 **Cases where `inactive` should be set:**
 - Email address was invalid and bounced (permanent error)
@@ -450,7 +450,7 @@ For prospects where approach failed due to a **structural reason** making future
 After all prospects are processed, if successes fall short of the target count:
 
 1. Shortfall = target count - successes (in draft mode, count `pending_review` records as success — drafts are the intended outcome)
-2. Retrieve additional prospects: call `mcp__plugin_lead-ace_api__get_outbound_targets` with `limit: <shortfall>`
+2. Retrieve additional prospects: call `mcp__plugin_leadace_api__get_outbound_targets` with `limit: <shortfall>`
 3. Repeat steps 2-6 for retrieved prospects
 4. Retry **one round only**. Also end retry if total reachable is 0
 5. Include final target achievement in the report (e.g., "Target 5, achieved 3 (ended due to depleted list)")
@@ -461,7 +461,7 @@ Report the following:
 - Number of prospects approached
 - Attempts and successes per channel, success rate (Email: X successes/Y attempts (XX%), Form: X successes/Y attempts (XX%), SNS: X successes/Y attempts (XX%))
 - If `outboundMode` was `draft`, report total drafts created across all channels (Drafts: N) and remind the user to review and send them at https://app.leadace.ai/drafts
-- **Missing-tool warnings (from env_status)**: list any tool whose capability is not-connected / unsure (Gmail SaaS → blocks email auto-send; Claude in Chrome → blocks form / SNS auto-send) and recommend reconnecting + re-running `/setup`. Especially important in draft mode, where these tools were bypassed but will be needed when the user sends the drafts.
+- **Missing-tool warnings (from env_status)**: list any tool whose capability is not-connected / unsure (Gmail SaaS → blocks email auto-send; Claude in Chrome → blocks form / SNS auto-send) and recommend reconnecting + re-running `/leadace`. Especially important in draft mode, where these tools were bypassed but will be needed when the user sends the drafts.
 - Number of failures and reasons
 - Guide the user to run `/check-results` as the next step (or, if drafts were created, after the user sends the reviewed drafts)
 - Append a single low-key dashboard line at the end: `Dashboard: https://app.leadace.ai/outreach` — purely informational, do not push the user to open it

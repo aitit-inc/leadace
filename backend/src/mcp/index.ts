@@ -39,7 +39,7 @@ type Env = {
 
 // SERVER_VERSION is informational — the deployed backend's own version.
 // MIN_PLUGIN_VERSION is the gate: any plugin older than this MUST be told to
-// run `/plugin update lead-ace@lead-ace` because backend behavior assumes the
+// run `/plugin update leadace@leadace` because backend behavior assumes the
 // new plugin contract. Bump this **only when** introducing a backend change
 // that the old plugin cannot tolerate (removed tool, renamed required arg,
 // changed response shape). See .claude/rules/release.md.
@@ -483,7 +483,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
 
   server.tool(
     'get_tenant_settings',
-    'Get the workspace-level identity / compliance fields the user has configured. Returns { id, name, legalName, physicalAddress, contactEmail, defaultSenderCountry, privacyPolicyUrl }. legalName / physicalAddress / defaultSenderCountry are MANDATORY for outbound sends — when any of those is null, send_email_and_record / record_outreach_with_inquiry refuse with 412. /setup uses this to direct the user to the Workspace settings page when fields are missing.',
+    'Get the workspace-level identity / compliance fields the user has configured. Returns { id, name, legalName, physicalAddress, contactEmail, defaultSenderCountry, privacyPolicyUrl }. legalName / physicalAddress / defaultSenderCountry are MANDATORY for outbound sends — when any of those is null, send_email_and_record / record_outreach_with_inquiry refuse with 412. /leadace uses this to direct the user to the Workspace settings page when fields are missing.',
     {},
     async () => {
       const { ok, data } = await callApi('GET', '/tenant-settings', null, apiUrl, authHeader)
@@ -518,7 +518,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
 
   server.tool(
     'update_tenant_settings',
-    'Update workspace-level identity / compliance fields. All fields are optional — only the keys you pass are written. legalName / physicalAddress / defaultSenderCountry are the three mandatory-for-outbound fields; setting them clears the 412 send-time refusal. defaultSenderCountry is the sender-side ISO 3166-1 alpha-2 code recorded in the compliance footer; any valid alpha-2 is accepted. It is independent from the recipient-delivery allowlist (which is enforced separately on prospect / organization country). Used by /setup to interactively fill compliance during onboarding.',
+    'Update workspace-level identity / compliance fields. All fields are optional — only the keys you pass are written. legalName / physicalAddress / defaultSenderCountry are the three mandatory-for-outbound fields; setting them clears the 412 send-time refusal. defaultSenderCountry is the sender-side ISO 3166-1 alpha-2 code recorded in the compliance footer; any valid alpha-2 is accepted. It is independent from the recipient-delivery allowlist (which is enforced separately on prospect / organization country). Used by /leadace to interactively fill compliance during onboarding.',
     {
       name: z.string().min(1).max(120).optional().describe('Workspace display name (internal label).'),
       legalName: z.string().min(1).max(200).nullable().optional().describe('Registered business name shown in the email compliance footer (CAN-SPAM § 5(a)(5)).'),
@@ -567,7 +567,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
 
   server.tool(
     'list_subject_variants',
-    'List the project\'s subject-line variants (active + archived) so /strategy can detect whether seeding is needed and /evaluate can review existing rotation. Returns `{ variants: [{ variantId, subjectPattern, label, archivedAt, ... }] }` ordered by createdAt asc.',
+    'List the project\'s subject-line variants (active + archived) so /leadace can detect whether seeding is needed and /evaluate can review existing rotation. Returns `{ variants: [{ variantId, subjectPattern, label, archivedAt, ... }] }` ordered by createdAt asc.',
     {
       projectId: z.string().describe('Project name or ID'),
     },
@@ -596,7 +596,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
 
   server.tool(
     'upsert_subject_variant',
-    'Register or update a subject-line A/B variant on a project. variantId is a stable slug (e.g. "v1", "warm_intro", "signal_funded"); subjectPattern may include {{org}} / {{name}} / {{signal}} placeholders that the skill substitutes at send time. Setting archived=true retires the slug from rotation while keeping it analysable for historic outreach rows. Idempotent: re-calling with the same variantId updates the pattern / label / archived state. /strategy onboarding seeds the first 2-3 variants; /evaluate may suggest adding new ones based on response rates.',
+    'Register or update a subject-line A/B variant on a project. variantId is a stable slug (e.g. "v1", "warm_intro", "signal_funded"); subjectPattern may include {{org}} / {{name}} / {{signal}} placeholders that the skill substitutes at send time. Setting archived=true retires the slug from rotation while keeping it analysable for historic outreach rows. Idempotent: re-calling with the same variantId updates the pattern / label / archived state. /leadace onboarding seeds the first 2-3 variants; /evaluate may suggest adding new ones based on response rates.',
     {
       projectId: z.string().describe('Project name or ID'),
       variantId: z.string().regex(/^[a-zA-Z0-9_-]{1,32}$/).describe('Stable slug, max 32 chars [A-Za-z0-9_-]'),
