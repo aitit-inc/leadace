@@ -483,7 +483,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
 
   server.tool(
     'get_tenant_settings',
-    'Get the workspace-level identity / compliance fields the user has configured. Returns { id, name, legalName, physicalAddress, contactEmail, defaultSenderCountry, privacyPolicyUrl }. legalName / physicalAddress / defaultSenderCountry are MANDATORY for outbound sends — when any of those is null, send_email_and_record / record_outreach_with_inquiry refuse with 412. /leadace uses this to direct the user to the Workspace settings page when fields are missing.',
+    'Get the workspace-level identity / compliance fields the user has configured. Returns a readiness status line plus legalName, physicalAddress, defaultSenderCountry, and privacyPolicyUrl. legalName / physicalAddress / defaultSenderCountry are MANDATORY for outbound sends — when any of those is null, send_email_and_record / record_outreach_with_inquiry refuse with 412. /leadace uses this to direct the user to the Workspace settings page when fields are missing.',
     {},
     async () => {
       const { ok, data } = await callApi('GET', '/tenant-settings', null, apiUrl, authHeader)
@@ -497,7 +497,6 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
         physicalAddress: string | null
         defaultSenderCountry: string | null
         privacyPolicyUrl: string | null
-        contactEmail: string | null
       }
       const missing: string[] = []
       if (!r.legalName) missing.push('legalName')
@@ -510,7 +509,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
       return {
         content: [{
           type: 'text' as const,
-          text: `${status}\n\nlegalName: ${r.legalName ?? '(not set)'}\nphysicalAddress: ${r.physicalAddress ?? '(not set)'}\ndefaultSenderCountry: ${r.defaultSenderCountry ?? '(not set)'}\nprivacyPolicyUrl: ${r.privacyPolicyUrl ?? '(not set)'}\ncontactEmail: ${r.contactEmail ?? '(not set)'}`,
+          text: `${status}\n\nlegalName: ${r.legalName ?? '(not set)'}\nphysicalAddress: ${r.physicalAddress ?? '(not set)'}\ndefaultSenderCountry: ${r.defaultSenderCountry ?? '(not set)'}\nprivacyPolicyUrl: ${r.privacyPolicyUrl ?? '(not set)'}`,
         }],
       }
     },
@@ -523,9 +522,8 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
       name: z.string().min(1).max(120).optional().describe('Workspace display name (internal label).'),
       legalName: z.string().min(1).max(200).nullable().optional().describe('Registered business name shown in the email compliance footer (CAN-SPAM § 5(a)(5)).'),
       physicalAddress: z.string().min(5).max(500).nullable().optional().describe('Postal address shown in the email compliance footer (CAN-SPAM physical address requirement).'),
-      contactEmail: z.email().max(254).nullable().optional().describe('Inbound contact / complaint routing address. Optional.'),
       defaultSenderCountry: z.string().regex(/^[A-Z]{2}$/, 'must be ISO 3166-1 alpha-2 (e.g. US, CA, JP)').nullable().optional(),
-      privacyPolicyUrl: z.url().max(500).nullable().optional().describe('Public privacy policy URL. Optional but recommended.'),
+      privacyPolicyUrl: z.url().max(500).nullable().optional().describe('The sender\'s own privacy policy URL. Optional; appended to the footer as "Privacy: <url>" when set. Only legally meaningful as the sender\'s GDPR Art.14 notice to UK/EU individual recipients — not required for the current US/CA/JP send targets.'),
     },
     async (patch) => {
       const { ok, data } = await callApi('PUT', '/tenant-settings', patch, apiUrl, authHeader)

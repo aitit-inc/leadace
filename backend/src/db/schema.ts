@@ -273,7 +273,6 @@ export const tenants = pgTable('tenants', {
   // assertTenantComplianceReady before any actual outreach.
   legalName: text('legal_name'),
   physicalAddress: text('physical_address'),
-  contactEmail: text('contact_email'),
   // ISO 3166-1 alpha-2 (e.g. 'US'). The tenant's own country, used for
   // future jurisdiction-specific footer rendering and per-country audit. Not
   // the recipient's country (that lives on prospects / organizations).

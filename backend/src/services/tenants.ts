@@ -15,7 +15,6 @@ export const updateTenantSettingsSchema = z
     name: z.string().min(1).max(120).optional(),
     legalName: z.string().min(1).max(200).nullable().optional(),
     physicalAddress: z.string().min(5).max(500).nullable().optional(),
-    contactEmail: z.email().max(254).nullable().optional(),
     defaultSenderCountry: z
       .string()
       .regex(COUNTRY_CODE_REGEX, 'Country must be ISO 3166-1 alpha-2 (2 upper-case letters)')
@@ -31,7 +30,6 @@ export type TenantSettingsRow = {
   name: string
   legalName: string | null
   physicalAddress: string | null
-  contactEmail: string | null
   defaultSenderCountry: string | null
   privacyPolicyUrl: string | null
 }
@@ -41,7 +39,6 @@ const settingsCols = {
   name: tenants.name,
   legalName: tenants.legalName,
   physicalAddress: tenants.physicalAddress,
-  contactEmail: tenants.contactEmail,
   defaultSenderCountry: tenants.defaultSenderCountry,
   privacyPolicyUrl: tenants.privacyPolicyUrl,
 }
@@ -71,7 +68,6 @@ export async function updateTenantSettings(
     ...(patch.name !== undefined ? { name: patch.name } : {}),
     ...(patch.legalName !== undefined ? { legalName: patch.legalName } : {}),
     ...(patch.physicalAddress !== undefined ? { physicalAddress: patch.physicalAddress } : {}),
-    ...(patch.contactEmail !== undefined ? { contactEmail: patch.contactEmail } : {}),
     ...(patch.defaultSenderCountry !== undefined
       ? { defaultSenderCountry: patch.defaultSenderCountry?.toUpperCase() ?? null }
       : {}),
@@ -94,14 +90,14 @@ export async function updateTenantSettings(
 
 // Refuses the send when legal_name / physical_address / default_sender_country
 // are missing — CAN-SPAM physical address + sender identity, CASL §6 sender
-// identification. privacy_policy_url is recommended but not blocking;
-// contact_email is for inbound complaint / erasure routing.
+// identification. privacy_policy_url is optional and never blocking — it is
+// only meaningful as the sender's (controller's) GDPR Art.14 notice to UK/EU
+// individual recipients (no current send-target country requires it).
 export type TenantComplianceProjection = {
   legalName: string
   physicalAddress: string
   defaultSenderCountry: string
   privacyPolicyUrl: string | null
-  contactEmail: string | null
 }
 
 export async function assertTenantComplianceReady(
@@ -131,7 +127,6 @@ export async function assertTenantComplianceReady(
     physicalAddress: row.physicalAddress!,
     defaultSenderCountry: row.defaultSenderCountry!,
     privacyPolicyUrl: row.privacyPolicyUrl,
-    contactEmail: row.contactEmail,
   })
 }
 

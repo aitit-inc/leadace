@@ -204,6 +204,13 @@
       "when": 1780207384371,
       "tag": "0028_natural_smasher",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1780234335564,
+      "tag": "0029_black_spencer_smythe",
+      "breakpoints": true
     }
   ]
 }

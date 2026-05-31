@@ -40,15 +40,6 @@
     }
   }
 
-  function validateEmail(value: string | null): string | null {
-    if (!value) return null;
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
-      return 'Contact email is not a valid email address';
-    }
-    if (value.length > 254) return 'Contact email is too long';
-    return null;
-  }
-
   function validate(s: TenantSettings): boolean {
     const errors: Partial<Record<keyof TenantSettings, string>> = {};
     if (s.name && s.name.length > 120) errors.name = 'Workspace name is too long (120 chars max)';
@@ -61,8 +52,6 @@
     if (s.physicalAddress && s.physicalAddress.length < 5) {
       errors.physicalAddress = 'Address looks too short';
     }
-    const emailErr = validateEmail(s.contactEmail);
-    if (emailErr) errors.contactEmail = emailErr;
     if (s.defaultSenderCountry && !/^[A-Z]{2}$/.test(s.defaultSenderCountry)) {
       errors.defaultSenderCountry = 'Country must be a 2-letter ISO code (e.g. US, CA, JP)';
     }
@@ -84,7 +73,6 @@
       ...formData,
       legalName: emptyToNull(formData.legalName),
       physicalAddress: emptyToNull(formData.physicalAddress),
-      contactEmail: emptyToNull(formData.contactEmail),
       defaultSenderCountry: emptyToNull(formData.defaultSenderCountry?.toUpperCase() ?? null),
       privacyPolicyUrl: emptyToNull(formData.privacyPolicyUrl),
     };
@@ -230,28 +218,12 @@
       </section>
 
       <section class="space-y-1">
-        <label for="contactEmail" class="block text-sm font-medium text-text">Contact email</label>
-        <p class="text-xs text-text-muted">
-          Optional — surfaced in <a href="/compliance" class="underline">/compliance</a> as the route
-          for inbound complaints / data-subject requests.
-        </p>
-        <input
-          id="contactEmail"
-          type="email"
-          maxlength="254"
-          bind:value={formData.contactEmail}
-          placeholder="privacy@example.com"
-          class="block w-full rounded border border-border bg-page px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-text/40 focus:outline-none"
-        />
-        {#if validationErrors.contactEmail}
-          <p class="text-xs text-danger">{validationErrors.contactEmail}</p>
-        {/if}
-      </section>
-
-      <section class="space-y-1">
         <label for="privacyPolicyUrl" class="block text-sm font-medium text-text">Privacy policy URL</label>
         <p class="text-xs text-text-muted">
-          Optional. When set, appended as <code>Privacy: …</code> in every email footer.
+          Optional. When set, appended as <code>Privacy: …</code> in every email footer. This is
+          <strong>your own</strong> privacy notice as the sender — the current send targets (US / CA / JP)
+          don't require it; it only carries legal weight as your GDPR Art.14 notice when emailing
+          named individuals in the UK / EU. LeadAce's own privacy policy can't substitute for it.
         </p>
         <input
           id="privacyPolicyUrl"
