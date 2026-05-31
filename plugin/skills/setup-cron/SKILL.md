@@ -183,5 +183,5 @@ Print the exact command they should run, then stop. The skill does not auto-inst
 
 ## Notes
 
-- The skill never tries to bypass safety prompts in scheduled runs. `claude --print` runs the skill non-interactively and the LLM will refuse irreversible actions if it would normally prompt. The user's plan-tier rate limits and `/leadace` env_status still apply at run time.
+- The skill never tries to bypass safety prompts in scheduled runs. `claude --print` runs the skill non-interactively and the LLM will refuse irreversible actions if it would normally prompt. The user's plan-tier rate limits still apply at run time.
 - If the user is on a self-host backend, the schedule does not need any change — `claude` reads `LEADACE_MCP_URL` from the user's existing Claude Code config the same way as the interactive session.

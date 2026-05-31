@@ -46,8 +46,9 @@ echo "==> Running /leadace $URL (output=$LEAD_ACE_OUT)" >&2
 
 Headless smoke test — no interactive Q&A is available. Run the onboarding chain end-to-end making sensible default choices: when env_check would normally ask, treat optional integrations as unsure/skip; when strategy_drafting needs sender details, use placeholder values; when overlap with existing config would normally ask for a merge decision, prefer create-new. Do not send any outreach. Goal: verify the full chain reaches the 4B-4 strategy summary without stopping to ask the user.
 
-After the completion report, on a final line by itself, print exactly:
-PROJECT_ID=<the id of the project you just created>" \
+After the completion report, on a final line by itself, print exactly one of:
+PROJECT_ID=<the id of the project you just created>
+PROJECT_ID=NONE   (only if you could NOT create a project — e.g. a hard blocker such as the LeadAce MCP server needing authorization). Never fabricate an id." \
   > "$LEAD_ACE_OUT"
 
 if ! jq -e 'select(.is_error == false and .subtype == "success")' "$LEAD_ACE_OUT" > /dev/null; then
@@ -61,6 +62,17 @@ PROJECT_ID="$(jq -r '.result' "$LEAD_ACE_OUT" | grep -oE 'PROJECT_ID=[A-Za-z0-9_
 if [[ -z "$PROJECT_ID" ]]; then
   echo "ERROR: could not parse PROJECT_ID from /leadace result. See $LEAD_ACE_OUT" >&2
   exit 2
+fi
+
+# A real project id is a nanoid. The chain prints PROJECT_ID=NONE (or a NONE_*
+# variant) when it could NOT create one — most often because the LeadAce MCP
+# server needs (re-)authorization after a `wrangler dev` restart wiped the
+# in-memory KV. Without this guard the NONE sentinel parses as a "valid" id,
+# cleanup runs against a bogus target, and the run reports a false PASS.
+if [[ "$PROJECT_ID" == NONE* ]]; then
+  echo "ERROR: /leadace did not create a project (PROJECT_ID=$PROJECT_ID)." >&2
+  echo "       Most likely the LeadAce MCP server needs authorization — re-run ./e2e/setup.sh, then retry." >&2
+  exit 1
 fi
 
 echo "==> /leadace OK, created project: $PROJECT_ID" >&2

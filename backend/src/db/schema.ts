@@ -66,8 +66,20 @@ export type Channel = (typeof channelEnum.enumValues)[number]
 // updateOutreachStatus('sent') on submit success or ('failed') on submit
 // failure. A 'pre_send' row that never resolves is treated as in-flight by
 // listReachable (NOT EXISTS) and counts against quota until cleared.
-export const outreachStatusEnum = pgEnum('outreach_status', ['sent', 'failed', 'pending_review', 'pre_send'])
+// 'skipped' records an outbound run's deliberate decision NOT to contact a
+// prospect (no send attempted) so the audit trail and the recycle-window
+// stamp survive without faking a 'failed' row. Quota counts 'sent' only and
+// cycle.n counts 'sent' only, so a skip consumes neither; it surfaces in the
+// recent-outreach feed and the org-detail history, carrying skip_reason.
+export const outreachStatusEnum = pgEnum('outreach_status', ['sent', 'failed', 'pending_review', 'pre_send', 'skipped'])
 export type OutreachStatus = (typeof outreachStatusEnum.enumValues)[number]
+
+// Structured reason a 'skipped' row was written. 'bad_timing' /
+// 'no_fresh_material' are LLM judgments the server cannot make on its own
+// (the deterministic country gate filters candidates server-side, so it is
+// not a skip reason); 'other' is the escape hatch. NULL on every non-skip row.
+export const skipReasonEnum = pgEnum('skip_reason', ['bad_timing', 'no_fresh_material', 'other'])
+export type SkipReason = (typeof skipReasonEnum.enumValues)[number]
 
 // Statuses that represent allocated-but-not-yet-confirmed outreach: the row
 // exists in outreach_logs but the channel has neither delivered nor failed.
@@ -540,6 +552,7 @@ export const outreachLogs = pgTable('outreach_logs', {
   status: outreachStatusEnum('status').notNull().default('sent'),
   sentAt: timestamp('sent_at', { withTimezone: true }).defaultNow().notNull(),
   errorMessage: text('error_message'),
+  skipReason: skipReasonEnum('skip_reason'),
   // Subject-line A/B variant id (free-form short slug; no FK so old/removed
   // variants stay analysable). Populated by /outbound when the project has
   // multiple variants registered. NULL when the email used a one-off subject.

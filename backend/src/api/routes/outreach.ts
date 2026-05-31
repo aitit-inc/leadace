@@ -5,6 +5,8 @@ import {
   recentOutreachQuerySchema,
   recordOutreach,
   recordOutreachSchema,
+  skipProspect,
+  skipProspectSchema,
   recordOutreachWithInquiry,
   recordOutreachWithInquirySchema,
   updateOutreachStatus,
@@ -38,6 +40,12 @@ outreachRouter.post('/outreach', zValidator('json', recordOutreachSchema), async
     c.get('edition'),
     c.req.valid('json'),
   )
+  if (!result.ok) return respondWithError(c, result)
+  return c.json(result.value, 201)
+})
+
+outreachRouter.post('/outreach/skip', zValidator('json', skipProspectSchema), async (c) => {
+  const result = await skipProspect(c.get('db'), c.get('tenantId'), c.req.valid('json'))
   if (!result.ok) return respondWithError(c, result)
   return c.json(result.value, 201)
 })

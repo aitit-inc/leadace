@@ -18,13 +18,14 @@ allowed-tools:
   - mcp__claude-in-chrome__read_network_requests
   - mcp__plugin_leadace_api__get_outbound_targets
   - mcp__plugin_leadace_api__send_email_and_record
-  - mcp__plugin_leadace_api__record_outreach
+  - mcp__plugin_leadace_api__skip_prospect
   - mcp__plugin_leadace_api__record_outreach_with_inquiry
   - mcp__plugin_leadace_api__update_outreach_status
   - mcp__plugin_leadace_api__update_prospect_status
   - mcp__plugin_leadace_api__get_document
   - mcp__plugin_leadace_api__get_master_document
   - mcp__plugin_leadace_api__get_project_settings
+  - mcp__plugin_leadace_api__get_gmail_status
   - mcp__plugin_leadace_api__pick_subject_variant
   - mcp__plugin_leadace_api__get_compliance_status
 ---
@@ -58,10 +59,9 @@ Load documents via MCP:
 
 Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "business"`.
 Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "sales_strategy"`.
-Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "env_status"`. Source of truth for connected tools (Gmail SaaS / Claude in Chrome), saved by `/leadace`. Hold the result as `ENV` (or `null` if the document doesn't exist). The send-mode capability gate below decides whether to abort — a missing doc is fatal in send mode (run `/leadace` first) but tolerated in draft mode (no tools are invoked; surface the gap in the step 8 report).
 
 Pay particular attention to these sections in the sales_strategy document:
-- **Outreach mode**: `precision` (deep personalization) or `volume` (template-based semi-personalization). Default to `precision` if not set
+- **Outreach mode**: `precision` (deep personalization) or `volume` (template-based semi-personalization). The document always carries a concrete value — read it; do not assume a default
 - **Sales channels**: tactical preferences only (channel ordering, sub-channel preferences, tone). Channel enablement (on/off) is owned by `outboundChannels` in project settings — read below, not from this section.
 - **Messaging**: Subject line patterns, body structure, and A/B test instructions if any -- follow them
 - **Sender information**: Signature block (organization phone, name, title, etc.). Sender display name and email come from project settings, **not** from this document — the backend send path uses them automatically
@@ -93,22 +93,23 @@ From the settings response, surface for body composition:
   (legal_name / physical_address / privacy_url) is also tenant-level and
   is appended by the backend at send time — never inline these in the body.
 
-And surface for prospect gating (apply before picking a channel in step 2):
+And surface for channel selection (apply when picking a channel in step 2):
 - **`outboundChannels`** (subset of `email | form | sns_twitter | sns_linkedin`): the channels
-  the project is allowed to use. Treat any channel outside this set as **disabled** — when
-  ranking against the default ladder (or SALES_STRATEGY's "Sales Channels"), simply skip
-  disabled channels. If a prospect's only reachable channel is disabled, skip the prospect
-  entirely (no `record_outreach` audit row needed — it is a project-policy decision, not a
-  per-prospect compliance refusal). If `outboundChannels` is empty, **abort the entire
-  /outbound run** and tell the user that outbound is paused for this project.
-- **env_status capability** — pre-flight gate, **send mode only**. In send mode, every channel in `outboundChannels` requires its tool to be connected: `email` requires Gmail SaaS; `form` / `sns_twitter` / `sns_linkedin` require Claude in Chrome. Treat a capability whose recorded value is `unsure`, absent from `ENV`, or where `ENV` itself is `null` (env_status doc missing) as unavailable (conservative). If **any** channel in `outboundChannels` is unavailable, **abort the entire run** before processing prospects and tell the user to either connect the missing tool (run `/leadace` after reconnecting if env_status was missing entirely) or remove that channel from Project Settings → `outboundChannels`, then re-run. Do **not** silently skip per-prospect: `get_outbound_targets` only knows `outboundChannels` server-side, so a skill-side filter is lossy — the backend keeps returning candidates the skill would skip, and form / SNS prospects never surface within the run's `limit`. Draft mode bypasses this entirely (server-side `pending_review`, no Gmail / browser call); surface any missing tool (or missing env_status) in the step 8 report.
-- **`targetCountries`** (subset of `US | CA | JP`): when non-empty, treat any prospect whose
-  resolved `country` (prospect.country, then organization.country) falls outside the set as
-  out-of-scope and skip without recording — this is a project-policy decision, not a
-  compliance refusal. The send-time compliance gate still enforces the unchanged US / CA / JP
-  rule for any country = null prospects that slip through. When `targetCountries` is empty
-  (default), retain the existing US / CA / JP behavior described in the "Country pre-flight"
-  block below.
+  the project sends through. `get_outbound_targets` has already filtered the candidate list
+  server-side — by enabled channel **and** by supported recipient country (unknown-country
+  prospects pass through as warn-only) — so every prospect you see is reachable on an enabled
+  channel and in-scope. Use `outboundChannels` only to break ties:
+  when a prospect is reachable on more than one channel, rank only among the enabled ones (a
+  disabled channel is never picked even if the channel policy ranks it higher). If the targets
+  response came back empty with a "paused" message, outbound is off for this project — report
+  it and stop.
+
+**Gmail live pre-flight (send mode + email enabled).** If outbound mode is `send` and `email`
+is in `outboundChannels`, call `mcp__plugin_leadace_api__get_gmail_status`. If it reports not
+connected, warn the user that email sends will be rejected at send time (HTTP 412) and they
+should connect Gmail at https://app.leadace.ai — they can still proceed with form / SNS
+prospects. This is a courtesy check (status is live, never cached); the 412 at send time is the
+authoritative guard, and draft mode needs no Gmail connection.
 
 Each prospect in the targets list also carries:
 - `cycle: { n, kind, lastOutreach, lastResponse }` — the prospect's
@@ -125,68 +126,26 @@ If the tool returns a "Project not found" error, instruct the user to run `/lead
 
 ### 2. Approach Each Prospect
 
-Pick **one** channel per prospect. SALES_STRATEGY's "Sales Channels"
-section, when present, defines **ordering preferences only** — apply
-its order **among the channels enabled** by step 1's `outboundChannels`
-gate. (In send mode, step 1's env_status pre-flight has already aborted
-the run if any enabled channel's tool is missing; if execution reaches
-here, every channel in `outboundChannels` is usable.) Skip any channel
-its order references that is disabled; never treat that section as
-overriding the gate. The ladder below is the **default** used when
-SALES_STRATEGY omits "Sales Channels" or doesn't constrain ordering.
+Pick **one** channel per prospect — never chain channels.
 
-**Default channel ladder (apply when SALES_STRATEGY does not override):**
+Retrieve the channel ranking policy via `mcp__plugin_leadace_api__get_master_document`
+with `slug: "tpl_channel_policy"` and follow it. It is the single source of truth for how
+to rank the channels a prospect is reachable on (personal email → LinkedIn → department
+email → generic email → form → X DM, with named-vs-generic address classification). Apply
+it together with two project inputs:
 
-1. **Personal email** — `email` is set AND looks like a named address
-   (`first.last@`, `flast@`, `f.last@`, etc., not a department mailbox).
-2. **LinkedIn DM** — `snsAccounts.linkedin` is set. Skip this rung if the
-   prospect is not a 1st-degree connection (the browser flow surfaces this).
-3. **Department email** — `email` is set and starts with a department
-   prefix like `sales@`, `bd@`, `partnerships@`, `recruiting@`.
-4. **Generic email** — `email` is set and starts with `info@`, `contact@`,
-   `support@`, `hello@`, `pr@`. Demoted but **never excluded** — for many
-   small companies it is the only reachable address. The mid-funnel reply
-   rate is lower; reflect that in priority, not in eligibility.
-5. **Contact form** — `contactFormUrl` is set.
-6. **X / Twitter DM** — `snsAccounts.x` is set. Lowest rung because reach
-   depends on the recipient's DM-settings.
+- **`outboundChannels`** (from step 1): rank only among the channels the project has
+  enabled. The candidate list is already server-filtered to enabled channels, but a
+  multi-channel prospect may still expose a disabled channel — never pick it.
+- **SALES_STRATEGY's "Sales Channels"** section, when present: it overrides the **ordering**
+  (only the ordering) among the enabled channels. When absent, use the policy order as-is.
 
-If a step is the only one that produces a valid channel for the prospect,
-use it. Channels disabled by `outboundChannels` are already filtered in
-step 1's gating block — do not re-derive enablement from SALES_STRATEGY
-here. (In send mode, step 1 also verified each enabled channel's tool is
-connected; the run aborted upfront if any was missing, so by this point
-every enabled channel is usable.) One channel per prospect — do not chain
-channels.
-
-**Country pre-flight.** Each prospect carries `country` (and the
-organization carries one as fallback). LeadAce currently only allows sends
-to recipients in `US`, `CA`, and `JP` — anywhere else is blocked at send
-time with HTTP 422. Skip non-allowed prospects up front so the report
-stays clean:
-
-1. Treat `country ∈ {null, undefined, 'US', 'CA', 'JP'}` as eligible. `null`
-   is warn-only at send time; we proceed but the operator should backfill.
-2. For any other country code, do NOT call the send tool. Instead call
-   `mcp__plugin_leadace_api__record_outreach` with:
-   - `channel`: the first reachable channel for this prospect from the
-     default ladder above (`email` if `email` is set, else `form` if
-     `contactFormUrl` is set, else `sns_linkedin` / `sns_twitter`).
-     The row is audit-only; channel just records *which* path would
-     have been tried.
-   - `body`: a one-line audit string, e.g. `"skipped: country not
-     supported (<code>)"`. Body is required by the schema but never
-     reaches the recipient on a `failed` row.
-   - `status: "failed"`
-   - `errorMessage: "skipped: country not supported (<code>) — currently
-     sends to US/CA/JP only"`
-
-   The server stamps `next_outreach_after` so the prospect drops out of
-   `get_outbound_targets` for the recycle window; quota is not consumed.
+Country eligibility is no longer a skill-side concern — `get_outbound_targets` filters to
+supported recipient countries server-side (step 1).
 
 **Attempt limit per prospect:** Limit sending attempts to **a maximum of 2** per prospect (main channel + 1 fallback only when the main channel fails for a transient reason). If both fail for any reason, immediately skip and move to the next prospect. Do not waste context and tool calls lingering on a single prospect.
 
-**SNS DM caution:** SNS DMs have a lower reach rate (depends on recipient's DM settings). Enablement is handled by step 1's `outboundChannels` gate (plus the send-mode env_status gate); do not re-check SALES_STRATEGY here.
+**SNS DM caution:** SNS DMs have a lower reach rate (depends on recipient's DM settings). Channel enablement is handled by step 1's `outboundChannels`; do not re-check SALES_STRATEGY here.
 
 **Bad-timing skip (optional, on by default).** If the prospect's `overview`
 contains a `## Timing` section that explicitly says now is a bad moment
@@ -195,19 +154,16 @@ shake-up implying the buyer left, post-acquisition integration freeze),
 skip outreach entirely:
 
 1. Do NOT send.
-2. Call `mcp__plugin_leadace_api__record_outreach` with:
-   - `channel`: the channel you were about to use (or the first reachable
-     channel if you hadn't picked one yet — `email` / `form` /
+2. Call `mcp__plugin_leadace_api__skip_prospect` with:
+   - `projectId: "$0"`, `prospectId`: the prospect's id.
+   - `channel`: the channel you were about to use (`email` / `form` /
      `sns_linkedin` / `sns_twitter`).
-   - `body`: a one-line audit string, e.g. `"skipped: bad timing —
-     <one-line reason>"`. Body is required by the schema but never
-     reaches the recipient on a `failed` row.
-   - `status: "failed"`
-   - `errorMessage: "skipped: bad timing — <one-line reason>"`
+   - `reason: "bad_timing"`
+   - `note`: the one-line reason, e.g. `"layoffs announced last week"`.
 
-   The server stamps the prospect's `next_outreach_after` to
-   `now + noResponseRecycleDays` (default 90 days), so they drop out of
-   `get_outbound_targets` until that window elapses. No quota is consumed.
+   The server records a `skipped` audit row and defers the prospect's
+   re-eligibility by the project's no-response recycle window, so they drop
+   out of `get_outbound_targets` until it elapses. No quota is consumed.
 3. Continue to the next prospect.
 
 If the user passed an explicit override ("send anyway", "ignore timing"),
@@ -297,7 +253,7 @@ The server reads the project's `outboundMode` and decides what happens:
 
 Track the response `mode` per call for the step 8 report (sent vs. drafted counts).
 
-On a 502 `Send failed`, the outreach is still logged with `status: "failed"` and the prospect's `next_outreach_after` is stamped to defer re-eligibility by `noResponseRecycleDays` (default 90 days) — do not retry `record_outreach` manually. On a 412 `Gmail not connected` / `Gmail token revoked`, abort all email sending for this run and surface the message; the user must reconnect Gmail in the web app's Settings.
+On a 502 `Send failed`, the outreach is still logged with `status: "failed"` and the prospect's re-eligibility is deferred by the project's no-response recycle window — do not retry manually. On a 412 `Gmail not connected` / `Gmail token revoked`, abort all email sending for this run and surface the message; the user must reconnect Gmail in the web app's Settings.
 
 **Notes:**
 - The body must be the complete content including the signature
@@ -312,19 +268,16 @@ When `cycle.kind === 'no_response'`:
   ("circling back on my note from <approx month>"), then **lead with
   what's new** — a fresh signal from `## Recent Signals`, a new product
   release, a different angle in `matchReason`. If you genuinely have no
-  new material to add, **skip the prospect**: log via `record_outreach`
-  with:
+  new material to add, **skip the prospect**: call
+  `mcp__plugin_leadace_api__skip_prospect` with:
+  - `projectId: "$0"`, `prospectId`: the prospect's id.
   - `channel`: the channel you were about to use (`email` / `form` /
     `sns_linkedin` / `sns_twitter`).
-  - `body`: a one-line audit string, e.g. `"skipped: no fresh material
-    for re-approach (cycle n=<n>)"`. Body is required by the schema
-    but never reaches the recipient on a `failed` row.
-  - `status: "failed"`
-  - `errorMessage: "skipped: no fresh material for re-approach (cycle
-    n=<n>)"`
+  - `reason: "no_fresh_material"`
+  - `note`: e.g. `"no fresh signal since cycle n=<n>"`.
 
-  The server stamps `next_outreach_after` so the prospect drops out of
-  future runs until the recycle window elapses. Quietly re-spamming the
+  The server records a `skipped` row and defers re-eligibility until the
+  recycle window elapses. Quietly re-spamming the
   same pitch hurts the long-term reply rate.
 - **Subject must differ from `cycle.lastOutreach.subject`.** Pick a
   different SALES_STRATEGY pattern. Never use a generic "Re:" or
@@ -389,7 +342,7 @@ If `formType` is null (not yet determined), inspect the page with `read_page` / 
 
 **After submission verification.** Always call `mcp__plugin_leadace_api__update_outreach_status`:
 - On success → `status: "sent"`. The server flips the prospect to `contacted` and confirms quota consumption.
-- On failure (HTTP 4xx/5xx, no POST observed, no thank-you state, etc.) → `status: "failed"` plus a concise `errorMessage`. The in-flight quota reservation is refunded and the server stamps `next_outreach_after` to defer re-eligibility by `noResponseRecycleDays` (default 90 days). Do not retry the form.
+- On failure (HTTP 4xx/5xx, no POST observed, no thank-you state, etc.) → `status: "failed"` plus a concise `errorMessage`. The in-flight quota reservation is refunded and the server defers re-eligibility by the project's no-response recycle window. Do not retry the form.
 
 ### 5. SNS DM
 
@@ -461,7 +414,7 @@ Report the following:
 - Number of prospects approached
 - Attempts and successes per channel, success rate (Email: X successes/Y attempts (XX%), Form: X successes/Y attempts (XX%), SNS: X successes/Y attempts (XX%))
 - If `outboundMode` was `draft`, report total drafts created across all channels (Drafts: N) and remind the user to review and send them at https://app.leadace.ai/drafts
-- **Missing-tool warnings (from env_status)**: list any tool whose capability is not-connected / unsure (Gmail SaaS → blocks email auto-send; Claude in Chrome → blocks form / SNS auto-send) and recommend reconnecting + re-running `/leadace`. Especially important in draft mode, where these tools were bypassed but will be needed when the user sends the drafts.
+- **Missing-tool warnings**: if any send failed because a tool was not connected (Gmail not connected → email; Claude in Chrome unavailable → form / SNS), list it and recommend connecting the tool before the next run. Especially relevant in draft mode, where these tools weren't exercised but will be needed when the user sends the drafts.
 - Number of failures and reasons
 - Guide the user to run `/check-results` as the next step (or, if drafts were created, after the user sends the reviewed drafts)
 - Append a single low-key dashboard line at the end: `Dashboard: https://app.leadace.ai/outreach` — purely informational, do not push the user to open it

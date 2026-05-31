@@ -201,7 +201,7 @@ export async function recordResponse(
 
   if (reapproachMonths !== null) {
     // GREATEST so a longer pre-existing window (earlier rejection / no-response
-    // recycle) is never shortened. Same rule as deferProspectAfterFailure.
+    // recycle) is never shortened. Same rule as deferProspectReeligibility.
     const nextOutreachAfter = addMonthsUtc(receivedAt, reapproachMonths)
     const nextIso = nextOutreachAfter.toISOString()
     await db

@@ -33,12 +33,7 @@ Examples:
 
 ## Outreach Mode
 
-Set one of the following. Choose based on the project's goals and target.
-
-- **precision** — High-value, targeted approach. Deep personalization referencing specific news, job postings, funding rounds, and initiatives for each prospect. No expense spared per contact; maximize response rate. Best for high-value targets
-- **volume** — Efficiency-focused. Semi-personalized based on company name, industry, and business overview. Use the email template in SALES_STRATEGY.md as a base, adjusting the opening and problem framing per prospect. Best for broad market testing and awareness building
-
-Default: `precision`
+(Write exactly one concrete value here — `precision` or `volume` — chosen per the generation guidelines below. Do not leave it ambiguous or write "default".)
 
 ## Sales Channels
 (Channel ordering, tone, sub-channel preferences. Optional.)
@@ -109,16 +104,17 @@ The two modes are mutually exclusive per project — the inquiry-settings page e
 - Country/region-specific directories: (if applicable)
 ```
 
-(Tool / environment status lives in the separate `env_status` document — saved when `/leadace` runs env_check, read directly by `/leadace` strategy drafting and downstream skills. **Do not duplicate it here.** Channel tool capability is also surfaced in env_status; the outbound allowlist is Project Settings → `outboundChannels`.)
+(Environment / tool status is live-detected at run time, never stored in a project document. The outbound channel allowlist is Project Settings → `outboundChannels`.)
 
 **Generation guidelines:**
 - Keep the elevator pitch specific and concise. Avoid jargon; make it easy to understand
 - Make targets as specific as possible (not "small businesses" but "SaaS companies with 50-200 employees in the US"; not "retailers" but "DTC e-commerce brands with under 50 employees")
 - Structure messaging to lead with recipient benefits
 - List at least 10 search keywords
+- **Outreach Mode**: write a single concrete value. `precision` = deep per-prospect personalization (specific news, job postings, funding rounds, initiatives), best for high-value targets. `volume` = semi-personalized from company / industry / overview using the email template, best for broad market testing. When the user hasn't indicated a preference, choose `precision` and write it — never leave the section ambiguous or defer to a runtime default.
 - **Sales Channels section rules:**
   - Channel on/off (`email` / `form` / `sns_twitter` / `sns_linkedin`) is owned by Project Settings (`outboundChannels`) and read by `/outbound` and `/build-list`. **Never restate enablement / disablement here.**
   - This section may carry tactical preferences Project Settings can't express: channel ordering ("SNS DM before email for consumer-facing prospects"), tone, sub-channel preferences ("prefer named-personal emails over generic"). `/outbound` reads the order from here when present.
-  - **Do not** write sub-channel exclusions like "info@-style addresses: not contacted". The plugin's default policy collects every reachable email and demotes generic addresses at the outbound channel-ladder stage. A *preference* ("prefer named over generic") is fine; an *exclusion* breaks the default collection behavior.
+  - **Do not** write sub-channel exclusions like "info@-style addresses: not contacted". The channel policy (master document `tpl_channel_policy`, applied by `/outbound`) collects every reachable email and demotes generic addresses rather than excluding them. A *preference* ("prefer named over generic") is fine; an *exclusion* breaks that collection behavior.
 - **SNS Messages section rules:**
   - Which SNS platforms are enabled (`sns_twitter` / `sns_linkedin`) is owned by Project Settings `outboundChannels`. **Do not restate enablement here** (no "SNS used: X / LinkedIn / Both" line). The section is for DM message style / tone only.

@@ -150,13 +150,20 @@ rm -rf e2e/.claude-state
 - Commit `accounts.local.json` (the `*.local.json` ignore covers it, but be explicit).
 - Commit `e2e/.claude-state/` (covered by `e2e/.gitignore`).
 
-## Phase 2 scope (not yet implemented)
+## Coverage status
 
-The following are out of scope today:
+Curl-only regressions (no Claude session, no Anthropic budget) — run all via
+`./e2e/regression-all.sh`, or each individually:
 
-- **build-list regression** — direct-mint JWT + curl tests for `check_prospect_dedup` + Phase 1.5 + normalize-domain.
-- **daily-cycle full run** — chain check-results → evaluate → outbound + build-list with real Gmail send (recipient redirected to a test mailbox).
-- **outbound + record_outreach** — register one prospect → outbound send-and-record → quota path validation.
+- ✅ **`regression-build-list-dedup.sh`** — `check_prospect_dedup` + Phase 1.5 + normalize-domain.
+- ✅ **`regression-outbound.sh`** — `send-and-record`: compliance gate, draft mode, country guardrail, real-Gmail send (redirected to `E2E_RECIPIENT_OVERRIDE`).
+- ✅ **`regression-skip-reachable.sh`** — `skip_prospect` ('skipped' audit row, all reasons) + `listReachable` candidate-stage country filter (US/CA/JP/NULL admitted, GB excluded).
+
+Onboarding chain is covered by `./e2e/smoke.sh` (drives the Claude CLI; needs a live MCP grant).
+
+Still Phase 2 (not yet implemented):
+
+- **daily-cycle full run** — chain check-results → evaluate → outbound + build-list end-to-end.
 - **Reaction detection automation** — either plant replies in a test mailbox so `/check-results` can pick them up, or substitute the inquiry-landing webhook path.
 
 ## Related resources

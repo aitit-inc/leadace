@@ -40,6 +40,7 @@ import {
   type TenantId,
 } from '../domain/ids'
 import { isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG } from '../domain/url'
+import { ALLOWED_SEND_COUNTRIES } from '../domain/country'
 
 // See get_outbound_targets / B §4.2-F.
 const SIGNAL_FRESH_DAYS = 14
@@ -286,6 +287,22 @@ export async function listReachable(
       )
     : undefined
 
+  // Hard send-target allowlist (US/CA/JP), always on — the deterministic
+  // jurisdiction guardrail mirrors isAllowedSendCountry at the candidate
+  // stage so the skill never pre-filters by country or fabricates a skip row
+  // for an unsupported jurisdiction. NULL passes (warn-and-allow; the send
+  // path's 422 is the final gate). Independent of the project's optional
+  // targetCountries preference above.
+  const hardCountryFilter: SQL | undefined = or(
+    isNull(sql`COALESCE(${prospects.country}, ${organizations.country})`),
+    inArray(
+      // UPPER mirrors isAllowedSendCountry's normalization so the candidate
+      // filter and the send-time guard agree regardless of stored casing.
+      sql<string>`UPPER(COALESCE(${prospects.country}, ${organizations.country}))`,
+      [...ALLOWED_SEND_COUNTRIES],
+    ),
+  )
+
   // Excludes prospects with in-flight outreach ('pending_review' or
   // unresolved 'pre_send' within PRE_SEND_TTL_MINUTES). After TTL, pre_send
   // rows are treated as abandoned so the prospect becomes re-pickable —
@@ -314,6 +331,7 @@ export async function listReachable(
     ),
     channelFilter,
     countryFilter,
+    hardCountryFilter,
     notExists(
       db
         .select({ one: sql`1` })

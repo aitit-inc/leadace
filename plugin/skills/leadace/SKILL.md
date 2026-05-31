@@ -31,7 +31,7 @@ The single entry point for LeadAce. Behaviors:
 
 1. **Overview mode** (no argument): version + project list + skill catalog + suggested next step.
 2. **Onboarding chain** (URL argument or first-time user): run env check + strategy drafting end-to-end so the user can go from "just installed the plugin" to "ready for `/daily-cycle`" in one command.
-3. **Setup / environment** ("set up", "Gmail", "MCP", "reconnect"): verify connectivity, pick or create a project, refresh the `env_status` document — run inline (no separate skill).
+3. **Setup / environment** ("set up", "Gmail", "MCP", "reconnect"): verify connectivity and pick or create a project — run inline (no separate skill). Environment status is live-detected each run, never stored.
 4. **Strategy authoring** ("strategy", "targeting", "messaging"): author or refine `BUSINESS.md` + `SALES_STRATEGY.md` for a project — run inline (no separate skill).
 5. **Free-form mode** (other text): classify intent, answer directly or route to a specific skill.
 
@@ -116,7 +116,7 @@ Then stop.
 Answer the user's question using the context already gathered (`PROJECTS`, `GMAIL`). If the question requires data not in context, call the relevant MCP tool for the most likely project (or ask which project if ambiguous):
 
 - "結果は?" / "evaluation" / "改善案" / past evaluation history → `get_evaluation_history`
-- Project documents (business / sales_strategy / env_status / etc.) → `get_document` / `list_documents`
+- Project documents (business / sales_strategy / etc.) → `get_document` / `list_documents`
 - Project / tenant settings → `get_project_settings` / `get_tenant_settings`
 
 Keep the answer to a few lines. Do not invoke other skills.
@@ -141,15 +141,15 @@ One polite line: "That's outside what LeadAce does. I can help with sales-automa
 
 This runs the former `/setup` flow inline. Use for first-time environment setup and for re-checking after the user reconnects Gmail / Chrome / local tools.
 
-`Read` `${CLAUDE_PLUGIN_ROOT}/references/onboarding/env_check.md` and execute its full procedure (Steps 1-5) with interactive framing. Pass:
+`Read` `${CLAUDE_PLUGIN_ROOT}/references/onboarding/env_check.md` and execute its full procedure (Steps 1-4) with interactive framing. Pass:
 - `$0` = the project name if the user named one, else empty
 - No `$URL`
 
 When it finishes, print a short, scannable report:
 - Project in use (`PROJECT_NAME`)
-- The capability table from the saved `env_status` doc
+- The live capability summary returned by env_check (Gmail SaaS / Gmail MCP / Chrome / local fetch)
 - Any missing capabilities and what each blocks (most prominent fix-it line first — usually Gmail SaaS)
-- A one-line note that recipient delivery is **currently limited to US / CA / JP**
+- A one-line note that recipient delivery is currently limited to the supported countries shown during the compliance step
 - Next step: "Ask `/leadace` to draft your sales strategy (or run `/daily-cycle <project>` if your strategy is already set)."
 
 #### 3f. run_strategy — Sales & Marketing Strategy (inline)
@@ -160,7 +160,7 @@ This runs the former `/strategy` flow inline: author or refine the project's `BU
    - 0 projects → "No project yet — run `/leadace <your-homepage-URL>` to set up end-to-end first." Stop.
    - exactly 1 → use it.
    - multiple → `AskUserQuestion` which project.
-2. **Ensure `env_status` exists**: call `get_document` with `slug: "env_status"`. If missing, run the **run_setup** procedure (3e / env_check.md Steps 1-5) for this project first, then continue.
+2. **Environment context**: status is live-detected, not stored. Pass the Gmail status from Step 1 (`GMAIL`) as the initial `ENV_SUMMARY`; strategy_drafting's interactive channel step (4-8) confirms channel availability with the user, so a full env re-check isn't required here.
 3. `Read` `${CLAUDE_PLUGIN_ROOT}/references/onboarding/strategy_drafting.md` and execute its full procedure (Steps 1-8) using **Mode A (Interactive Q&A)**. Pass `$0` = the resolved project name, no `$URL`. Mode A auto-detects initial vs update sub-mode (Step 3) and offers a URL fast-path (Step 4-0).
 4. Report per strategy_drafting Step 8: initial → overview of the 2 generated docs + `inquiry_chat_brief` status, guide to `/build-list` or `/daily-cycle`; update → summary of updated / added sections.
 
@@ -192,7 +192,7 @@ If N: stop, and tell the user they can re-run `/leadace <url>` anytime, or ask `
 
 #### 4.2 Run env_check
 
-`Read` `${CLAUDE_PLUGIN_ROOT}/references/onboarding/env_check.md` and execute its full procedure (Steps 1-5). Pass:
+`Read` `${CLAUDE_PLUGIN_ROOT}/references/onboarding/env_check.md` and execute its full procedure (Steps 1-4). Pass:
 - `$0` = empty (the chain derives the project name from the URL in env_check Step 3-2)
 - `$URL` = `URL` (the homepage URL the user provided)
 
@@ -213,9 +213,9 @@ Mode B fetches the URL with the local fetch tool, infers business / target / fea
 Print:
 
 1. **Header**: `Setup complete - <PROJECT_NAME>`
-2. **What was created**: project, `business` doc, `sales_strategy` doc, env_status doc, sender info in project settings, initial `inquiry_chat_brief`.
+2. **What was created**: project, `business` doc, `sales_strategy` doc, sender info + outbound channels in project settings, initial `inquiry_chat_brief`.
 3. **Capability summary** from env_check (4 lines).
-4. **Recipient delivery scope**: a one-line note that recipient delivery is **currently limited to US / CA / JP** (so the operator's targeting matches the send-time guardrail).
+4. **Recipient delivery scope**: a one-line note that recipient delivery is currently limited to the supported countries shown during the compliance step (so the operator's targeting matches the send-time guardrail).
 5. **Defaults you can change later**: outbound mode is `draft` so nothing sends without your review; the AI inquiry chat is live on the recipient landing page (the inquiry landing defaults to enabled — toggle it off in the Web UI if you don't want recipient links to surface) — edit settings via the Web UI (Inquiry page, sidebar) or ask `/leadace` to refine the strategy / messaging.
 6. **Next steps**:
    - `/daily-cycle <project>` — runs initial prospect collection (`/build-list` is auto-triggered when the list is empty), drafts outreach, and shows you the queue.

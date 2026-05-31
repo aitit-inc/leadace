@@ -14,6 +14,7 @@ allowed-tools:
   - mcp__plugin_leadace_api__send_email
   - mcp__plugin_leadace_api__send_email_and_record
   - mcp__plugin_leadace_api__record_outreach
+  - mcp__plugin_leadace_api__skip_prospect
   - mcp__plugin_leadace_api__record_response
   - mcp__plugin_leadace_api__update_prospect_status
   - mcp__plugin_leadace_api__get_eval_data
@@ -146,10 +147,9 @@ You are an outbound sales agent. Please reach out to each company on the prospec
 1. First retrieve strategy documents via MCP:
    - Call mcp__plugin_leadace_api__get_document with projectId "$0" and slug "business"
    - Call mcp__plugin_leadace_api__get_document with projectId "$0" and slug "sales_strategy"
-   - (env_status is loaded later by outbound/SKILL.md step 1 — do not fetch it here)
    Understand:
-   - Outreach mode (precision / volume). Default to precision if not set
-   - SALES_STRATEGY "Sales Channels" section: tactical preferences only (ordering, tone, sub-channel preferences). Channel enablement is owned by `outboundChannels` in project settings (gated in outbound/SKILL.md step 1; in send mode, outbound also pre-flights env_status and aborts if any enabled channel's tool is missing).
+   - Outreach mode (precision / volume) — the document always carries a concrete value; read it, do not assume a default
+   - SALES_STRATEGY "Sales Channels" section: tactical preferences only (ordering, tone, sub-channel preferences). Channel enablement is owned by `outboundChannels` in project settings (applied in outbound/SKILL.md step 1).
    - Subject line pattern variations (if A/B test instructions exist, follow them)
    - Email body structure and template (especially important in volume mode)
    - Sender information: signature block only (sender display name + email live in project settings and are applied automatically by `send_email` / `send_email_and_record`)
@@ -173,8 +173,7 @@ You are an outbound sales agent. Please reach out to each company on the prospec
 - Batch number: N
 - Count: 10 (final batch may be fewer)
 - Retrieve prospects via mcp__plugin_leadace_api__get_outbound_targets with projectId "$0" and limit 10
-- For each prospect, follow `${CLAUDE_PLUGIN_ROOT}/skills/outbound/SKILL.md`'s channel-pick + send sequence. The skill picks one MCP per channel (`send_email_and_record` for email, `record_outreach_with_inquiry` for form/SNS) and uses `record_outreach` with status='failed' only for skips and post-hoc failures — do **not** call `record_outreach` after each successful send (that path bypasses the compliance footer and would double-log).
-- Country pre-flight: skip non-US/CA/JP targets up front via `record_outreach` status='failed' with `errorMessage:"skipped: country not supported"`; do not attempt the send tool for those.
+- For each prospect, follow `${CLAUDE_PLUGIN_ROOT}/skills/outbound/SKILL.md`'s channel-pick + send sequence. The skill picks one MCP per channel (`send_email_and_record` for email, `record_outreach_with_inquiry` for form/SNS), uses `skip_prospect` for deliberate skips (bad timing / no fresh material), and `update_outreach_status` to resolve form/SNS rows — do **not** add an extra log call after a successful send (that path bypasses the compliance footer and would double-log). Recipient-country eligibility is filtered server-side by `get_outbound_targets`; there is no skill-side country pre-flight.
 - Return to main with **only: success count, failure count, inactive count, main failure reasons (if any), list of variantIds used**
   Example: "Success 8, Failure 1 (form submission error), Unreachable 1. Variants: v1 x 4, v2 x 3, v3 x 3"
 ```

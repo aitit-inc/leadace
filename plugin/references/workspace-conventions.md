@@ -11,6 +11,16 @@ All project data is stored on the server and accessed via MCP tools (`mcp__plugi
 - **Master documents** (templates, guidelines, frameworks): `get_master_document` MCP tool with slugs like `tpl_business`, `tpl_email_guidelines`, etc. These are shared across all users and updated centrally
 - **Local files**: Only plugin SKILL.md files, local-operation references (claude-in-chrome-guide, form-filling), and scripts in `${CLAUDE_PLUGIN_ROOT}/`
 
+## Where knowledge lives (skills write procedure, not values)
+
+LeadAce separates three kinds of knowledge. A skill describes the *procedure* and *where to look* — it never restates a default value, a server-enforced constant, or a tool-connectivity snapshot.
+
+- **T1 — Guardrails / invariants** (supported send countries, quota, recycle windows, compliance footer, pre-send TTL): enforced **server-side** and deterministically. Skills react to the server's response (filtered candidate list, error code) — they do **not** re-encode the constant as skill logic. Example: `get_outbound_targets` already drops unsupported-country and disabled-channel prospects; the skill does not pre-filter by country.
+- **T2 — Project settings** (channel on/off, target countries, outbound/outreach mode, sender info, inquiry settings): structured `project_settings` (always returns a concrete value, defaulted server-side) plus the `sales_strategy` doc for tactical preferences. Skills **read** these unconditionally — there is always a concrete value, so no `if not set then <default>` branch belongs in a skill. Stable cross-project policy (e.g. the channel ranking) lives in a master document (`tpl_channel_policy`), fetched at runtime, never copied into a skill or a generated project doc.
+- **T3 — Runtime environment** (Gmail SaaS / Gmail MCP / Chrome / local fetch connectivity): **live-detected at the moment it's needed, never persisted.** No env-status document. Query `get_gmail_status` when sending; re-detect the local toolchain per run; treat Gmail MCP / Chrome as advisory and fail-safe per-prospect at the point of use.
+
+The rule of thumb: if you're about to write a default value, a fallback (`if X is missing, assume Y`), or a hardcoded constant the server already owns, stop — surface the value from its single source instead.
+
 ## Command Execution Rules
 
 - **Do not use cd.** Run all bash commands from the workspace root.

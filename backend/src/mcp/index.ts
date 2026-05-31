@@ -688,6 +688,34 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
   )
 
   server.tool(
+    'skip_prospect',
+    'Record a deliberate decision NOT to contact a prospect on this outbound run — no send is attempted. Use only for the LLM judgment calls the server cannot make: reason="bad_timing" (the prospect overview flags now as a bad moment — layoffs, wind-down, post-acquisition freeze) or reason="no_fresh_material" (a re-approach with nothing new to say). Writes a "skipped" audit row and stamps next_outreach_after = sentAt + noResponseRecycleDays so the prospect drops out of get_outbound_targets for that window (longer existing windows preserved via GREATEST). No quota is consumed and the prospect is NOT marked contacted. Do NOT use this for unsupported-country prospects — get_outbound_targets already filters those server-side.',
+    {
+      projectId: z.string().describe('Project name or ID'),
+      prospectId: z.number().int(),
+      channel: z.enum(['email', 'form', 'sns_twitter', 'sns_linkedin'])
+        .describe('The channel the run was about to use. Recorded on the audit row only; no send happens.'),
+      reason: z.enum(['bad_timing', 'no_fresh_material', 'other'])
+        .describe('Structured skip reason. "bad_timing" / "no_fresh_material" are the common cases; "other" is an escape hatch.'),
+      note: z.string().min(1).max(2000).optional()
+        .describe('Optional one-line context shown in the recent-outreach feed.'),
+    },
+    async (input) => {
+      const resolved = await resolveProjectId(input.projectId, apiUrl, authHeader)
+      if (!resolved.id) {
+        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
+      }
+      const { ok, data } = await callApi('POST', '/outreach/skip', { ...input, projectId: resolved.id }, apiUrl, authHeader)
+      if (!ok) {
+        const err = data as { error: string }
+        return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
+      }
+      const result = data as { id: number }
+      return { content: [{ type: 'text' as const, text: `Prospect skipped (${input.reason}; audit id: ${result.id}).` }] }
+    },
+  )
+
+  server.tool(
     'get_gmail_status',
     'Check whether the current user has connected their Google account (gmail.send scope) via the LeadAce web app. Returns the connected Gmail address or an indication that Gmail is not connected.',
     {},

@@ -80,6 +80,8 @@
         return 'bg-text-muted';
       case 'failed':
         return 'bg-danger';
+      case 'skipped':
+        return 'bg-warning';
     }
   }
 

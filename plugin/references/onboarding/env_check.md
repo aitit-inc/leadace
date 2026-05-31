@@ -1,6 +1,8 @@
 # Environment Check & Project Selection
 
-Shared procedure for verifying the LeadAce environment, picking or creating a project, and persisting environment status. Used by `/leadace` (the setup / environment intent and the URL-driven onboarding chain).
+Shared procedure for verifying the LeadAce environment and picking or creating a project. Used by `/leadace` (the setup / environment intent and the URL-driven onboarding chain).
+
+Environment status is **live-detected, never persisted.** Gmail SaaS connectivity is queried at the moment it's needed (`get_gmail_status`); the local fetch toolchain is re-detected per run; Gmail MCP / Claude in Chrome are advisory (we inform the user they're needed, but never store a stale snapshot or gate on it). This procedure detects the current state for the onboarding completion report only — it does not save an `env_status` document.
 
 The caller (the SKILL.md that `Read`s this file) provides:
 - The user-facing framing and tone (interactive Q&A vs minimal-prompt chain)
@@ -70,15 +72,15 @@ Parse the user's reply locally:
 
 After parsing, call `mcp__plugin_leadace_api__update_tenant_settings` once with all the newly collected values in a single payload (pass `defaultSenderCountry` as the two-letter code, not the label). Trust the tool's "Compliance ready." reply or re-fetch to confirm. Refresh `TENANT_SETTINGS` in memory after the update.
 
-If the user declines to provide a value (says "skip" / "later"), record that in the Step 5 completion report as a prominent warning with the URL `https://app.leadace.ai/workspace-settings` for later self-service. Do **not** abort — build-list / strategy / evaluate work fine with compliance unset; only `/outbound` and `/daily-cycle` will be blocked.
+If the user declines to provide a value (says "skip" / "later"), record that in the Step 4 hand-off summary as a prominent warning with the URL `https://app.leadace.ai/workspace-settings` for later self-service. Do **not** abort — build-list / strategy / evaluate work fine with compliance unset; only `/outbound` and `/daily-cycle` will be blocked.
 
-Mention the current US/CA/JP recipient scope once in the completion report so the operator's targeting matches the send-time guardrail.
+Mention the recipient-delivery scope once in the completion report (the supported countries are listed in the prompt above) so the operator's targeting matches the send-time guardrail.
 
 ### 2-3. Claude in Chrome extension — ask
 
 Use `AskUserQuestion`: "Are you using the Claude in Chrome extension? (Required for contact-form submission and SNS DMs in `/outbound`, plus SNS reply checking in `/check-results`.)" — options: `yes` / `no` / `unsure`. Record as `CHROME_EXT`.
 
-**Caller may relax these prompts**: when invoked from `/leadace`'s onboarding chain, the caller can default to `unsure` for 2-2 and 2-3 without asking, to keep the chain flowing. The user can ask `/leadace` to re-check the environment later for explicit confirmation. State this assumption in the completion report (Step 5) when applied.
+**Caller may relax these prompts**: when invoked from `/leadace`'s onboarding chain, the caller can default to `unsure` for 2-2 and 2-3 without asking, to keep the chain flowing. The user can ask `/leadace` to re-check the environment later for explicit confirmation. State this assumption in the hand-off summary (Step 4) when applied.
 
 ### 2-4. Local fetch toolchain (auto)
 
@@ -112,43 +114,11 @@ The script uses standard-library only (no `pip install`), so a working `python3`
   - **If `$URL` is not provided**: ask the user for a project name in plain text (do not use `AskUserQuestion` for free-text input).
   - Then call `setup_project` with `name: <answer>`. Set `PROJECT_NAME`.
 
-## Step 4. Save Environment Status
+## Step 4. Hand-off to caller
 
-Build a markdown document and save via `mcp__plugin_leadace_api__save_document` with `projectId: PROJECT_NAME` and `slug: "env_status"`. This is the source of truth that `/leadace` and other skills read — do not skip.
-
-Document template (substitute the fields from `GMAIL_STATUS`, `GMAIL_MCP`, `CHROME_EXT`, and the current local time):
-
-```markdown
-# Environment & Tool Status
-
-Captured: <YYYY-MM-DD HH:MM> via /leadace.
-
-| Capability | Status | Detail |
-|---|---|---|
-| LeadAce MCP | connected | (verified by list_projects) |
-| Gmail send (SaaS) | connected / not connected | <email when connected> |
-| Gmail MCP (replies) | yes / no / unsure | from user |
-| Claude in Chrome (forms + SNS) | yes / no / unsure | from user |
-| Local fetch toolchain (python3 + claude) | available / unavailable | <python / claude versions, or which is missing> |
-
-## Channel tool capability implied by the above
-
-(Tool capability only — which channels are *technically* usable given the connected tools. The outbound allowlist — which channels the project actually sends through — is controlled separately in Project Settings → `outboundChannels`.)
-
-- Email: <available / unavailable — Gmail SaaS connection required>
-- Form submission: <available / unavailable — Claude in Chrome required>
-- SNS DM: <available / unavailable — Claude in Chrome required>
-- Reply checking: <automated via Gmail MCP / manual fallback>
-- Local URL fetch (build-list / strategy research): <local fetch tool available / web-fetch fallback only — some sites with WAF will return 403 and be skipped>
-```
-
-Use `Bash` `date '+%Y-%m-%d %H:%M %Z'` for the timestamp.
-
-## Step 5. Hand-off to caller
-
-Return control to the caller with:
+Return control to the caller with (held in memory — not saved as a document):
 - `PROJECT_NAME`
-- `GMAIL_STATUS`, `GMAIL_MCP`, `CHROME_EXT`, `LOCAL_FETCH` (for downstream use)
+- `GMAIL_STATUS`, `GMAIL_MCP`, `CHROME_EXT`, `LOCAL_FETCH` (for the completion report)
 - A capability summary the caller can include in its completion report:
   - Project in use (`PROJECT_NAME`)
   - Email send: <available / unavailable>

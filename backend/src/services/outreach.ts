@@ -7,6 +7,7 @@ import {
   prospects,
   responses,
   channelEnum,
+  skipReasonEnum,
   inquirySessions,
   inquiryOutcomeEnum,
   meetingRequestSourceEnum,
@@ -40,6 +41,7 @@ import { loadProjectReapproachSettings, loadProjectSendSettings } from './projec
 import { assertTenantComplianceReady } from './tenants'
 import { addDays } from '../domain/prospect-status'
 import { isAllowedSendCountry } from '../domain/country'
+import { buildSkipAuditBody } from '../domain/outreach-skip'
 import type { Edition } from '../domain/edition'
 
 export const recentOutreachQuerySchema = z.object({
@@ -85,6 +87,21 @@ export const recordOutreachSchema = z.discriminatedUnion('status', [
   }).strict(),
 ])
 export type RecordOutreachInput = z.infer<typeof recordOutreachSchema>
+
+// A deliberate skip is distinct from a 'sent' or 'failed' outreach: no send is
+// attempted. `reason` is the structured skip_reason; `channel` is the channel
+// the run was about to use (kept for the audit feed, not a send target);
+// `note` is optional free-text context. `.strict()` rejects stray keys.
+export const skipProspectSchema = z
+  .object({
+    projectId: projectIdSchema,
+    prospectId: prospectIdSchema,
+    channel: z.enum(channelEnum.enumValues),
+    reason: z.enum(skipReasonEnum.enumValues),
+    note: z.string().min(1).max(2000).optional(),
+  })
+  .strict()
+export type SkipProspectInput = z.infer<typeof skipProspectSchema>
 
 export const sendAndRecordSchema = z
   .object({
@@ -252,7 +269,49 @@ export async function recordOutreach(
   if (input.status === 'sent' && log) {
     await markProspectContacted(db, input.projectId, input.prospectId, sentAt)
   } else if (input.status === 'failed' && log) {
-    await deferProspectAfterFailure(db, input.projectId, input.prospectId, sentAt)
+    await deferProspectReeligibility(db, input.projectId, input.prospectId, sentAt)
+  }
+
+  return ok({ id: log?.id as number | undefined })
+}
+
+// Record a deliberate skip: an outbound run decided NOT to contact this
+// prospect (no send attempted) for an LLM-judged reason the server cannot
+// determine itself — bad timing or no fresh re-approach material. Writes a
+// 'skipped' audit row and defers re-eligibility by noResponseRecycleDays so
+// the prospect drops out of get_outbound_targets for that window. No quota is
+// consumed (only 'sent' counts) and the prospect is NOT flipped to
+// 'contacted'. Replaces the old pattern of fabricating a 'failed' row.
+export async function skipProspect(
+  db: Db,
+  tenantId: TenantId,
+  input: SkipProspectInput,
+): Promise<ServiceResult<{ id: number | undefined }>> {
+  const guard = await requireProject(db, input.projectId, tenantId)
+  if (!guard.ok) return guard
+
+  const sentAt = new Date()
+
+  const [log] = await db
+    .insert(outreachLogs)
+    .values({
+      tenantId,
+      projectId: input.projectId,
+      prospectId: input.prospectId,
+      channel: input.channel,
+      // body carries the human-readable skip line (incl. the note); skipReason
+      // is the structured reason. errorMessage stays NULL — a deliberate skip
+      // is not an error, and the recent-outreach feed renders errorMessage as
+      // a red "Error:" line.
+      body: buildSkipAuditBody(input.reason, input.note),
+      status: 'skipped',
+      skipReason: input.reason,
+      sentAt,
+    })
+    .returning({ id: outreachLogs.id })
+
+  if (log) {
+    await deferProspectReeligibility(db, input.projectId, input.prospectId, sentAt)
   }
 
   return ok({ id: log?.id as number | undefined })
@@ -390,7 +449,7 @@ export async function updateOutreachStatus(
   if (input.status === 'sent') {
     await markProspectContacted(db, updated.projectId as ProjectId, updated.prospectId, updated.sentAt)
   } else if (input.status === 'failed') {
-    await deferProspectAfterFailure(db, updated.projectId as ProjectId, updated.prospectId, updated.sentAt)
+    await deferProspectReeligibility(db, updated.projectId as ProjectId, updated.prospectId, updated.sentAt)
   }
 
   return ok({ id: updated.id })
@@ -528,7 +587,7 @@ export async function sendAndRecord(
       .update(outreachLogs)
       .set({ status: 'failed', errorMessage: result.detail })
       .where(eq(outreachLogs.id, log.id))
-    await deferProspectAfterFailure(db, input.projectId, input.prospectId, sentAt)
+    await deferProspectReeligibility(db, input.projectId, input.prospectId, sentAt)
     return err('BAD_GATEWAY', result.error, result.detail, { outreachId: log.id })
   }
 
@@ -584,7 +643,8 @@ export async function listRecentOutreach(
 
   const visibleStatusFilter = and(
     eq(outreachLogs.projectId, projectId),
-    // Only confirmed sent/failed events belong in the recent activity feed.
+    // Confirmed events belong in the recent activity feed (sent / failed /
+    // skipped); in-flight allocations (pending_review / pre_send) do not.
     // Spread because notInArray's typing rejects readonly inputs.
     notInArray(outreachLogs.status, [...IN_FLIGHT_OUTREACH_STATUSES]),
   )
@@ -914,7 +974,7 @@ export async function sendDraft(
     .where(eq(outreachLogs.id, draft.id))
 
   if (!result.ok) {
-    await deferProspectAfterFailure(db, draft.projectId as ProjectId, draft.prospectId, sentAt)
+    await deferProspectReeligibility(db, draft.projectId as ProjectId, draft.prospectId, sentAt)
     return err('BAD_GATEWAY', result.error, result.detail, { outreachId: draft.id })
   }
 
@@ -1117,13 +1177,13 @@ async function markProspectContacted(
     .where(eq(prospects.id, prospectId))
 }
 
-// Defer after 'failed' so listReachable drops the prospect for
-// noResponseRecycleDays. Covers both intentional skips (skill logs
-// `record_outreach('failed', errorMessage: 'skipped: …')`) and real send
-// errors. Without the stamp, the prospect would be picked up by the next
-// /outbound run and the LLM would burn context re-evaluating the same dead end.
-// GREATEST preserves a longer explicit window (e.g. rejection '12_months').
-async function deferProspectAfterFailure(
+// Defer a prospect's re-eligibility by noResponseRecycleDays so listReachable
+// drops it for that window. Called after a real send failure AND after a
+// deliberate skip_prospect (bad timing / no fresh material). Without the stamp
+// the next /outbound run re-picks the prospect and the LLM burns context
+// re-evaluating the same dead end. GREATEST preserves a longer explicit window
+// (e.g. rejection '12_months').
+async function deferProspectReeligibility(
   db: Db,
   projectId: ProjectId,
   prospectId: number,

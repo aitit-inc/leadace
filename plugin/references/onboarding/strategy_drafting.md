@@ -5,7 +5,7 @@ Shared procedure for collecting business information and generating / updating t
 ## Table of Contents
 - [Modes](#modes)
 - [Step 1. Verify Project](#step-1-verify-project)
-- [Step 2. Load Environment Status](#step-2-load-environment-status)
+- [Step 2. Environment Context (from caller)](#step-2-environment-context-from-caller)
 - [Step 3. Check Existing Documents & Determine Sub-mode](#step-3-check-existing-documents--determine-sub-mode)
 - [Step 4. Information Collection (mode-specific)](#step-4-information-collection-mode-specific)
 - [Step 5. Web Research (supplementary)](#step-5-web-research-supplementary)
@@ -35,15 +35,13 @@ Call `mcp__plugin_leadace_api__list_projects`. If `$0` does not exist:
 - Mode A → when run via `/leadace` the project is already resolved; if `$0` does not exist, abort and tell the user to run `/leadace <url>` to set it up first.
 - Mode B → the onboarding chain just created the project in env_check Step 3; this branch is unreachable. If reached, abort with internal error and ask the user to re-run.
 
-## Step 2. Load Environment Status
+## Step 2. Environment Context (from caller)
 
-Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "env_status"`.
+Environment status is **live-detected, never persisted** — there is no `env_status` document to load. The caller (`/leadace`) ran env_check first and holds the in-memory capability summary; treat it as `ENV_SUMMARY` here. **Do not** call `get_document` for env status, and **do not re-ask the user** about Gmail / Chrome.
 
-If missing:
-- Mode A → `/leadace` runs env_check before this step, so env_status should exist; if it is still missing, abort with: "No environment status recorded for this project. Run `/leadace` to set up the environment first."
-- Mode B → unreachable (env_check just saved it). If reached, abort.
-
-Hold the parsed env status as `ENV`. Use it to inform the **Step 8 hand-off summary** — surface any missing-tool warning so the operator sees it once (and knows to ask `/leadace` to re-check the environment after reconnecting the tool). This procedure does not collect `outboundChannels`; that field is set in the web UI. The `env_status` document itself is the authoritative source read directly by `/outbound`'s step 1 pre-flight (`/daily-cycle` does not fetch it; its sub-agent delegates to `/outbound`, which loads it there); **do not** copy it into SALES_STRATEGY.md. **Do not re-ask the user** about Gmail / Chrome here.
+Use `ENV_SUMMARY` for two things only:
+1. The **Step 8 hand-off summary** — surface any missing-tool warning once (per the tool-impact catalog below).
+2. A sensible **default for the outbound-channels collection** (Step 4 / 4B-3): if Claude in Chrome was not confirmed connected, default channels to email-only.
 
 **Tool impact catalog** (use as the content of the Step 8 warning):
 - No Gmail SaaS → blocks email auto-send (send mode); drafting still works.
@@ -216,17 +214,28 @@ Phone stays in SALES_STRATEGY.md "Sender Information" (forms reference it). The 
 
 If the email is a Send-As alias **not yet verified** in Gmail (Settings → Accounts → "Send mail as"), Gmail will reject the send. Tell the user to verify before `/outbound`. Primary Gmail addresses don't need verification.
 
-#### 4-8. Outbound Mode
+#### 4-8. Outbound Mode, Channels & Target Countries
+
+**Outbound mode:**
 - `send` (default): emails sent immediately during `/outbound`.
 - `draft`: `/outbound` stores as LeadAce draft; user reviews at https://app.leadace.ai/drafts. Recommended while calibrating or for high-stakes outreach.
 
-Save:
+**Channels** — which channels `/outbound` may use (`email` / `form` / `sns_twitter` / `sns_linkedin`). Propose a default from `ENV_SUMMARY` (Step 2): if Claude in Chrome is connected, all reachable channels; if not, **email only** (form / SNS need Chrome). Confirm with the user and let them narrow it.
+
+**Target countries (optional)** — by default `/outbound` reaches every supported recipient country (the server enforces the current allowlist). Only collect this if the user wants to **restrict** delivery to a subset — take ISO 3166-1 alpha-2 codes (the backend validates them against the allowlist and rejects unsupported ones).
+
+Save the values the user actually chose:
 ```
 mcp__plugin_leadace_api__update_project_settings
   projectId: "$0"
   outboundMode: "send" | "draft"
+  outboundChannels: ["email", ...]   # a NON-EMPTY subset; see guard below. Omit to keep the all-channels default
+  targetCountries: ["US", ...]       # omit entirely unless the user is restricting delivery
 ```
-"Up to you" → default `send`.
+Guards:
+- `outboundMode`: "Up to you" → default `send`.
+- `outboundChannels`: **never save `[]`** — an empty array pauses outbound entirely. If the user wants all channels, omit the field (the project already defaults to all). Only write a concrete non-empty subset when the user (or the email-only `ENV_SUMMARY` default) narrows it.
+- `targetCountries`: omit the field unless the user explicitly restricts delivery. Never send `[]` or `null` — that is the default and writing it changes nothing meaningful while risking clobbering an existing restriction.
 
 #### 4-9. Scheduling and Response Definition
 - Scheduling link(s) (Calendly / Cal.com / HubSpot Meetings — URL; "None" if N/A; multiple OK).
@@ -312,9 +321,11 @@ Ask for these in 2-3 questions max. Each item below declares its own input style
 2. **Notification email** (4-10 equivalent): "Email address for daily-cycle completion notifications, or 'none'."
 3. **Inquiry landing optional polish** (4-11 equivalent): run **only Step 4-11's collection / parsing parts** — issue the combined free-text prompt (free-text, not `AskUserQuestion`), pre-filling whatever §4B-2 inferred (`inquiryVideoUrl` / `inquiryPdfUrl` / inferred CTA `inquiryCtaType` + `inquiryCtaUrl`) **plus** any `INQUIRY_PREFILLS` carried over from 4-0; show those defaults in the prompt and let the user accept them by replying "ok", override, or skip per-field. Don't double-ask for items already supplied; only items the user has neither pre-filled nor that 4B-2 could infer should appear as fresh blanks. **Do NOT issue 4-11's `update_project_settings` call here, and do NOT print 4-11's "All set" closing line** — §4B-4 saves the inquiry-extra fields together with sender / brief / one-liner so that nothing is persisted before the user confirms the §4B-4 summary.
 
-Do not ask for prospect discovery sources, outbound mode, or response definition in Mode B — apply defaults:
+Do not ask for prospect discovery sources, outbound mode, channels, target countries, or response definition in Mode B — apply defaults:
 - Prospect discovery sources: pick 2-3 from `tpl_targeting_guide` matching the inferred target market.
 - Outbound mode: default `draft` (recommended for new users to review the first batch before sending).
+- Outbound channels: if `ENV_SUMMARY` did not confirm Claude in Chrome, default to `outboundChannels: ["email"]` (email-only — form / SNS need Chrome); otherwise omit the field so the project defaults to all channels. **Never write an empty array.**
+- Target countries: omit (unrestricted by default — the server enforces the supported-country allowlist).
 - Response definition: defaults (1)(2)(3) from 4-9.
 
 #### 4B-4. Show inference summary and confirm
@@ -328,6 +339,7 @@ mcp__plugin_leadace_api__update_project_settings
   senderCompanyName: <company>   # omit the field if user said "none"
   senderEmailAlias: <email>
   outboundMode: "draft"
+  outboundChannels: ["email"]     # include ONLY when ENV_SUMMARY lacked Chrome (email-only); omit otherwise. Never []
   inquiryChatBrief: <brief>
   inquiryOneLiner: <one-liner>
   inquiryVideoUrl: <url>          # include when accepted/overridden in §4B-3; omit only when explicitly skipped
@@ -378,7 +390,7 @@ Also retrieve via `get_master_document` to improve quality:
 - **`tpl_targeting_guide`**: Target persona refinement, competitive analysis, USP articulation, channel selection criteria, KPI reverse calculation, search keyword design patterns.
 - **`tpl_email_templates`**: Email template selection by target industry. Auto-select the best pattern, customize to business-specific info (USP, track record, pricing). Do **not** use templates as-is.
 
-**Environment information**: The `env_status` doc (loaded in Step 2) is the single source of truth for tool / environment status and is read directly by downstream skills. **Do not** duplicate it into SALES_STRATEGY.md — the template no longer has an "Environment & Tool Status" section. If env shows a tool missing, surface it once in the Step 8 completion report (so the operator knows to ask `/leadace` to re-check the environment); do not write it into SALES_STRATEGY. Channel on/off is managed in Project Settings (`outboundChannels`); do not encode channel exclusions into "Sales Channels".
+**Environment information**: Tool / environment status is live-detected at run time — there is no env_status document, and the template has no "Environment & Tool Status" section. **Do not** write tool / environment status into SALES_STRATEGY.md; if `ENV_SUMMARY` shows a tool missing, surface it once in the Step 8 completion report. Channel on/off is managed in Project Settings (`outboundChannels`, collected in 4-8 / 4B-3); do not encode channel exclusions into "Sales Channels".
 
 Save:
 ```
@@ -462,7 +474,7 @@ Tell the user once: "Seeded N subject variants — `/outbound` will rotate throu
 
 Return:
 - A 5-10 line summary the caller can include in its completion report (sub-mode, sections completed, sections deferred, any sender-info migrations, the chosen outbound mode, whether `inquiry_chat_brief` was generated / skipped).
-- **Env-status warnings**: if Step 2 `ENV` shows any tool missing, list each unavailable tool with its impact taken from the Step 2 "Tool impact catalog". Classify per the catalog: Gmail SaaS and Claude in Chrome are channel-affecting (block outbound auto-send for their respective channels); Gmail MCP is reply-check-affecting (only degrades `/check-results` to manual, not an outbound block); local fetch toolchain is a research-quality fallback, not a channel block. Recommend asking `/leadace` to re-check the environment after the user reconnects. Surface this here — SALES_STRATEGY.md no longer carries env status, so this is the single user-facing surfacing point.
+- **Environment warnings**: if `ENV_SUMMARY` (Step 2) shows any tool missing, list each unavailable tool with its impact from the Step 2 "Tool impact catalog". Classify per the catalog: Gmail SaaS and Claude in Chrome are channel-affecting (block outbound auto-send for their respective channels); Gmail MCP is reply-check-affecting (only degrades `/check-results` to manual, not an outbound block); local fetch toolchain is a research-quality fallback, not a channel block. Recommend reconnecting the missing tool — status is re-checked live on the next run, there is no env document to refresh.
 - For Mode B: an explicit hint that the user can ask `/leadace` to refine the strategy later (e.g., to update messaging or fill in deferred fields).
 
 The caller composes its own user-facing completion message; this procedure does not print one.

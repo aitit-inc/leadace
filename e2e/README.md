@@ -52,21 +52,24 @@ browser already expects it.
 - Daily-cycle and reply-detection scenarios (the recipient redirect below
   is the building block; the scripts that drive those flows haven't
   landed yet)
-- Real-Gmail outbound happy path against `E2E_RECIPIENT_OVERRIDE` (the
-  refusal branches and draft mode are covered curl-only by
-  `regression-outbound.sh` below; the real-send branch requires a Gmail
-  OAuth on the test account and is still on the Phase 2 todo list)
 - Plan-tier quota enforcement (the `self-hosted` edition resolves every
   tenant to `unlimited`; quota tests need a `cloud`-edition stack with
   a manual `subscriptions` row)
 - Headless browser side effects (`claude-in-chrome`)
 - Stripe webhook handling
 
-The 0.5.91 dedup flow is covered separately by
-`./e2e/regression-build-list-dedup.sh` — see "Build-list dedup regression"
-below. The send-and-record refusal/draft branches are covered by
-`./e2e/regression-outbound.sh` — see "Outbound regression" below. Both
-are curl-only, don't need a Claude session, and run fast.
+Three curl-only regressions cover the server contracts the plugin depends on,
+need no Claude session, and run fast:
+
+- `regression-outbound.sh` — `send-and-record`: compliance gate, draft mode,
+  country guardrail, and the real-Gmail send happy path (redirected to
+  `E2E_RECIPIENT_OVERRIDE`).
+- `regression-build-list-dedup.sh` — the 0.5.91 dedup flow.
+- `regression-skip-reachable.sh` — `skip_prospect` ('skipped' audit row) and
+  the `listReachable` candidate-stage country filter.
+
+Run all three in sequence with `./e2e/regression-all.sh`. See the sections
+below for what each asserts.
 
 ## Recipient redirect for real Gmail sends
 
@@ -243,6 +246,41 @@ The real-send branch only asserts the API + DB stamps; it does not
 verify the test mailbox actually received the email. Check that
 manually if you want end-to-end confirmation. See "Recipient redirect
 for real Gmail sends" above for how the override works.
+
+### Skip / reachable regression (curl-only, no Claude)
+
+```bash
+./e2e/regression-skip-reachable.sh
+SKIP_CLEANUP=1 ./e2e/regression-skip-reachable.sh
+```
+
+Curl-driven regression for the two server behaviors the single-source plugin
+refactor leans on. Mints a JWT, creates a throwaway project, seeds US/CA/JP/GB
+plus a country-less prospect, and exercises:
+
+- **Candidate-stage country filter** — `GET /projects/:id/prospects/reachable`
+  admits US/CA/JP and the NULL-country prospect (warn-and-allow) and excludes
+  GB. Mirrors `isAllowedSendCountry` at the candidate stage, so the skill never
+  pre-filters by country or fabricates a skip for an unsupported one.
+- **skip_prospect** — `POST /outreach/skip` writes a `status='skipped'` audit
+  row with the structured `skip_reason`, `error_message` NULL, consumes no
+  quota, leaves the prospect un-`contacted`, and defers re-eligibility so it
+  drops out of the candidate pool. All three reasons (`bad_timing`,
+  `no_fresh_material`, `other`) are asserted.
+
+Cleans up the test project and its tenant-scoped rows on exit; never touches
+tenant settings or `gmail_credentials`.
+
+### Run all curl regressions at once
+
+```bash
+./e2e/regression-all.sh
+SKIP_CLEANUP=1 ./e2e/regression-all.sh
+```
+
+Sequences the three curl-only suites above and prints an aggregate pass/fail,
+exiting non-zero if any suite fails. The onboarding-chain smoke (`smoke.sh`) is
+not included — it needs the Claude CLI and a live MCP grant; run it separately.
 
 ### Triggering Cloudflare cron jobs
 

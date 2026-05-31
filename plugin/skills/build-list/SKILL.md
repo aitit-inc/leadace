@@ -52,10 +52,11 @@ Call `mcp__plugin_leadace_api__get_project_settings` with `projectId: "$0"` and 
   /outbound, so deprioritize discovering them. An empty `outboundChannels` array means the
   project has paused outbound entirely — stop and inform the user instead of building a list
   that can never be reached.
-- **`targetCountries`** (array of ISO 3166-1 alpha-2 codes; subset of `US | CA | JP`): when
-  non-empty, restrict discovery to organizations in these countries — bias search queries with
-  regional qualifiers, prefer country-specific portals, and drop candidates whose inferred
-  country falls outside the set. When empty, use the full compliance allowlist (US / CA / JP).
+- **`targetCountries`** (array of ISO 3166-1 alpha-2 codes): when non-empty, restrict discovery
+  to organizations in these countries — bias search queries with regional qualifiers, prefer
+  country-specific portals, and drop candidates whose inferred country falls outside the set.
+  When empty, don't constrain discovery by country — collect per the project's target market;
+  recipient-country eligibility is enforced server-side at outbound time.
 
 If either project document is not found, guide the user to run `/leadace`.
 
