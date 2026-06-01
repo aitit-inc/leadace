@@ -211,6 +211,20 @@
       "when": 1780234335564,
       "tag": "0029_black_spencer_smythe",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1780286409478,
+      "tag": "0030_hard_human_fly",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1780308308355,
+      "tag": "0031_minor_carnage",
+      "breakpoints": true
     }
   ]
 }

@@ -346,9 +346,7 @@ export const projects = pgTable('projects', {
 ])
 
 export const projectSettings = pgTable('project_settings', {
-  projectId: text('project_id')
-    .primaryKey()
-    .references(() => projects.id, { onDelete: 'cascade' }),
+  projectId: text('project_id').primaryKey(),
   tenantId: text('tenant_id')
     .notNull()
     .references(() => tenants.id, { onDelete: 'cascade' }),
@@ -414,6 +412,14 @@ export const projectSettings = pgTable('project_settings', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   index('idx_project_settings_tenant').on(table.tenantId),
+  // Composite FK ties project_id + tenant_id together so a settings row
+  // cannot reference a project in a different tenant (defense-in-depth on
+  // top of RLS). The single-column .references() is folded in here.
+  foreignKey({
+    columns: [table.projectId, table.tenantId],
+    foreignColumns: [projects.id, projects.tenantId],
+    name: 'fk_project_settings_project_tenant',
+  }).onDelete('cascade'),
   // signup mode is meaningless without a destination. The application-level
   // pre-check in updateProjectSettings races under concurrent partial PUTs
   // (one PUT flips type → 'signup', another nulls the URL — both pass their
@@ -443,6 +449,10 @@ export const organizations = pgTable('organizations', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   unique('uq_org_tenant_domain').on(table.tenantId, table.domain),
+  // Required so prospects can declare a composite (organization_id, tenant_id)
+  // foreign key that prevents cross-tenant references at write time
+  // (defense-in-depth on top of RLS).
+  unique('uq_org_id_tenant').on(table.id, table.tenantId),
   index('idx_org_tenant').on(table.tenantId),
 ])
 
@@ -453,9 +463,7 @@ export const prospects = pgTable('prospects', {
     .references(() => tenants.id, { onDelete: 'cascade' }),
   name: text('name').notNull(),
   contactName: text('contact_name'),
-  organizationId: integer('organization_id')
-    .notNull()
-    .references(() => organizations.id),
+  organizationId: integer('organization_id').notNull(),
   department: text('department'),
   overview: text('overview').notNull(),
   industry: text('industry'),
@@ -495,6 +503,15 @@ export const prospects = pgTable('prospects', {
   // tenant_id) foreign key that prevents cross-tenant references at write
   // time (defense-in-depth on top of RLS).
   unique('uq_prospect_id_tenant').on(table.id, table.tenantId),
+  // Composite FK ties organization_id + tenant_id so a prospect cannot
+  // reference an organization in a different tenant. No onDelete: keep the
+  // default NO ACTION (an org with prospects cannot be deleted out from
+  // under them). Folds in the former single-column .references().
+  foreignKey({
+    columns: [table.organizationId, table.tenantId],
+    foreignColumns: [organizations.id, organizations.tenantId],
+    name: 'fk_prospect_org_tenant',
+  }),
   index('idx_prospect_tenant').on(table.tenantId),
   index('idx_prospect_org').on(table.organizationId),
 ])
@@ -539,12 +556,8 @@ export const outreachLogs = pgTable('outreach_logs', {
   tenantId: text('tenant_id')
     .notNull()
     .references(() => tenants.id, { onDelete: 'cascade' }),
-  projectId: text('project_id')
-    .notNull()
-    .references(() => projects.id, { onDelete: 'cascade' }),
-  prospectId: integer('prospect_id')
-    .notNull()
-    .references(() => prospects.id, { onDelete: 'cascade' }),
+  projectId: text('project_id').notNull(),
+  prospectId: integer('prospect_id').notNull(),
   channel: channelEnum('channel').notNull(),
   subject: text('subject'),
   body: text('body').notNull(),
@@ -557,6 +570,23 @@ export const outreachLogs = pgTable('outreach_logs', {
   // multiple variants registered. NULL when the email used a one-off subject.
   variantId: text('variant_id'),
 }, (table) => [
+  // Required so responses / inquiry_tokens / inquiry_sessions can declare a
+  // composite (outreach_log_id, tenant_id) foreign key (defense-in-depth on
+  // top of RLS).
+  unique('uq_outreach_id_tenant').on(table.id, table.tenantId),
+  // Composite FKs tie project_id / prospect_id to tenant_id so an outreach
+  // row cannot reference a project / prospect in a different tenant. The
+  // single-column .references() are folded in here.
+  foreignKey({
+    columns: [table.projectId, table.tenantId],
+    foreignColumns: [projects.id, projects.tenantId],
+    name: 'fk_outreach_project_tenant',
+  }).onDelete('cascade'),
+  foreignKey({
+    columns: [table.prospectId, table.tenantId],
+    foreignColumns: [prospects.id, prospects.tenantId],
+    name: 'fk_outreach_prospect_tenant',
+  }).onDelete('cascade'),
   index('idx_outreach_tenant').on(table.tenantId),
   index('idx_outreach_project').on(table.projectId),
   index('idx_outreach_prospect').on(table.prospectId),
@@ -574,9 +604,7 @@ export const subjectVariants = pgTable('subject_variants', {
   tenantId: text('tenant_id')
     .notNull()
     .references(() => tenants.id, { onDelete: 'cascade' }),
-  projectId: text('project_id')
-    .notNull()
-    .references(() => projects.id, { onDelete: 'cascade' }),
+  projectId: text('project_id').notNull(),
   // Short stable slug (e.g. "v1", "warm_intro", "signal_funded").
   variantId: text('variant_id').notNull(),
   // May include {{org}} / {{name}} / {{signal}} placeholders; the LLM
@@ -588,6 +616,12 @@ export const subjectVariants = pgTable('subject_variants', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   unique('uq_subject_variant_project').on(table.projectId, table.variantId),
+  // Composite FK ties project_id + tenant_id (defense-in-depth on top of RLS).
+  foreignKey({
+    columns: [table.projectId, table.tenantId],
+    foreignColumns: [projects.id, projects.tenantId],
+    name: 'fk_subject_variant_project_tenant',
+  }).onDelete('cascade'),
   index('idx_subject_variants_tenant').on(table.tenantId),
   index('idx_subject_variants_active').on(table.projectId, table.archivedAt),
 ])
@@ -597,9 +631,7 @@ export const responses = pgTable('responses', {
   tenantId: text('tenant_id')
     .notNull()
     .references(() => tenants.id, { onDelete: 'cascade' }),
-  outreachLogId: integer('outreach_log_id')
-    .notNull()
-    .references(() => outreachLogs.id, { onDelete: 'cascade' }),
+  outreachLogId: integer('outreach_log_id').notNull(),
   channel: channelEnum('channel').notNull(),
   content: text('content').notNull(),
   sentiment: sentimentEnum('sentiment').notNull(),
@@ -607,6 +639,16 @@ export const responses = pgTable('responses', {
   receivedAt: timestamp('received_at', { withTimezone: true }).defaultNow().notNull(),
   rejectionFeedback: jsonb('rejection_feedback').$type<RejectionFeedbackV1>(),
 }, (table) => [
+  // Required so inquiry_sessions can declare a composite (response_id,
+  // tenant_id) foreign key (defense-in-depth on top of RLS).
+  unique('uq_response_id_tenant').on(table.id, table.tenantId),
+  // Composite FK ties outreach_log_id + tenant_id (defense-in-depth on top
+  // of RLS). Folds in the former single-column .references().
+  foreignKey({
+    columns: [table.outreachLogId, table.tenantId],
+    foreignColumns: [outreachLogs.id, outreachLogs.tenantId],
+    name: 'fk_response_outreach_tenant',
+  }).onDelete('cascade'),
   index('idx_responses_tenant').on(table.tenantId),
   index('idx_responses_outreach').on(table.outreachLogId),
 ])
@@ -616,17 +658,28 @@ export const inquiryTokens = pgTable('inquiry_tokens', {
   tenantId: text('tenant_id')
     .notNull()
     .references(() => tenants.id, { onDelete: 'cascade' }),
-  prospectId: integer('prospect_id')
-    .notNull()
-    .references(() => prospects.id, { onDelete: 'cascade' }),
-  outreachLogId: integer('outreach_log_id')
-    .notNull()
-    .references(() => outreachLogs.id, { onDelete: 'cascade' }),
+  prospectId: integer('prospect_id').notNull(),
+  outreachLogId: integer('outreach_log_id').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   // Soft delete via `revoked_at IS NOT NULL` so `inquiry_sessions` history
   // tied to this token stays intact.
   revokedAt: timestamp('revoked_at', { withTimezone: true }),
 }, (table) => [
+  // Required so inquiry_sessions can declare a composite (short_id, tenant_id)
+  // foreign key (defense-in-depth on top of RLS).
+  unique('uq_inquiry_token_short_id_tenant').on(table.shortId, table.tenantId),
+  // Composite FKs tie prospect_id / outreach_log_id to tenant_id. Fold in the
+  // former single-column .references().
+  foreignKey({
+    columns: [table.prospectId, table.tenantId],
+    foreignColumns: [prospects.id, prospects.tenantId],
+    name: 'fk_inquiry_token_prospect_tenant',
+  }).onDelete('cascade'),
+  foreignKey({
+    columns: [table.outreachLogId, table.tenantId],
+    foreignColumns: [outreachLogs.id, outreachLogs.tenantId],
+    name: 'fk_inquiry_token_outreach_tenant',
+  }).onDelete('cascade'),
   index('idx_inquiry_tokens_tenant').on(table.tenantId),
   index('idx_inquiry_tokens_outreach').on(table.outreachLogId),
 ])
@@ -636,18 +689,16 @@ export const inquirySessions = pgTable('inquiry_sessions', {
   tenantId: text('tenant_id')
     .notNull()
     .references(() => tenants.id, { onDelete: 'cascade' }),
-  prospectId: integer('prospect_id')
-    .notNull()
-    .references(() => prospects.id, { onDelete: 'cascade' }),
-  outreachLogId: integer('outreach_log_id')
-    .notNull()
-    .references(() => outreachLogs.id, { onDelete: 'cascade' }),
-  shortId: text('short_id')
-    .notNull()
-    .references(() => inquiryTokens.shortId, { onDelete: 'cascade' }),
-  // ON DELETE SET NULL keeps inquiry_sessions readable as audit trail if
-  // its referenced responses row is later removed.
-  responseId: integer('response_id').references(() => responses.id, { onDelete: 'set null' }),
+  prospectId: integer('prospect_id').notNull(),
+  outreachLogId: integer('outreach_log_id').notNull(),
+  shortId: text('short_id').notNull(),
+  // Nullable: a session may close without a recorded response. The composite
+  // (response_id, tenant_id) FK below enforces same-tenant. No onDelete
+  // (NO ACTION): responses are never deleted independently of their
+  // outreach_log, and a session cascade-deletes from the same outreach_log,
+  // so a response and its session always disappear together — SET NULL would
+  // never fire.
+  responseId: integer('response_id'),
   outcome: inquiryOutcomeEnum('outcome').notNull().default('opened'),
   meetingRequestSource: meetingRequestSourceEnum('meeting_request_source'),
   derivedSummary: text('derived_summary'),
@@ -672,6 +723,30 @@ export const inquirySessions = pgTable('inquiry_sessions', {
   // tenant_id) foreign key that prevents cross-tenant references at write
   // time (defense-in-depth on top of RLS).
   unique('uq_inquiry_session_id_tenant').on(table.id, table.tenantId),
+  // Composite FKs tie prospect_id / outreach_log_id / short_id / response_id
+  // to tenant_id. Fold in the former single-column .references().
+  foreignKey({
+    columns: [table.prospectId, table.tenantId],
+    foreignColumns: [prospects.id, prospects.tenantId],
+    name: 'fk_inquiry_session_prospect_tenant',
+  }).onDelete('cascade'),
+  foreignKey({
+    columns: [table.outreachLogId, table.tenantId],
+    foreignColumns: [outreachLogs.id, outreachLogs.tenantId],
+    name: 'fk_inquiry_session_outreach_tenant',
+  }).onDelete('cascade'),
+  foreignKey({
+    columns: [table.shortId, table.tenantId],
+    foreignColumns: [inquiryTokens.shortId, inquiryTokens.tenantId],
+    name: 'fk_inquiry_session_token_tenant',
+  }).onDelete('cascade'),
+  // No onDelete (NO ACTION): see the response_id column comment. Nullable
+  // response_id is unchecked by the FK when null (MATCH SIMPLE).
+  foreignKey({
+    columns: [table.responseId, table.tenantId],
+    foreignColumns: [responses.id, responses.tenantId],
+    name: 'fk_inquiry_session_response_tenant',
+  }),
 ])
 
 export const inquiryMessages = pgTable('inquiry_messages', {
@@ -704,14 +779,18 @@ export const projectDocuments = pgTable('project_documents', {
   tenantId: text('tenant_id')
     .notNull()
     .references(() => tenants.id, { onDelete: 'cascade' }),
-  projectId: text('project_id')
-    .notNull()
-    .references(() => projects.id, { onDelete: 'cascade' }),
+  projectId: text('project_id').notNull(),
   // Known values: "business", "sales_strategy", "search_notes".
   slug: text('slug').notNull(),
   content: text('content').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
+  // Composite FK ties project_id + tenant_id (defense-in-depth on top of RLS).
+  foreignKey({
+    columns: [table.projectId, table.tenantId],
+    foreignColumns: [projects.id, projects.tenantId],
+    name: 'fk_project_document_project_tenant',
+  }).onDelete('cascade'),
   index('idx_doc_tenant').on(table.tenantId),
   index('idx_doc_latest').on(table.projectId, table.slug, table.createdAt),
 ])
@@ -756,14 +835,18 @@ export const evaluations = pgTable('evaluations', {
   tenantId: text('tenant_id')
     .notNull()
     .references(() => tenants.id, { onDelete: 'cascade' }),
-  projectId: text('project_id')
-    .notNull()
-    .references(() => projects.id, { onDelete: 'cascade' }),
+  projectId: text('project_id').notNull(),
   evaluationDate: timestamp('evaluation_date', { withTimezone: true }).defaultNow().notNull(),
   metrics: jsonb('metrics').$type<EvaluationMetrics>().notNull(),
   findings: text('findings').notNull(),
   improvements: text('improvements').notNull(),
 }, (table) => [
+  // Composite FK ties project_id + tenant_id (defense-in-depth on top of RLS).
+  foreignKey({
+    columns: [table.projectId, table.tenantId],
+    foreignColumns: [projects.id, projects.tenantId],
+    name: 'fk_evaluation_project_tenant',
+  }).onDelete('cascade'),
   index('idx_evaluations_tenant').on(table.tenantId),
   index('idx_evaluations_project').on(table.projectId),
 ])
