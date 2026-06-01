@@ -642,7 +642,8 @@ export async function getRejectionFeedbackSummary(
       }>(sql`
         WITH ranked AS (
           SELECT
-            ${responses.rejectionFeedback}->>'preferred_recontact_window' AS window,
+            -- "window" is a reserved keyword; quoted so the outer SELECT/ORDER BY parse.
+            ${responses.rejectionFeedback}->>'preferred_recontact_window' AS "window",
             ${responses.receivedAt} AS received_at,
             ${outreachLogs.prospectId} AS prospect_id,
             ${prospects.name} AS prospect_name,
@@ -663,10 +664,10 @@ export async function getRejectionFeedbackSummary(
             sql`${responses.rejectionFeedback}->>'preferred_recontact_window' IN (${recontactWindowList})`,
           )}
         )
-        SELECT window, received_at, prospect_id, prospect_name, organization_name, bucket_count
+        SELECT "window", received_at, prospect_id, prospect_name, organization_name, bucket_count
         FROM ranked
         WHERE rn <= ${recontactLimit}
-        ORDER BY window, received_at DESC
+        ORDER BY "window", received_at DESC
       `),
     ),
 

@@ -36,6 +36,7 @@ import {
 } from '../auth/google'
 import { ok, err, type ServiceResult } from './result'
 import { requireProject } from './projects'
+import { requireProspect } from './prospects'
 import { allocateInquiryUrl } from './inquiry-token'
 import { loadProjectReapproachSettings, loadProjectSendSettings } from './project-settings'
 import { assertTenantComplianceReady } from './tenants'
@@ -231,12 +232,14 @@ export async function recordOutreach(
   // stamps must remain recordable on incomplete tenants so failed-send logs
   // aren't lost.
   const sending = input.status === 'sent'
-  const [guard, quota, compliance] = await Promise.all([
+  const [guard, prospectGuard, quota, compliance] = await Promise.all([
     requireProject(db, input.projectId, tenantId),
+    requireProspect(db, tenantId, input.prospectId),
     sending ? getRemainingOutreachQuota(db, tenantId, edition) : Promise.resolve(null),
     sending ? assertTenantComplianceReady(db, tenantId) : Promise.resolve(null),
   ])
   if (!guard.ok) return guard
+  if (!prospectGuard.ok) return prospectGuard
   if (compliance && !compliance.ok) return compliance
   const quotaErr = quota ? outreachQuotaErrorIfExhausted(quota) : null
   if (quotaErr) return quotaErr
@@ -287,8 +290,12 @@ export async function skipProspect(
   tenantId: TenantId,
   input: SkipProspectInput,
 ): Promise<ServiceResult<{ id: number | undefined }>> {
-  const guard = await requireProject(db, input.projectId, tenantId)
+  const [guard, prospectGuard] = await Promise.all([
+    requireProject(db, input.projectId, tenantId),
+    requireProspect(db, tenantId, input.prospectId),
+  ])
   if (!guard.ok) return guard
+  if (!prospectGuard.ok) return prospectGuard
 
   const sentAt = new Date()
 
@@ -336,12 +343,14 @@ export async function recordOutreachWithInquiry(
   ctx: SendContext,
   input: RecordOutreachWithInquiryInput,
 ): Promise<ServiceResult<RecordOutreachWithInquiryResult>> {
-  const [guard, sendSettings, complianceResult] = await Promise.all([
+  const [guard, prospectGuard, sendSettings, complianceResult] = await Promise.all([
     requireProject(db, input.projectId, tenantId),
+    requireProspect(db, tenantId, input.prospectId),
     loadProjectSendSettings(db, input.projectId),
     assertTenantComplianceReady(db, tenantId),
   ])
   if (!guard.ok) return guard
+  if (!prospectGuard.ok) return prospectGuard
   if (!complianceResult.ok) return complianceResult
 
   const willSend = sendSettings.outboundMode === 'send'
@@ -470,12 +479,14 @@ export async function sendAndRecord(
   ctx: SendContext,
   input: SendAndRecordInput,
 ): Promise<ServiceResult<SendOutcome>> {
-  const [guard, sendSettings, complianceResult] = await Promise.all([
+  const [guard, prospectGuard, sendSettings, complianceResult] = await Promise.all([
     requireProject(db, input.projectId, tenantId),
+    requireProspect(db, tenantId, input.prospectId),
     loadProjectSendSettings(db, input.projectId),
     assertTenantComplianceReady(db, tenantId),
   ])
   if (!guard.ok) return guard
+  if (!prospectGuard.ok) return prospectGuard
   // Compliance must gate both branches: even in draft mode the user clicks
   // "send from /drafts" later, and we want the 412 to surface at allocation
   // (skill, /outbound report) rather than at confirm time after the body's

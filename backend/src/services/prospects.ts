@@ -56,6 +56,22 @@ function channelAvailabilityClause(ch: OutboundChannel): SQL {
 
 export { prospectIdParamSchema } from '../domain/ids'
 
+// Guards outreach_logs inserts (FK prospect_id → prospects.id) so a bogus id
+// becomes a clean 404 instead of an unhandled FK-violation 500.
+export async function requireProspect(
+  db: Db,
+  tenantId: TenantId,
+  prospectId: number,
+): Promise<ServiceResult<undefined>> {
+  const [row] = await db
+    .select({ id: prospects.id })
+    .from(prospects)
+    .where(and(eq(prospects.id, prospectId), eq(prospects.tenantId, tenantId)))
+    .limit(1)
+  if (!row) return err('NOT_FOUND', 'Prospect not found')
+  return ok(undefined)
+}
+
 export const reachableQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
 })

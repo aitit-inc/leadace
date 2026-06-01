@@ -6,6 +6,9 @@
 #     no Gmail required)
 #   - send-mode country guardrail (prospect.country='GB' → 422 UNPROCESSABLE,
 #     refused before Gmail is touched)
+#   - fabricated prospectId → 404 (not a 500 from the outreach_logs FK)
+#   - rejection-feedback summary (default scope) → 200 (guards the reserved-
+#     keyword "window" SQL regression, which 500s on every call when present)
 #   - The Gmail-dependent branch is conditional on local state:
 #     - When `gmail_credentials` has no row for the test tenant, run the
 #       412 'Gmail not connected' rollback test (verifies the optimistic
@@ -235,6 +238,24 @@ PROSPECT_GB_ID="$(echo "$LIST_RESP" | jq -r --arg e "$EMAIL_GB" '.prospects[]? |
   exit 1;
 }
 say "prospect_us=$PROSPECT_US_ID prospect_gb=$PROSPECT_GB_ID"
+
+# ---------------------------------------------------------------------------
+# Fabricated prospectId must be a clean 404, not a 500 from the outreach_logs FK.
+step "fabricated prospectId returns 404 (not 500)"
+BOGUS_BODY="$(jq -nc \
+  --arg pid "$PROJECT_ID" --arg eUS "$EMAIL_US" \
+  '{projectId:$pid, prospectId:999999999, to:[$eUS], subject:"bogus prospect", body:"body"}')"
+BOGUS_CODE="$(api_status POST /api/outreach/send-and-record "$BOGUS_BODY" 2>/tmp/regression-outbound-out.$$ || true)"
+BOGUS_RESP="$(cat /tmp/regression-outbound-out.$$ 2>/dev/null || true)"; rm -f /tmp/regression-outbound-out.$$
+assert_eq "send-and-record bogus prospectId → 404" "$BOGUS_CODE" "404"
+[[ "$BOGUS_CODE" == "404" ]] || say "body: $BOGUS_RESP"
+
+# Regression: the recontact query's unquoted "window" alias (reserved keyword) 500'd every call.
+step "rejection-feedback summary returns 200 (reserved-keyword SQL regression)"
+RFS_CODE="$(api_status GET "/api/projects/$PROJECT_ID/rejection-feedback/summary" 2>/tmp/regression-outbound-out.$$ || true)"
+RFS_RESP="$(cat /tmp/regression-outbound-out.$$ 2>/dev/null || true)"; rm -f /tmp/regression-outbound-out.$$
+assert_eq "rejection-feedback/summary default scope → 200" "$RFS_CODE" "200"
+[[ "$RFS_CODE" == "200" ]] || say "body: $RFS_RESP"
 
 # ---------------------------------------------------------------------------
 step "compliance gate: send-and-record returns 412 with missing fields"
