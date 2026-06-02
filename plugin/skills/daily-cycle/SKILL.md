@@ -286,27 +286,16 @@ If step 6 determined to run build-list first, proceed to step 7 (outbound) from 
 
 ### 9. wrap-up (sub-agent)
 
-**After all phases complete, execute KPI update and notification in a single sub-agent.**
+**After all phases complete, send the completion notification in a sub-agent.**
 
 Include the following in the prompt:
 - Project ID: `$0`
 - Execution date and time: the datetime obtained in step 1
 - Phase summaries collected from sub-agents during this cycle (check-results, evaluate, outbound, build-list)
 
-**9a. Update KPI Actual Results in SALES_STRATEGY.md**
+**Completion Notification Email**
 
-Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "sales_strategy"`. If the document has a "KPI Actuals" section, update the following basic numbers with the latest values:
-- Total sent (contacted)
-- Total responses and response rate
-- Execution date and time
-
-Save via `mcp__plugin_leadace_api__save_document` with `projectId: "$0"`, `slug: "sales_strategy"`, and the updated content.
-
-This prevents KPI actuals from becoming stale even in cycles where evaluate is skipped. Leave messaging improvements, targeting changes, and other strategic analysis to the evaluate skill -- **only update numbers here**.
-
-**9b. Completion Notification Email**
-
-Get the notification recipient email from the "Notification Settings" section of the sales_strategy document (already loaded in 9a). Skip if notification is "none" or not set. The `From:` address is applied automatically by `send_email` from project settings (`senderEmailAlias` / `senderDisplayName`) — do not pass them as arguments.
+Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "sales_strategy"` and read the notification recipient email from its "Notification Settings" section. Skip if notification is "none" or not set. The `From:` address is applied automatically by `send_email` from project settings (`senderEmailAlias` / `senderDisplayName`) — do not pass them as arguments.
 
 Compose the report body from the phase summaries passed in the prompt:
 
@@ -322,4 +311,6 @@ build-list: (summary)
 
 Call `mcp__plugin_leadace_api__send_email` with the notification recipient as `to`, subject `"daily-cycle completed: $0"`, and the report body. (Use `send_email`, not `send_email_and_record` — this is an internal report, not prospect outreach.)
 
-Sub-agent's return to main: Briefly report the KPI update status and notification email send status.
+Per-cycle actuals are **not** written to any document. Send / draft / response counts live in structured storage (`outreach_logs`, `responses`) and analysis history in the `evaluations` table — all surfaced in the Web UI (`/evaluations`, `/drafts`, `/outreach`). Do **not** create or maintain a "KPI Actuals" section in SALES_STRATEGY.md.
+
+Sub-agent's return to main: Briefly report the notification email send status.

@@ -580,14 +580,14 @@
         <p class="mt-4 text-xs text-danger">{actionError}</p>
       {/if}
 
-      <div class="mt-16 text-right">
+      <div class="mt-16 flex justify-center">
         <button
           type="button"
           disabled={isPreview || actionBusy}
           onclick={startUnsubscribe}
-          class="text-xs text-text-muted underline decoration-text-muted/30 underline-offset-4 hover:text-text hover:decoration-text disabled:opacity-40"
+          class="rounded-full border border-border bg-surface px-4 py-1.5 text-xs text-text-secondary transition-colors hover:border-text/40 hover:text-text disabled:opacity-40"
         >
-          {actionBusy ? 'Unsubscribing…' : "Don't want these? Unsubscribe"}
+          {actionBusy ? 'Unsubscribing…' : "Don't want these messages? Unsubscribe"}
         </button>
       </div>
     {/if}

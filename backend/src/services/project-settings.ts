@@ -48,27 +48,13 @@ export const updateSettingsSchema = z
   .strict()
 export type UpdateSettingsPatch = z.infer<typeof updateSettingsSchema>
 
-const DEFAULTS = {
-  outboundMode: 'send' as const,
-  senderEmailAlias: null,
-  senderDisplayName: null,
-  senderCompanyName: null,
-  senderJobTitle: null,
-  unsubscribeEnabled: true,
-  inquiryLandingEnabled: true,
-  inquiryChatBrief: null,
-  inquiryOneLiner: null,
-  inquiryVideoUrl: null,
-  inquiryPdfUrl: null,
-  inquiryBrandColor: null,
-  inquiryBrandLogoUrl: null,
-  inquiryCtaType: 'meeting' as InquiryCtaType,
-  inquiryCtaUrl: null,
-  maxReapproachCycles: 3,
-  unspecifiedRecontactWindowMonths: 3,
-  noResponseRecycleDays: 90,
-  outboundChannels: [...OUTBOUND_CHANNELS] as OutboundChannel[],
-  targetCountries: [] as string[],
+// The settings row is seeded on project creation and backfilled for existing
+// projects, so its absence is an invariant violation, not "not configured yet".
+function assertSettingsRow<T>(row: T | undefined, projectId: ProjectId): T {
+  if (!row) {
+    throw new Error(`Invariant: project_settings row missing for project ${projectId}`)
+  }
+  return row
 }
 
 const settingsCols = {
@@ -121,8 +107,6 @@ export type ProjectSettingsRow = {
   updatedAt: Date | null
 }
 
-// Lightweight read for hot paths that only need outboundMode (e.g. every
-// /outbound run). Defaults to 'send' when no row exists.
 export async function getOutboundMode(
   db: Db,
   projectId: ProjectId,
@@ -132,25 +116,15 @@ export async function getOutboundMode(
     .from(projectSettings)
     .where(eq(projectSettings.projectId, projectId))
     .limit(1)
-  return row?.outboundMode ?? 'send'
+  return assertSettingsRow(row, projectId).outboundMode
 }
 
-// Send-path projection. Defaults match the DB column defaults so a project
-// with no row behaves like one inserted at defaults.
 export type ProjectSendSettings = {
   outboundMode: OutboundMode
   senderEmailAlias: string | null
   senderDisplayName: string | null
   unsubscribeEnabled: boolean
   inquiryLandingEnabled: boolean
-}
-
-const DEFAULT_SEND_SETTINGS: ProjectSendSettings = {
-  outboundMode: 'send',
-  senderEmailAlias: null,
-  senderDisplayName: null,
-  unsubscribeEnabled: true,
-  inquiryLandingEnabled: true,
 }
 
 export async function loadProjectSendSettings(
@@ -168,20 +142,13 @@ export async function loadProjectSendSettings(
     .from(projectSettings)
     .where(eq(projectSettings.projectId, projectId))
     .limit(1)
-  return row ?? DEFAULT_SEND_SETTINGS
+  return assertSettingsRow(row, projectId)
 }
 
-// Re-approach configuration projection. Defaults match DB column defaults.
 export type ProjectReapproachSettings = {
   maxReapproachCycles: number
   unspecifiedRecontactWindowMonths: number
   noResponseRecycleDays: number
-}
-
-const DEFAULT_REAPPROACH_SETTINGS: ProjectReapproachSettings = {
-  maxReapproachCycles: DEFAULTS.maxReapproachCycles,
-  unspecifiedRecontactWindowMonths: DEFAULTS.unspecifiedRecontactWindowMonths,
-  noResponseRecycleDays: DEFAULTS.noResponseRecycleDays,
 }
 
 export async function loadProjectReapproachSettings(
@@ -197,18 +164,13 @@ export async function loadProjectReapproachSettings(
     .from(projectSettings)
     .where(eq(projectSettings.projectId, projectId))
     .limit(1)
-  return row ?? DEFAULT_REAPPROACH_SETTINGS
+  return assertSettingsRow(row, projectId)
 }
 
 // Scoped to automated outbound; manual per-draft Send / Mark-sent bypass.
 export type ProjectOutboundAllowlist = {
   outboundChannels: OutboundChannel[]
   targetCountries: string[]
-}
-
-const DEFAULT_OUTBOUND_ALLOWLIST: ProjectOutboundAllowlist = {
-  outboundChannels: DEFAULTS.outboundChannels,
-  targetCountries: DEFAULTS.targetCountries,
 }
 
 export async function loadProjectOutboundAllowlist(
@@ -223,10 +185,10 @@ export async function loadProjectOutboundAllowlist(
     .from(projectSettings)
     .where(eq(projectSettings.projectId, projectId))
     .limit(1)
-  if (!row) return DEFAULT_OUTBOUND_ALLOWLIST
+  const r = assertSettingsRow(row, projectId)
   return {
-    outboundChannels: row.outboundChannels as OutboundChannel[],
-    targetCountries: row.targetCountries,
+    outboundChannels: r.outboundChannels as OutboundChannel[],
+    targetCountries: r.targetCountries,
   }
 }
 
@@ -243,20 +205,14 @@ export async function getProjectSettings(
     .from(projectSettings)
     .where(eq(projectSettings.projectId, projectId))
     .limit(1)
-  if (!row) {
-    return ok({ projectId, ...DEFAULTS, updatedAt: null })
-  }
+  const r = assertSettingsRow(row, projectId)
   return ok({
-    ...row,
-    projectId: row.projectId as ProjectId,
-    outboundChannels: row.outboundChannels as OutboundChannel[],
+    ...r,
+    projectId: r.projectId as ProjectId,
+    outboundChannels: r.outboundChannels as OutboundChannel[],
   })
 }
 
-// Insert with caller-supplied values (defaults for omitted), or on conflict
-// update only the columns the caller explicitly set. The conditional spread
-// on UPDATE avoids the read-then-write race where two concurrent PUTs both
-// pre-load the same row and the loser's patch wipes the winner's fields.
 export async function updateProjectSettings(
   db: Db,
   tenantId: TenantId,
@@ -279,8 +235,9 @@ export async function updateProjectSettings(
       .from(projectSettings)
       .where(eq(projectSettings.projectId, projectId))
       .limit(1)
-    const nextType = patch.inquiryCtaType ?? existing?.inquiryCtaType ?? DEFAULTS.inquiryCtaType
-    const nextUrl = patch.inquiryCtaUrl !== undefined ? patch.inquiryCtaUrl : (existing?.inquiryCtaUrl ?? null)
+    const e = assertSettingsRow(existing, projectId)
+    const nextType = patch.inquiryCtaType ?? e.inquiryCtaType
+    const nextUrl = patch.inquiryCtaUrl !== undefined ? patch.inquiryCtaUrl : e.inquiryCtaUrl
     if (nextType === 'signup' && nextUrl === null) {
       return err('INVALID_INPUT', 'inquiryCtaUrl is required when inquiryCtaType is "signup"')
     }
@@ -313,42 +270,15 @@ export async function updateProjectSettings(
   }
 
   const [row] = await db
-    .insert(projectSettings)
-    .values({
-      projectId,
-      tenantId,
-      outboundMode: patch.outboundMode ?? DEFAULTS.outboundMode,
-      senderEmailAlias: patch.senderEmailAlias ?? DEFAULTS.senderEmailAlias,
-      senderDisplayName: patch.senderDisplayName ?? DEFAULTS.senderDisplayName,
-      senderCompanyName: patch.senderCompanyName ?? DEFAULTS.senderCompanyName,
-      senderJobTitle: patch.senderJobTitle ?? DEFAULTS.senderJobTitle,
-      unsubscribeEnabled: patch.unsubscribeEnabled ?? DEFAULTS.unsubscribeEnabled,
-      inquiryLandingEnabled: patch.inquiryLandingEnabled ?? DEFAULTS.inquiryLandingEnabled,
-      inquiryChatBrief: patch.inquiryChatBrief ?? DEFAULTS.inquiryChatBrief,
-      inquiryOneLiner: patch.inquiryOneLiner ?? DEFAULTS.inquiryOneLiner,
-      inquiryVideoUrl: patch.inquiryVideoUrl ?? DEFAULTS.inquiryVideoUrl,
-      inquiryPdfUrl: patch.inquiryPdfUrl ?? DEFAULTS.inquiryPdfUrl,
-      inquiryBrandColor: patch.inquiryBrandColor ?? DEFAULTS.inquiryBrandColor,
-      inquiryBrandLogoUrl: patch.inquiryBrandLogoUrl ?? DEFAULTS.inquiryBrandLogoUrl,
-      inquiryCtaType: patch.inquiryCtaType ?? DEFAULTS.inquiryCtaType,
-      inquiryCtaUrl: patch.inquiryCtaUrl ?? DEFAULTS.inquiryCtaUrl,
-      maxReapproachCycles: patch.maxReapproachCycles ?? DEFAULTS.maxReapproachCycles,
-      unspecifiedRecontactWindowMonths: patch.unspecifiedRecontactWindowMonths ?? DEFAULTS.unspecifiedRecontactWindowMonths,
-      noResponseRecycleDays: patch.noResponseRecycleDays ?? DEFAULTS.noResponseRecycleDays,
-      outboundChannels: patch.outboundChannels ?? DEFAULTS.outboundChannels,
-      targetCountries: patch.targetCountries ?? DEFAULTS.targetCountries,
-      createdAt: now,
-      updatedAt: now,
-    })
-    .onConflictDoUpdate({
-      target: projectSettings.projectId,
-      set: updateSet,
-    })
+    .update(projectSettings)
+    .set(updateSet)
+    .where(eq(projectSettings.projectId, projectId))
     .returning(settingsCols)
 
+  const r = assertSettingsRow(row, projectId)
   return ok({
-    ...row!,
-    projectId: row!.projectId as ProjectId,
-    outboundChannels: row!.outboundChannels as OutboundChannel[],
+    ...r,
+    projectId: r.projectId as ProjectId,
+    outboundChannels: r.outboundChannels as OutboundChannel[],
   })
 }

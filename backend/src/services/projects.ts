@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { eq, and, count } from 'drizzle-orm'
 import type { Db } from '../db/connection'
-import { projects, projectProspects } from '../db/schema'
+import { projects, projectSettings } from '../db/schema'
 import { getTenantPlan, getPlanLimits } from './plan-limits'
 import { randomFromAlphabet } from '../auth/random-id'
 import { ok, err, type ServiceResult } from './result'
@@ -114,6 +114,7 @@ export async function createProject(
   const id = asProjectId(generateProjectId())
   const now = new Date()
   await db.insert(projects).values({ id, tenantId, name, createdAt: now, updatedAt: now })
+  await db.insert(projectSettings).values({ projectId: id, tenantId, createdAt: now, updatedAt: now })
 
   return ok({ id, name, tenantId, createdAt: now, updatedAt: now })
 }

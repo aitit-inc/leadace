@@ -239,13 +239,13 @@ async function loadChatContext(
     .from(inquirySessions)
     .innerJoin(inquiryTokens, eq(inquiryTokens.shortId, inquirySessions.shortId))
     .innerJoin(outreachLogs, eq(outreachLogs.id, inquirySessions.outreachLogId))
-    .leftJoin(projectSettings, eq(projectSettings.projectId, outreachLogs.projectId))
+    .innerJoin(projectSettings, eq(projectSettings.projectId, outreachLogs.projectId))
     .where(and(eq(inquirySessions.shortId, shortId), isNull(inquirySessions.closedAt)))
     .limit(1)
 
   if (!row) return err('NOT_FOUND', 'Inquiry session is no longer open')
   if (row.tokenRevokedAt !== null) return err('NOT_FOUND', 'Inquiry session is no longer open')
-  if (row.landingEnabled === false) return err('NOT_FOUND', 'Inquiry session is no longer open')
+  if (!row.landingEnabled) return err('NOT_FOUND', 'Inquiry session is no longer open')
 
   // The per-session snapshot wins when present — it folds in the prospect
   // hypothesis and recent org signals on top of the project brief. Fall

@@ -144,30 +144,20 @@ export async function pickSubjectVariant(
 
   if (active.length === 0) return ok(null)
 
-  // Upsert-and-advance: without the insert side, a project that has never had
-  // update_project_settings called would return cursor=0 forever — every send
-  // picks variant[0], silently breaking rotation for fresh projects.
   const now = new Date()
   const [advancedRow] = await db
-    .insert(projectSettings)
-    .values({
-      tenantId,
-      projectId,
-      subjectVariantCursor: 1 % active.length,
-      createdAt: now,
+    .update(projectSettings)
+    .set({
+      subjectVariantCursor: sql`((${projectSettings.subjectVariantCursor} + 1) % ${active.length})`,
       updatedAt: now,
     })
-    .onConflictDoUpdate({
-      target: projectSettings.projectId,
-      set: {
-        subjectVariantCursor: sql`((${projectSettings.subjectVariantCursor} + 1) % ${active.length})`,
-        updatedAt: now,
-      },
-    })
+    .where(eq(projectSettings.projectId, projectId))
     .returning({ cursor: projectSettings.subjectVariantCursor })
 
+  if (!advancedRow) {
+    throw new Error(`Invariant: project_settings row missing for project ${projectId}`)
+  }
   // We wrote the *next* cursor; the current pick is one step behind.
-  const nextCursor = advancedRow?.cursor ?? 0
-  const idx = ((nextCursor - 1) % active.length + active.length) % active.length
+  const idx = ((advancedRow.cursor - 1) % active.length + active.length) % active.length
   return ok(active[idx]!)
 }

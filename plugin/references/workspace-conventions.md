@@ -34,6 +34,13 @@ If any MCP tool call returns a "Project not found" error, instruct the user to r
 
 When calling `save_document` (or any MCP tool that persists user-visible document/content), sanity-check that the content matches the slug's intent and the active project context. If the content is clearly unrelated — e.g., the session has drifted to another topic, the wrong project is selected, or stray output is about to be pasted in — confirm with the user before saving. Documents are persistent and read by other skills, so a wrong write is not silently absorbed.
 
+## Document length & content discipline
+
+Generated project documents (`business`, `sales_strategy`, `search_notes`) are design / reference artifacts, not activity logs. Keep them lean:
+
+- **Soft length targets** — a document materially past its target is carrying filler or data that belongs elsewhere; trim or relocate. `business` ~60 lines, `sales_strategy` ~180 lines, `search_notes` ~80 lines.
+- **Never persist runtime actuals or per-run history into a document.** Send / draft / response counts, rates, and per-cycle logs live in structured storage (`outreach_logs`, `responses`, `evaluations`) and are surfaced in the Web UI (`/evaluations`, `/drafts`, `/outreach`). The `sales_strategy` `## KPI` section holds *target* metrics (the reverse-calc tree) only — never an actuals / KPI-history table. A document that grows an append-only metrics table is a bug.
+
 ## Explore wide, output narrow
 
 When investigating, weighing options, or drafting internally, cast a wide net across angles. When producing output that a skill persists or reports back (documents, settings fields, evaluation records, search-notes, completion summaries), cut to the minimum that carries the conclusion — on fresh writes and revisions alike. "Just in case" and "might as well note this" filler doesn't get read, buries the important parts, and breeds inconsistency over time — pure cost, no upside.

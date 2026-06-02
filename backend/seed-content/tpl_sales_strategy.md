@@ -107,6 +107,7 @@ The two modes are mutually exclusive per project — the inquiry-settings page e
 (Environment / tool status is live-detected at run time, never stored in a project document. The outbound channel allowlist is Project Settings → `outboundChannels`.)
 
 **Generation guidelines:**
+- **Target length ~180 lines or fewer.** This is a strategy design doc — do not pad sections. Never add a runtime-actuals / KPI-history table: send / draft / response counts live in structured storage and are surfaced in the Web UI. The `## KPI` section carries *target* metrics + the reverse-calc tree only, never actuals.
 - Keep the elevator pitch specific and concise. Avoid jargon; make it easy to understand
 - Make targets as specific as possible (not "small businesses" but "SaaS companies with 50-200 employees in the US"; not "retailers" but "DTC e-commerce brands with under 50 employees")
 - Structure messaging to lead with recipient benefits

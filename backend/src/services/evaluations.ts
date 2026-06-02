@@ -1,14 +1,13 @@
 import { z } from 'zod'
-import { eq, and, sql, desc, inArray } from 'drizzle-orm'
+import { eq, sql, desc } from 'drizzle-orm'
 import {
   evaluations,
-  projectProspects,
-  prospects,
   prioritySchema,
   INQUIRY_OUTCOMES,
   type EvaluationMetrics,
   type InquiryOutcome,
   type OutreachStatus,
+  type ProspectStatus,
 } from '../db/schema'
 import type { Db } from '../db/connection'
 import {
@@ -54,6 +53,8 @@ export type RecordEvaluationInput = z.infer<typeof recordEvaluationSchema>
 
 type Row = Record<string, unknown>
 
+export type DailyActivity = { date: string; sent: number; responses: number }
+
 export type ProjectStatsResult = {
   metrics: EvaluationMetrics
   respondedMessages: Row[]
@@ -63,6 +64,7 @@ export type ProjectStatsResult = {
     totalSent: number
     daysSinceLastSend: number | null
   }
+  dailyActivity: DailyActivity[]
 }
 
 export async function getProjectStats(
@@ -81,6 +83,10 @@ export async function getProjectStats(
   // Bind enum literals as parameters so a typo would surface at compile time.
   const SENT: OutreachStatus = 'sent'
   const FAILED: OutreachStatus = 'failed'
+  // Lower bound for the activity-trend window: midnight UTC 29 days ago, so the
+  // UTC-date buckets number exactly 30 (today + the previous 29) instead of a
+  // rolling timestamp that can straddle 31 distinct UTC dates.
+  const trendSince = sql`(date_trunc('day', now() AT TIME ZONE 'UTC') - interval '29 days') AT TIME ZONE 'UTC'`
 
   const [
     totalOutreachRows,
@@ -94,6 +100,8 @@ export async function getProjectStats(
     noResponseSampleRows,
     lastSentRows,
     inquiryOutcomeRows,
+    dailySentRows,
+    dailyResponseRows,
   ] = await Promise.all([
     rawQuery(sql`SELECT COUNT(*)::int AS "totalOutreach" FROM outreach_logs WHERE project_id = ${projectId} AND status = ${SENT}`),
     // Channel mix counts confirmed activity only — exclude in-flight rows
@@ -140,6 +148,18 @@ export async function getProjectStats(
                  JOIN outreach_logs ol ON ol.id = s.outreach_log_id
                  WHERE ol.project_id = ${projectId}
                  GROUP BY s.outcome`),
+    // Daily sent / response counts over the last 30 days, bucketed by UTC day
+    // (matches the UTC-midnight quota window). Drives the activity-trend table.
+    rawQuery(sql`SELECT (sent_at AT TIME ZONE 'UTC')::date::text AS day, COUNT(*)::int AS count
+                 FROM outreach_logs
+                 WHERE project_id = ${projectId} AND status = ${SENT}
+                   AND sent_at >= ${trendSince}
+                 GROUP BY day`),
+    rawQuery(sql`SELECT (r.received_at AT TIME ZONE 'UTC')::date::text AS day, COUNT(*)::int AS count
+                 FROM responses r JOIN outreach_logs ol ON r.outreach_log_id = ol.id
+                 WHERE ol.project_id = ${projectId}
+                   AND r.received_at >= ${trendSince}
+                 GROUP BY day`),
   ])
 
   const totalOutreach = (totalOutreachRows[0]?.['totalOutreach'] as number | undefined) ?? 0
@@ -172,6 +192,25 @@ export async function getProjectStats(
     inquiryOutcomeCounts,
   }
 
+  // Daily activity trend (last 30d, UTC day boundary). Only days with at least
+  // one sent or one response appear — zero-activity days are omitted to keep
+  // the table compact. Derived live; no stored snapshot (the raw outreach_logs
+  // / responses rows are the single source of truth).
+  const dailyMap = new Map<string, DailyActivity>()
+  for (const row of dailySentRows) {
+    const date = row['day'] as string
+    dailyMap.set(date, { date, sent: (row['count'] as number | undefined) ?? 0, responses: 0 })
+  }
+  for (const row of dailyResponseRows) {
+    const date = row['day'] as string
+    const entry = dailyMap.get(date) ?? { date, sent: 0, responses: 0 }
+    entry.responses = (row['count'] as number | undefined) ?? 0
+    dailyMap.set(date, entry)
+  }
+  const dailyActivity = Array.from(dailyMap.values()).sort((a, b) =>
+    a.date < b.date ? 1 : a.date > b.date ? -1 : 0,
+  )
+
   return ok({
     metrics,
     respondedMessages: respondedMessagesRows,
@@ -181,6 +220,7 @@ export async function getProjectStats(
       totalSent,
       daysSinceLastSend,
     },
+    dailyActivity,
   })
 }
 
@@ -211,27 +251,40 @@ export async function recordEvaluation(
     })
     .returning({ id: evaluations.id })
 
-  // Apply per-industry priority overrides as a small linear loop. The list
-  // is capped in the schema (max 50, no duplicates), and /evaluate is a
-  // batch-cadence endpoint, so there's no reason to reach for Promise.all.
-  const priorityResults: Array<{ industry: string; rowsAffected: number }> = []
-  for (const pu of input.priorityUpdates ?? []) {
-    const updated = await db
-      .update(projectProspects)
-      .set({ priority: pu.priority, updatedAt: now })
-      .where(
-        and(
-          eq(projectProspects.projectId, input.projectId),
-          eq(projectProspects.status, 'new'),
-          inArray(
-            projectProspects.prospectId,
-            db.select({ id: prospects.id }).from(prospects).where(eq(prospects.industry, pu.industry)),
-          ),
-        ),
-      )
-      .returning({ id: projectProspects.id })
-
-    priorityResults.push({ industry: pu.industry, rowsAffected: updated.length })
+  // Apply every per-industry priority override in a single
+  // UPDATE ... FROM (VALUES ...) so the endpoint issues one round-trip
+  // regardless of list size. The schema caps the list (max 50, no duplicate
+  // industries); RETURNING the matched industry lets us report per-industry
+  // rowsAffected. Only 'new' rows are touched, matching the prior behavior.
+  const priorityUpdates = input.priorityUpdates ?? []
+  let priorityResults: Array<{ industry: string; rowsAffected: number }> = []
+  if (priorityUpdates.length > 0) {
+    const NEW: ProspectStatus = 'new'
+    const valuesList = sql.join(
+      priorityUpdates.map((pu) => sql`(${pu.industry}::text, ${pu.priority}::int)`),
+      sql`, `,
+    )
+    const updatedRows = Array.from(
+      await db.execute(sql`
+        UPDATE project_prospects pp
+        SET priority = v.priority, updated_at = ${now}
+        FROM (VALUES ${valuesList}) AS v(industry, priority)
+        JOIN prospects p ON p.industry = v.industry
+        WHERE pp.prospect_id = p.id AND pp.project_id = ${input.projectId} AND pp.status = ${NEW}
+        RETURNING v.industry AS industry
+      `),
+    ) as Row[]
+    // Seed every requested industry at 0 so an industry that matched no 'new'
+    // prospect still appears in the result (preserves prior behavior).
+    const counts = new Map<string, number>(priorityUpdates.map((pu) => [pu.industry, 0]))
+    for (const row of updatedRows) {
+      const industry = row['industry'] as string
+      counts.set(industry, (counts.get(industry) ?? 0) + 1)
+    }
+    priorityResults = priorityUpdates.map((pu) => ({
+      industry: pu.industry,
+      rowsAffected: counts.get(pu.industry) ?? 0,
+    }))
   }
 
   return ok({

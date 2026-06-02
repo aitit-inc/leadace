@@ -167,13 +167,14 @@ function plainTextToHtmlBody(plain: string): string {
 }
 
 // Build the body footer + RFC 8058 List-Unsubscribe headers attached to every
-// outbound message. The footer is mandatory and unsubscribe is always
-// emitted: CAN-SPAM §5(a)(3) and CASL §6 both require an opt-out mechanism
-// in every commercial message, so the project_settings.unsubscribe_enabled
-// flag (kept for legacy reasons) is intentionally ignored here. Footer
-// carries the tenant's legal identity + physical address, the inquiry link
-// when enabled, the privacy policy URL when configured, and the unsubscribe
-// link.
+// outbound message. An opt-out is always present: the List-Unsubscribe header
+// is emitted unconditionally, and the body carries either the inquiry link
+// (whose label routes to the landing opt-out) or, when inquiry is disabled, a
+// standalone Unsubscribe line. CAN-SPAM §5(a)(3) and CASL §6 require an opt-out
+// in every commercial message, so the project_settings.unsubscribe_enabled flag
+// (kept for legacy reasons) is intentionally ignored here. The footer also
+// carries the tenant's legal identity + physical address and the privacy policy
+// URL when configured.
 //
 // The caller MUST resolve `tenantLegalName` / `tenantPhysicalAddress` via
 // `assertTenantComplianceReady` before invoking this — those columns are
@@ -214,7 +215,9 @@ export async function buildComplianceAttachments(args: {
   )
   const userUrl = `${args.appUrl}/unsubscribe/${token}`
   const oneClickUrl = `${args.apiUrl}/api/unsubscribe/${token}`
-  lines.push(`Unsubscribe: ${userUrl}`)
+  if (!args.inquiryUrl) {
+    lines.push(`Unsubscribe: ${userUrl}`)
+  }
   headers['List-Unsubscribe'] = `<${oneClickUrl}>, <${userUrl}>`
   headers['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
 

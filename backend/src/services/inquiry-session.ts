@@ -526,9 +526,6 @@ export async function recordSignupClick(
   }
 }
 
-// CTA mode for the project that owns this outreach. left-join project_settings
-// so legacy projects without a settings row default to 'meeting' (the column
-// default), matching the loadLandingContext fallback.
 async function readInquiryCtaType(
   db: Db,
   outreachLogId: number,
@@ -536,10 +533,13 @@ async function readInquiryCtaType(
   const [row] = await db
     .select({ inquiryCtaType: projectSettings.inquiryCtaType })
     .from(outreachLogs)
-    .leftJoin(projectSettings, eq(projectSettings.projectId, outreachLogs.projectId))
+    .innerJoin(projectSettings, eq(projectSettings.projectId, outreachLogs.projectId))
     .where(eq(outreachLogs.id, outreachLogId))
     .limit(1)
-  return row?.inquiryCtaType ?? 'meeting'
+  if (!row) {
+    throw new Error(`Invariant: no project_settings for outreach_log ${outreachLogId}`)
+  }
+  return row.inquiryCtaType
 }
 
 // Button-source meeting requests come from /inquiry/:shortId/request-meeting
@@ -900,10 +900,6 @@ export async function loadLandingContext(
   db: Db,
   shortId: ShortId,
 ): Promise<ServiceResult<InquiryLandingPayload>> {
-  // Single-roundtrip join: inquiry_tokens (auth) → outreach_logs →
-  // project_settings (left; null on legacy projects) → prospect →
-  // organization. Prospect/organization joins are inner because the token
-  // is meaningless without a target row to display the page for.
   const [row] = await db
     .select({
       tokenTenantId: inquiryTokens.tenantId,
@@ -917,7 +913,7 @@ export async function loadLandingContext(
     })
     .from(inquiryTokens)
     .innerJoin(outreachLogs, eq(outreachLogs.id, inquiryTokens.outreachLogId))
-    .leftJoin(projectSettings, eq(projectSettings.projectId, outreachLogs.projectId))
+    .innerJoin(projectSettings, eq(projectSettings.projectId, outreachLogs.projectId))
     .innerJoin(prospects, eq(prospects.id, inquiryTokens.prospectId))
     .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
     .where(and(eq(inquiryTokens.shortId, shortId), isNull(inquiryTokens.revokedAt)))
@@ -925,9 +921,7 @@ export async function loadLandingContext(
 
   if (!row) return err('NOT_FOUND', 'Inquiry link is no longer valid')
 
-  // `=== false` only — left-join null (no project_settings row) honors
-  // the column default of true.
-  if (row.inquiryLandingEnabled === false) {
+  if (!row.inquiryLandingEnabled) {
     return err('NOT_FOUND', 'Inquiry link is no longer valid')
   }
 
@@ -993,7 +987,7 @@ export async function loadPreviewContext(
       ...previewableSettingsCols,
     })
     .from(projects)
-    .leftJoin(projectSettings, eq(projectSettings.projectId, projects.id))
+    .innerJoin(projectSettings, eq(projectSettings.projectId, projects.id))
     .where(eq(projects.id, projectId))
     .limit(1)
 

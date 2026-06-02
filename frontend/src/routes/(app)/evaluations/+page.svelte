@@ -145,6 +145,22 @@
     {/if}
   </section>
 
+  {#if stats.dailyActivity.length > 0}
+    <section class="mb-10">
+      <h3 class="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">Activity trend · last 30d</h3>
+      <div class="grid grid-cols-[1fr_70px_70px] md:grid-cols-[1fr_80px_80px] gap-2 text-xs max-w-sm">
+        <span class="text-text-muted">Date</span>
+        <span class="text-text-muted text-right">Sent</span>
+        <span class="text-text-muted text-right">Resp.</span>
+        {#each stats.dailyActivity as d}
+          <span class="text-text font-mono">{d.date.slice(5)}</span>
+          <span class="text-text-secondary text-right font-mono">{d.sent}</span>
+          <span class="text-text-secondary text-right font-mono">{d.responses}</span>
+        {/each}
+      </div>
+    </section>
+  {/if}
+
   <section>
     <h3 class="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">History</h3>
 

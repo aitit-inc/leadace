@@ -18,9 +18,17 @@ export interface Evaluation {
   improvements: string;
 }
 
+/** Mirrors backend `services/evaluations.ts` DailyActivity. */
+export interface DailyActivity {
+  date: string;
+  sent: number;
+  responses: number;
+}
+
 export interface ProjectStats {
   metrics: EvaluationMetrics;
   respondedMessages: Array<Record<string, unknown>>;
   noResponseSample: Array<Record<string, unknown>>;
   dataSufficiency: { sufficient: boolean; totalSent: number; daysSinceLastSend: number | null };
+  dailyActivity: DailyActivity[];
 }

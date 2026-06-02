@@ -343,13 +343,15 @@ export async function recordOutreachWithInquiry(
   ctx: SendContext,
   input: RecordOutreachWithInquiryInput,
 ): Promise<ServiceResult<RecordOutreachWithInquiryResult>> {
-  const [guard, prospectGuard, sendSettings, complianceResult] = await Promise.all([
-    requireProject(db, input.projectId, tenantId),
+  // Gate project existence before loadProjectSendSettings, which asserts the
+  // settings row exists — loading it for a missing project would 500 not 404.
+  const guard = await requireProject(db, input.projectId, tenantId)
+  if (!guard.ok) return guard
+  const [prospectGuard, sendSettings, complianceResult] = await Promise.all([
     requireProspect(db, tenantId, input.prospectId),
     loadProjectSendSettings(db, input.projectId),
     assertTenantComplianceReady(db, tenantId),
   ])
-  if (!guard.ok) return guard
   if (!prospectGuard.ok) return prospectGuard
   if (!complianceResult.ok) return complianceResult
 
@@ -479,13 +481,15 @@ export async function sendAndRecord(
   ctx: SendContext,
   input: SendAndRecordInput,
 ): Promise<ServiceResult<SendOutcome>> {
-  const [guard, prospectGuard, sendSettings, complianceResult] = await Promise.all([
-    requireProject(db, input.projectId, tenantId),
+  // Gate project existence before loadProjectSendSettings, which asserts the
+  // settings row exists — loading it for a missing project would 500 not 404.
+  const guard = await requireProject(db, input.projectId, tenantId)
+  if (!guard.ok) return guard
+  const [prospectGuard, sendSettings, complianceResult] = await Promise.all([
     requireProspect(db, tenantId, input.prospectId),
     loadProjectSendSettings(db, input.projectId),
     assertTenantComplianceReady(db, tenantId),
   ])
-  if (!guard.ok) return guard
   if (!prospectGuard.ok) return prospectGuard
   // Compliance must gate both branches: even in draft mode the user clicks
   // "send from /drafts" later, and we want the 412 to surface at allocation

@@ -25,3 +25,5 @@ Generate the `BUSINESS.md` document with the following structure:
 ```
 
 Each section should be written by combining information obtained from the user with web research results. For sections where information is unknown, write "Not available" — do not leave sections empty.
+
+**Target length ~60 lines or fewer.** This is a reference doc — keep each section to the essentials; do not pad.
