@@ -11,6 +11,10 @@
  *   # Preview what would change without writing
  *   npx tsx scripts/seed-master-documents.ts --env-file=.env.production --dry-run
  *
+ * If DATABASE_URL is still unset (no env var, and any --env-file didn't define
+ * it), it falls back to backend/.dev.vars (mirroring scripts/migrate.ts), so
+ * the local-dev quickstart works bare.
+ *
  * Source layout: every seed source lives in `backend/seed-content/<slug>.md`.
  * Skills fetch the content at runtime via the `get_master_document` MCP tool
  * (by slug), never via the `Read` tool against the file path.
@@ -49,9 +53,26 @@ if (envFileArg) {
   }
 }
 
+// Fallback: load DATABASE_URL from backend/.dev.vars when not set in env or via
+// --env-file, mirroring scripts/migrate.ts so the local-dev quickstart
+// (`npx tsx scripts/seed-master-documents.ts`) works the same way
+// `npm run db:migrate` does.
+if (!process.env['DATABASE_URL']) {
+  const devVarsPath = resolve(__dirname, '..', '.dev.vars')
+  if (existsSync(devVarsPath)) {
+    for (const line of readFileSync(devVarsPath, 'utf-8').split('\n')) {
+      const m = line.match(/^DATABASE_URL\s*=\s*"?([^"\n]+?)"?\s*$/)
+      if (m) {
+        process.env['DATABASE_URL'] = m[1]
+        break
+      }
+    }
+  }
+}
+
 const DATABASE_URL = process.env['DATABASE_URL']
 if (!DATABASE_URL) {
-  console.error('DATABASE_URL is required (set in env or via --env-file=...)')
+  console.error('DATABASE_URL is required (set in env, via --env-file=<path>, or in backend/.dev.vars)')
   process.exit(1)
 }
 
