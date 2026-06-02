@@ -29,3 +29,21 @@ export SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET=""
 # GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET so the API Worker can do the
 # Gmail-send refresh-token exchange. Wrangler dev does not auto-forward
 # arbitrary shell env vars, so .dev.vars stays separate.
+
+# --- Isolated / parallel local Supabase stack (optional) -------------------
+# Read by scripts/supabase-local.sh, NOT by `npx supabase` directly. Run the
+# stack with that wrapper to get a separate project (own Docker containers +
+# DB volume) so it never touches the default `lead-ace` DB — e.g. to run a
+# checkout alongside another stack without sharing data:
+#
+#   SUPABASE_PROJECT_ID=leadace-oss scripts/supabase-local.sh start
+#
+# Leave these unset for the normal shared stack (`npx supabase start` is
+# unchanged). Set the offset too only if you need both stacks up at once — it
+# shifts each Supabase service's listen port so they don't collide (read the
+# shifted URLs from `scripts/supabase-local.sh status` into backend/.dev.vars +
+# frontend/.env). Note: the offset does not rewrite the Google redirect_uri in
+# config.toml, so interactive sign-in stays on the default-port stack — see
+# docs/self-host.md → "Running an isolated (or parallel) Supabase stack".
+# export SUPABASE_PROJECT_ID="leadace-oss"
+# export SUPABASE_PORT_OFFSET="100"

@@ -13,7 +13,8 @@ outbound outreach, and iterates on strategy — all hands-free.
 
 - Claude Code
 - A LeadAce account (sign up at https://app.leadace.ai — Free tier, no card)
-- Gmail MCP — for sending and checking emails
+- A connected Gmail account — for sending email (granted when you sign in with Google, or via the "Connect Gmail" banner in the web app)
+- Gmail MCP (claude.ai built-in) — for checking email replies
 - claude-in-chrome MCP — for form submission and SNS DMs
 
 ## Installation
@@ -33,8 +34,9 @@ To update later:
 ## Sign in
 
 The first time the plugin calls a LeadAce tool, Claude Code opens a browser
-window to https://mcp.leadace.ai for OAuth sign-in (uses the same email and
-password as the web app). The token is cached locally for subsequent runs.
+window to the LeadAce MCP server (`https://mcp.leadace.ai` by default, or your
+`LEADACE_MCP_URL`) for Google sign-in with the same Google account as the web
+app. The token is cached locally for subsequent runs.
 
 ### Self-hosting
 

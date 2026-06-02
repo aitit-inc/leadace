@@ -110,6 +110,47 @@ claude
 users who don't want Supabase Auth. It won't satisfy the backend's auth
 middleware out of the box — you'd need to swap the JWT verifier.
 
+### Running an isolated (or parallel) Supabase stack
+
+`supabase/config.toml` pins the project to `lead-ace` on fixed ports, so two
+checkouts on one machine share the same Docker containers and DB volume. To
+give a checkout its own isolated stack — its own containers and DB, leaving any
+other local stack (and its data) untouched — run Supabase through the wrapper
+instead of the CLI directly:
+
+```bash
+SUPABASE_PROJECT_ID=leadace-oss scripts/supabase-local.sh start
+SUPABASE_PROJECT_ID=leadace-oss scripts/supabase-local.sh status   # URLs/keys
+SUPABASE_PROJECT_ID=leadace-oss scripts/supabase-local.sh stop
+```
+
+The wrapper copies the committed config into a gitignored `.supabase-local/`
+workdir, rewrites the project id (and ports, if you set one), and forwards the
+command with `--workdir`. The Supabase CLI's `env()` interpolation has no
+default-value support, so the config itself can't be made env-overridable
+without breaking the no-env path — hence the wrapper rather than env vars in
+`config.toml`. With `SUPABASE_PROJECT_ID` unset it is a plain passthrough to
+`npx supabase`, so the default workflow above is unchanged.
+
+To run two stacks **at the same time**, also set `SUPABASE_PORT_OFFSET` (added
+to each Supabase service's listen port) so they don't collide, then read the
+shifted URLs from `... status` into `backend/.dev.vars` and `frontend/.env`:
+
+```bash
+SUPABASE_PROJECT_ID=leadace-oss SUPABASE_PORT_OFFSET=100 \
+  scripts/supabase-local.sh start    # API on 54421, DB on 54422, …
+```
+
+The offset shifts the service ports but not the Google `redirect_uri` baked
+into `config.toml` (`…:54321/auth/v1/callback`), so an offset stack is meant
+for non-interactive use (the curl regression harness, DB work). Interactive
+Google sign-in on an offset stack additionally needs the shifted callback URL
+registered on your Google OAuth client — easier to just run the offset stack
+without sign-in, or run only one stack at the default ports when you need it.
+
+The API/MCP Workers (8787/8788) and frontend (5173) are not Supabase; to run
+those alongside another stack, pass their own `--port` flags.
+
 ## Production self-deploy
 
 What you need:
@@ -167,10 +208,11 @@ environment. If you prefer the named-environment workflow, add your own
    - Redirect URLs: add the same hostname plus `/auth/callback`,
      `/auth/*`, and your local dev URL `http://localhost:5173/*` if
      you're going to keep working from a laptop too.
-4. **Authentication → Providers**: enable whichever providers you want.
-   The hosted service uses Google sign-in; email/password also works
-   out of the box. See [§9](#9-optional-google-sign-in) for the
-   Google-specific steps.
+4. **Authentication → Providers**: enable **Google**. The shipped
+   `/login` UI is Google-only — there is no email/password login UI, so
+   enabling email/password in Supabase alone gives you no way to sign in
+   (you'd have to build your own login form). See
+   [§10](#10-google-sign-in) for the Google client setup.
 
 ### 2. Apply database migrations
 
@@ -401,10 +443,11 @@ You only need this if Supabase's defaults aren't good enough for you.
    The hosted service's templates live under `supabase/templates/` in
    this repo as a starting point.
 
-### 10. Optional: Google Sign-in
+### 10. Google Sign-in
 
-The committed `/login` UI offers a "Continue with Google" button. To
-make it work:
+The committed `/login` UI offers a "Continue with Google" button — and
+since that UI is Google-only, this setup is required for a working
+sign-in. To make it work:
 
 1. [Google Cloud Console → APIs & Services → OAuth consent screen](https://console.cloud.google.com/apis/credentials/consent).
    - User type: External (or Internal if you only need Workspace
