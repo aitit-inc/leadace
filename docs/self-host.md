@@ -265,7 +265,7 @@ npx wrangler secret put SUPABASE_JWT_SECRET   --config wrangler.api.jsonc
 npx wrangler secret put GMAIL_TOKEN_ENCRYPTION_KEY --config wrangler.api.jsonc
 npx wrangler secret put UNSUBSCRIBE_TOKEN_SECRET   --config wrangler.api.jsonc
 
-# API Worker — for outbound Gmail send (optional but expected by /outreach/send)
+# API Worker — for outbound Gmail send (optional but expected by /api/outreach/send-and-record)
 npx wrangler secret put GOOGLE_CLIENT_ID      --config wrangler.api.jsonc
 npx wrangler secret put GOOGLE_CLIENT_SECRET  --config wrangler.api.jsonc
 
@@ -469,7 +469,7 @@ sign-in. To make it work:
 
 ### 11. Optional: Gmail OAuth for outbound send
 
-`/outreach/send` calls Gmail's `gmail.send` scope on behalf of the
+`/api/outreach/send-and-record` calls Gmail's `gmail.send` scope on behalf of the
 signed-in user using a refresh token captured during the §10 sign-in
 flow. The pieces wire together like this:
 
@@ -493,7 +493,11 @@ flow. The pieces wire together like this:
    (already covered in §4).
 
 If you skip this, sign-in still works and the rest of the platform is
-fine; only the outbound-email path returns 412 with a helpful error.
+fine; the outbound path then returns a graceful 412 "Gmail not
+connected" — **provided** `UNSUBSCRIBE_TOKEN_SECRET` is set. The send
+path HMAC-signs an unsubscribe link before it checks Gmail, so an empty
+`UNSUBSCRIBE_TOKEN_SECRET` makes it fail with a 500 instead of the 412.
+Set it (§4) even if you never enable outbound.
 
 ### 12. Optional: Stripe (cloud edition only)
 

@@ -38,16 +38,20 @@ LEADACE_EDITION="self-hosted"
 # Additional Scopes and the OAuth consent screen, and paste the Client ID /
 # Secret here. The redirect URI Google needs is the Supabase one — there
 # is no API-Worker callback. Without these, sign-in still works but
-# /outreach/send and the inquiry-landing reply path return 412.
+# /api/outreach/send-and-record and the inquiry-landing reply path return 412.
 GOOGLE_CLIENT_ID=""
 GOOGLE_CLIENT_SECRET=""
 # pgp_sym_encrypt key for stored Gmail tokens. Any 32+ char passphrase.
+# Required for outbound: encrypts/decrypts the stored Gmail refresh token.
 # Once data is encrypted with this key, do not change it without re-encrypting
 # the existing rows.
 GMAIL_TOKEN_ENCRYPTION_KEY=""
 
 # --- Outbound (unsubscribe links) ---
 # HMAC-SHA256 key for /unsubscribe/:token. Any 32+ char passphrase.
+# REQUIRED for outbound: every message HMAC-signs an unsubscribe link
+# (List-Unsubscribe) before the Gmail step, so leaving this empty makes
+# /api/outreach/send-and-record fail with a 500 — not the graceful "Gmail not connected" 412.
 # NEVER rotate once outbound emails have been sent — rotation invalidates
 # every prior unsubscribe link.
 UNSUBSCRIBE_TOKEN_SECRET=""
