@@ -54,7 +54,7 @@ export const recordResponseSchema = z.object({
   content: z.string().min(1),
   sentiment: z.enum(sentimentEnum.enumValues),
   responseType: z.enum(responseTypeEnum.enumValues),
-  // Clamped to [now-7d, now] so /check-results can pass Gmail's internalDate
+  // Clamped to [now-7d, now] so /check-responses can pass Gmail's internalDate
   // for polling lag, but callers can't backdate to shift nextOutreachAfter.
   receivedAt: z.iso
     .datetime()

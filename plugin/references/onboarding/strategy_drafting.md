@@ -45,7 +45,7 @@ Use `ENV_SUMMARY` for two things only:
 
 **Tool impact catalog** (use as the content of the Step 8 warning):
 - No Gmail SaaS → blocks email auto-send (send mode); drafting still works.
-- No Gmail MCP → reply checking in `/check-results` becomes manual.
+- No Gmail MCP → reply checking in `/check-responses` becomes manual.
 - No Claude in Chrome → blocks form / SNS auto-send (send mode); drafting still works.
 - No local fetch toolchain (`python3` + `claude` CLI) → `/build-list` and `/leadace` strategy research falls back to `WebFetch` — **not a channel block**, just lower research quality on WAF-blocked sites.
 - No tools at all → Outbound auto-send is effectively unusable; make the limitation prominent.
@@ -474,7 +474,7 @@ Tell the user once: "Seeded N subject variants — `/outbound` will rotate throu
 
 Return:
 - A 5-10 line summary the caller can include in its completion report (sub-mode, sections completed, sections deferred, any sender-info migrations, the chosen outbound mode, whether `inquiry_chat_brief` was generated / skipped).
-- **Environment warnings**: if `ENV_SUMMARY` (Step 2) shows any tool missing, list each unavailable tool with its impact from the Step 2 "Tool impact catalog". Classify per the catalog: Gmail SaaS and Claude in Chrome are channel-affecting (block outbound auto-send for their respective channels); Gmail MCP is reply-check-affecting (only degrades `/check-results` to manual, not an outbound block); local fetch toolchain is a research-quality fallback, not a channel block. Recommend reconnecting the missing tool — status is re-checked live on the next run, there is no env document to refresh.
+- **Environment warnings**: if `ENV_SUMMARY` (Step 2) shows any tool missing, list each unavailable tool with its impact from the Step 2 "Tool impact catalog". Classify per the catalog: Gmail SaaS and Claude in Chrome are channel-affecting (block outbound auto-send for their respective channels); Gmail MCP is reply-check-affecting (only degrades `/check-responses` to manual, not an outbound block); local fetch toolchain is a research-quality fallback, not a channel block. Recommend reconnecting the missing tool — status is re-checked live on the next run, there is no env document to refresh.
 - For Mode B: an explicit hint that the user can ask `/leadace` to refine the strategy later (e.g., to update messaging or fill in deferred fields).
 
 The caller composes its own user-facing completion message; this procedure does not print one.

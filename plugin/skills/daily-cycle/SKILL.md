@@ -1,6 +1,6 @@
 ---
 name: daily-cycle
-description: "This skill should be used when the user asks to \"run the daily cycle\", \"run today's sales\", \"do the daily sales tasks\", \"run daily-cycle\", or wants to run the daily sales automation cycle. Automatically runs check-results -> evaluate -> outbound + build-list (when needed) in sequence."
+description: "This skill should be used when the user asks to \"run the daily cycle\", \"run today's sales\", \"do the daily sales tasks\", \"run daily-cycle\", or wants to run the daily sales automation cycle. Automatically runs check-responses -> evaluate -> outbound + build-list (when needed) in sequence."
 argument-hint: "<project-id> [outbound-count=30]"
 allowed-tools:
   - Bash
@@ -84,13 +84,13 @@ Call `mcp__plugin_leadace_api__send_email` with the notification recipient as `t
 
 If sending fails (e.g. Gmail not connected), continue the cycle (errors will be reported in the wrap-up report).
 
-### 4. check-results (sub-agent)
+### 4. check-responses (sub-agent)
 
 Launch a sub-agent using the Agent tool to check for replies.
 
 Include the following in the prompt:
 - Project ID: `$0`
-- Read `${CLAUDE_PLUGIN_ROOT}/skills/check-results/SKILL.md` and follow its procedure
+- Read `${CLAUDE_PLUGIN_ROOT}/skills/check-responses/SKILL.md` and follow its procedure
 - Return to main with **only a 3-line summary**. Example: "3 responses (positive 2, neutral 1). 2 drafts created. 0 do-not-contacts."
 
 After receiving the summary from the sub-agent, report it to the user.
@@ -291,7 +291,7 @@ If step 6 determined to run build-list first, proceed to step 7 (outbound) from 
 Include the following in the prompt:
 - Project ID: `$0`
 - Execution date and time: the datetime obtained in step 1
-- Phase summaries collected from sub-agents during this cycle (check-results, evaluate, outbound, build-list)
+- Phase summaries collected from sub-agents during this cycle (check-responses, evaluate, outbound, build-list)
 
 **Completion Notification Email**
 
@@ -303,7 +303,7 @@ Compose the report body from the phase summaries passed in the prompt:
 Daily Cycle Report — YYYY-MM-DD HH:MM
 Project: $0
 
-check-results: (summary)
+check-responses: (summary)
 evaluate: (summary)
 outbound: (summary)
 build-list: (summary)

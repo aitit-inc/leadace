@@ -416,5 +416,5 @@ Report the following:
 - If `outboundMode` was `draft`, report total drafts created across all channels (Drafts: N) and remind the user to review and send them at https://app.leadace.ai/drafts
 - **Missing-tool warnings**: if any send failed because a tool was not connected (Gmail not connected → email; Claude in Chrome unavailable → form / SNS), list it and recommend connecting the tool before the next run. Especially relevant in draft mode, where these tools weren't exercised but will be needed when the user sends the drafts.
 - Number of failures and reasons
-- Guide the user to run `/check-results` as the next step (or, if drafts were created, after the user sends the reviewed drafts)
+- Guide the user to run `/check-responses` as the next step (or, if drafts were created, after the user sends the reviewed drafts)
 - Append a single low-key dashboard line at the end: `Dashboard: https://app.leadace.ai/outreach` — purely informational, do not push the user to open it

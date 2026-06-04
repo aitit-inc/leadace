@@ -163,8 +163,8 @@ Onboarding chain is covered by `./e2e/smoke.sh` (drives the Claude CLI; needs a 
 
 Still Phase 2 (not yet implemented):
 
-- **daily-cycle full run** — chain check-results → evaluate → outbound + build-list end-to-end.
-- **Reaction detection automation** — either plant replies in a test mailbox so `/check-results` can pick them up, or substitute the inquiry-landing webhook path.
+- **daily-cycle full run** — chain check-responses → evaluate → outbound + build-list end-to-end.
+- **Reaction detection automation** — either plant replies in a test mailbox so `/check-responses` can pick them up, or substitute the inquiry-landing webhook path.
 
 ## Related resources
 

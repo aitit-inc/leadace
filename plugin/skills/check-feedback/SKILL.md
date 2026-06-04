@@ -9,7 +9,7 @@ allowed-tools:
 
 # Check Feedback - PMF Signals from Rejection Feedback
 
-A read-only skill that surfaces **product/pricing/business-model** signals from rejection feedback recorded by `/check-results`. Use this for PMF reflection — questions like "is there a missing feature people keep asking for?" or "are we losing to a specific competitor?".
+A read-only skill that surfaces **product/pricing/business-model** signals from rejection feedback recorded by `/check-responses`. Use this for PMF reflection — questions like "is there a missing feature people keep asking for?" or "are we losing to a specific competitor?".
 
 This skill is **not** for sales tactics. Tactical signals from rejections (when to recontact, who to redirect to, which industries to deprioritize) are consumed automatically by `/evaluate` in the daily cycle. Do not use `/check-feedback` to drive operational decisions.
 

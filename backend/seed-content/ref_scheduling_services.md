@@ -1,6 +1,6 @@
 # Scheduling Services — Notification Sender Domains
 
-This document maps known scheduling services to the apex domain(s) they use for booking notification emails. Used by `/check-results` to search Gmail for booking notifications, and by `/leadace` strategy drafting to auto-fill the sender domain when the user names a service.
+This document maps known scheduling services to the apex domain(s) they use for booking notification emails. Used by `/check-responses` to search Gmail for booking notifications, and by `/leadace` strategy drafting to auto-fill the sender domain when the user names a service.
 
 ## Why domains, not full email addresses
 
@@ -14,13 +14,13 @@ Local-parts (`no-reply@`, `notifications@`, `do-not-reply@`, `booking@`, …) ar
 | Cal.com | `cal.com` | Global | Open-source alternative |
 | HubSpot Meetings | `hubspot.com` | Global | HubSpot uses many subdomains; apex catches them all |
 | SavvyCal | `savvycal.com` | Global | |
-| Microsoft Bookings | `microsoft.com` | Global | Booking notifications are sent from various MS subdomains; apex catches them. May overlap with non-booking MS mail — content match in `/check-results` step 3d filters false positives |
+| Microsoft Bookings | `microsoft.com` | Global | Booking notifications are sent from various MS subdomains; apex catches them. May overlap with non-booking MS mail — content match in `/check-responses` step 3d filters false positives |
 | Chili Piper | `chilipiper.com` | Global, enterprise | |
 | Doodle | `doodle.com` | Global | |
 | TimeRex | `timerex.net` | Japan | |
 | Spir | `spirinc.com` | Japan | |
 
-## How `/check-results` uses this
+## How `/check-responses` uses this
 
 For each scheduling service the user has configured (in `SALES_STRATEGY.md` Response Definition section, or any service the user later mentions):
 

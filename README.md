@@ -52,12 +52,12 @@ Most commands take your project name as the first argument (chosen during `/lead
 | `/match-prospects <name>` | Reuse prospects already in your tenant |
 | **Sales loop** | |
 | `/outbound <name>` | Send via email, contact forms, SNS DMs |
-| `/check-results <name>` | Collect Gmail + SNS replies → DB |
+| `/check-responses <name>` | Collect Gmail + SNS replies → DB |
 | `/evaluate <name>` | PDCA — analyse, auto-improve strategy, and surface tactical rejection signals (recontact queue, decision-maker referrals, targeting hints) |
 | **Reflection** | |
 | `/check-feedback <name>` | Surface PMF signals from rejection feedback (feature gaps, competitor presence) — ad-hoc product reflection |
 | **Automation** | |
-| `/daily-cycle <name> [count]` | One-shot bundle: check-results → evaluate → outbound + build-list |
+| `/daily-cycle <name> [count]` | One-shot bundle: check-responses → evaluate → outbound + build-list |
 | `/setup-cron <name>` | Schedule `/daily-cycle` on the OS (LaunchAgent / Task / cron) |
 | **Maintenance** | |
 | `/delete-project <name>` | Permanently delete a project and all its data |
@@ -80,7 +80,7 @@ flowchart TD
   IP --> OB
   MP --> OB
 
-  OB --> CR["/check-results"]
+  OB --> CR["/check-responses"]
   CR --> EV["/evaluate"]
   EV -- next round --> P
 
@@ -95,7 +95,7 @@ flowchart TD
 ```
 
 Solid arrows = the main loop. Dashed = optional / occasional / wrapper.
-`/evaluate` also consumes the tactical slice of rejection feedback (recontact requests, decision-maker referrals, `not_relevant` industry clusters) recorded by `/check-results` — no separate user step.
+`/evaluate` also consumes the tactical slice of rejection feedback (recontact requests, decision-maker referrals, `not_relevant` industry clusters) recorded by `/check-responses` — no separate user step.
 
 ---
 

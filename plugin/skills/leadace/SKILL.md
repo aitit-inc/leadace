@@ -35,7 +35,7 @@ The single entry point for LeadAce. Behaviors:
 4. **Strategy authoring** ("strategy", "targeting", "messaging"): author or refine `BUSINESS.md` + `SALES_STRATEGY.md` for a project — run inline (no separate skill).
 5. **Free-form mode** (other text): classify intent, answer directly or route to a specific skill.
 
-After this skill, day-to-day use needs only `/daily-cycle` (which itself fans out to `/check-results`, `/evaluate`, `/outbound`, and `/build-list` when prospects run low). Other skills (`/build-list`, `/outbound`, `/check-results`, `/evaluate`, `/import-prospects`, `/match-prospects`, `/setup-cron`, `/delete-project`) remain available as advanced shortcuts and as routing targets for this skill.
+After this skill, day-to-day use needs only `/daily-cycle` (which itself fans out to `/check-responses`, `/evaluate`, `/outbound`, and `/build-list` when prospects run low). Other skills (`/build-list`, `/outbound`, `/check-responses`, `/evaluate`, `/import-prospects`, `/match-prospects`, `/setup-cron`, `/delete-project`) remain available as advanced shortcuts and as routing targets for this skill.
 
 **Before starting:** `Read` `${CLAUDE_PLUGIN_ROOT}/references/workspace-conventions.md` and follow the cross-cutting conventions there (data storage, MCP error handling, document writes, output discipline).
 
@@ -135,7 +135,7 @@ For `delegate_outbound` and `delegate_daily`, add an extra line about side effec
 
 #### 3d. out_of_scope
 
-One polite line: "That's outside what LeadAce does. I can help with sales-automation tasks via `/leadace`, `/build-list`, `/outbound`, `/check-results`, `/evaluate`, or `/daily-cycle`." Stop.
+One polite line: "That's outside what LeadAce does. I can help with sales-automation tasks via `/leadace`, `/build-list`, `/outbound`, `/check-responses`, `/evaluate`, or `/daily-cycle`." Stop.
 
 #### 3e. run_setup — Environment Check & Project Setup (inline)
 
@@ -234,7 +234,7 @@ Print a short snippet the user can paste into their runtime's persistent memory 
   ## LeadAce
   Sales automation plugin. Default project: <PROJECT_NAME>.
   Daily flow: /daily-cycle <PROJECT_NAME>.
-  Entry point (setup, strategy, overview, onboarding): /leadace. Advanced: /build-list, /outbound, /check-results, /evaluate, /import-prospects, /match-prospects, /setup-cron, /delete-project.
+  Entry point (setup, strategy, overview, onboarding): /leadace. Advanced: /build-list, /outbound, /check-responses, /evaluate, /import-prospects, /match-prospects, /setup-cron, /delete-project.
   Outbound is irreversible — always confirm before /outbound or /daily-cycle.
   ```
 
@@ -263,7 +263,7 @@ Three tiers — daily use only needs the first two. Print under sub-headings so 
 | Skill | One-line purpose |
 |---|---|
 | `/leadace` | This skill — entry point: onboarding, environment setup / re-check, strategy authoring, overview, and routing. |
-| `/daily-cycle` | The daily run: `check-results` -> `evaluate` -> `outbound`, plus auto-`build-list` when prospects run low. |
+| `/daily-cycle` | The daily run: `check-responses` -> `evaluate` -> `outbound`, plus auto-`build-list` when prospects run low. |
 
 **Advanced** — direct access to the steps `/daily-cycle` runs, plus list-management entry points. (Environment setup / re-check and strategy authoring are handled by `/leadace` itself — ask it in plain language.)
 
@@ -271,7 +271,7 @@ Three tiers — daily use only needs the first two. Print under sub-headings so 
 |---|---|
 | `/build-list` | Web-search-driven prospect collection based on the project's strategy; registers candidates in the DB. |
 | `/outbound` | Execute outreach (email / contact form / SNS DM) against the project's prospect list. |
-| `/check-results` | Detect replies and scheduling notifications, record them as `responses`. |
+| `/check-responses` | Detect replies and scheduling notifications, record them as `responses`. |
 | `/evaluate` | Analyze response-rate data and propose strategy / targeting / messaging improvements. |
 | `/import-prospects` | Load prospects from a file (CSV / Excel / SQLite / text) — either as tenant assets or linked to a project. |
 | `/match-prospects` | Pull existing tenant-wide prospects into a project that fits the targeting. |

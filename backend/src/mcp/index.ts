@@ -178,7 +178,7 @@ function buildToolRegistry(): ToolDef[] {
       category: z.enum(BUG_REPORT_CATEGORIES)
         .describe('"bug" = something is broken / wrong. "feedback" = working but rough / confusing. "idea" = a feature request or product suggestion.'),
       title: z.string().min(3).max(200)
-        .describe('One-line summary, e.g. "/check-results crashes when no Gmail connected".'),
+        .describe('One-line summary, e.g. "/check-responses crashes when no Gmail connected".'),
       body: z.string().min(10).max(4000)
         .describe('What you tried, what happened, what you expected. Include reproduction steps if you have them.'),
       context: z.record(z.string(), z.unknown()).optional()
@@ -1001,7 +1001,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_recent_outreach',
-    'Get recent outreach logs for a project. Used by check-results to match Gmail/SNS replies to sent messages. Each log carries the recipient identifiers (prospectName, contactName, prospectEmail, organizationDomain) so the skill can match by domain and name leads in the report without a second lookup. Each log also carries inquiry-landing aggregates: inquirySessionCount, inquiryOutcome (opened / inquired / unsubscribed / signup_clicked / lead / null — most-significant outcome ever recorded; signup_clicked is the self-serve counterpart to lead, surfaced only when the project runs in inquiryCtaType="signup"), inquiryMeetingSource (button / chat / null — only set when inquiryOutcome === "lead"), inquiryLastVisitAt — surface lead-via-landing and signup-via-landing alongside email replies, and skip reply-draft creation for outreach where the recipient already became a lead or signup via the inquiry page.',
+    'Get recent outreach logs for a project. Used by check-responses to match Gmail/SNS replies to sent messages. Each log carries the recipient identifiers (prospectName, contactName, prospectEmail, organizationDomain) so the skill can match by domain and name leads in the report without a second lookup. Each log also carries inquiry-landing aggregates: inquirySessionCount, inquiryOutcome (opened / inquired / unsubscribed / signup_clicked / lead / null — most-significant outcome ever recorded; signup_clicked is the self-serve counterpart to lead, surfaced only when the project runs in inquiryCtaType="signup"), inquiryMeetingSource (button / chat / null — only set when inquiryOutcome === "lead"), inquiryLastVisitAt — surface lead-via-landing and signup-via-landing alongside email replies, and skip reply-draft creation for outreach where the recipient already became a lead or signup via the inquiry page.',
     {
       projectId: z.string().describe('Project name or ID'),
       limit: z.number().int().min(1).max(200).default(100),
@@ -1407,7 +1407,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_inquiry_session_summary',
-    'Sender-side visibility into a recipient\'s inquiry-landing activity for a given shortId. Returns the prospect/outreach context plus every session opened against this short_id (most recent first), each with outcome (opened / inquired / lead / signup_clicked / unsubscribed), meetingRequestSource (button / chat / null — only set when outcome === "lead"), derivedSummary, chatTurnsUsed, openedAt / closedAt, and the chat message thread. Use in /check-results to surface inquiry-landing outcomes alongside email replies.',
+    'Sender-side visibility into a recipient\'s inquiry-landing activity for a given shortId. Returns the prospect/outreach context plus every session opened against this short_id (most recent first), each with outcome (opened / inquired / lead / signup_clicked / unsubscribed), meetingRequestSource (button / chat / null — only set when outcome === "lead"), derivedSummary, chatTurnsUsed, openedAt / closedAt, and the chat message thread. Use in /check-responses to surface inquiry-landing outcomes alongside email replies.',
     {
       shortId: z.string().describe('Inquiry landing short_id (from create_inquiry_token).'),
     },

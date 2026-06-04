@@ -166,7 +166,7 @@ async function notifyLeadByEmail(
 
   if (!row) return
 
-  const dashboardUrl = `${env.APP_URL}/check-results`
+  const dashboardUrl = `${env.APP_URL}/responses`
   const prospectLine = row.prospectEmail
     ? `${row.prospectName} <${row.prospectEmail}>`
     : row.prospectName

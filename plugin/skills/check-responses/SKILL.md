@@ -1,5 +1,5 @@
 ---
-name: check-results
+name: check-responses
 description: "This skill should be used when the user asks to \"check replies\", \"check responses\", \"see results\", \"check if there are email replies\", or wants to check outbound outreach responses. Automatically checks email replies and SNS responses and records them in the DB."
 argument-hint: "<project-id>"
 allowed-tools:
@@ -20,7 +20,7 @@ allowed-tools:
   - mcp__plugin_leadace_api__get_master_document
 ---
 
-# Check Results - Response Collection
+# Check Responses - Response Collection
 
 A skill that automatically checks outbound sales responses and records them in the database.
 

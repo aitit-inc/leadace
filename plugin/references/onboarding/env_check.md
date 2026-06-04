@@ -45,7 +45,7 @@ If not connected: "Open https://app.leadace.ai — a 'Connect Gmail' banner is s
 
 ### 2-2. Gmail MCP (claude.ai built-in) — ask
 
-Use `AskUserQuestion`: "Have you connected the Gmail MCP in claude.ai? (Required for reply checking in `/check-results` and for auto-drafting replies to positive responses.)" — options: `yes` / `no` / `unsure`. Record as `GMAIL_MCP`.
+Use `AskUserQuestion`: "Have you connected the Gmail MCP in claude.ai? (Required for reply checking in `/check-responses` and for auto-drafting replies to positive responses.)" — options: `yes` / `no` / `unsure`. Record as `GMAIL_MCP`.
 
 ### 2-2b. Workspace identity / compliance footer (interactive fill)
 
@@ -78,7 +78,7 @@ Mention the recipient-delivery scope once in the completion report (the supporte
 
 ### 2-3. Claude in Chrome extension — ask
 
-Use `AskUserQuestion`: "Are you using the Claude in Chrome extension? (Required for contact-form submission and SNS DMs in `/outbound`, plus SNS reply checking in `/check-results`.)" — options: `yes` / `no` / `unsure`. Record as `CHROME_EXT`.
+Use `AskUserQuestion`: "Are you using the Claude in Chrome extension? (Required for contact-form submission and SNS DMs in `/outbound`, plus SNS reply checking in `/check-responses`.)" — options: `yes` / `no` / `unsure`. Record as `CHROME_EXT`.
 
 **Caller may relax these prompts**: when invoked from `/leadace`'s onboarding chain, the caller can default to `unsure` for 2-2 and 2-3 without asking, to keep the chain flowing. The user can ask `/leadace` to re-check the environment later for explicit confirmation. State this assumption in the hand-off summary (Step 4) when applied.
 

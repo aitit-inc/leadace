@@ -75,12 +75,12 @@ Most commands take your project name as the first argument (chosen during `/lead
 | `/match-prospects <name>` | Reuse prospects already in your tenant |
 | **Sales loop** | |
 | `/outbound <name>` | Send via email, contact forms, SNS DMs |
-| `/check-results <name>` | Collect Gmail + SNS replies → DB |
+| `/check-responses <name>` | Collect Gmail + SNS replies → DB |
 | `/evaluate <name>` | PDCA — auto-improve strategy and surface tactical rejection signals |
 | **Reflection** | |
 | `/check-feedback <name>` | Surface PMF signals from rejection feedback (feature gaps, competitor presence) |
 | **Automation** | |
-| `/daily-cycle <name> [count]` | One-shot bundle: check-results → evaluate → outbound + build-list |
+| `/daily-cycle <name> [count]` | One-shot bundle: check-responses → evaluate → outbound + build-list |
 | `/setup-cron <name>` | Schedule `/daily-cycle` on the OS (LaunchAgent / Task / cron) |
 | **Maintenance** | |
 | `/delete-project <name>` | Permanently delete a project and all its data |
