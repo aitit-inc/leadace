@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import { verifyJwt, verifySupabaseJwt } from '../auth/verify-jwt'
 import { BUG_REPORT_CATEGORIES, OUTBOUND_MODES, OUTBOUND_CHANNELS, REJECTION_PRIMARY_REASONS, REJECTION_RECONTACT_WINDOWS, prospectStatusEnum, prioritySchema } from '../db/schema'
@@ -131,10 +132,32 @@ function withCors(response: Response): Response {
   })
 }
 
-function createMcpServer(apiUrl: string, authHeader: string): McpServer {
-  const server = new McpServer({ name: 'lead-ace', version: SERVER_VERSION })
+type ToolCtx = { apiUrl: string; authHeader: string }
 
-  server.tool(
+type ToolDef = {
+  name: string
+  description: string
+  schema: z.ZodRawShape
+  handler: (args: Record<string, unknown>, ctx: ToolCtx) => Promise<CallToolResult> | CallToolResult
+}
+
+// The tool catalog (names, descriptions, input schemas, handlers) is immutable
+// and built once per isolate here. Only the per-request execution context
+// (apiUrl, authHeader) varies — createMcpServer injects it at call time. Building
+// the 44 Zod schemas once instead of per request keeps the MCP fetch path off the
+// Worker CPU limit (per-request rebuild used to exceed Free's 10 ms ceiling).
+function buildToolRegistry(): ToolDef[] {
+  const tools: ToolDef[] = []
+  const defineTool = <S extends z.ZodRawShape>(
+    name: string,
+    description: string,
+    schema: S,
+    handler: (args: z.infer<z.ZodObject<S>>, ctx: ToolCtx) => Promise<CallToolResult> | CallToolResult,
+  ): void => {
+    tools.push({ name, description, schema, handler: handler as ToolDef['handler'] })
+  }
+
+  defineTool(
     'get_server_version',
     'Return the LeadAce backend MCP server version and the minimum compatible plugin version. Skills should call this first and abort with a "/plugin update" message if their plugin.json version is below minPluginVersion.',
     {},
@@ -148,7 +171,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'report_bug',
     'File a bug, feedback, or idea about LeadAce. The maintainer reviews these out of band on the LeadAce backend (no public issue is opened). Use freely from any skill — include what you tried, what happened, and what you expected. The optional `context` field accepts arbitrary JSON metadata (skill name, plugin version, prospect/project ids, etc.). Daily-capped per tenant; on cap exhaustion the call returns an error and the user can retry tomorrow. self-host installs collect reports in their own database (the maintainer does not see them).',
     {
@@ -161,7 +184,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
       context: z.record(z.string(), z.unknown()).optional()
         .describe('Optional structured metadata (any JSON object). Suggested keys: skill, pluginVersion, projectId, prospectId, errorMessage.'),
     },
-    async (input) => {
+    async (input, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('POST', '/bug-reports', input, apiUrl, authHeader)
       if (!ok) {
         const err = data as { error: string; detail?: string }
@@ -173,11 +196,11 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'list_projects',
     'List all projects for the current user.',
     {},
-    async () => {
+    async (_args, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('GET', '/projects', null, apiUrl, authHeader)
       if (!ok) {
         const err = data as { error: string }
@@ -195,11 +218,11 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'setup_project',
     'Create a new LeadAce project. Returns the auto-generated project ID. Returns an error if the plan limit is reached.',
     { name: z.string().describe('Project name (unique per tenant)') },
-    async ({ name }) => {
+    async ({ name }, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('POST', '/projects', { name }, apiUrl, authHeader)
       if (!ok) {
         const err = data as { error: string; detail?: string }
@@ -210,11 +233,11 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'delete_project',
     'Delete a project and all its data (prospects, outreach logs, responses, evaluations).',
     { projectId: z.string().describe('Project name or ID') },
-    async ({ projectId }) => {
+    async ({ projectId }, { apiUrl, authHeader }) => {
       const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
       if (!resolved.id) {
         return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
@@ -228,7 +251,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'add_prospects',
     'Batch register prospects. Server-side dedup is the single source of truth for duplicate avoidance. Each skipped row comes back in skippedDetails as {name, reason} where reason ∈ "email_duplicate" | "form_url_duplicate" | "already_in_project" | "do_not_contact" | "duplicate_in_batch" | "plan_limit". Use those codes to adjust your search keywords (e.g. lots of "email_duplicate" → narrow the search; lots of "already_in_project" → cluster is exhausted). projectId is optional: omit it to save prospects as tenant-only assets (no project link). When projectId is provided, every prospect must include matchReason. Set doNotContact=true on rows the source data marks as unsubscribed/opted-out so /build-list will not re-contact them later (DNC is a one-way ratchet on overwrite — false never clears an existing flag). Pair tenant-only imports with /match-prospects to link the right ones into a project later.',
     {
@@ -269,7 +292,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
         countrySource: z.enum(['manual', 'ai_inferred']).optional().describe('How the country value was determined. "manual" = operator confirmed; "ai_inferred" = LLM-derived from page content. Only meaningful when country is provided.'),
       })).describe('Array of prospects to register (max 100)'),
     },
-    async ({ projectId, prospects }) => {
+    async ({ projectId, prospects }, { apiUrl, authHeader }) => {
       let resolvedId: string | undefined
       if (projectId) {
         const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
@@ -293,7 +316,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'check_prospect_dedup',
     'Read-only pre-flight duplicate check. Use after candidate discovery, before paying for heavy contact retrieval: pass each candidate\'s organizationDomain (and email / contactFormUrl if surfaced incidentally), receive {kind: "fresh" | "skip", reason?} per candidate in input order. Skip reasons are the dedup-only subset of add_prospects: "email_duplicate" | "form_url_duplicate" | "already_in_project" | "do_not_contact" | "duplicate_in_batch". add_prospects also emits "plan_limit" — that is a budget signal, never emitted here. Drop kind="skip" candidates before launching contact-retrieval sub-agents; add_prospects re-runs the same dedup as a safety net. Up to 100 candidates per call.',
     {
@@ -304,7 +327,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
         contactFormUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
       })).describe('Array of candidates to check (max 100)'),
     },
-    async ({ projectId, candidates }) => {
+    async ({ projectId, candidates }, { apiUrl, authHeader }) => {
       let resolvedId: string | undefined
       if (projectId) {
         const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
@@ -330,7 +353,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'import_prospects_from_csv',
     'Import prospects from a canonical CSV string. Required headers: organizationDomain, organizationName, organizationWebsiteUrl, name, overview, websiteUrl. matchReason is required only when projectId is provided. Optional headers: contactName, department, industry, email, contactFormUrl, formType, snsAccounts.x, snsAccounts.linkedin, snsAccounts.instagram, snsAccounts.facebook, notes, priority, doNotContact. At least one of email / contactFormUrl / snsAccounts.* per row. doNotContact accepts 1/true/yes/on (DNC) or 0/false/no/off (not DNC); empty cells are treated as not provided. Set it on rows the source marks as unsubscribed/opted-out so /build-list will not re-discover and contact them. On overwrite, doNotContact=true sets the flag on existing prospects; false (or column absent) never clears an existing flag (one-way ratchet). projectId is optional: omit it to save prospects as tenant-only assets (no project_prospects link is created — pair with /match-prospects to link them into a project later). dedupPolicy "skip" leaves existing prospects alone; "overwrite" updates prospect fields (matched by email or contactFormUrl) and re-links to the project. Rows that match only by organization domain are skipped as "already_in_project" even with "overwrite" — the prospect identity within that organization is ambiguous and cannot be safely updated. Existing prospects already flagged do_not_contact are always skipped (their record is preserved). Skipped rows are returned in skippedDetails as {row, name, reason} where reason ∈ "email_duplicate" | "form_url_duplicate" | "already_in_project" | "do_not_contact" | "duplicate_in_batch" | "plan_limit". Max 1000 data rows.',
     {
@@ -338,7 +361,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
       csvText: z.string().describe('Full CSV text including header row'),
       dedupPolicy: z.enum(['skip', 'overwrite']).default('skip'),
     },
-    async ({ projectId, csvText, dedupPolicy }) => {
+    async ({ projectId, csvText, dedupPolicy }, { apiUrl, authHeader }) => {
       let resolvedId: string | undefined
       if (projectId) {
         const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
@@ -376,14 +399,14 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'get_outbound_targets',
     'Get uncontacted prospects ordered by priority for outbound outreach. Each prospect carries `country` (effective code = prospect override > org country > null) for pre-flight skipping against the currently-allowed US/CA/JP delivery scope.',
     {
       projectId: z.string().describe('Project name or ID'),
       limit: z.number().int().min(1).max(200).default(50).describe('Max number of prospects to return'),
     },
-    async ({ projectId, limit }) => {
+    async ({ projectId, limit }, { apiUrl, authHeader }) => {
       const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
       if (!resolved.id) {
         return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
@@ -427,7 +450,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'record_outreach_with_inquiry',
     'Pre-submit allocation for form / SNS DM channels: reserves the outreach log row (status="pre_send" in send mode, "pending_review" in draft mode) and returns finalBody with the inquiry-landing URL footer baked in (when project_settings.inquiryLandingEnabled=true). The skill submits finalBody verbatim, then resolves the row by calling update_outreach_status with "sent" on success or "failed" on failure. The prospect is flipped to "contacted" only on the "sent" transition. In draft mode the user submits manually from app.leadace.ai/drafts — no follow-up call needed. For email use send_email_and_record instead.',
     {
@@ -437,7 +460,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
       subject: z.string().optional(),
       body: z.string(),
     },
-    async (input) => {
+    async (input, { apiUrl, authHeader }) => {
       const resolved = await resolveProjectId(input.projectId, apiUrl, authHeader)
       if (!resolved.id) {
         return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
@@ -459,7 +482,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'update_outreach_status',
     'Resolve a "pre_send" outreach log row allocated by record_outreach_with_inquiry. Call with status="sent" after the form / SNS submit succeeds — the server flips the prospect to "contacted" and confirms quota consumption. Call with status="failed" plus an errorMessage if the submit fails — the in-flight quota reservation is refunded and next_outreach_after is stamped to sentAt + noResponseRecycleDays so the prospect drops out of get_outbound_targets for that window (existing longer windows are preserved via GREATEST). Only the "pre_send" → terminal transition is accepted.',
     {
@@ -467,7 +490,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
       status: z.enum(['sent', 'failed']).describe('"sent" = submit succeeded; "failed" = submit failed.'),
       errorMessage: z.string().min(1).max(2000).optional().describe('Required when status="failed". Reason for the submit failure (HTTP status, network error, etc.).'),
     },
-    async ({ outreachLogId, status, errorMessage }) => {
+    async ({ outreachLogId, status, errorMessage }, { apiUrl, authHeader }) => {
       if (status === 'failed' && !errorMessage) {
         return { content: [{ type: 'text' as const, text: 'Error: errorMessage is required when status="failed".' }], isError: true }
       }
@@ -481,11 +504,11 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'get_tenant_settings',
     'Get the workspace-level identity / compliance fields the user has configured. Returns a readiness status line plus legalName, physicalAddress, defaultSenderCountry, and privacyPolicyUrl. legalName / physicalAddress / defaultSenderCountry are MANDATORY for outbound sends — when any of those is null, send_email_and_record / record_outreach_with_inquiry refuse with 412. /leadace uses this to direct the user to the Workspace settings page when fields are missing.',
     {},
-    async () => {
+    async (_args, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('GET', '/tenant-settings', null, apiUrl, authHeader)
       if (!ok) {
         const e = data as { error: string; detail?: string }
@@ -515,7 +538,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'update_tenant_settings',
     'Update workspace-level identity / compliance fields. All fields are optional — only the keys you pass are written. legalName / physicalAddress / defaultSenderCountry are the three mandatory-for-outbound fields; setting them clears the 412 send-time refusal. defaultSenderCountry is the sender-side ISO 3166-1 alpha-2 code recorded in the compliance footer; any valid alpha-2 is accepted. It is independent from the recipient-delivery allowlist (which is enforced separately on prospect / organization country). Used by /leadace to interactively fill compliance during onboarding.',
     {
@@ -525,7 +548,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
       defaultSenderCountry: z.string().regex(/^[A-Z]{2}$/, 'must be ISO 3166-1 alpha-2 (e.g. US, CA, JP)').nullable().optional(),
       privacyPolicyUrl: z.url().max(500).nullable().optional().describe('The sender\'s own privacy policy URL. Optional; appended to the footer as "Privacy: <url>" when set. Only legally meaningful as the sender\'s GDPR Art.14 notice to UK/EU individual recipients — not required for the current US/CA/JP send targets.'),
     },
-    async (patch) => {
+    async (patch, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('PUT', '/tenant-settings', patch, apiUrl, authHeader)
       if (!ok) {
         const e = data as { error: string; detail?: string }
@@ -544,11 +567,11 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'get_compliance_status',
     'Lightweight pre-flight check for outbound. Returns just { ready: boolean, missing: string[] } so callers can branch without parsing the full tenant settings payload. ready=false means at least one of legalName / physicalAddress / defaultSenderCountry is unset and any send_email_and_record / record_outreach_with_inquiry call will refuse with 412. Use this at the top of /outbound to bail early before spending tokens on draft generation.',
     {},
-    async () => {
+    async (_args, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('GET', '/tenant/compliance-status', null, apiUrl, authHeader)
       if (!ok) {
         const e = data as { error: string; detail?: string }
@@ -563,13 +586,13 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'list_subject_variants',
     'List the project\'s subject-line variants (active + archived) so /leadace can detect whether seeding is needed and /evaluate can review existing rotation. Returns `{ variants: [{ variantId, subjectPattern, label, archivedAt, ... }] }` ordered by createdAt asc.',
     {
       projectId: z.string().describe('Project name or ID'),
     },
-    async ({ projectId }) => {
+    async ({ projectId }, { apiUrl, authHeader }) => {
       const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
       if (!resolved.id) {
         return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
@@ -592,7 +615,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'upsert_subject_variant',
     'Register or update a subject-line A/B variant on a project. variantId is a stable slug (e.g. "v1", "warm_intro", "signal_funded"); subjectPattern may include {{org}} / {{name}} / {{signal}} placeholders that the skill substitutes at send time. Setting archived=true retires the slug from rotation while keeping it analysable for historic outreach rows. Idempotent: re-calling with the same variantId updates the pattern / label / archived state. /leadace onboarding seeds the first 2-3 variants; /evaluate may suggest adding new ones based on response rates.',
     {
@@ -602,7 +625,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
       label: z.string().min(1).max(120).nullable().optional().describe('Optional human-readable label for /evaluate.'),
       archived: z.boolean().optional().describe('Set true to retire the slug from rotation.'),
     },
-    async (input) => {
+    async (input, { apiUrl, authHeader }) => {
       const resolved = await resolveProjectId(input.projectId, apiUrl, authHeader)
       if (!resolved.id) {
         return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
@@ -626,14 +649,14 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'pick_subject_variant',
     'Pick the next active subject-line variant for the project via round-robin (project_settings.subject_variant_cursor advances by one per call, modulo the active variant count). Pass an explicit variantId to bypass rotation; unknown / archived ids fall through to round-robin. Returns { variantId, subjectPattern, label }. Email-only — the skill renders the pattern (substitutes {{org}} / {{name}} / {{signal}} placeholders) into the final subject and forwards variantId to send_email_and_record so outreach_logs.variant_id is stamped. NOT_FOUND when no active variants are registered — generate a one-off subject and send without variantId in that case.',
     {
       projectId: z.string().describe('Project name or ID'),
       variantId: z.string().min(1).max(32).optional().describe('Override round-robin with a specific variant id.'),
     },
-    async (input) => {
+    async (input, { apiUrl, authHeader }) => {
       const resolved = await resolveProjectId(input.projectId, apiUrl, authHeader)
       if (!resolved.id) {
         return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
@@ -656,7 +679,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'record_outreach',
     'Record an outreach log entry. status="sent" flips the prospect to "contacted". status="failed" REQUIRES errorMessage and stamps next_outreach_after = sentAt + noResponseRecycleDays (project setting, default 90) so the prospect drops out of get_outbound_targets for that window — covers both intentional skips (errorMessage starting with "skipped: …") and real send errors. status="pending_review" leaves the prospect unchanged but excludes it from get_outbound_targets while the draft is open. errorMessage is rejected with 400 on "sent" / "pending_review". For form / SNS DM where you intend to submit, prefer record_outreach_with_inquiry — it allocates the row pre-submit and returns finalBody with the inquiry-landing URL footer baked in.',
     {
@@ -670,7 +693,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
       errorMessage: z.string().min(1).max(2000).optional()
         .describe('Required when status="failed"; rejected when status="sent" or "pending_review".'),
     },
-    async (input) => {
+    async (input, { apiUrl, authHeader }) => {
       const resolved = await resolveProjectId(input.projectId, apiUrl, authHeader)
       if (!resolved.id) {
         return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
@@ -685,7 +708,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'skip_prospect',
     'Record a deliberate decision NOT to contact a prospect on this outbound run — no send is attempted. Use only for the LLM judgment calls the server cannot make: reason="bad_timing" (the prospect overview flags now as a bad moment — layoffs, wind-down, post-acquisition freeze) or reason="no_fresh_material" (a re-approach with nothing new to say). Writes a "skipped" audit row and stamps next_outreach_after = sentAt + noResponseRecycleDays so the prospect drops out of get_outbound_targets for that window (longer existing windows preserved via GREATEST). No quota is consumed and the prospect is NOT marked contacted. Do NOT use this for unsupported-country prospects — get_outbound_targets already filters those server-side.',
     {
@@ -698,7 +721,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
       note: z.string().min(1).max(2000).optional()
         .describe('Optional one-line context shown in the recent-outreach feed.'),
     },
-    async (input) => {
+    async (input, { apiUrl, authHeader }) => {
       const resolved = await resolveProjectId(input.projectId, apiUrl, authHeader)
       if (!resolved.id) {
         return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
@@ -713,11 +736,11 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'get_gmail_status',
     'Check whether the current user has connected their Google account (gmail.send scope) via the LeadAce web app. Returns the connected Gmail address or an indication that Gmail is not connected.',
     {},
-    async () => {
+    async (_args, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('GET', '/auth/google-credentials/status', null, apiUrl, authHeader)
       if (!ok) {
         const err = data as { error: string }
@@ -731,7 +754,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'send_email',
     'Send an email via the user\'s connected Gmail account WITHOUT recording an outreach log. Use for internal notifications (e.g. daily-cycle start/wrap-up emails). For prospect outreach use send_email_and_record instead.',
     {
@@ -746,7 +769,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
         .max(998)
         .optional(),
     },
-    async (input) => {
+    async (input, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('POST', '/auth/send-email', input, apiUrl, authHeader)
       if (!ok) {
         const err = data as { error: string; detail?: string }
@@ -765,7 +788,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'send_email_and_record',
     'Compose and submit a prospect email + outreach log in one call. The server reads the project\'s outboundMode setting and either sends via the user\'s Gmail (mode "send") or stores a pending_review draft for the user to send from the LeadAce web app (mode "draft"). Skills should call this regardless of mode — do not branch on outboundMode in skill logic.',
     {
@@ -779,7 +802,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
       inReplyTo: z.string().optional().describe('Gmail Message-Id header for threading'),
       variantId: z.string().regex(/^[a-zA-Z0-9_-]{1,32}$/).optional().describe('Subject variant id from pick_subject_variant. Stamps outreach_logs.variant_id so /evaluate can join reply rates per variant.'),
     },
-    async (input) => {
+    async (input, { apiUrl, authHeader }) => {
       const resolved = await resolveProjectId(input.projectId, apiUrl, authHeader)
       if (!resolved.id) {
         return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
@@ -806,7 +829,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'discard_drafts',
     'Batch-delete pending_review drafts. Pass either ids (explicit list, max 200) for selective cleanup, or projectId to wipe every pending_review draft in that project. Already-sent / failed rows are silently excluded. Returns deletedIds + skippedIds (the latter only meaningful in id-list mode — ids that did not match a pending_review row in this tenant).',
     {
@@ -815,7 +838,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
       projectId: z.string().optional()
         .describe('Project name or ID. When set (and ids omitted), wipes every pending_review draft in that project. Mutually exclusive with ids.'),
     },
-    async ({ ids, projectId }) => {
+    async ({ ids, projectId }, { apiUrl, authHeader }) => {
       if ((ids && projectId) || (!ids && !projectId)) {
         return {
           content: [{
@@ -853,7 +876,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'update_prospect_status',
     'Update the status of a prospect in a project (e.g. mark as inactive, rejected).',
     {
@@ -861,7 +884,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
       prospectId: z.number().int(),
       status: z.enum(prospectStatusEnum.enumValues),
     },
-    async ({ projectId, prospectId, status }) => {
+    async ({ projectId, prospectId, status }, { apiUrl, authHeader }) => {
       const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
       if (!resolved.id) {
         return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
@@ -881,7 +904,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'update_organization',
     'Partial-update an organization\'s name or website URL. Domain is immutable (it is the per-tenant dedup key). Use when /build-list or imports created the org with a stale name (e.g., before a rebrand) and the visible name needs correcting. organizationId is the integer PK from get_organizations / org listings, not a domain.',
     {
@@ -891,7 +914,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
         websiteUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
       }).describe('Fields to update. At least one required.'),
     },
-    async ({ organizationId, patch }) => {
+    async ({ organizationId, patch }, { apiUrl, authHeader }) => {
       if (Object.keys(patch).length === 0) {
         return { content: [{ type: 'text' as const, text: 'Error: patch is empty (provide name and/or websiteUrl).' }], isError: true }
       }
@@ -906,7 +929,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'update_prospect',
     'Partial-update a tenant prospect\'s fields (organization-level columns: name / contactName / department / overview / industry / websiteUrl / email / contactFormUrl / formType / snsAccounts / notes / hypothesis / country / countrySource). Only the keys you pass are written; null clears a nullable field. The prospect must keep at least one contact channel (email, contactFormUrl, or any snsAccounts entry) — UNPROCESSABLE if the patch would leave none. CONFLICT when email or contactFormUrl already belongs to another prospect in the workspace. For per-project status / matchReason / priority use update_prospect_status (status) — those columns live on the project_prospects junction. For DNC use set_prospect_do_not_contact.',
     {
@@ -941,7 +964,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
         countrySource: z.enum(['manual', 'ai_inferred']).nullable().optional(),
       }).describe('Fields to update. Omit a key to leave it unchanged; pass null to clear (only on nullable columns).'),
     },
-    async ({ prospectId, patch }) => {
+    async ({ prospectId, patch }, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('PATCH', `/prospects/${prospectId}`, patch, apiUrl, authHeader)
       if (!ok) {
         const e = data as { error: string; detail?: string }
@@ -953,14 +976,14 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'set_prospect_do_not_contact',
     'Toggle the do_not_contact flag on a tenant prospect. Use after /import-prospects when the source had no DNC column but you know certain rows are unsubscribed/opted-out, or for ad-hoc DNC management outside the response-recording flow. DNC prospects are excluded from /build-list re-discovery and from outbound targeting.',
     {
       prospectId: z.number().int(),
       doNotContact: z.boolean().describe('true to mark do-not-contact; false to clear the flag.'),
     },
-    async ({ prospectId, doNotContact }) => {
+    async ({ prospectId, doNotContact }, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi(
         'PATCH',
         `/prospects/${prospectId}/do-not-contact`,
@@ -976,14 +999,14 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'get_recent_outreach',
     'Get recent outreach logs for a project. Used by check-results to match Gmail/SNS replies to sent messages. Each log carries the recipient identifiers (prospectName, contactName, prospectEmail, organizationDomain) so the skill can match by domain and name leads in the report without a second lookup. Each log also carries inquiry-landing aggregates: inquirySessionCount, inquiryOutcome (opened / inquired / unsubscribed / signup_clicked / lead / null — most-significant outcome ever recorded; signup_clicked is the self-serve counterpart to lead, surfaced only when the project runs in inquiryCtaType="signup"), inquiryMeetingSource (button / chat / null — only set when inquiryOutcome === "lead"), inquiryLastVisitAt — surface lead-via-landing and signup-via-landing alongside email replies, and skip reply-draft creation for outreach where the recipient already became a lead or signup via the inquiry page.',
     {
       projectId: z.string().describe('Project name or ID'),
       limit: z.number().int().min(1).max(200).default(100),
     },
-    async ({ projectId, limit }) => {
+    async ({ projectId, limit }, { apiUrl, authHeader }) => {
       const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
       if (!resolved.id) {
         return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
@@ -1003,7 +1026,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'record_response',
     'Record a response (email reply, SNS DM, etc.) to an outreach. Updates prospect status and optionally marks do-not-contact. For rejections, pass rejectionFeedback to capture the structured reason — feature_gap notes are tracked as PMF signal; unsubscribe_request / preferred_recontact_window=never / consent.* opt-outs auto-flip do_not_contact; primary_reason wrong_timing/budget + preferred_recontact_window 3/6/12_months auto-defers (sets status="deferred" and prospects.next_outreach_after) so the prospect re-enters the outbound queue when the window passes; decision_maker_pointer with email auto-creates a new prospect (linked to every project the referring prospect is in, status="new", priority preserved) inheriting org/overview/websiteUrl/industry — pointer.name only without email updates an existing same-org contact role/department instead, returned as derivedProspects.',
     {
@@ -1034,7 +1057,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
         tenant_signature: z.string().optional(),
       }).optional().describe('Only valid when responseType="rejection". Schema: https://leadace.ai/schema/rejection-feedback-v1.json'),
     },
-    async (input) => {
+    async (input, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('POST', '/responses', input, apiUrl, authHeader)
       if (!ok) {
         const err = data as { error: string }
@@ -1049,7 +1072,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'get_rejection_feedback_summary',
     'Aggregate rejection_feedback. With scope="pmf" returns the PMF slice (feature_gap, already_have_solution, competitor_locked) — primary_reason distribution + feature_gap free-text notes, with total and percentages computed within the PMF subset. Used by /check-feedback. With scope="tactical" returns the non-PMF slice — primary_reason distribution + recontactWindows (per-bucket count + samples for every RejectionRecontactWindow value: "never", "3_months", "6_months", "12_months", "unspecified" — empty buckets carry {count:0,samples:[]}) + decision_maker_pointer + not_relevant notes (with industry context). Used by /evaluate to drive targeting; recontact-window prospects are auto-deferred and decision_maker_pointer rows auto-create or update prospects at record_response time, both surface here as a transparency log only. scope="all" (default) returns the unfiltered union.',
     {
@@ -1057,7 +1080,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
       windowDays: z.number().int().min(1).max(3650).optional().describe('Restrict to rejections received within the last N days. Omit for all-time.'),
       scope: z.enum(['pmf', 'tactical', 'all']).optional().describe('"pmf" → PMF slice only; "tactical" → non-PMF slice only; "all" (default) → unfiltered union.'),
     },
-    async ({ projectId, windowDays, scope }) => {
+    async ({ projectId, windowDays, scope }, { apiUrl, authHeader }) => {
       const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
       if (!resolved.id) {
         return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
@@ -1075,11 +1098,11 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'get_eval_data',
     'Get evaluation statistics for a project: response rates, channel performance, sentiment breakdown, and inquiry-landing outcome counts (opened / inquired / lead / signup_clicked / unsubscribed). Also returns responded message bodies and a data sufficiency check.',
     { projectId: z.string().describe('Project name or ID') },
-    async ({ projectId }) => {
+    async ({ projectId }, { apiUrl, authHeader }) => {
       const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
       if (!resolved.id) {
         return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
@@ -1095,7 +1118,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'record_evaluation',
     'Record an evaluation result and optionally bulk-update prospect priorities by industry.',
     {
@@ -1108,7 +1131,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
         priority: prioritySchema,
       })).optional().describe('Bulk priority updates by industry'),
     },
-    async (input) => {
+    async (input, { apiUrl, authHeader }) => {
       const resolved = await resolveProjectId(input.projectId, apiUrl, authHeader)
       if (!resolved.id) {
         return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
@@ -1128,11 +1151,11 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'get_evaluation_history',
     'Get past evaluation records for a project (findings, improvements, dates).',
     { projectId: z.string().describe('Project name or ID') },
-    async ({ projectId }) => {
+    async ({ projectId }, { apiUrl, authHeader }) => {
       const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
       if (!resolved.id) {
         return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
@@ -1154,14 +1177,14 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'get_document',
     'Get the latest version of a project document (business, sales_strategy, search_notes).',
     {
       projectId: z.string().describe('Project name or ID'),
       slug: z.string().describe('Document slug: "business", "sales_strategy", or "search_notes"'),
     },
-    async ({ projectId, slug }) => {
+    async ({ projectId, slug }, { apiUrl, authHeader }) => {
       const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
       if (!resolved.id) {
         return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
@@ -1181,7 +1204,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'save_document',
     'Save a new version of a project document. Appends a new version (immutable); previous versions are preserved.',
     {
@@ -1189,7 +1212,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
       slug: z.string().describe('Document slug: "business", "sales_strategy", or "search_notes"'),
       content: z.string().describe('Full markdown content of the document'),
     },
-    async ({ projectId, slug, content }) => {
+    async ({ projectId, slug, content }, { apiUrl, authHeader }) => {
       const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
       if (!resolved.id) {
         return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
@@ -1204,13 +1227,13 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'list_documents',
     'List all documents for a project with their last updated timestamps.',
     {
       projectId: z.string().describe('Project name or ID'),
     },
-    async ({ projectId }) => {
+    async ({ projectId }, { apiUrl, authHeader }) => {
       const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
       if (!resolved.id) {
         return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
@@ -1233,13 +1256,13 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'get_master_document',
     'Get a master document (shared templates, guidelines, frameworks) by slug.',
     {
       slug: z.string().describe('Master document slug (e.g. "tpl_business", "tpl_email_guidelines")'),
     },
-    async ({ slug }) => {
+    async ({ slug }, { apiUrl, authHeader }) => {
       const { ok, status, data } = await callApi('GET', `/master-documents/${slug}`, null, apiUrl, authHeader)
       if (!ok) {
         if (status === 404) {
@@ -1255,11 +1278,11 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'list_master_documents',
     'List all available master documents (templates, guidelines, frameworks).',
     {},
-    async () => {
+    async (_args, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('GET', '/master-documents', null, apiUrl, authHeader)
       if (!ok) {
         const err = data as { error: string }
@@ -1278,7 +1301,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'list_tenant_prospects',
     'List existing prospects across the entire tenant (every project the user owns). Use this in /match-prospects to find prospects gathered for past projects that may fit the current project. Excludes do-not-contact prospects. excludeProjectId omits prospects already linked to that project. q is a substring match on name / overview / industry / organization name. Returns up to 1000 rows.',
     {
@@ -1288,7 +1311,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
       industry: z.string().optional().describe('Exact-match industry filter'),
       limit: z.number().int().min(1).max(1000).default(200),
     },
-    async ({ excludeProjectId, q, industry, limit }) => {
+    async ({ excludeProjectId, q, industry, limit }, { apiUrl, authHeader }) => {
       const params = new URLSearchParams()
       if (excludeProjectId) {
         const resolved = await resolveProjectId(excludeProjectId, apiUrl, authHeader)
@@ -1316,7 +1339,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'link_existing_prospects_to_project',
     'Link existing tenant prospects to a project by creating project_prospects junction rows. Does NOT create new prospects or organizations — pair with list_tenant_prospects to discover candidates first. Skips prospects flagged do_not_contact and reports prospects already linked. Use this in /match-prospects after the LLM picks targets and the user approves.',
     {
@@ -1327,7 +1350,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
         priority: prioritySchema.default(3),
       })).min(1).max(200),
     },
-    async ({ projectId, links }) => {
+    async ({ projectId, links }, { apiUrl, authHeader }) => {
       const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
       if (!resolved.id) {
         return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
@@ -1359,13 +1382,13 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'create_inquiry_token',
     'Allocate a stable inquiry landing short_id + URL for an outreach. Idempotent on outreachLogId — repeated calls for the same live outreach return the same shortId so the URL stays valid across retried sends. Outbound skills MUST call this before sending email/form/SNS so the recipient has a single landing page (resources, AI chat, meeting-request button, unsubscribe with optional reason). Returns { shortId, inquiryUrl } — embed inquiryUrl in the outbound message body.',
     {
       outreachLogId: z.number().int().positive().describe('outreachLogs.id returned by record_outreach.'),
     },
-    async ({ outreachLogId }) => {
+    async ({ outreachLogId }, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('POST', '/inquiry/tokens', { outreachLogId }, apiUrl, authHeader)
       if (!ok) {
         const err = data as { error: string; detail?: string }
@@ -1382,13 +1405,13 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'get_inquiry_session_summary',
     'Sender-side visibility into a recipient\'s inquiry-landing activity for a given shortId. Returns the prospect/outreach context plus every session opened against this short_id (most recent first), each with outcome (opened / inquired / lead / signup_clicked / unsubscribed), meetingRequestSource (button / chat / null — only set when outcome === "lead"), derivedSummary, chatTurnsUsed, openedAt / closedAt, and the chat message thread. Use in /check-results to surface inquiry-landing outcomes alongside email replies.',
     {
       shortId: z.string().describe('Inquiry landing short_id (from create_inquiry_token).'),
     },
-    async ({ shortId }) => {
+    async ({ shortId }, { apiUrl, authHeader }) => {
       const { ok, status, data } = await callApi('GET', `/inquiry/sessions/${shortId}/summary`, null, apiUrl, authHeader)
       if (!ok) {
         if (status === 404) {
@@ -1401,11 +1424,11 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'get_project_settings',
     'Get user-editable project settings (outboundMode, senderEmailAlias, senderDisplayName, senderCompanyName, senderJobTitle, unsubscribeEnabled, outboundChannels, targetCountries, ...). Returns defaults if no row exists yet. Skills should call this before strategy/build-list/outbound/daily-cycle to honor user-controlled behavior — especially outboundChannels (skip prospects whose only channel is disabled) and targetCountries (narrow discovery / exclude prospects outside the allowlist when non-empty).',
     { projectId: z.string().describe('Project name or ID') },
-    async ({ projectId }) => {
+    async ({ projectId }, { apiUrl, authHeader }) => {
       const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
       if (!resolved.id) {
         return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
@@ -1419,7 +1442,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
-  server.tool(
+  defineTool(
     'update_project_settings',
     'Update user-editable project settings. Any omitted field keeps its current value. Pass null to clear nullable fields.',
     {
@@ -1465,7 +1488,7 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
       targetCountries: z.array(z.enum(ALLOWED_SEND_COUNTRIES)).optional()
         .describe('ISO 3166-1 alpha-2 codes that further narrow the compliance-level send allowlist (currently US / CA / JP). Empty array (default) = no project-level restriction. Non-empty = explicit allowlist; /build-list focuses discovery on these countries and /outbound excludes prospects outside the set in addition to the unchanged send-time compliance gate.'),
     },
-    async ({ projectId, ...patch }) => {
+    async ({ projectId, ...patch }, { apiUrl, authHeader }) => {
       const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
       if (!resolved.id) {
         return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
@@ -1479,6 +1502,20 @@ function createMcpServer(apiUrl: string, authHeader: string): McpServer {
     },
   )
 
+  return tools
+}
+
+// Built lazily on the first MCP request per isolate, then memoized. Requests
+// that never touch the catalog (OAuth flow, /.well-known/*) don't pay the
+// build cost on a cold isolate.
+let toolRegistry: ToolDef[] | null = null
+
+function createMcpServer(ctx: ToolCtx): McpServer {
+  toolRegistry ??= buildToolRegistry()
+  const server = new McpServer({ name: 'lead-ace', version: SERVER_VERSION })
+  for (const tool of toolRegistry) {
+    server.tool(tool.name, tool.description, tool.schema, (args) => tool.handler(args, ctx))
+  }
   return server
 }
 
@@ -1606,7 +1643,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   }
 
   const authHeader = request.headers.get('Authorization') ?? ''
-  const server = createMcpServer(env.WEB_API_URL, authHeader)
+  const server = createMcpServer({ apiUrl: env.WEB_API_URL, authHeader })
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true, // Return JSON instead of SSE streams (Workers compat)

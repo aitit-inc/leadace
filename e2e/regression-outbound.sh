@@ -6,6 +6,8 @@
 #     no Gmail required)
 #   - send-mode country guardrail (prospect.country='GB' → 422 UNPROCESSABLE,
 #     refused before Gmail is touched)
+#   - send-mode do-not-contact backstop (prospect.do_not_contact=true → 422
+#     UNPROCESSABLE, refused before any outreach_logs row is allocated)
 #   - fabricated prospectId → 404 (not a 500 from the outreach_logs FK)
 #   - rejection-feedback summary (default scope) → 200 (guards the reserved-
 #     keyword "window" SQL regression, which 500s on every call when present)
@@ -52,8 +54,10 @@ RUN_TAG="e2e-outbound-$(date +%s)"
 PROJECT_NAME="$RUN_TAG project"
 DOMAIN_US="$RUN_TAG-us.example"
 DOMAIN_GB="$RUN_TAG-gb.example"
+DOMAIN_DNC="$RUN_TAG-dnc.example"
 EMAIL_US="contact@$DOMAIN_US"
 EMAIL_GB="contact@$DOMAIN_GB"
+EMAIL_DNC="contact@$DOMAIN_DNC"
 
 PASS=0
 FAIL=0
@@ -209,11 +213,12 @@ PROJECT_ID="$(echo "$CREATE_RESP" | jq -r '.id // ""')"
 [[ -n "$PROJECT_ID" ]] || { echo "create-project failed: $CREATE_RESP" >&2; exit 1; }
 say "project_id=$PROJECT_ID"
 
-step "seed prospects (US allowed, GB blocked)"
+step "seed prospects (US allowed, GB blocked, DNC do-not-contact)"
 SEED_BODY="$(jq -nc \
   --arg pid "$PROJECT_ID" \
   --arg dUS "$DOMAIN_US" --arg eUS "$EMAIL_US" \
   --arg dGB "$DOMAIN_GB" --arg eGB "$EMAIL_GB" \
+  --arg dDNC "$DOMAIN_DNC" --arg eDNC "$EMAIL_DNC" \
   '{projectId: $pid,
     prospects: [
       {organizationDomain:$dUS, organizationName:"Org US", organizationWebsiteUrl:("https://"+$dUS),
@@ -221,23 +226,27 @@ SEED_BODY="$(jq -nc \
        name:"Prospect US", overview:"seed US", websiteUrl:("https://"+$dUS+"/about"), email:$eUS, matchReason:"seed"},
       {organizationDomain:$dGB, organizationName:"Org GB", organizationWebsiteUrl:("https://"+$dGB),
        country:"GB", countrySource:"manual",
-       name:"Prospect GB", overview:"seed GB", websiteUrl:("https://"+$dGB+"/about"), email:$eGB, matchReason:"seed"}
+       name:"Prospect GB", overview:"seed GB", websiteUrl:("https://"+$dGB+"/about"), email:$eGB, matchReason:"seed"},
+      {organizationDomain:$dDNC, organizationName:"Org DNC", organizationWebsiteUrl:("https://"+$dDNC),
+       country:"US", countrySource:"manual",
+       name:"Prospect DNC", overview:"seed DNC", websiteUrl:("https://"+$dDNC+"/about"), email:$eDNC, matchReason:"seed"}
     ]}')"
 SEED_RESP="$(api POST /api/prospects/batch "$SEED_BODY")"
 SEED_INSERTED="$(echo "$SEED_RESP" | jq -r '.inserted // 0')"
-assert_eq "seed inserted=2" "$SEED_INSERTED" "2"
+assert_eq "seed inserted=3" "$SEED_INSERTED" "3"
 
 # Resolve prospect ids via the project's prospect listing — the batch
 # response only carries insertedIds (no email/country mapping back).
 LIST_RESP="$(api GET "/api/projects/$PROJECT_ID/prospects?limit=200")"
 PROSPECT_US_ID="$(echo "$LIST_RESP" | jq -r --arg e "$EMAIL_US" '.prospects[]? | select(.email == $e) | .prospectId' | head -1)"
 PROSPECT_GB_ID="$(echo "$LIST_RESP" | jq -r --arg e "$EMAIL_GB" '.prospects[]? | select(.email == $e) | .prospectId' | head -1)"
-[[ -n "$PROSPECT_US_ID" && -n "$PROSPECT_GB_ID" ]] || {
+PROSPECT_DNC_ID="$(echo "$LIST_RESP" | jq -r --arg e "$EMAIL_DNC" '.prospects[]? | select(.email == $e) | .prospectId' | head -1)"
+[[ -n "$PROSPECT_US_ID" && -n "$PROSPECT_GB_ID" && -n "$PROSPECT_DNC_ID" ]] || {
   echo "could not resolve prospect ids from /projects/$PROJECT_ID/prospects" >&2;
   echo "$LIST_RESP" >&2;
   exit 1;
 }
-say "prospect_us=$PROSPECT_US_ID prospect_gb=$PROSPECT_GB_ID"
+say "prospect_us=$PROSPECT_US_ID prospect_gb=$PROSPECT_GB_ID prospect_dnc=$PROSPECT_DNC_ID"
 
 # ---------------------------------------------------------------------------
 # Fabricated prospectId must be a clean 404, not a 500 from the outreach_logs FK.
@@ -330,6 +339,25 @@ assert_eq "country_gb.error message" "$GB_ERROR_OK" "y"
 # before the optimistic INSERT).
 GB_LOG_COUNT="$(psql_local "SELECT count(*) FROM outreach_logs WHERE prospect_id = $PROSPECT_GB_ID AND project_id = '$PROJECT_ID';")"
 assert_eq "country_gb.no log row allocated" "$GB_LOG_COUNT" "0"
+
+# ---------------------------------------------------------------------------
+step "send mode + do-not-contact: 422 DNC backstop"
+# country=US so the country gate passes and only the DNC backstop can refuse.
+psql_local "UPDATE prospects SET do_not_contact = true WHERE id = $PROSPECT_DNC_ID;" > /dev/null
+DNC_BODY="$(jq -nc \
+  --arg pid "$PROJECT_ID" --argjson prid "$PROSPECT_DNC_ID" \
+  --arg eDNC "$EMAIL_DNC" \
+  '{projectId:$pid, prospectId:$prid, to:[$eDNC], subject:"dnc test", body:"body"}')"
+DNC_CODE="$(api_status POST /api/outreach/send-and-record "$DNC_BODY" 2>/tmp/regression-outbound-out.$$ || true)"
+DNC_RESP="$(cat /tmp/regression-outbound-out.$$)"
+rm -f /tmp/regression-outbound-out.$$
+
+assert_eq "dnc.http_status" "$DNC_CODE" "422"
+DNC_ERROR_OK="$(echo "$DNC_RESP" | jq -r '.error // ""' | grep -q '^Prospect is on do-not-contact list' && echo y || echo n)"
+assert_eq "dnc.error message" "$DNC_ERROR_OK" "y"
+
+DNC_LOG_COUNT="$(psql_local "SELECT count(*) FROM outreach_logs WHERE prospect_id = $PROSPECT_DNC_ID AND project_id = '$PROJECT_ID';")"
+assert_eq "dnc.no log row allocated" "$DNC_LOG_COUNT" "0"
 
 # ---------------------------------------------------------------------------
 # Gmail-dependent branch: no-credential rollback OR real-send happy path,

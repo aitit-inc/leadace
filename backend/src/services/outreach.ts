@@ -222,6 +222,24 @@ async function assertProspectCountryAllowed(
   return ok(undefined)
 }
 
+async function assertProspectContactable(
+  db: Db,
+  tenantId: TenantId,
+  prospectId: number,
+): Promise<ServiceResult<undefined>> {
+  const [row] = await db
+    .select({ doNotContact: prospects.doNotContact })
+    .from(prospects)
+    .where(and(eq(prospects.id, prospectId), eq(prospects.tenantId, tenantId)))
+    .limit(1)
+  // Missing prospect → defer to the caller's requireProspect NOT_FOUND.
+  if (!row) return ok(undefined)
+  if (row.doNotContact) {
+    return err('UNPROCESSABLE', 'Prospect is on do-not-contact list')
+  }
+  return ok(undefined)
+}
+
 export async function recordOutreach(
   db: Db,
   tenantId: TenantId,
@@ -245,6 +263,8 @@ export async function recordOutreach(
   if (quotaErr) return quotaErr
 
   if (sending) {
+    const contactable = await assertProspectContactable(db, tenantId, input.prospectId)
+    if (!contactable.ok) return contactable
     const country = await assertProspectCountryAllowed(db, tenantId, input.prospectId)
     if (!country.ok) return country
   }
@@ -358,6 +378,8 @@ export async function recordOutreachWithInquiry(
   const willSend = sendSettings.outboundMode === 'send'
 
   if (willSend) {
+    const contactable = await assertProspectContactable(db, tenantId, input.prospectId)
+    if (!contactable.ok) return contactable
     const quota = await getRemainingOutreachQuota(db, tenantId, edition)
     const quotaErr = outreachQuotaErrorIfExhausted(quota)
     if (quotaErr) return quotaErr
@@ -518,6 +540,9 @@ export async function sendAndRecord(
   }
 
   const compliance = complianceResult.value
+
+  const contactable = await assertProspectContactable(db, tenantId, input.prospectId)
+  if (!contactable.ok) return contactable
 
   const quota = await getRemainingOutreachQuota(db, tenantId, edition)
   const quotaErr = outreachQuotaErrorIfExhausted(quota)
