@@ -14,6 +14,7 @@ export type InquirySettings = {
   inquiryPdfUrl: string | null;
   inquiryBrandColor: string | null;
   inquiryBrandLogoUrl: string | null;
+  inquiryDarkBackground: boolean;
   // Landing CTA mode. 'meeting' renders Book/Request meeting (the
   // human-sales path; inquiryCtaUrl is then an optional scheduling URL).
   // 'signup' renders a Sign up button that redirects visitors to

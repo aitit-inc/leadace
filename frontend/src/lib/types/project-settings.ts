@@ -25,6 +25,7 @@ export type ProjectSettings = {
   inquiryPdfUrl: string | null;
   inquiryBrandColor: string | null;
   inquiryBrandLogoUrl: string | null;
+  inquiryDarkBackground: boolean;
   inquiryCtaType: InquiryCtaType;
   inquiryCtaUrl: string | null;
   outboundChannels: OutboundChannel[];

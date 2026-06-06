@@ -35,6 +35,7 @@ export const updateSettingsSchema = z
     inquiryPdfUrl: z.url().max(500).refine(isHttpsUrl, HTTPS_ONLY_MSG).nullable().optional(),
     inquiryBrandColor: z.string().regex(BRAND_COLOR_REGEX).nullable().optional(),
     inquiryBrandLogoUrl: z.url().max(500).refine(isHttpsUrl, HTTPS_ONLY_MSG).nullable().optional(),
+    inquiryDarkBackground: z.boolean().optional(),
     inquiryCtaType: z.enum(INQUIRY_CTA_TYPES).optional(),
     inquiryCtaUrl: z.url().max(500).refine(isHttpsUrl, HTTPS_ONLY_MSG).nullable().optional(),
     // Bounds keep the skill / SaaS UI from pathological values that would
@@ -72,6 +73,7 @@ const settingsCols = {
   inquiryPdfUrl: projectSettings.inquiryPdfUrl,
   inquiryBrandColor: projectSettings.inquiryBrandColor,
   inquiryBrandLogoUrl: projectSettings.inquiryBrandLogoUrl,
+  inquiryDarkBackground: projectSettings.inquiryDarkBackground,
   inquiryCtaType: projectSettings.inquiryCtaType,
   inquiryCtaUrl: projectSettings.inquiryCtaUrl,
   maxReapproachCycles: projectSettings.maxReapproachCycles,
@@ -97,6 +99,7 @@ export type ProjectSettingsRow = {
   inquiryPdfUrl: string | null
   inquiryBrandColor: string | null
   inquiryBrandLogoUrl: string | null
+  inquiryDarkBackground: boolean
   inquiryCtaType: InquiryCtaType
   inquiryCtaUrl: string | null
   maxReapproachCycles: number
@@ -259,6 +262,7 @@ export async function updateProjectSettings(
     ...(patch.inquiryPdfUrl !== undefined ? { inquiryPdfUrl: patch.inquiryPdfUrl } : {}),
     ...(patch.inquiryBrandColor !== undefined ? { inquiryBrandColor: patch.inquiryBrandColor } : {}),
     ...(patch.inquiryBrandLogoUrl !== undefined ? { inquiryBrandLogoUrl: patch.inquiryBrandLogoUrl } : {}),
+    ...(patch.inquiryDarkBackground !== undefined ? { inquiryDarkBackground: patch.inquiryDarkBackground } : {}),
     ...(patch.inquiryCtaType !== undefined ? { inquiryCtaType: patch.inquiryCtaType } : {}),
     ...(patch.inquiryCtaUrl !== undefined ? { inquiryCtaUrl: patch.inquiryCtaUrl } : {}),
     ...(patch.maxReapproachCycles !== undefined ? { maxReapproachCycles: patch.maxReapproachCycles } : {}),

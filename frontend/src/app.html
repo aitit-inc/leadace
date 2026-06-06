@@ -24,6 +24,10 @@
 		<script>
 			(function () {
 				try {
+					// /q/* inquiry landing pages pin their own light/dark mode from
+					// project settings — don't let a visitor's stored/OS preference
+					// leak onto a recipient-facing page.
+					if (location.pathname.indexOf('/q/') === 0) return;
 					var t = localStorage.getItem('leadace.theme');
 					var dark = t === 'dark' || (t !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 					if (dark) document.documentElement.classList.add('dark');

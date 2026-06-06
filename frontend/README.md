@@ -25,17 +25,23 @@ npm run check
 
 ## Updating dependencies (lockfile gotcha)
 
-`@sveltejs/adapter-cloudflare` pulls in `@img/sharp-wasm32`, whose optional
-peer deps resolve to different `@emnapi/*` versions on macOS vs Linux. Running
-`npm install` on macOS therefore writes a lockfile that fails `npm ci` on CI
-(Ubuntu). **Only when you change `package.json` or `package-lock.json`**,
-regenerate the lockfile inside a Linux container:
+`npm install` with `node_modules` already present prunes other-platform
+optional deps — `@emnapi/*`, `@img/sharp-*` — from `package-lock.json`
+([npm/cli#7961](https://github.com/npm/cli/issues/7961), npm 10.3+–11.x). CI
+then runs `npm ci` against that pruned lockfile and fails with `Missing: … from
+lock file`. This is an npm-version / stale-`node_modules` issue, not a
+macOS-vs-Linux one.
+
+**Only when you change `package.json` or `package-lock.json`**, regenerate the
+lockfile under the repo's pinned toolchain (node 22 via `.nvmrc`, matching CI):
 
 ```sh
 # from frontend/
-docker run --rm -v "$PWD":/w -w /w node:22-slim \
-  npm install --package-lock-only --no-audit --no-fund
+nvm use                    # node 22 (repo .nvmrc) — matches CI
+rm -rf node_modules        # removing this first is what avoids the prune
+npm install --no-audit --no-fund
 ```
 
-Then commit the regenerated `package-lock.json`. Regular code-only changes do
-not require this step — CI consumes the committed lockfile as-is.
+Then commit the regenerated `package-lock.json`. Docker is not needed. Regular
+code-only changes do not require this step — CI consumes the committed lockfile
+as-is.

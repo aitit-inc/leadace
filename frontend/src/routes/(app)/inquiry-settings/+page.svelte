@@ -99,6 +99,7 @@
       inquiryPdfUrl: emptyToNull(formData.inquiryPdfUrl),
       inquiryBrandColor: emptyToNull(formData.inquiryBrandColor),
       inquiryBrandLogoUrl: emptyToNull(formData.inquiryBrandLogoUrl),
+      inquiryDarkBackground: formData.inquiryDarkBackground,
       inquiryCtaType: formData.inquiryCtaType,
       inquiryCtaUrl: emptyToNull(formData.inquiryCtaUrl),
     };
@@ -390,6 +391,33 @@
           {#if validationErrors.inquiryCtaUrl}
             <p class="text-xs text-danger">{validationErrors.inquiryCtaUrl}</p>
           {/if}
+        </div>
+      </section>
+
+      <section class="space-y-2 rounded-lg border border-border bg-surface p-4">
+        <span class="block text-sm font-medium text-text">Background</span>
+        <p class="text-xs text-text-muted">
+          The canvas recipients see on the landing page. Your brand color stays the accent on either.
+        </p>
+        <div class="flex gap-4">
+          <label class="flex cursor-pointer items-center gap-2">
+            <input
+              type="radio"
+              name="inquiryDarkBackground"
+              checked={!s.inquiryDarkBackground}
+              onchange={() => (s.inquiryDarkBackground = false)}
+            />
+            <span class="text-sm text-text">Light</span>
+          </label>
+          <label class="flex cursor-pointer items-center gap-2">
+            <input
+              type="radio"
+              name="inquiryDarkBackground"
+              checked={s.inquiryDarkBackground}
+              onchange={() => (s.inquiryDarkBackground = true)}
+            />
+            <span class="text-sm text-text">Dark</span>
+          </label>
         </div>
       </section>
 

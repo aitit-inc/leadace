@@ -24,12 +24,12 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260529.1",
+    "@cloudflare/workers-types": "^4.20260604.1",
     "@hono/zod-validator": "^0.8.0",
     "drizzle-kit": "^0.31.10",
     "drizzle-zod": "^0.8.3",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.7",
-    "wrangler": "^4.95.0"
+    "vitest": "^4.1.8",
+    "wrangler": "^4.98.0"
   }
 }

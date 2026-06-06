@@ -375,6 +375,11 @@ export const projectSettings = pgTable('project_settings', {
   inquiryPdfUrl: text('inquiry_pdf_url'),
   inquiryBrandColor: text('inquiry_brand_color'),
   inquiryBrandLogoUrl: text('inquiry_brand_logo_url'),
+  // Landing background mode. false = light canvas (default), true = dark. The
+  // brand color stays the accent on either; text/surface tokens follow the
+  // mode for contrast. Rendered by toggling the `.dark` class on the inquiry
+  // landing root, which re-scopes the CSS-var theme tokens.
+  inquiryDarkBackground: boolean('inquiry_dark_background').notNull().default(false),
   // Landing CTA mode. 'meeting' renders Book/Request meeting (the
   // human-sales path); 'signup' renders a Sign up button that redirects
   // visitors to inquiryCtaUrl (the self-serve path, no human follow-up).

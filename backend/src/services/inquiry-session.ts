@@ -823,6 +823,10 @@ export type InquiryLandingPayload = {
   senderJobTitle: string | null
   brandColor: string | null
   brandLogoUrl: string | null
+  // Landing background mode. false = light canvas, true = dark. The brand
+  // color stays the accent on either; the frontend toggles the .dark class on
+  // the landing root so text / surface tokens follow the mode for contrast.
+  backgroundDark: boolean
 
   // Greeting hints. Null on preview (no real prospect) or for legacy
   // prospect rows missing contact_name. Frontend falls back gracefully.
@@ -866,6 +870,7 @@ const previewableSettingsCols = {
   inquiryPdfUrl: projectSettings.inquiryPdfUrl,
   inquiryBrandColor: projectSettings.inquiryBrandColor,
   inquiryBrandLogoUrl: projectSettings.inquiryBrandLogoUrl,
+  inquiryDarkBackground: projectSettings.inquiryDarkBackground,
   inquiryCtaType: projectSettings.inquiryCtaType,
   inquiryCtaUrl: projectSettings.inquiryCtaUrl,
 }
@@ -949,6 +954,7 @@ export async function loadLandingContext(
     senderJobTitle: row.senderJobTitle,
     brandColor: row.inquiryBrandColor,
     brandLogoUrl: httpsOrNull(row.inquiryBrandLogoUrl),
+    backgroundDark: row.inquiryDarkBackground,
     recipientName: row.prospectContactName,
     recipientOrganization: row.organizationName,
     oneLiner: row.inquiryOneLiner,
@@ -1027,6 +1033,7 @@ export async function loadPreviewContext(
     senderJobTitle: row.senderJobTitle,
     brandColor: row.inquiryBrandColor,
     brandLogoUrl: httpsOrNull(row.inquiryBrandLogoUrl),
+    backgroundDark: row.inquiryDarkBackground,
     recipientName,
     recipientOrganization,
     oneLiner: row.inquiryOneLiner,

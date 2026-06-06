@@ -65,6 +65,21 @@
     (initialSession?.chatTurnsUsed ?? 0) >= (initialSession?.chatTurnsMax ?? 5),
   );
 
+  // Keep the newest message (or the typing indicator) in view as the chat
+  // grows. The thread lives in normal page flow, so without this a fresh
+  // assistant reply can land below the fold on mobile. Skips the initial
+  // empty render so the page doesn't jump past the greeting on load, and
+  // honors prefers-reduced-motion.
+  let chatBottom = $state<HTMLDivElement | null>(null);
+  $effect(() => {
+    if (chatTurns.length === 0 && !chatBusy) return;
+    const el = chatBottom;
+    if (!el) return;
+    // This effect only runs in the browser, where matchMedia is universal.
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'end' });
+  });
+
   // Action busy / error state (request-meeting + unsubscribe).
   let actionBusy = $state(false);
   let actionError = $state<string | null>(null);
@@ -288,7 +303,8 @@
 </script>
 
 <div
-  class="min-h-screen bg-page"
+  class="min-h-screen bg-page text-text"
+  class:dark={landing.backgroundDark}
   class:themed={safeBrandColor}
   style:--brand={safeBrandColor ?? undefined}
 >
@@ -510,27 +526,23 @@
           {/if}
 
           {#if chatTurns.length > 0 || chatBusy}
-            <div class="mt-5 space-y-5">
+            <div class="mt-5 space-y-3">
               {#each chatTurns as turn, i (i)}
-                <div>
-                  <div class="text-[11px] uppercase tracking-[0.1em] text-text-muted">
-                    {turn.role === 'user' ? 'You' : displayName}
+                {#if turn.role === 'user'}
+                  <div class="chat-enter flex justify-end">
+                    <div class="brand-bubble max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-text px-3.5 py-2 text-sm leading-relaxed text-page">{turn.content}</div>
                   </div>
-                  {#if turn.role === 'user'}
-                    <div class="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-text">{turn.content}</div>
-                  {:else}
-                    <div class="chat-md mt-1.5 text-sm leading-relaxed text-text-secondary">
+                {:else}
+                  <div class="chat-enter flex justify-start">
+                    <div class="chat-md max-w-[85%] rounded-2xl rounded-bl-md bg-surface px-3.5 py-2 text-sm leading-relaxed text-text">
                       {@html renderInquiryMarkdown(turn.content)}
                     </div>
-                  {/if}
-                </div>
+                  </div>
+                {/if}
               {/each}
               {#if chatBusy}
-                <div aria-live="polite">
-                  <div class="text-[11px] uppercase tracking-[0.1em] text-text-muted">
-                    {displayName}
-                  </div>
-                  <div class="mt-2 inline-flex items-center gap-1.5 text-text-muted" aria-label="Generating response">
+                <div class="chat-enter flex justify-start" aria-live="polite">
+                  <div class="inline-flex items-center gap-1.5 rounded-2xl rounded-bl-md bg-surface px-3.5 py-3 text-text-muted" aria-label="Generating response">
                     <span class="typing-dot"></span>
                     <span class="typing-dot"></span>
                     <span class="typing-dot"></span>
@@ -573,6 +585,7 @@
               </button>
             </form>
           {/if}
+          <div bind:this={chatBottom} aria-hidden="true"></div>
         </section>
       {/if}
 
@@ -640,6 +653,13 @@
     border-color: var(--brand);
   }
 
+  /* Sent (user) chat bubble adopts the brand color when themed; otherwise it
+     keeps the neutral bg-text / text-page fill set in the class list. */
+  .themed .brand-bubble {
+    background-color: var(--brand);
+    color: #fff;
+  }
+
   /* Markdown subset emitted by renderInquiryMarkdown — bold, italic, lists.
      Tailwind's preflight strips list markers globally, so we re-add the
      minimum needed for assistant replies to read correctly. Scoped via
@@ -673,6 +693,28 @@
   }
   .chat-md :global(em) {
     font-style: italic;
+  }
+
+  /* Subtle entrance for each newly mounted bubble (and the typing
+     indicator). Keyed each-blocks reuse existing DOM, so only the new row
+     animates — past turns stay put. */
+  .chat-enter {
+    animation: chat-enter 0.22s ease-out both;
+  }
+  @keyframes chat-enter {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .chat-enter {
+      animation: none;
+    }
   }
 
   .typing-dot {

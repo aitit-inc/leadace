@@ -232,6 +232,13 @@
       "when": 1780320954524,
       "tag": "0032_seed_project_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1780571252275,
+      "tag": "0033_eminent_spot",
+      "breakpoints": true
     }
   ]
 }

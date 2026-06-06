@@ -167,3 +167,26 @@ Pre-release checks:
 cd backend && npm run typecheck
 cd frontend && npm run check
 ```
+
+### Updating dependencies (lockfile gotcha)
+
+`npm install` with `node_modules` already present can prune other-platform
+optional deps (`@emnapi/*`, `@img/sharp-*`, `esbuild` binaries) from
+`package-lock.json` ([npm/cli#7961](https://github.com/npm/cli/issues/7961), npm
+10.3+–11.x). CI then runs `npm ci` against that pruned lockfile and fails with
+`Missing: … from lock file`. This bites both `backend/` and `frontend/`, and is
+what makes Dependabot's npm PRs go red.
+
+When you change a `package.json` / `package-lock.json` (or repair a Dependabot
+PR), regenerate the lockfile under the repo's pinned toolchain — **not** in
+Docker:
+
+```bash
+nvm use                 # node 22 (repo .nvmrc) — matches CI
+cd backend              # or cd frontend
+rm -rf node_modules     # removing this first is what avoids the prune
+npm install --no-audit --no-fund
+```
+
+Then commit the regenerated `package-lock.json`. Code-only changes don't need
+this — CI consumes the committed lockfile as-is.

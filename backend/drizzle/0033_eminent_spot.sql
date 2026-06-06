@@ -1,0 +1,1 @@
+ALTER TABLE "project_settings" ADD COLUMN "inquiry_dark_background" boolean DEFAULT false NOT NULL;

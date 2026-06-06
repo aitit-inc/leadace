@@ -1473,6 +1473,8 @@ function buildToolRegistry(): ToolDef[] {
         .describe('6-digit hex color (e.g. "#1f6feb") for the landing page accent.'),
       inquiryBrandLogoUrl: z.url().max(500).refine(isHttpsUrl, HTTPS_ONLY_MSG).nullable().optional()
         .describe('Public URL for the brand logo shown on the landing page. https:// only.'),
+      inquiryDarkBackground: z.boolean().optional()
+        .describe('Landing background mode. false = light canvas (default), true = dark. The brand color stays the accent on either.'),
       inquiryCtaType: z.enum(['meeting', 'signup']).optional()
         .describe('Landing CTA mode. "meeting" (default) renders Book/Request meeting (human-sales path; inquiryCtaUrl is then an optional scheduling URL). "signup" renders a Sign up button that redirects visitors to inquiryCtaUrl (self-serve path, no human follow-up); inquiryCtaUrl is required in this mode. The two are mutually exclusive — one CTA per project.'),
       inquiryCtaUrl: z.url().max(500).refine(isHttpsUrl, HTTPS_ONLY_MSG).nullable().optional()

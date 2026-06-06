@@ -28,6 +28,9 @@ export type InquiryLandingPayload = {
   senderJobTitle: string | null;
   brandColor: string | null;
   brandLogoUrl: string | null;
+  // Landing background mode. false = light canvas, true = dark. The landing
+  // view toggles the `.dark` class on its root so theme tokens follow it.
+  backgroundDark: boolean;
 
   recipientName: string | null;
   recipientOrganization: string | null;
