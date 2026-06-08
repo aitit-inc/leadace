@@ -45,6 +45,10 @@ export const shortIdSchema = z
 export const prospectIdSchema = positiveInt
 export const outreachLogIdSchema = positiveInt
 
+// Subject-variant slug, shared by the variants upsert and every variant_id write.
+const variantIdRegex = /^[a-zA-Z0-9_-]{1,32}$/
+export const variantIdSchema = z.string().regex(variantIdRegex)
+
 // Path / query param wrappers — only for entities with a `:id` route segment.
 // The path-string wire format is `Record<string, string>`, so coerce here.
 export const projectIdParamSchema = z.object({ id: projectIdSchema })

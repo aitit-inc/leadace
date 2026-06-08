@@ -4,6 +4,9 @@ import {
   evaluations,
   prioritySchema,
   INQUIRY_OUTCOMES,
+  responseTypeEnum,
+  sentimentEnum,
+  type Channel,
   type EvaluationMetrics,
   type InquiryOutcome,
   type OutreachStatus,
@@ -15,6 +18,11 @@ import {
   type ProjectId,
   type TenantId,
 } from '../domain/ids'
+import { replyReward } from '../domain/reward'
+import { type LeverConfig } from '../domain/lever-config'
+import type { VariantStat } from '../domain/subject-bandit'
+import type { ChannelFineStat } from '../domain/channel-affinity'
+import { loadLeverConfig } from './project-settings'
 import { ok, err, type ServiceResult } from './result'
 import { requireProject } from './projects'
 
@@ -44,7 +52,7 @@ export const recordEvaluationSchema = z.object({
 })
 export type RecordEvaluationInput = z.infer<typeof recordEvaluationSchema>
 
-// Aggregation-heavy: 10 independent COUNT/GROUP BY queries pipelined over the
+// Aggregation-heavy: 15 independent COUNT/GROUP BY queries pipelined over the
 // RLS transaction connection. Most rely on `COUNT() FILTER (WHERE ...)`,
 // multi-table joins, or `ROUND(... NULLIF, 1)::float` ratios that drizzle's
 // typed builder doesn't express directly. Each query returns a well-known
@@ -52,6 +60,9 @@ export type RecordEvaluationInput = z.infer<typeof recordEvaluationSchema>
 // drifts, both edits land here.
 
 type Row = Record<string, unknown>
+
+type ResponseType = (typeof responseTypeEnum.enumValues)[number]
+type Sentiment = (typeof sentimentEnum.enumValues)[number]
 
 export type DailyActivity = { date: string; sent: number; responses: number }
 
@@ -65,6 +76,123 @@ export type ProjectStatsResult = {
     daysSinceLastSend: number | null
   }
   dailyActivity: DailyActivity[]
+}
+
+// Per-variant aggregate over the reply-mature window (shared by getProjectStats
+// and run_lever_tick). `responses` is COUNT(DISTINCT replied send) so it stays ≤
+// total even when one send draws two countable replies — else responses>total
+// throws in wilsonBounds. `rewardSum` deliberately sums over every countable
+// reply row (graded reward per reply event). `NOT IN ('bounce','auto_reply')`
+// mirrors NON_COUNTABLE in domain/reward.ts — keep the two in sync.
+export async function getVariantStats(
+  db: Db,
+  projectId: ProjectId,
+  config: LeverConfig,
+  // Tick path passes true so a forgetting window (if configured) narrows the bandit's
+  // view to recent data; the all-history display path (getProjectStats) leaves it false.
+  applyLookback = false,
+): Promise<VariantStat[]> {
+  const SENT: OutreachStatus = 'sent'
+  const matureBefore = sql`now() - make_interval(days => ${config.rewardWindowDays})`
+  // Forgetting lower bound (opt-in). Empty fragment when unset/disabled, so the SQL is
+  // byte-for-byte today's. Two variants because the denom query uses bare `sent_at`
+  // while the response/reward queries alias it `ol.sent_at`.
+  const lookbackDays =
+    applyLookback && config.rewardLookbackDays !== undefined
+      ? config.rewardWindowDays + config.rewardLookbackDays
+      : undefined
+  const forgetBare = lookbackDays === undefined ? sql`` : sql` AND sent_at >= now() - make_interval(days => ${lookbackDays})`
+  const forgetOl = lookbackDays === undefined ? sql`` : sql` AND ol.sent_at >= now() - make_interval(days => ${lookbackDays})`
+  const exec = async (q: ReturnType<typeof sql>): Promise<Row[]> =>
+    Array.from(await db.execute(q)) as Row[]
+
+  const [denomRows, responseRows, rewardRows] = await Promise.all([
+    exec(sql`SELECT variant_id AS "variantId", COUNT(*)::int AS total
+             FROM outreach_logs
+             WHERE project_id = ${projectId} AND status = ${SENT}
+               AND variant_id IS NOT NULL AND sent_at < ${matureBefore}${forgetBare}
+             GROUP BY variant_id ORDER BY variant_id`),
+    exec(sql`SELECT ol.variant_id AS "variantId", COUNT(DISTINCT ol.id)::int AS responses
+             FROM outreach_logs ol JOIN responses r ON r.outreach_log_id = ol.id
+             WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}
+               AND ol.variant_id IS NOT NULL AND ol.sent_at < ${matureBefore}${forgetOl}
+               AND r.response_type NOT IN ('bounce', 'auto_reply')
+             GROUP BY ol.variant_id`),
+    exec(sql`SELECT ol.variant_id AS "variantId", r.response_type AS "responseType", r.sentiment, COUNT(*)::int AS count
+             FROM outreach_logs ol JOIN responses r ON r.outreach_log_id = ol.id
+             WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}
+               AND ol.variant_id IS NOT NULL AND ol.sent_at < ${matureBefore}${forgetOl}
+               AND r.response_type NOT IN ('bounce', 'auto_reply')
+             GROUP BY ol.variant_id, r.response_type, r.sentiment`),
+  ])
+
+  const agg = new Map<string, VariantStat>()
+  for (const row of denomRows) {
+    const variantId = row['variantId'] as string
+    agg.set(variantId, { variantId, total: (row['total'] as number | undefined) ?? 0, responses: 0, rewardSum: 0 })
+  }
+  for (const row of responseRows) {
+    const entry = agg.get(row['variantId'] as string)
+    if (!entry) continue
+    entry.responses = (row['responses'] as number | undefined) ?? 0
+  }
+  for (const row of rewardRows) {
+    const entry = agg.get(row['variantId'] as string)
+    if (!entry) continue
+    const count = (row['count'] as number | undefined) ?? 0
+    entry.rewardSum +=
+      replyReward(
+        { responseType: row['responseType'] as ResponseType, sentiment: row['sentiment'] as Sentiment },
+        config.reward,
+      ) * count
+  }
+  return Array.from(agg.values())
+}
+
+// COUNT(DISTINCT replied send) keeps responses ≤ total (two replies to one send
+// would otherwise overflow the rate and throw in wilsonBounds). `NOT IN
+// ('bounce','auto_reply')` mirrors NON_COUNTABLE in domain/reward.ts.
+export async function getChannelStats(
+  db: Db,
+  projectId: ProjectId,
+  config: LeverConfig,
+): Promise<ChannelFineStat[]> {
+  const SENT: OutreachStatus = 'sent'
+  const matureBefore = sql`now() - make_interval(days => ${config.rewardWindowDays})`
+  const exec = async (q: ReturnType<typeof sql>): Promise<Row[]> =>
+    Array.from(await db.execute(q)) as Row[]
+
+  const [denomRows, responseRows] = await Promise.all([
+    exec(sql`SELECT ol.channel AS "channel", p.industry AS "industry", COUNT(*)::int AS total
+             FROM outreach_logs ol JOIN prospects p ON p.id = ol.prospect_id
+             WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}
+               AND ol.sent_at < ${matureBefore}
+             GROUP BY ol.channel, p.industry`),
+    exec(sql`SELECT ol.channel AS "channel", p.industry AS "industry", COUNT(DISTINCT ol.id)::int AS responses
+             FROM outreach_logs ol
+               JOIN prospects p ON p.id = ol.prospect_id
+               JOIN responses r ON r.outreach_log_id = ol.id
+             WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}
+               AND ol.sent_at < ${matureBefore}
+               AND r.response_type NOT IN ('bounce', 'auto_reply')
+             GROUP BY ol.channel, p.industry`),
+  ])
+
+  const keyOf = (channel: string, industry: string | null): string => `${channel} ${industry ?? ''}`
+  const agg = new Map<string, ChannelFineStat>()
+  for (const row of denomRows) {
+    const channel = row['channel'] as Channel
+    const industry = (row['industry'] as string | null) ?? null
+    agg.set(keyOf(channel, industry), { channel, industry, total: (row['total'] as number | undefined) ?? 0, responses: 0 })
+  }
+  for (const row of responseRows) {
+    const channel = row['channel'] as Channel
+    const industry = (row['industry'] as string | null) ?? null
+    const entry = agg.get(keyOf(channel, industry))
+    if (!entry) continue
+    entry.responses = (row['responses'] as number | undefined) ?? 0
+  }
+  return Array.from(agg.values())
 }
 
 export async function getProjectStats(
@@ -181,6 +309,16 @@ export async function getProjectStats(
     inquiryOutcomeCounts[outcome] = count
   }
 
+  const config = await loadLeverConfig(db, projectId)
+  const variantStats = await getVariantStats(db, projectId, config)
+  const variantResponseRate: EvaluationMetrics['variantResponseRate'] = variantStats.map((v) => ({
+    variantId: v.variantId,
+    total: v.total,
+    responses: v.responses,
+    rate: v.total === 0 ? 0 : Math.round((v.responses / v.total) * 1000) / 10,
+    meanReward: v.total === 0 ? 0 : Math.round((v.rewardSum / v.total) * 1000) / 1000,
+  }))
+
   const metrics: EvaluationMetrics = {
     totalOutreach,
     channelCounts: channelCountsRows as EvaluationMetrics['channelCounts'],
@@ -189,6 +327,7 @@ export async function getProjectStats(
     priorityResponseRate: priorityResponseRateRows as EvaluationMetrics['priorityResponseRate'],
     statusCounts: statusCountsRows as EvaluationMetrics['statusCounts'],
     channelResponseRate: channelResponseRateRows as EvaluationMetrics['channelResponseRate'],
+    variantResponseRate,
     inquiryOutcomeCounts,
   }
 

@@ -23,6 +23,16 @@ Stricter than the generic guidance in `/skill-development`. Source: [Skill autho
 - References are nested at most one level deep (a reference file must not reference another reference file).
 - Reference files over 300 lines need a table of contents at the top.
 
+## Write skills to the goal, not the procedure
+
+LLMs jump capability every few months; a smarter model is likely to land soon. An over-specified, step-by-step SKILL.md ages badly — it (a) goes stale as the model outgrows the hand-holding and (b) constrains a more capable model's judgment. Author to the **expected outcome**, not the keystrokes:
+
+- State the **goal, completion criteria, and output contract** (the shape the skill must produce, the conditions to skip/stop) plus **rough steps** for orientation — not a fine-grained procedure.
+- Constrain the **contract** (what / format / guardrails), not the **how** (which tool calls in which order).
+- Anything that must be **consistent and reproducible** belongs in deterministic backend/MCP logic, where it does not depend on prompt precision at all (see CLAUDE.md "Separation of Responsibilities: LLM vs MCP Tools"). If you find yourself writing a precise procedure into a skill to guarantee an outcome, that outcome probably wants to move server-side.
+
+Counterpart to the hard limits above: those bound size; this bounds prescriptiveness.
+
 ## Template master documents: fence in vs. fence out
 
 `backend/seed-content/tpl_*.md` files contain a fenced ```` ```markdown ```` block that is the literal output skeleton — anything inside is rendered verbatim into the generated user document. Keep policy and rationale **outside** the fence (in "Generation guidelines"); inside the fence is short placeholders only. Rules placed inside leak into every generated document as ambient noise.

@@ -1,0 +1,1 @@
+ALTER TABLE "lever_state" ADD COLUMN "channel_affinity" jsonb DEFAULT '{}'::jsonb NOT NULL;

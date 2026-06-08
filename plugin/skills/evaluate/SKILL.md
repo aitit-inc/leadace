@@ -1,6 +1,6 @@
 ---
 name: evaluate
-description: "This skill should be used when the user asks to \"analyze results\", \"improve strategy\", \"run PDCA\", \"evaluate effectiveness\", \"check response rates\", or wants to evaluate sales performance and improve strategy. Automatically analyzes and improves strategy, targeting, and messaging based on response rate data."
+description: "This skill should be used when the user asks to \"analyze results\", \"improve strategy\", \"run PDCA\", \"evaluate effectiveness\", \"check response rates\", or to evaluate and improve sales performance. Reports metrics, applies priority + targeting updates."
 argument-hint: "<project-id>"
 allowed-tools:
   - Bash
@@ -9,6 +9,10 @@ allowed-tools:
   - mcp__plugin_leadace_api__get_eval_data
   - mcp__plugin_leadace_api__get_rejection_feedback_summary
   - mcp__plugin_leadace_api__get_evaluation_history
+  - mcp__plugin_leadace_api__get_lever_state
+  - mcp__plugin_leadace_api__get_lever_decisions
+  - mcp__plugin_leadace_api__list_subject_variants
+  - mcp__plugin_leadace_api__upsert_subject_variant
   - mcp__plugin_leadace_api__record_evaluation
   - mcp__plugin_leadace_api__get_document
   - mcp__plugin_leadace_api__save_document
@@ -17,7 +21,7 @@ allowed-tools:
 
 # Evaluate - PDCA Evaluation & Improvement
 
-A skill that analyzes sales activity result data and automatically evaluates and improves every aspect -- strategy, tactics, targeting, and messaging.
+A skill that analyzes sales activity result data, reports on performance, and applies the improvements it still owns — numeric priorities and targeting / search keywords. Messaging (subject lines) and channel ranking are now optimized deterministically by the daily lever tick; evaluate **reads and narrates** those, it does not rewrite them as strategy prose.
 
 **Before starting:** `Read` `${CLAUDE_PLUGIN_ROOT}/references/workspace-conventions.md` and follow the cross-cutting conventions there (data storage, MCP error handling, document writes, output discipline).
 
@@ -30,11 +34,14 @@ A skill that analyzes sales activity result data and automatically evaluates and
 In parallel, call:
 - `mcp__plugin_leadace_api__get_eval_data` with `projectId: "$0"`
 - `mcp__plugin_leadace_api__get_rejection_feedback_summary` with `projectId: "$0"`, `windowDays: 30`, `scope: "tactical"`
+- `mcp__plugin_leadace_api__get_lever_state` with `projectId: "$0"` — current subject draw weights, channel affinity, and per-variant maturity (read-only)
+- `mcp__plugin_leadace_api__get_lever_decisions` with `projectId: "$0"` — the daily tick's decision history (newest first) for trend narration
 
 If `get_eval_data` returns a "Project not found" error, instruct the user to run `/leadace` first and **abort**.
 
 `get_eval_data` response includes:
-- `metrics`: totalOutreach, channelCounts, responseCounts, sentimentBreakdown, priorityResponseRate, statusCounts, channelResponseRate, inquiryOutcomeCounts
+- `metrics`: totalOutreach, channelCounts, responseCounts, sentimentBreakdown, priorityResponseRate, statusCounts, channelResponseRate, variantResponseRate, inquiryOutcomeCounts
+  - `variantResponseRate` / `channelResponseRate` / `priorityResponseRate` are the **measured lever surfaces**. The subject and channel levers act on them automatically (lever tick) — read them to report, do not turn them into SALES_STRATEGY edits
   - `metrics.inquiryOutcomeCounts`: per-project session totals keyed by outcome (`opened` / `inquired` / `lead` / `signup_clicked` / `unsubscribed`). `signup_clicked` is the self-serve conversion path (project's CTA mode is `signup`, visitor clicked the Sign up button); `lead` is the human-sales conversion (meeting requested, button or chat-derived). Both `signup_clicked` and `lead` flip `project_prospects.status` to `responded`, so the prospect drops out of the outbound pool — they are different conversion axes that both belong in the "won" column
 - `respondedMessages`: all outreach bodies that received responses (with sentiment and responseType)
 - `noResponseSample`: sample of outreach bodies that received no response
@@ -69,20 +76,24 @@ Retrieve analysis frameworks via `mcp__plugin_leadace_api__get_master_document` 
 - Response rate by priority
 - Trends by time of day and day of week (analyze from send timestamps. However, since sending timing is determined by the daily-cycle execution schedule, do not write sending time constraints in SALES_STRATEGY.md. Report analysis results as "recommended execution timing" in the report only)
 
-**Message Analysis:**
+**Message Analysis (report-only — the subject lever applies, you narrate):**
 - Read all outreach bodies that received responses (from `respondedMessages`) and extract common traits
 - Compare with non-response samples (from `noResponseSample`)
-- Effectiveness of subject lines
+- Effectiveness of subject lines (cross-reference `variantResponseRate` and the lever weights)
 - Effectiveness of body length and structure
+
+These feed the Step 6 report. Do **not** translate them into SALES_STRATEGY messaging edits — subject-line optimization is owned by the lever tick.
 
 **Target Analysis:**
 - Industries and sizes with good responses
 - Segments with poor responses
 - Unexpected response patterns
 
-**Channel Analysis:**
-- Most effective channel
+**Channel Analysis (report-only — the channel lever applies, you narrate):**
+- Most effective channel (cross-reference `channelResponseRate` and the lever's `channelAffinity`)
 - Cost-effectiveness by channel
+
+These feed the Step 6 report. Do **not** translate them into SALES_STRATEGY channel-priority edits — channel ranking is owned by the lever tick.
 
 **Rejection Tactical Analysis (from `get_rejection_feedback_summary` scope="tactical"):**
 - `primaryReasonDistribution`: which tactical reasons dominate (e.g. `not_relevant` heavy → targeting issue; `wrong_timing` / `budget` heavy → pipeline issue; `not_decision_maker` heavy → outreach is reaching wrong contacts)
@@ -120,11 +131,11 @@ Before deciding on improvement actions, review the past evaluations history orga
 - Continue and deepen the direction of measures that were effective before
 - If proposing the same improvement as before, state why different results are expected this time
 
-**Update SALES_STRATEGY.md:**
+**Update SALES_STRATEGY.md (targeting & KPI only):**
 - Narrow or broaden targeting
-- Improve messaging (subject line, body structure, tone)
-- Revise channel priority
 - Update KPI goals
+
+Do **not** edit messaging (subject line / body) or channel priority here — those are optimized deterministically by the daily lever tick (subject draw weights, channel affinity). Report their measured performance in Step 6; do not encode it as prose. (Tone/sub-channel preferences a user wrote in SALES_STRATEGY stay as their authored hints; evaluate just doesn't rewrite them.)
 
 Save the updated document via `mcp__plugin_leadace_api__save_document` with `projectId: "$0"`, `slug: "sales_strategy"`, and the full markdown content.
 
@@ -142,6 +153,13 @@ Content to add:
 - **Industries with `not_relevant` rejection clusters** (from `notRelevantNotes` grouped by `industry`): if ≥2 rows in the same industry, add "XX industry has N `not_relevant` rejections — targeting mismatch, lower priority". Skip industries with only 1 hit (noise)
 
 Skip if the document is not found (build-list hasn't been run yet).
+
+**Replenish the subject-variant pool (supply candidates, never pick winners):**
+The lever tick prunes and re-weights subject variants but never *generates* new ones, so a converged pool plateaus on its least-bad seeds. Close that gap here — supply, don't select:
+- **When to act:** only when step 1's `get_lever_state` returns `needsReplenishment: true` (the optimizer has converged to the two-active floor with a dominated arm). If it is false, do nothing.
+- **Guardrails:** the same gates as every change above — skip if `dataSufficiency` is insufficient, if the stability discipline says wait, or if a previously supplied variant has not yet matured (don't stack ungrown candidates).
+- **What to produce:** read `list_subject_variants` first (so you see the active and recently-archived angles), then add **exactly one** new subject pattern that is a *genuinely distinct angle* from every active one — ≤80 chars, only `{{org}}` / `{{name}}` / `{{signal}}` placeholders, matching the SALES_STRATEGY voice, no fabricated company-specific claims. Upsert via `upsert_subject_variant` with a fresh generation-namespaced slug — `[A-Za-z0-9_-]`, ≤32 chars (e.g. `gen_20260607`); never reuse the `v1` / `v2` / `v3` seed slugs (that overwrites a live seed).
+- **Boundary (report-only intact):** this hands the bandit a new arm to *test* — it does not assert the new angle is better and does not edit SALES_STRATEGY messaging. Frame it as "an angle to test," not "a better subject."
 
 **Recalculate priorities:**
 - Update prospect priorities based on response patterns (bulk execution in step 5)
@@ -168,4 +186,8 @@ Report the following directly to the user (no file output needed -- evaluation d
   - **Recontact queue** — for each non-empty bucket in `recontactWindows` (`never` / `3_months` / `6_months` / `12_months` / `unspecified`), report `count` and list the `samples` entries (organization, prospect name). State that time-bounded buckets are auto-deferred (`prospects.next_outreach_after` set on rejection) and will re-enter the outbound queue automatically once the window passes; `never` is a hard DNC opt-out, not a recontact. Omit this sub-bullet when every bucket has `count: 0`
   - **Decision-maker referrals** — list `decisionMakerPointers` rows (referring prospect → pointer name/email/role). State that auto-prospect-creation runs at record_response time (pointer with email creates a new prospect linked to the same projects; pointer with name only updates an existing same-org contact's role/department), so no manual registration is required. Omit this sub-bullet when `decisionMakerPointers` is empty
   - Skip the whole section only when tactical `total` is 0 (no tactical rejections at all)
+- **Lever observability (apply + monitor)** (from step 1's `get_lever_state` / `get_lever_decisions`): make the automatic optimization visible so it is not a black box. Narrate:
+  - **Subject & channel levers (controlled)**: which subject variants lead and their maturity (`total` vs `minSamplePerArm`), any recently archived variants, and the measured `channelAffinity` per coarse-industry bucket — plus how these moved across the recent ticks (the decision history is the trend). If you supplied a fresh subject angle this run (pool replenishment), name it and say the tick will trend it. Say "uniform / none yet" when there isn't enough data
+  - **Timing & priority levers (no control arm)**: these are applied and monitored, never A/B-tested or auto-reverted. Surface their monitoring view — `priorityResponseRate` and the recontact / timing signals above — and call out notable shifts for the operator to judge
+  - Skip lines with no data yet (fresh project)
 - Next actions to take (`/build-list` for additional exploration, `/outbound` for re-approach, etc.)

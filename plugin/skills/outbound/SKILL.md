@@ -116,11 +116,28 @@ Each prospect in the targets list also carries:
   outreach history for this project. `n` is the count of confirmed sends.
   `kind ∈ first | no_response | rejection_followup`. `lastOutreach.subject`
   is the most recent subject used; `lastResponse.responseType` is the most
-  recent response (rejection / reply / etc.). Drives tone selection in step 3
-  and the re-approach branch in step 3b.
+  recent response (rejection / reply / etc.). When that response was a
+  rejection, `lastResponse.rejectionFeedback` carries the stated objection —
+  `primaryReason` (e.g. `wrong_timing` / `budget`) and `freeText` (their own
+  words, may be null) — so a re-approach can answer the actual reason. Drives
+  tone selection in step 3 and the re-approach branch in step 3b.
 - `hasFreshSignal: boolean` — true when `org_signals_global.signals_updated_at`
   is within the last 14 days. Used by the prioritisation server-side; you
   may surface it in the report.
+- `hypothesis: { bestChannel, bestKeyperson }` — the build-list registrant's
+  first-touch guess at the best channel (e.g. `personal_email` / `linkedin_dm`)
+  and a named keyperson, when one was obvious. Either may be null. Use as
+  context for channel choice and addressing — a hint, not an override: the
+  `tpl_channel_policy` ranking and the country / quota gates still decide.
+- `channelAffinity: [{ channel, rate, total, responses }]` — the project's
+  **measured** channel ranking for this prospect's coarse industry, best first
+  (e.g. `[{channel:"form",rate:14.0,total:50,responses:7},{channel:"email",rate:8.0,total:100,responses:8}]`),
+  recomputed daily by the lever tick. The array order is the ranking; `rate` (%)
+  / `total` / `responses` are for transparency — only the order (i.e. `channel`)
+  drives selection. `[]` until that industry has enough sends per channel — most
+  projects start empty. When present it reflects what has actually worked, so it
+  takes precedence over the policy order (see step 2); still intersect it with
+  available / enabled channels.
 
 If the tool returns a "Project not found" error, instruct the user to run `/leadace` first and **abort**.
 
@@ -129,16 +146,20 @@ If the tool returns a "Project not found" error, instruct the user to run `/lead
 Pick **one** channel per prospect — never chain channels.
 
 Retrieve the channel ranking policy via `mcp__plugin_leadace_api__get_master_document`
-with `slug: "tpl_channel_policy"` and follow it. It is the single source of truth for how
-to rank the channels a prospect is reachable on (personal email → LinkedIn → department
-email → generic email → form → X DM, with named-vs-generic address classification). Apply
-it together with two project inputs:
+with `slug: "tpl_channel_policy"` and follow it (personal email → LinkedIn → department
+email → generic email → form → X DM, with named-vs-generic address classification). It is
+the **default** order. Apply it together with these project inputs, highest precedence first:
 
-- **`outboundChannels`** (from step 1): rank only among the channels the project has
-  enabled. The candidate list is already server-filtered to enabled channels, but a
-  multi-channel prospect may still expose a disabled channel — never pick it.
-- **SALES_STRATEGY's "Sales Channels"** section, when present: it overrides the **ordering**
-  (only the ordering) among the enabled channels. When absent, use the policy order as-is.
+- **`outboundChannels`** (from step 1) — hard filter: rank only among the channels the
+  project has enabled. The candidate list is already server-filtered to enabled channels,
+  but a multi-channel prospect may still expose a disabled channel — never pick it.
+- **SALES_STRATEGY's "Sales Channels"** section, when present: the user's explicit channel
+  ordering. It overrides the ordering (only the ordering) and wins over the inputs below.
+- **`channelAffinity`** (from step 1), when non-empty: the measured best-to-worst ranking
+  for this prospect's industry. Use it as the order — it **overrides the policy default** —
+  picking the top-ranked channel that is available and enabled; fall back to the policy
+  order for any channels it doesn't cover. Empty (the common early state) → ignore it.
+- **`tpl_channel_policy`** default order when none of the above decide.
 
 Country eligibility is no longer a skill-side concern — `get_outbound_targets` filters to
 supported recipient countries server-side (step 1).
@@ -147,24 +168,23 @@ supported recipient countries server-side (step 1).
 
 **SNS DM caution:** SNS DMs have a lower reach rate (depends on recipient's DM settings). Channel enablement is handled by step 1's `outboundChannels`; do not re-check SALES_STRATEGY here.
 
-**Bad-timing skip (optional, on by default).** If the prospect's `overview`
-contains a `## Timing` section that explicitly says now is a bad moment
-(layoffs ongoing, just announced bankruptcy / wind-down, recent leadership
-shake-up implying the buyer left, post-acquisition integration freeze),
-skip outreach entirely:
+**Bad-timing skip (optional, on by default).** Before composing, judge from
+what you already have on the prospect — the `overview` (including any
+`## Recent Signals`), the `hypothesis`, and the `cycle` context — whether now
+is clearly a bad moment to reach this specific recipient. What counts as "bad"
+depends on the recipient; representative cases are a recent negative event that
+removes or freezes the buyer (layoffs, an announced bankruptcy / wind-down, a
+leadership shake-up implying the buyer left, a post-acquisition integration
+freeze). Skip only when the signal is concrete and clearly negative — when in
+doubt, send (a neutral read is a send, so prospects with no such signal are
+unaffected).
 
-1. Do NOT send.
-2. Call `mcp__plugin_leadace_api__skip_prospect` with:
-   - `projectId: "$0"`, `prospectId`: the prospect's id.
-   - `channel`: the channel you were about to use (`email` / `form` /
-     `sns_linkedin` / `sns_twitter`).
-   - `reason: "bad_timing"`
-   - `note`: the one-line reason, e.g. `"layoffs announced last week"`.
-
-   The server records a `skipped` audit row and defers the prospect's
-   re-eligibility by the project's no-response recycle window, so they drop
-   out of `get_outbound_targets` until it elapses. No quota is consumed.
-3. Continue to the next prospect.
+To skip: do NOT send, and call `mcp__plugin_leadace_api__skip_prospect` with
+`projectId: "$0"`, `prospectId`, the `channel` you were about to use (`email` /
+`form` / `sns_linkedin` / `sns_twitter`), `reason: "bad_timing"`, and a one-line
+`note` (e.g. `"layoffs announced last week"`). The server records a `skipped`
+audit row and defers re-eligibility by the project's no-response recycle window
+(no quota consumed); then continue to the next prospect.
 
 If the user passed an explicit override ("send anyway", "ignore timing"),
 skip the skip — they own the trade-off.
@@ -173,15 +193,19 @@ skip the skip — they own the trade-off.
 
 Retrieve email guidelines via `mcp__plugin_leadace_api__get_master_document` with `slug: "tpl_email_guidelines"` and follow them. Get the signature block from the "Sender Information" section of SALES_STRATEGY.md (append it to the body). Sender display name and `From:` address are applied automatically by `send_email_and_record` from project settings — do not pass them as arguments.
 
-**Subject line variation (round-robin).** Subject patterns are stored
-server-side in `subject_variants` and rotated by the server. Per send,
-call `mcp__plugin_leadace_api__pick_subject_variant` with the project
-id; the response is `{ variantId, subjectPattern, label }` and the
-server's cursor advances by one. Render the subject by substituting
-`{{org}}` / `{{name}}` / `{{signal}}` placeholders the pattern uses,
-then forward the `variantId` to `send_email_and_record` so
-`outreach_logs.variant_id` is stamped (this is what `/evaluate` joins
-to compare reply rates).
+**Subject line variation (weighted draw).** Subject patterns are stored
+server-side in `subject_variants`; the server picks one per send by a
+weighted draw (favoring the better-performing variants, recomputed daily
+by the lever tick). Per send, call
+`mcp__plugin_leadace_api__pick_subject_variant` with the project id; the
+response is `{ variantId, subjectPattern, label }`. Render the subject by
+substituting `{{org}}` / `{{name}}` / `{{signal}}` placeholders the
+pattern uses, then forward the `variantId` to `send_email_and_record` so
+`outreach_logs.variant_id` is stamped for per-variant reply metrics.
+The same attribution holds on any subject-bearing send: when a contact
+form carries a subject variant, pass its `variantId` to
+`record_outreach_with_inquiry` too (SNS DMs have no subject, so none
+applies) — otherwise per-variant metrics skew toward email-only sends.
 
 If `pick_subject_variant` returns `NOT_FOUND` ("No active subject
 variants"), the project has no patterns registered yet — generate a
@@ -288,15 +312,14 @@ When `cycle.kind === 'rejection_followup'`:
   bounce / meeting_request). Auto-replies do NOT set this kind — they
   fall under `no_response`, so a `rejection_followup` always has a real
   prior reason to reference.
-- Inspect `cycle.lastResponse.responseType`:
-  - `'rejection'` (or `'reply'` with negative sentiment, surfaced as
-    `'reply'` here): recipient previously rejected with a recontact
-    window now elapsed (`wrong_timing` / `budget`). Open by referencing
-    the prior reason without quoting it verbatim ("When I reached out
-    in Q1 you mentioned timing wasn't right — checking back now…"),
-    then highlight what's specifically changed since (Phase 1.5
-    signals, product updates, pricing changes).
-  - `'meeting_request'` / `'reply'` (positive): unusual to be back in
+- Inspect `cycle.lastResponse`:
+  - `responseType: 'rejection'` (or negative `'reply'`): the recipient
+    previously declined and the recontact window has now elapsed. Use
+    `lastResponse.rejectionFeedback.primaryReason` (and `freeText` if
+    present) to open against the actual objection — reference it, don't
+    quote verbatim — then lead with what's specifically changed since
+    (Phase 1.5 signals, product updates, pricing changes).
+  - `'meeting_request'` / positive `'reply'`: unusual to be back in
     the candidate pool — only happens if the recycle window elapsed
     without a follow-up booking. Reference the earlier interest neutrally.
 - If no concrete change has happened, skip — same logic as `no_response`

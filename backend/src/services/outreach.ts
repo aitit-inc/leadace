@@ -22,6 +22,7 @@ import {
   outreachLogIdSchema,
   projectIdSchema,
   prospectIdSchema,
+  variantIdSchema,
   type ProjectId,
   type TenantId,
 } from '../domain/ids'
@@ -70,6 +71,7 @@ const recordOutreachCommonFields = {
   channel: z.enum(channelEnum.enumValues),
   subject: z.string().optional(),
   body: z.string().min(1),
+  variantId: variantIdSchema.optional(),
 } as const
 
 export const recordOutreachSchema = z.discriminatedUnion('status', [
@@ -118,9 +120,10 @@ export const sendAndRecordSchema = z
       .regex(/^<[^\r\n<>]+>$/, 'inReplyTo must be a single RFC 5322 Message-ID like <id@host>')
       .max(998)
       .optional(),
-    // Optional explicit subject-variant id. When omitted or unknown/archived,
-    // the server falls back to round-robin across the project's active variants.
-    variantId: z.string().min(1).max(32).optional(),
+    // Optional explicit subject-variant id to stamp on outreach_logs.variant_id.
+    // This path performs no variant selection — the weighted draw happens upstream
+    // in pick_subject_variant; when omitted, variant_id is left null.
+    variantId: variantIdSchema.optional(),
   })
   .strict()
 export type SendAndRecordInput = z.infer<typeof sendAndRecordSchema>
@@ -152,6 +155,7 @@ export const recordOutreachWithInquirySchema = z
     channel: z.enum(['form', 'sns_twitter', 'sns_linkedin']),
     subject: z.string().optional(),
     body: z.string().min(1),
+    variantId: variantIdSchema.optional(),
   })
   .strict()
 export type RecordOutreachWithInquiryInput = z.infer<typeof recordOutreachWithInquirySchema>
@@ -280,6 +284,7 @@ export async function recordOutreach(
       channel: input.channel,
       subject: input.subject ?? null,
       body: input.body,
+      variantId: input.variantId ?? null,
       status: input.status,
       sentAt,
       errorMessage: input.status === 'failed' ? input.errorMessage : null,
@@ -399,6 +404,7 @@ export async function recordOutreachWithInquiry(
       channel: input.channel,
       subject: input.subject ?? null,
       body: input.body,
+      variantId: input.variantId ?? null,
       status,
       sentAt,
     })

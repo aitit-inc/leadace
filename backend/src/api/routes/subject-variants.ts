@@ -8,6 +8,7 @@ import {
   pickSubjectVariant,
 } from '../../services/subject-variants'
 import { projectIdParamSchema } from '../../services/projects'
+import { variantIdSchema } from '../../domain/ids'
 import { respondWithError } from '../respond'
 import { err } from '../../services/result'
 import type { Env, Variables } from '../types'
@@ -45,12 +46,13 @@ subjectVariantsRouter.put(
 )
 
 const pickQuerySchema = z.object({
-  variantId: z.string().min(1).max(32).optional(),
+  variantId: variantIdSchema.optional(),
 })
 
-// POST so cursor advance is not idempotent (a GET that mutates state would
-// confuse caches and pre-fetchers). The skill calls this once per send to
-// learn which variant + pattern to render before composing the subject.
+// POST, not GET: the pick is a weighted random draw, so each call may return a
+// different variant — a cacheable GET would be wrong. It mutates no state (the
+// old cursor advance is gone). The skill calls this once per send to learn
+// which variant + pattern to render before composing the subject.
 subjectVariantsRouter.post(
   '/projects/:id/subject-variants/pick',
   zValidator('param', projectIdParamSchema),

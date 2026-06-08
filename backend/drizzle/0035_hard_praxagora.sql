@@ -1,0 +1,1 @@
+ALTER TABLE "project_settings" DROP COLUMN "subject_variant_cursor";

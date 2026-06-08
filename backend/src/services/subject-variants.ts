@@ -1,17 +1,16 @@
 import { z } from 'zod'
-import { and, asc, eq, isNull, sql } from 'drizzle-orm'
-import { projectSettings, subjectVariants } from '../db/schema'
+import { and, asc, eq, isNull } from 'drizzle-orm'
+import { leverState, subjectVariants } from '../db/schema'
 import type { Db } from '../db/connection'
-import type { ProjectId, TenantId } from '../domain/ids'
+import { variantIdSchema, type ProjectId, type TenantId } from '../domain/ids'
+import { prepareDrawDistribution, weightedDraw } from '../domain/subject-bandit'
 import { ok, err, type ServiceResult } from './result'
 import { requireProject } from './projects'
-
-// Stable slug for URLs / analytics joins.
-const VARIANT_ID_REGEX = /^[a-zA-Z0-9_-]{1,32}$/
+import { loadLeverConfig } from './project-settings'
 
 export const upsertVariantBodySchema = z
   .object({
-    variantId: z.string().regex(VARIANT_ID_REGEX),
+    variantId: variantIdSchema,
     subjectPattern: z.string().min(1).max(300),
     label: z.string().min(1).max(120).nullable().optional(),
     archived: z.boolean().optional(),
@@ -94,12 +93,9 @@ export async function upsertSubjectVariant(
   return ok(row)
 }
 
-// Round-robin selection from active variants. The cursor advance is
-// best-effort fairness: concurrent /outbound runs may both read the same
-// value before the update lands, but the result is still rotation rather
-// than always picking variant 0. Returns null when no active variants exist
-// (caller falls back to an LLM-generated one-off subject).
-// `explicitVariantId` bypasses rotation; unknown / archived slugs fall through.
+// Weighted draw over active variants using lever_state weights (uniform when no
+// tick has run). Returns null when none are active (caller uses a one-off
+// subject). `explicitVariantId` bypasses the draw; unknown / archived fall through.
 export type PickedVariant = { variantId: string; subjectPattern: string; label: string | null }
 
 export async function pickSubjectVariant(
@@ -126,7 +122,7 @@ export async function pickSubjectVariant(
       ))
       .limit(1)
     if (row) return ok(row)
-    // Unknown / archived id falls through to round-robin.
+    // Unknown / archived id falls through to the weighted draw.
   }
 
   const active = await db
@@ -144,20 +140,21 @@ export async function pickSubjectVariant(
 
   if (active.length === 0) return ok(null)
 
-  const now = new Date()
-  const [advancedRow] = await db
-    .update(projectSettings)
-    .set({
-      subjectVariantCursor: sql`((${projectSettings.subjectVariantCursor} + 1) % ${active.length})`,
-      updatedAt: now,
-    })
-    .where(eq(projectSettings.projectId, projectId))
-    .returning({ cursor: projectSettings.subjectVariantCursor })
-
-  if (!advancedRow) {
-    throw new Error(`Invariant: project_settings row missing for project ${projectId}`)
+  const [stateRow] = await db
+    .select({ variantWeights: leverState.variantWeights })
+    .from(leverState)
+    .where(eq(leverState.projectId, projectId))
+    .limit(1)
+  const config = await loadLeverConfig(db, projectId)
+  const dist = prepareDrawDistribution(
+    active.map((v) => v.variantId),
+    stateRow?.variantWeights ?? {},
+    config,
+  )
+  const drawnId = weightedDraw(dist, Math.random)
+  const picked = active.find((v) => v.variantId === drawnId)
+  if (!picked) {
+    throw new Error(`Invariant: drawn variant ${drawnId} not in active set for project ${projectId}`)
   }
-  // We wrote the *next* cursor; the current pick is one step behind.
-  const idx = ((advancedRow.cursor - 1) % active.length + active.length) % active.length
-  return ok(active[idx]!)
+  return ok(picked)
 }

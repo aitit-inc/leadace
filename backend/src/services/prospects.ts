@@ -7,6 +7,7 @@ import {
   projectProspects,
   outreachLogs,
   responses,
+  leverState,
   formTypeEnum,
   prospectStatusEnum,
   responseTypeEnum,
@@ -21,6 +22,8 @@ import {
   type ProspectHypothesis,
   type OutboundMode,
   type OutboundChannel,
+  type RejectionPrimaryReason,
+  type RejectionFeedbackV1,
 } from '../db/schema'
 import type { Db } from '../db/connection'
 import {
@@ -41,6 +44,8 @@ import {
 } from '../domain/ids'
 import { isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG } from '../domain/url'
 import { ALLOWED_SEND_COUNTRIES } from '../domain/country'
+import { coarseIndustry } from '../domain/coarse-industry'
+import type { ChannelRank } from '../domain/channel-affinity'
 
 // See get_outbound_targets / B §4.2-F.
 const SIGNAL_FRESH_DAYS = 14
@@ -166,7 +171,11 @@ export type ReachableCycle = {
   n: number
   kind: CycleKind
   lastOutreach: { sentAt: string; subject: string | null } | null
-  lastResponse: { receivedAt: string; responseType: typeof responseTypeEnum.enumValues[number] } | null
+  lastResponse: {
+    receivedAt: string
+    responseType: typeof responseTypeEnum.enumValues[number]
+    rejectionFeedback: { primaryReason: RejectionPrimaryReason; freeText: string | null } | null
+  } | null
 }
 
 export type ReachableProspect = {
@@ -194,6 +203,8 @@ export type ReachableProspect = {
   // True when signals_updated_at is within SIGNAL_FRESH_DAYS. Drives both
   // skill UX and server-side ordering (fresh-signal prospects float up).
   hasFreshSignal: boolean
+  hypothesis: { bestChannel: string | null; bestKeyperson: string | null }
+  channelAffinity: ChannelRank[]
   cycle: ReachableCycle
 }
 
@@ -374,7 +385,7 @@ export async function listReachable(
   )`
   const orderingPriorityExpr = sql<number>`(${projectProspects.priority} + (CASE WHEN ${freshSignalExpr} THEN 0 ELSE 1 END))`
 
-  const [rows, summaryRows] = await Promise.all([
+  const [rows, summaryRows, stateRows] = await Promise.all([
     db
       .select({
         ppId: projectProspects.id,
@@ -389,6 +400,7 @@ export async function listReachable(
         formType: prospects.formType,
         snsAccounts: prospects.snsAccounts,
         notes: prospects.notes,
+        hypothesis: prospects.hypothesis,
         matchReason: projectProspects.matchReason,
         priority: projectProspects.priority,
         status: projectProspects.status,
@@ -416,15 +428,26 @@ export async function listReachable(
       .innerJoin(prospects, eq(prospects.id, projectProspects.prospectId))
       .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
       .where(reachableCondition),
+    db
+      .select({ channelAffinity: leverState.channelAffinity })
+      .from(leverState)
+      .where(eq(leverState.projectId, projectId))
+      .limit(1),
   ])
 
   const summary = summaryRows[0] ?? { total: 0, email: 0, formOnly: 0, snsOnly: 0 }
+  const channelAffinityByBucket = stateRows[0]?.channelAffinity ?? {}
 
   const prospectIds = rows.map((r) => r.prospectId)
   const cycleByProspect = await loadCycleContext(db, projectId, prospectIds)
 
   const enriched: ReachableProspect[] = rows.map((r) => ({
     ...r,
+    hypothesis: {
+      bestChannel: r.hypothesis?.bestChannel ?? null,
+      bestKeyperson: r.hypothesis?.bestKeyperson ?? null,
+    },
+    channelAffinity: channelAffinityByBucket[coarseIndustry(r.industry)] ?? [],
     cycle: cycleByProspect.get(r.prospectId) ?? EMPTY_CYCLE,
   }))
 
@@ -486,6 +509,7 @@ async function loadCycleContext(
         prospectId: outreachLogs.prospectId,
         lastReceivedAt: sql<Date>`MAX(${responses.receivedAt})`,
         lastResponseType: sql<typeof responseTypeEnum.enumValues[number]>`(ARRAY_AGG(${responses.responseType} ORDER BY ${responses.receivedAt} DESC))[1]`,
+        lastRejectionFeedback: sql<RejectionFeedbackV1 | null>`(ARRAY_AGG(${responses.rejectionFeedback} ORDER BY ${responses.receivedAt} DESC))[1]`,
       })
       .from(responses)
       .innerJoin(outreachLogs, eq(outreachLogs.id, responses.outreachLogId))
@@ -501,12 +525,23 @@ async function loadCycleContext(
 
   for (const o of outreachAgg) {
     const resp = responseMap.get(o.prospectId)
+    // postgres/cf returns sql<Date> aggregates as strings, not Date — re-wrap
+    // before toISOString().
     cycles.set(o.prospectId, {
       n: o.n,
       kind: resp ? 'rejection_followup' : 'no_response',
-      lastOutreach: { sentAt: o.lastSentAt.toISOString(), subject: o.lastSubject },
+      lastOutreach: { sentAt: new Date(o.lastSentAt).toISOString(), subject: o.lastSubject },
       lastResponse: resp
-        ? { receivedAt: resp.lastReceivedAt.toISOString(), responseType: resp.lastResponseType }
+        ? {
+            receivedAt: new Date(resp.lastReceivedAt).toISOString(),
+            responseType: resp.lastResponseType,
+            rejectionFeedback: resp.lastRejectionFeedback
+              ? {
+                  primaryReason: resp.lastRejectionFeedback.primary_reason,
+                  freeText: resp.lastRejectionFeedback.free_text ?? null,
+                }
+              : null,
+          }
         : null,
     })
   }

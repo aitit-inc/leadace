@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { verifyJwt, verifySupabaseJwt } from '../auth/verify-jwt'
 import { BUG_REPORT_CATEGORIES, OUTBOUND_MODES, OUTBOUND_CHANNELS, REJECTION_PRIMARY_REASONS, REJECTION_RECONTACT_WINDOWS, prospectStatusEnum, prioritySchema } from '../db/schema'
 import { ALLOWED_SEND_COUNTRIES } from '../domain/country'
+import { variantIdSchema } from '../domain/ids'
 import type { OutreachQuota, OutreachQuotaWindow } from '../services/plan-limits'
 import {
   handleMetadata,
@@ -144,7 +145,7 @@ type ToolDef = {
 // The tool catalog (names, descriptions, input schemas, handlers) is immutable
 // and built once per isolate here. Only the per-request execution context
 // (apiUrl, authHeader) varies — createMcpServer injects it at call time. Building
-// the 44 Zod schemas once instead of per request keeps the MCP fetch path off the
+// the tool schemas once instead of per request keeps the MCP fetch path off the
 // Worker CPU limit (per-request rebuild used to exceed Free's 10 ms ceiling).
 function buildToolRegistry(): ToolDef[] {
   const tools: ToolDef[] = []
@@ -235,7 +236,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'delete_project',
-    'Delete a project and all its data (prospects, outreach logs, responses, evaluations).',
+    'Delete a project and its project-scoped data (project-prospect links, outreach logs, responses, evaluations, settings, subject variants). Prospects themselves are tenant assets and are NOT deleted — they survive for other projects and /match-prospects.',
     { projectId: z.string().describe('Project name or ID') },
     async ({ projectId }, { apiUrl, authHeader }) => {
       const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
@@ -459,6 +460,7 @@ function buildToolRegistry(): ToolDef[] {
       channel: z.enum(['form', 'sns_twitter', 'sns_linkedin']),
       subject: z.string().optional(),
       body: z.string(),
+      variantId: variantIdSchema.optional().describe('Subject variant id from pick_subject_variant. Stamps outreach_logs.variant_id so per-variant reply rates are not biased to email-only sends.'),
     },
     async (input, { apiUrl, authHeader }) => {
       const resolved = await resolveProjectId(input.projectId, apiUrl, authHeader)
@@ -620,7 +622,7 @@ function buildToolRegistry(): ToolDef[] {
     'Register or update a subject-line A/B variant on a project. variantId is a stable slug (e.g. "v1", "warm_intro", "signal_funded"); subjectPattern may include {{org}} / {{name}} / {{signal}} placeholders that the skill substitutes at send time. Setting archived=true retires the slug from rotation while keeping it analysable for historic outreach rows. Idempotent: re-calling with the same variantId updates the pattern / label / archived state. /leadace onboarding seeds the first 2-3 variants; /evaluate may suggest adding new ones based on response rates.',
     {
       projectId: z.string().describe('Project name or ID'),
-      variantId: z.string().regex(/^[a-zA-Z0-9_-]{1,32}$/).describe('Stable slug, max 32 chars [A-Za-z0-9_-]'),
+      variantId: variantIdSchema.describe('Stable slug, max 32 chars [A-Za-z0-9_-]'),
       subjectPattern: z.string().min(1).max(300).describe('Subject template; may use {{placeholders}}.'),
       label: z.string().min(1).max(120).nullable().optional().describe('Optional human-readable label for /evaluate.'),
       archived: z.boolean().optional().describe('Set true to retire the slug from rotation.'),
@@ -651,10 +653,10 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'pick_subject_variant',
-    'Pick the next active subject-line variant for the project via round-robin (project_settings.subject_variant_cursor advances by one per call, modulo the active variant count). Pass an explicit variantId to bypass rotation; unknown / archived ids fall through to round-robin. Returns { variantId, subjectPattern, label }. Email-only — the skill renders the pattern (substitutes {{org}} / {{name}} / {{signal}} placeholders) into the final subject and forwards variantId to send_email_and_record so outreach_logs.variant_id is stamped. NOT_FOUND when no active variants are registered — generate a one-off subject and send without variantId in that case.',
+    'Pick an active subject-line variant for the project via a server-side weighted draw (weights are recomputed daily by run_lever_tick; an un-ticked / under-sampled project draws uniformly). Pass an explicit variantId to bypass the draw; unknown / archived ids fall through to the draw. Returns { variantId, subjectPattern, label }. For any subject-bearing send: the skill renders the pattern (substitutes {{org}} / {{name}} / {{signal}} placeholders) into the final subject and forwards variantId to send_email_and_record (email) or record_outreach_with_inquiry (a contact form that carries a subject) so outreach_logs.variant_id is stamped. NOT_FOUND when no active variants are registered — generate a one-off subject and send without variantId in that case.',
     {
       projectId: z.string().describe('Project name or ID'),
-      variantId: z.string().min(1).max(32).optional().describe('Override round-robin with a specific variant id.'),
+      variantId: variantIdSchema.optional().describe('Override the weighted draw with a specific variant id.'),
     },
     async (input, { apiUrl, authHeader }) => {
       const resolved = await resolveProjectId(input.projectId, apiUrl, authHeader)
@@ -680,6 +682,98 @@ function buildToolRegistry(): ToolDef[] {
   )
 
   defineTool(
+    'run_lever_tick',
+    'Run the daily outbound-optimization tick for the project. (1) Subject lines: measures per-variant reply rates over the reward-mature window, recomputes the weighted-draw weights pick_subject_variant reads, and archives any clearly-dominated variant (never below two active; reversible by un-archiving). (2) Channel affinity: measures (channel × coarse-industry) reply rates and recomputes the per-industry channel ranking get_outbound_targets surfaces — cells under min-sample stay on policy order, so low-volume projects are unaffected. Idempotent per UTC day — a second call the same day reports the already-recorded decision without re-applying. Call once per day from /daily-cycle after results are in. Returns the decision (subject weights, archived variants, sample counts, channel affinity by industry bucket) plus needsReplenishment: true when the subject pool has converged to the two-active floor with a dominated arm (the lever prunes/re-weights but never generates — /evaluate supplies a fresh angle).',
+    {
+      projectId: z.string().describe('Project name or ID'),
+    },
+    async (input, { apiUrl, authHeader }) => {
+      const resolved = await resolveProjectId(input.projectId, apiUrl, authHeader)
+      if (!resolved.id) {
+        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
+      }
+      const { ok, data } = await callApi('POST', `/projects/${resolved.id}/run-lever-tick`, null, apiUrl, authHeader)
+      if (!ok) {
+        const e = data as { error: string; detail?: string }
+        const msg = e.detail ? `${e.error}: ${e.detail}` : e.error
+        return { content: [{ type: 'text' as const, text: `Error: ${msg}` }], isError: true }
+      }
+      const r = data as {
+        ran: boolean
+        cycleDate: string
+        minSamplePerArm: number
+        weights: Record<string, number>
+        archived: Array<{ variantId: string }>
+        samples: Array<{ variantId: string; total: number }>
+        channelAffinity: Record<string, Array<{ channel: string; rate: number; total: number; responses: number }>>
+        needsReplenishment: boolean
+      }
+      const mature = r.samples.filter((s) => s.total >= r.minSamplePerArm).length
+      const head = r.ran
+        ? `Lever tick ran for ${r.cycleDate}.`
+        : `Lever tick already ran for ${r.cycleDate} (no change).`
+      const archivedLine = r.archived.length > 0 ? ` Archived: ${r.archived.map((a) => a.variantId).join(', ')}.` : ''
+      const buckets = Object.keys(r.channelAffinity)
+      const channelLine = buckets.length > 0
+        ? `\nChannel affinity (${buckets.length} industry bucket(s)): ${JSON.stringify(r.channelAffinity)}`
+        : '\nChannel affinity: none yet (cells under min-sample → policy order).'
+      const replenishLine = r.needsReplenishment
+        ? '\nReplenishment: pool converged to the floor with a dominated arm — /evaluate should supply one fresh subject angle.'
+        : ''
+      return {
+        content: [{
+          type: 'text' as const,
+          text: `${head} ${mature}/${r.samples.length} variant(s) at min-sample (${r.minSamplePerArm}).${archivedLine}\nWeights: ${JSON.stringify(r.weights)}${channelLine}${replenishLine}`,
+        }],
+      }
+    },
+  )
+
+  defineTool(
+    'get_lever_state',
+    'Inspect the outbound optimizer state for the project: current subject draw weights (null = no tick yet → uniform), the measured channel affinity per coarse-industry bucket ({} = none yet → policy order), when they were last updated, the mature sample progress per active variant, today\'s tick decision if it has run, and needsReplenishment (true when the pool has converged to the two-active floor with a dominated arm → /evaluate should supply one fresh subject angle). Read-only — use it to see whether optimization has enough data and what it last decided.',
+    {
+      projectId: z.string().describe('Project name or ID'),
+    },
+    async (input, { apiUrl, authHeader }) => {
+      const resolved = await resolveProjectId(input.projectId, apiUrl, authHeader)
+      if (!resolved.id) {
+        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
+      }
+      const { ok, data } = await callApi('GET', `/projects/${resolved.id}/lever-state`, null, apiUrl, authHeader)
+      if (!ok) {
+        const e = data as { error: string; detail?: string }
+        const msg = e.detail ? `${e.error}: ${e.detail}` : e.error
+        return { content: [{ type: 'text' as const, text: `Error: ${msg}` }], isError: true }
+      }
+      return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] }
+    },
+  )
+
+  defineTool(
+    'get_lever_decisions',
+    'Read the recent daily lever-tick decision history for the project (newest first; default last 30 days, override with days). Each entry is one UTC day\'s recorded decision: subject draw weights, any variants archived that day, per-variant sample counts, and the channel affinity per coarse-industry bucket. Read-only audit trail — use it to narrate how the no-control levers trended (weight shifts, archive events, channel-affinity moves) without trying to A/B or revert them. Empty until the tick has run at least once.',
+    {
+      projectId: z.string().describe('Project name or ID'),
+      days: z.number().int().min(1).max(365).optional().describe('Lookback window in days (default 30)'),
+    },
+    async (input, { apiUrl, authHeader }) => {
+      const resolved = await resolveProjectId(input.projectId, apiUrl, authHeader)
+      if (!resolved.id) {
+        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
+      }
+      const qs = input.days ? `?days=${input.days}` : ''
+      const { ok, data } = await callApi('GET', `/projects/${resolved.id}/lever-decisions${qs}`, null, apiUrl, authHeader)
+      if (!ok) {
+        const e = data as { error: string; detail?: string }
+        const msg = e.detail ? `${e.error}: ${e.detail}` : e.error
+        return { content: [{ type: 'text' as const, text: `Error: ${msg}` }], isError: true }
+      }
+      return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] }
+    },
+  )
+
+  defineTool(
     'record_outreach',
     'Record an outreach log entry. status="sent" flips the prospect to "contacted". status="failed" REQUIRES errorMessage and stamps next_outreach_after = sentAt + noResponseRecycleDays (project setting, default 90) so the prospect drops out of get_outbound_targets for that window — covers both intentional skips (errorMessage starting with "skipped: …") and real send errors. status="pending_review" leaves the prospect unchanged but excludes it from get_outbound_targets while the draft is open. errorMessage is rejected with 400 on "sent" / "pending_review". For form / SNS DM where you intend to submit, prefer record_outreach_with_inquiry — it allocates the row pre-submit and returns finalBody with the inquiry-landing URL footer baked in.',
     {
@@ -688,6 +782,7 @@ function buildToolRegistry(): ToolDef[] {
       channel: z.enum(['email', 'form', 'sns_twitter', 'sns_linkedin']),
       subject: z.string().optional(),
       body: z.string(),
+      variantId: variantIdSchema.optional().describe('Subject variant id from pick_subject_variant. Stamps outreach_logs.variant_id so per-variant reply rates are not biased to email-only sends.'),
       status: z.enum(['sent', 'failed', 'pending_review']).default('sent')
         .describe('"sent" = delivered. "failed" = send error (errorMessage required). "pending_review" = draft created (outbound_mode = draft).'),
       errorMessage: z.string().min(1).max(2000).optional()
@@ -800,7 +895,7 @@ function buildToolRegistry(): ToolDef[] {
       cc: z.array(z.email()).optional(),
       bcc: z.array(z.email()).optional(),
       inReplyTo: z.string().optional().describe('Gmail Message-Id header for threading'),
-      variantId: z.string().regex(/^[a-zA-Z0-9_-]{1,32}$/).optional().describe('Subject variant id from pick_subject_variant. Stamps outreach_logs.variant_id so /evaluate can join reply rates per variant.'),
+      variantId: variantIdSchema.optional().describe('Subject variant id from pick_subject_variant. Stamps outreach_logs.variant_id so /evaluate can join reply rates per variant.'),
     },
     async (input, { apiUrl, authHeader }) => {
       const resolved = await resolveProjectId(input.projectId, apiUrl, authHeader)
@@ -931,7 +1026,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'update_prospect',
-    'Partial-update a tenant prospect\'s fields (organization-level columns: name / contactName / department / overview / industry / websiteUrl / email / contactFormUrl / formType / snsAccounts / notes / hypothesis / country / countrySource). Only the keys you pass are written; null clears a nullable field. The prospect must keep at least one contact channel (email, contactFormUrl, or any snsAccounts entry) — UNPROCESSABLE if the patch would leave none. CONFLICT when email or contactFormUrl already belongs to another prospect in the workspace. For per-project status / matchReason / priority use update_prospect_status (status) — those columns live on the project_prospects junction. For DNC use set_prospect_do_not_contact.',
+    'Partial-update a tenant prospect\'s fields (organization-level columns: name / contactName / department / overview / industry / websiteUrl / email / contactFormUrl / formType / snsAccounts / notes / hypothesis / country / countrySource). Only the keys you pass are written; null clears a nullable field. The prospect must keep at least one contact channel (email, contactFormUrl, or any snsAccounts entry) — UNPROCESSABLE if the patch would leave none. CONFLICT when email or contactFormUrl already belongs to another prospect in the workspace. For per-project status use update_prospect_status. matchReason and priority also live on the project_prospects junction but are not patchable here or via update_prospect_status — they are set at registration / linking and rewritten only by re-importing the prospect with import_prospects (dedupPolicy="overwrite"). For DNC use set_prospect_do_not_contact.',
     {
       prospectId: z.number().int().positive(),
       patch: z.object({
@@ -1379,48 +1474,6 @@ function buildToolRegistry(): ToolDef[] {
           text: `Linked: ${result.linked} new, ${result.alreadyLinked} already linked, ${result.skipped} skipped.\nSkipped: ${JSON.stringify(result.skippedDetails)}`,
         }],
       }
-    },
-  )
-
-  defineTool(
-    'create_inquiry_token',
-    'Allocate a stable inquiry landing short_id + URL for an outreach. Idempotent on outreachLogId — repeated calls for the same live outreach return the same shortId so the URL stays valid across retried sends. Outbound skills MUST call this before sending email/form/SNS so the recipient has a single landing page (resources, AI chat, meeting-request button, unsubscribe with optional reason). Returns { shortId, inquiryUrl } — embed inquiryUrl in the outbound message body.',
-    {
-      outreachLogId: z.number().int().positive().describe('outreachLogs.id returned by record_outreach.'),
-    },
-    async ({ outreachLogId }, { apiUrl, authHeader }) => {
-      const { ok, data } = await callApi('POST', '/inquiry/tokens', { outreachLogId }, apiUrl, authHeader)
-      if (!ok) {
-        const err = data as { error: string; detail?: string }
-        const msg = err.detail ? `${err.error}: ${err.detail}` : err.error
-        return { content: [{ type: 'text' as const, text: `Error: ${msg}` }], isError: true }
-      }
-      const result = data as { shortId: string; inquiryUrl: string }
-      return {
-        content: [{
-          type: 'text' as const,
-          text: `Inquiry URL ready: ${result.inquiryUrl} (shortId: ${result.shortId}).`,
-        }],
-      }
-    },
-  )
-
-  defineTool(
-    'get_inquiry_session_summary',
-    'Sender-side visibility into a recipient\'s inquiry-landing activity for a given shortId. Returns the prospect/outreach context plus every session opened against this short_id (most recent first), each with outcome (opened / inquired / lead / signup_clicked / unsubscribed), meetingRequestSource (button / chat / null — only set when outcome === "lead"), derivedSummary, chatTurnsUsed, openedAt / closedAt, and the chat message thread. Use in /check-responses to surface inquiry-landing outcomes alongside email replies.',
-    {
-      shortId: z.string().describe('Inquiry landing short_id (from create_inquiry_token).'),
-    },
-    async ({ shortId }, { apiUrl, authHeader }) => {
-      const { ok, status, data } = await callApi('GET', `/inquiry/sessions/${shortId}/summary`, null, apiUrl, authHeader)
-      if (!ok) {
-        if (status === 404) {
-          return { content: [{ type: 'text' as const, text: `Inquiry token "${shortId}" not found.` }] }
-        }
-        const err = data as { error: string }
-        return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
-      }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] }
     },
   )
 

@@ -15,6 +15,7 @@ import { ok, err, type ServiceResult } from './result'
 import { requireProject } from './projects'
 import { isHttpsUrl, HTTPS_ONLY_MSG } from '../domain/url'
 import { ALLOWED_SEND_COUNTRIES } from '../domain/country'
+import { leverConfigSchema, leverConfigPatchSchema, type LeverConfig } from '../domain/lever-config'
 
 // 6-digit hex only; 3-digit shorthand and named colors rejected so the
 // frontend swatch / preview is deterministic.
@@ -45,6 +46,11 @@ export const updateSettingsSchema = z
     noResponseRecycleDays: z.coerce.number().int().min(7).max(365).optional(),
     outboundChannels: z.array(z.enum(OUTBOUND_CHANNELS)).optional(),
     targetCountries: z.array(z.enum(ALLOWED_SEND_COUNTRIES)).optional(),
+    // Overrides only: stored as the caller sent it (a partial), merged with the
+    // defaults at read time by loadLeverConfig. Whole-cell replace (not deep-merged)
+    // — a PUT must carry the full set of overrides it wants; an unset field then
+    // tracks the live leverConfigSchema default.
+    leverConfig: leverConfigPatchSchema.optional(),
   })
   .strict()
 export type UpdateSettingsPatch = z.infer<typeof updateSettingsSchema>
@@ -195,6 +201,15 @@ export async function loadProjectOutboundAllowlist(
   }
 }
 
+export async function loadLeverConfig(db: Db, projectId: ProjectId): Promise<LeverConfig> {
+  const [row] = await db
+    .select({ leverConfig: projectSettings.leverConfig })
+    .from(projectSettings)
+    .where(eq(projectSettings.projectId, projectId))
+    .limit(1)
+  return leverConfigSchema.parse(assertSettingsRow(row, projectId).leverConfig)
+}
+
 export async function getProjectSettings(
   db: Db,
   tenantId: TenantId,
@@ -270,6 +285,7 @@ export async function updateProjectSettings(
     ...(patch.noResponseRecycleDays !== undefined ? { noResponseRecycleDays: patch.noResponseRecycleDays } : {}),
     ...(patch.outboundChannels !== undefined ? { outboundChannels: patch.outboundChannels } : {}),
     ...(patch.targetCountries !== undefined ? { targetCountries: patch.targetCountries } : {}),
+    ...(patch.leverConfig !== undefined ? { leverConfig: patch.leverConfig } : {}),
     updatedAt: now,
   }
 

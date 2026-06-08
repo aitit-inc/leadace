@@ -2,6 +2,7 @@
 *.local.md
 *.local.json
 *.local.env
+*.local
 .env
 .env.local
 .env.production

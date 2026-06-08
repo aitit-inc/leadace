@@ -95,8 +95,8 @@ Call `mcp__plugin_leadace_api__get_evaluation_history` with `projectId: "$0"`. C
 | Category | Sections | Behavior |
 |---|---|---|
 | Not set | Missing / empty / incomplete | Subject to completion |
-| evaluate-managed | Messaging, targeting, channels, KPI, search keywords (when eval history exists) | **Do not touch by default** |
-| Static settings | Sender info, response def, notification, track record, outreach mode | Update only if user explicitly requests |
+| evaluate-managed | targeting, KPI, search keywords (when eval history exists) | **Do not touch by default** |
+| Static settings | Sender info, response def, notification, track record, outreach mode, messaging, channels | Update only if user explicitly requests |
 
 If 0 evaluations: treat as "not set" or "static settings".
 
@@ -114,6 +114,8 @@ Confirm policy via `AskUserQuestion`:
 - **Fill in missing items** (default): Only collect missing, don't touch evaluate-managed.
 - **Update specific sections**: Collect only user-specified. Warn if evaluate-managed is included.
 - **Business pivot**: Reconstruct all sections including evaluate-managed (eval improvements reset).
+
+**Pivot vs. new project:** "Business pivot" rebuilds the strategy in place but **keeps this project's engagement ledger** (already-contacted status + outreach / response history) — the right choice for *retargeting the same business* (shifted positioning / ICP / messaging on the same prospect base). If the user is selling a **genuinely different service / product**, or wants a clean slate that may legitimately re-approach previously-contacted (not unsubscribed) contacts, recommend a **new project** instead — a 2nd+ project can seed from this one via "Reference other projects" below, and tenant-wide unsubscribe / DNC / quota apply to it identically, so nothing compliance-relevant is lost. (Free / Starter cap projects at 1, so on those tiers pivot-in-place is the only *in-place* retarget path; a clean slate there means deleting and recreating the single project, which discards its engagement ledger.)
 
 #### Reference other projects (Mode A, initial sub-mode)
 
@@ -380,7 +382,7 @@ mcp__plugin_leadace_api__save_document
 ## Step 7. Generate / Update SALES_STRATEGY.md
 
 - **Initial** (both modes): Retrieve template `tpl_sales_strategy`. Generate following structure.
-- **Update** (Mode A): Use existing from Step 3. Update only changed sections. **Evaluate-managed sections (messaging, targeting, channels, KPI, search keywords) are only rewritten when user explicitly instructs an update.**
+- **Update** (Mode A): Use existing from Step 3. Update only changed sections. **Evaluate-managed sections (targeting, KPI, search keywords) are only rewritten when user explicitly instructs an update.** Messaging and channels are user-authored hints (subject lines & channel ranking are auto-optimized by the lever tick) — rewrite only on explicit user request.
 
 **Sender Information section**: Write only the organization's phone number and a short human signature line (name, title, sign-off). Sender display name, sender company name, and email live in project settings (set in 4-7 / 4B-3); legal name, physical address, privacy URL, and the unsubscribe link live in Workspace Settings and are appended automatically by the backend at send time. **Do not duplicate any of these in the document signature** — duplicated address blocks make the recipient-side footer look broken. If the template prompts for sender display / company / email, replace with `Sender display name, company, and email: managed in Project Settings (Web UI → Project settings page; company name is on the Inquiry settings page)`. If the template prompts for legal name / postal address / privacy / unsubscribe, replace with `Legal identity + footer: managed in Workspace Settings (https://app.leadace.ai/workspace-settings)`.
 
@@ -439,19 +441,19 @@ mcp__plugin_leadace_api__update_project_settings
 
 Tell the user once: "You can edit the brief / one-liner later in the Web UI → Inquiry page settings (sidebar). Optional landing extras (video / PDF / brand color / logo / scheduling link) can be set or updated on the same page."
 
-## Step 7.6. Seed subject-line variants (A/B rotation)
+## Step 7.6. Seed subject-line variants (A/B weighted draw)
 
-`/outbound` rotates subjects via `pick_subject_variant`, which reads the project's `subject_variants` table. Without any active variants registered, every send falls back to a one-off LLM-generated subject and `outreach_logs.variant_id` stays null — making the `/evaluate` reply-rate-by-variant analysis impossible. Seed 2-3 patterns here so rotation has something to rotate.
+`/outbound` varies subjects via `pick_subject_variant`, which reads the project's `subject_variants` table. Without any active variants registered, every send falls back to a one-off LLM-generated subject and `outreach_logs.variant_id` stays null — making the `/evaluate` reply-rate-by-variant analysis impossible. Seed 2-3 patterns here so the weighted draw has something to choose from.
 
 **Execution scope by sub-mode:**
 - **Initial — Mode A / Mode B**: seed.
 - **Update — fill missing**: seed only if `list_subject_variants` returns 0 active variants.
 - **Update — specific sections**: seed only if the user named "subject lines" / "A/B variants" in their list.
-- **Update — pivot**: skip — leave existing variants in place. The user can archive / replace via Web UI or `/evaluate` recommendations.
+- **Update — pivot**: regenerate. The pivot rebuilt the positioning/messaging (and the inquiry brief, Step 7.5), so the existing patterns encode the *old* strategy yet keep getting drawn by `pick_subject_variant`. Goal: after this step the active board holds only on-strategy arms, and is **never left with zero active variants** mid-procedure. So **seed the fresh on-strategy set first (new non-colliding slugs), then archive the old active variants** (`archived: true` — reversible, keeps the old rows analysable for historic `outreach_logs`). Seeding before archiving means a failed seed leaves the old board intact instead of emptying it. Don't lean on the lever tick for this: it only prunes reply-rate-dominated arms, and a pivot is a semantic change invisible to reply rate.
 
 **Procedure (when seeding applies):**
 
-1. Read existing variants: `mcp__plugin_leadace_api__list_subject_variants` with `projectId: "$0"`. If `active.length >= 2` and the sub-mode is anything other than the user explicitly asking for new patterns, skip the rest of this step.
+1. Read existing variants: `mcp__plugin_leadace_api__list_subject_variants` with `projectId: "$0"`. If `active.length >= 2` and the sub-mode is anything other than the user explicitly asking for new patterns (or a pivot), skip the rest of this step. On a pivot, do **not** skip — and keep the current active set (each one's `variantId`, `subjectPattern`, `label`) in hand for the archive step (step 4) below.
 2. Generate 2-3 short subject patterns (each ≤ 80 chars) following these rules:
    - Distinct angles, not paraphrases of one idea (e.g., warm-intro / direct-question / signal-driven). One-shot subjects only — no follow-up wording.
    - Use placeholders sparingly: `{{org}}` for the recipient organization, `{{name}}` for the contact name, `{{signal}}` for a recent signal phrase. The skill substitutes these at send time; never invent other placeholder names.
@@ -465,10 +467,11 @@ Tell the user once: "You can edit the brief / one-liner later in the Web UI → 
      subjectPattern: <pattern>
      label: <one-phrase human label for /evaluate display>
    ```
-   Use `v1` / `v2` / `v3` for the default seed unless the user explicitly names them. Idempotent — re-running with the same `variantId` updates the pattern.
-4. After the loop, list once more (`list_subject_variants`) and include the active variantIds in the Step 8 hand-off summary so the caller can confirm to the user.
+   Use `v1` / `v2` / `v3` for the **non-pivot** default seed (initial / fill-missing / specific-sections) unless the user explicitly names them. Idempotent — re-running with the same `variantId` updates the pattern. **Slug guardrail (pivot):** a pivot must **always** seed brand-new slugs that don't collide with any existing variantId, active *or archived* — e.g. a date-stamped `piv_20260607_a` (use today's date; slugs must match `[A-Za-z0-9_-]{1,32}`, so no `<…>` placeholders — they fail validation) — never reuse `v1/v2/v3`. Reusing a slug updates that row in place but does **not** un-archive it (archive state only changes when `archived` is passed) — so re-seeding the old `v1/v2/v3` would overwrite their patterns while leaving them archived, ending the pivot with **zero active variants** and corrupting the old slugs' historic `/evaluate` labels.
+4. **(Pivot only) Archive the old active set** held from step 1, now that the new slugs are seeded. For each, call `mcp__plugin_leadace_api__upsert_subject_variant` with its **`variantId` (the old slug being archived) plus its existing `subjectPattern` and `label` echoed back unchanged**, and `archived: true`. Both `variantId` and `subjectPattern` are **required on every call** (the schema is strict — omitting either fails validation). What you must get right: pass the **correct** `variantId` (the old slug being archived) with its **unchanged** `subjectPattern`, since a different / empty `subjectPattern` would rewrite the historic pattern and corrupt the old slug's `/evaluate` labels. Do this only after step 3's new slugs are confirmed active, so the board is never empty.
+5. List once more (`list_subject_variants`) and confirm `active.length >= 2`. If short — e.g. a new slug collided with an archived row and updated it instead of inserting — fix the slug and re-seed before exiting. On a pivot the active set should now be exactly the new on-strategy slugs (the old arms were archived in step 4); because seeding ran before archiving, the project is never left with zero active variants. Include the active variantIds in the Step 8 hand-off summary so the caller can confirm to the user.
 
-Tell the user once: "Seeded N subject variants — `/outbound` will rotate through them. You can edit / archive / add more later via `upsert_subject_variant` (called directly or driven by `/evaluate` recommendations)."
+Tell the user once: "Seeded N subject variants — `/outbound` will draw across them, favoring the better performers as replies accrue (the daily lever tick auto-archives clearly-dominated ones). You can edit / archive / add more later via the Web UI or `upsert_subject_variant`."
 
 ## Step 8. Hand-off to caller
 

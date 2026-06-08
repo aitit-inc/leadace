@@ -3,11 +3,7 @@ import { zValidator } from '../zvalidator'
 import { createDb } from '../../db/connection'
 import { authMiddleware } from '../middleware/auth'
 import { rlsMiddleware } from '../middleware/rls'
-import {
-  inquiryShortIdParamSchema,
-  createInquiryTokenBodySchema,
-  createInquiryToken,
-} from '../../services/inquiry-token'
+import { inquiryShortIdParamSchema } from '../../services/inquiry-token'
 import {
   inquiryUnsubscribeBodySchema,
   inquiryRequestMeetingBodySchema,
@@ -15,7 +11,6 @@ import {
   inquiryPreviewQuerySchema,
   loadLandingContext,
   loadPreviewContext,
-  loadInquirySessionSummary,
   recordMeetingRequest,
   recordSignupClick,
   recordInquiryUnsubscribe,
@@ -30,9 +25,8 @@ import type { Env, Variables } from '../types'
 
 // Public, unauthenticated landing routes — the DB-backed short_id in the
 // URL IS the auth, so handlers use raw `createDb()` and bypass RLS, same
-// pattern as `unsubscribe.ts`. Sender-facing sub-routes (/inquiry/preview,
-// /inquiry/tokens, /inquiry/sessions/...) attach authMiddleware +
-// rlsMiddleware inline so this whole router can sit outside the global
+// pattern as `unsubscribe.ts`. Sender-facing sub-routes attach authMiddleware
+// + rlsMiddleware inline so this whole router can sit outside the global
 // /api/* auth block in api/index.ts.
 
 export const inquiryRouter = new Hono<{ Bindings: Env; Variables: Variables }>()
@@ -68,39 +62,6 @@ inquiryRouter.post(
       { OPENAI_API_KEY: c.env.OPENAI_API_KEY },
       c.get('tenantId'),
       c.req.valid('json'),
-    )
-    if (!result.ok) return respondWithError(c, result)
-    return c.json(result.value)
-  },
-)
-
-inquiryRouter.post(
-  '/inquiry/tokens',
-  authMiddleware,
-  rlsMiddleware,
-  zValidator('json', createInquiryTokenBodySchema),
-  async (c) => {
-    const result = await createInquiryToken(
-      c.get('db'),
-      c.get('tenantId'),
-      c.env.APP_URL,
-      c.req.valid('json'),
-    )
-    if (!result.ok) return respondWithError(c, result)
-    return c.json(result.value)
-  },
-)
-
-inquiryRouter.get(
-  '/inquiry/sessions/:shortId/summary',
-  authMiddleware,
-  rlsMiddleware,
-  zValidator('param', inquiryShortIdParamSchema),
-  async (c) => {
-    const result = await loadInquirySessionSummary(
-      c.get('db'),
-      c.get('tenantId'),
-      c.req.valid('param').shortId,
     )
     if (!result.ok) return respondWithError(c, result)
     return c.json(result.value)

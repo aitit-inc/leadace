@@ -52,6 +52,8 @@ Clearly separate what the LLM should handle from what MCP tools handle.
 - Local tools: email sending (`gog` CLI), form submission (`playwright-cli`), SNS DMs (`claude-in-chrome`), web page fetching (`fetch_url.py`) — operations requiring local environment access
 - LLM (judgment & generation): context-dependent judgment and natural language — drafting email bodies, evaluating prospects, analyzing/improving strategy, merging/deduplicating candidate data
 
+Design tools so the plugin never has to reason about state consistency. Each MCP tool is a thin 1:1 wrapper over one backend endpoint (`src/mcp/` does only project-name resolution + response formatting — no business logic or state orchestration), so this is really an API-design rule: a data-mutating endpoint performs the action *and* applies every consequent state update atomically. The plugin then calls one simple, self-contained tool — never a multi-tool sequence in a fixed order — to keep data consistent. Canonical example: `send_email_and_record`.
+
 ## Plan Tiers & Limits
 
 Subscription is managed via Stripe. The API enforces limits based on user plan.

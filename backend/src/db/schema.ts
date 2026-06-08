@@ -3,6 +3,7 @@ import {
   boolean,
   check,
   customType,
+  date,
   foreignKey,
   index,
   integer,
@@ -17,6 +18,8 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
+import type { LeverConfigPatch } from '../domain/lever-config'
+import type { ChannelAffinityMap, ChannelCoarseStat } from '../domain/channel-affinity'
 
 const bytea = customType<{ data: Uint8Array; driverData: Uint8Array }>({
   dataType() {
@@ -256,6 +259,14 @@ export type EvaluationMetrics = {
     responses: number
     rate: number
   }>
+  // Read-only foundation for the subject bandit (charter P0); nothing selects on it yet.
+  variantResponseRate: Array<{
+    variantId: string
+    total: number
+    responses: number
+    rate: number
+    meanReward: number
+  }>
   // Inquiry-landing outcomes per project. Captures self-serve conversions
   // ('signup_clicked') and chat-only engagement ('inquired') that the
   // response-axis metrics above miss — responses are written for
@@ -402,10 +413,8 @@ export const projectSettings = pgTable('project_settings', {
   // never shortens an explicit longer window already in place (e.g. a
   // rejection-feedback '12_months' deferral).
   noResponseRecycleDays: smallint('no_response_recycle_days').notNull().default(90),
-  // Round-robin cursor for subject_variants selection in /outbound. Bumped
-  // by pickSubjectVariant on each send. Wraps modulo the active variant
-  // count; meaningless when there are no active variants for the project.
-  subjectVariantCursor: smallint('subject_variant_cursor').notNull().default(0),
+  // Overrides only ({} = none); loadLeverConfig fills the rest at read, so default changes need no backfill.
+  leverConfig: jsonb('lever_config').$type<LeverConfigPatch>().notNull().default({}),
   // Scoped to automated outbound (listReachable). Empty array pauses
   // automated outbound; manual UI Send / Mark-sent bypass.
   outboundChannels: text('outbound_channels').array().notNull()
@@ -600,10 +609,11 @@ export const outreachLogs = pgTable('outreach_logs', {
   index('idx_outreach_variant').on(table.projectId, table.variantId, table.status),
 ])
 
-// Per-project library of subject-line variants. /outbound round-robins over
-// the active rows; /evaluate joins outreachLogs.variantId to compare reply
-// rates. Variants are append-only conceptually — `archivedAt` retires a slug
-// from rotation while keeping it analysable for historic outreach rows.
+// Per-project library of subject-line variants. /outbound draws over the active
+// rows by the weights in lever_state (recomputed by run_lever_tick); /evaluate
+// joins outreachLogs.variantId to compare reply rates. Variants are append-only
+// conceptually — `archivedAt` retires a slug from the draw (the tick may set it
+// on a dominated variant) while keeping it analysable for historic outreach rows.
 export const subjectVariants = pgTable('subject_variants', {
   id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
   tenantId: text('tenant_id')
@@ -629,6 +639,60 @@ export const subjectVariants = pgTable('subject_variants', {
   }).onDelete('cascade'),
   index('idx_subject_variants_tenant').on(table.tenantId),
   index('idx_subject_variants_active').on(table.projectId, table.archivedAt),
+])
+
+// `channel` is absent on pre-P3 rows and until the project has channel data.
+export type LeverDecisionPayload = {
+  subject: {
+    weights: Record<string, number>
+    archived: Array<{ variantId: string; leaderLower: number; armUpper: number; n: number }>
+    samples: Array<{ variantId: string; total: number; responses: number; rewardSum: number }>
+  }
+  channel?: {
+    affinity: ChannelAffinityMap
+    samples: ChannelCoarseStat[]
+  }
+}
+
+// Subject-variant draw weights, one row per project. A separate table (not a
+// project_settings column) so the daily tick's write never contends with the
+// settings PUT path. Missing row → pickSubjectVariant draws uniformly.
+export const leverState = pgTable('lever_state', {
+  projectId: text('project_id').primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  variantWeights: jsonb('variant_weights').$type<Record<string, number>>().notNull().default({}),
+  // {} = no measured preference → listReachable falls back to policy order.
+  channelAffinity: jsonb('channel_affinity').$type<ChannelAffinityMap>().notNull().default({}),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  foreignKey({
+    columns: [table.projectId, table.tenantId],
+    foreignColumns: [projects.id, projects.tenantId],
+    name: 'fk_lever_state_project_tenant',
+  }).onDelete('cascade'),
+  index('idx_lever_state_tenant').on(table.tenantId),
+])
+
+// Append-only tick audit; UNIQUE(project_id, cycle_date) is the idempotency key.
+export const leverDecisions = pgTable('lever_decisions', {
+  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  projectId: text('project_id').notNull(),
+  cycleDate: date('cycle_date').notNull(),
+  decision: jsonb('decision').$type<LeverDecisionPayload>().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  unique('uq_lever_decision_cycle').on(table.projectId, table.cycleDate),
+  foreignKey({
+    columns: [table.projectId, table.tenantId],
+    foreignColumns: [projects.id, projects.tenantId],
+    name: 'fk_lever_decision_project_tenant',
+  }).onDelete('cascade'),
+  index('idx_lever_decisions_tenant').on(table.tenantId),
 ])
 
 export const responses = pgTable('responses', {

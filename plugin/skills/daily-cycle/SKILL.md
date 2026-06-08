@@ -20,6 +20,7 @@ allowed-tools:
   - mcp__plugin_leadace_api__get_eval_data
   - mcp__plugin_leadace_api__get_evaluation_history
   - mcp__plugin_leadace_api__record_evaluation
+  - mcp__plugin_leadace_api__run_lever_tick
   - mcp__plugin_leadace_api__get_document
   - mcp__plugin_leadace_api__save_document
   - mcp__plugin_leadace_api__get_master_document
@@ -102,9 +103,15 @@ Run every cycle.
 Include the following in the prompt:
 - Project ID: `$0`
 - Read `${CLAUDE_PLUGIN_ROOT}/skills/evaluate/SKILL.md` and follow its procedure
-- Return to main with **only a 3-line summary**. Example: "Response rate 4.2%. Messaging improvement applied. 2 search keywords added."
+- Return to main with **only a 3-line summary**. Example: "Response rate 4.2%. 2 search keywords added, priorities recalculated. Levers: subject v2 leading, email affinity in software_tech."
 
 After receiving the summary from the sub-agent, report it to the user.
+
+### 5b. run_lever_tick (outbound optimization)
+
+Run every cycle, right after evaluate. Call `mcp__plugin_leadace_api__run_lever_tick` once with `projectId: "$0"` — a single deterministic backend call, no sub-agent. From mature reply data it recomputes (1) the server-side subject-variant draw weights (archiving any clearly-dominated variant) and (2) the per-industry channel affinity that `get_outbound_targets` surfaces. Both leave low-volume projects on their current behavior until enough data accrues. Idempotent per UTC day, so re-running the cycle is safe.
+
+Report the one-line result to the user (whether it ran or was already done today, sample progress, any archived variants, channel affinity buckets).
 
 ### 6. Check List Remaining and Determine Execution Order
 
@@ -163,7 +170,7 @@ You are an outbound sales agent. Please reach out to each company on the prospec
 
 ## Required Rules for Sales Policy
 
-- **Subject lines:** Subject patterns live server-side in `subject_variants`. Per send, call `mcp__plugin_leadace_api__pick_subject_variant` for the next round-robin variant and forward `variantId` to `send_email_and_record` so `outreach_logs.variant_id` is stamped. If no active variants are registered, generate a one-off subject and send without `variantId`. Do not use the same subject for every prospect.
+- **Subject lines:** Subject patterns live server-side in `subject_variants`. Per send, call `mcp__plugin_leadace_api__pick_subject_variant` to draw a subject variant (the server picks by weighted draw) and forward `variantId` to `send_email_and_record` so `outreach_logs.variant_id` is stamped. If no active variants are registered, generate a one-off subject and send without `variantId`. Do not use the same subject for every prospect.
 - **Email opening:** Reference specific characteristics, industry, or initiatives of the target company. Generic greetings like "I visited your website" alone are not acceptable
 - **Full body:** Weave prospect-specific information from overview and matchReason throughout multiple parts of the email -- write in context tailored to the recipient, not template replacement. The compliance footer (legal name, address, privacy, unsubscribe) is appended server-side; do **not** include any of those in the body.
 
@@ -177,8 +184,6 @@ You are an outbound sales agent. Please reach out to each company on the prospec
 - Return to main with **only: success count, failure count, inactive count, main failure reasons (if any), list of variantIds used**
   Example: "Success 8, Failure 1 (form submission error), Unreachable 1. Variants: v1 x 4, v2 x 3, v3 x 3"
 ```
-
-**Carry over previous batch results:** From the 2nd batch onward, append the variant usage from the previous batch to the prompt so the sub-agent can pass an explicit `variantId` to `pick_subject_variant` if it wants to even out coverage. Example: "Previous batch used v1 x 4, v2 x 3. Skew toward v2 / v3 this time."
 
 **Reason for series execution:** Each batch queries prospects from the server sequentially, so parallel execution risks duplicate outreach.
 

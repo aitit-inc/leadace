@@ -80,6 +80,26 @@
       </div>
     {/if}
 
+    {#if stats.metrics.variantResponseRate.length > 0}
+      <div class="mb-6">
+        <p class="text-xs font-medium text-text-secondary mb-2">By subject variant · reply-matured sends</p>
+        <div class="grid grid-cols-[1fr_52px_52px_52px_60px] md:grid-cols-[1fr_70px_70px_70px_80px] gap-2 text-xs">
+          <span class="text-text-muted">Variant</span>
+          <span class="text-text-muted text-right">Sent</span>
+          <span class="text-text-muted text-right">Resp.</span>
+          <span class="text-text-muted text-right">Rate</span>
+          <span class="text-text-muted text-right">Reward/send</span>
+          {#each stats.metrics.variantResponseRate as v}
+            <span class="text-text font-mono truncate">{v.variantId}</span>
+            <span class="text-text-secondary text-right font-mono">{v.total}</span>
+            <span class="text-text-secondary text-right font-mono">{v.responses}</span>
+            <span class="text-text text-right font-mono">{pct(v.responses, v.total)}</span>
+            <span class="text-text text-right font-mono">{v.meanReward.toFixed(2)}</span>
+          {/each}
+        </div>
+      </div>
+    {/if}
+
     {#if stats.metrics.priorityResponseRate.length > 0}
       <div class="mb-6">
         <p class="text-xs font-medium text-text-secondary mb-2">By priority</p>

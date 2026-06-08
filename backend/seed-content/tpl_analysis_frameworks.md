@@ -8,7 +8,7 @@ When response rates fall below expectations, examine the following 6 causes in o
 
 ### 1. Subject Line Problem (Not Being Opened)
 - Symptoms: Overall low engagement
-- Remedies: Shorten the subject line, add numbers, include the recipient's company name, spark curiosity
+- Owned by the lever (report-only): subject selection is a weighted draw across the seeded `subject_variants`; the bandit learns from replies. Report which variants underperform (`variantResponseRate` + the lever weights) — do not rewrite subjects. If every variant is weak, suggest the user seed fresher patterns (shorter, numbers, recipient's company name, curiosity-driven) via `upsert_subject_variant`
 
 ### 2. Targeting Problem (Wrong Audience)
 - Symptoms: Zero responses despite high volume
@@ -16,11 +16,11 @@ When response rates fall below expectations, examine the following 6 causes in o
 
 ### 3. Body Content Problem (Read but No Action)
 - Symptoms: Some responses come in but positive rate is low
-- Remedies: Lead with recipient benefits, reduce self-promotion, add specific numbers/case studies
+- Report-only: surface what correlates with positive replies (recipient-benefit-led framing, less self-promotion, specific numbers / case studies). Body copy is a user-authored SALES_STRATEGY hint — report the observation, do not rewrite it here
 
 ### 4. CTA Problem (Response Barrier Too High)
 - Symptoms: Interest seems present but no replies
-- Remedies: "30-minute meeting" → "15-minute information exchange", "Shall I send you materials?"
+- Report-only: note lower-barrier CTA options ("30-minute meeting" → "15-minute information exchange", "Shall I send you materials?") as a suggestion for the user's SALES_STRATEGY; evaluate does not apply messaging edits
 
 ### 5. Timing Problem (Poor Send Time)
 - Symptoms: Response rate skewed by day of week or time of day
@@ -28,37 +28,20 @@ When response rates fall below expectations, examine the following 6 causes in o
 
 ### 6. Channel Problem (Other Channels More Effective)
 - Symptoms: No response from email but responses from SNS (or vice versa)
-- Remedies: Change channel priority order
+- Owned by the lever (report-only): channel ranking is the affinity re-rank per coarse-industry. Report the measured `channelResponseRate` / `channelAffinity` and any shift — do not rewrite channel priority
 
-## A/B Test Design
+## Message Pattern Analysis (report-only)
 
-When there is an improvement hypothesis, design A/B tests with the following elements:
+There is no manual A/B test to design or "adopt as default" here. Subject lines are optimized by the lever tick (the bandit's continuous weighted draw across `subject_variants`, learning from replies); channel ranking by the affinity re-rank. /evaluate reads their measured performance and narrates it — it does not run subject / channel experiments or write `ab_test` records.
 
-### Test Elements
-- **Subject line patterns**: Curiosity-type vs. number-type vs. problem-mention-type
-- **Email length**: Short (150 characters) vs. detailed (300 characters)
-- **CTA phrasing**: "Meeting" vs. "information exchange" vs. "demo" vs. "send materials"
-- **Tone**: Formal vs. casual
-- **Hook**: Company name mention vs. industry challenge vs. numbers/achievements
+For message elements no lever owns (body length, CTA phrasing, tone, hook), analyze what correlates with responses and report it as an observation in the evaluation report and as a hint the user may add to their SALES_STRATEGY Messaging section. Do not encode them as evaluate-applied changes.
 
-### Test Conditions
-- Change only one element per test
-- Send at least 15 of each pattern (for statistical significance)
-- Distribute evenly among prospects with the same attributes
-- Define measurement metrics in advance (response rate, positive response rate, etc.)
-
-### Recording in the evaluations Table
-Record test results in the improvements JSON in the following format:
-```json
-{
-  "type": "ab_test",
-  "element": "subject_line",
-  "pattern_a": "Number type: Track record of XX% improvement",
-  "pattern_b": "Problem type: Struggling with {problem}?",
-  "result": "pattern_a had 2.1% higher response rate",
-  "applied": "Adopted pattern_a as default"
-}
-```
+### Dimensions to compare when reporting
+- **Subject patterns**: curiosity vs. number vs. problem-mention (from variant performance — lever-owned)
+- **Body length**: short (~150 chars) vs. detailed (~300 chars)
+- **CTA phrasing**: "meeting" vs. "information exchange" vs. "demo" vs. "send materials"
+- **Tone**: formal vs. casual
+- **Hook**: company-name mention vs. industry challenge vs. numbers / achievements
 
 ## Targeting Accuracy Verification
 

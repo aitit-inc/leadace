@@ -272,7 +272,7 @@ Three tiers — daily use only needs the first two. Print under sub-headings so 
 | `/build-list` | Web-search-driven prospect collection based on the project's strategy; registers candidates in the DB. |
 | `/outbound` | Execute outreach (email / contact form / SNS DM) against the project's prospect list. |
 | `/check-responses` | Detect replies and scheduling notifications, record them as `responses`. |
-| `/evaluate` | Analyze response-rate data and propose strategy / targeting / messaging improvements. |
+| `/evaluate` | Analyze response-rate data; report findings and apply priority / targeting / keyword updates (subject & channel are auto-optimized by the lever tick). |
 | `/import-prospects` | Load prospects from a file (CSV / Excel / SQLite / text) — either as tenant assets or linked to a project. |
 | `/match-prospects` | Pull existing tenant-wide prospects into a project that fits the targeting. |
 | `/check-feedback` | PMF-oriented review of rejection feedback (Pro-tier introspection). |

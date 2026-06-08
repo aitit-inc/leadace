@@ -8,6 +8,7 @@ export interface EvaluationMetrics {
   priorityResponseRate: Array<{ priority: number; total: number; responses: number; rate: number }>;
   statusCounts: Array<{ status: string; count: number }>;
   channelResponseRate: Array<{ channel: string; total: number; responses: number; rate: number }>;
+  variantResponseRate: Array<{ variantId: string; total: number; responses: number; rate: number; meanReward: number }>;
   inquiryOutcomeCounts: Record<InquiryOutcome, number>;
 }
 
