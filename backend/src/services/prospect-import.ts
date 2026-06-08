@@ -145,12 +145,34 @@ const ALLOWED_CSV_HEADERS = new Set<string>([
   'countrySource',
 ])
 
+export function validateCsvHeader(
+  header: string[],
+  requireMatchReason: boolean,
+): { ok: true } | { ok: false; error: string; detail: string } {
+  const missing = REQUIRED_CSV_HEADERS.filter((h) => !header.includes(h))
+  if (missing.length > 0) {
+    return { ok: false, error: 'Missing required columns', detail: missing.join(', ') }
+  }
+  if (requireMatchReason && !header.includes('matchReason')) {
+    return {
+      ok: false,
+      error: 'Missing required columns',
+      detail: 'matchReason is required when projectId is provided',
+    }
+  }
+  const unknown = header.filter((h) => !ALLOWED_CSV_HEADERS.has(h))
+  if (unknown.length > 0) {
+    return { ok: false, error: 'Unknown columns', detail: unknown.join(', ') }
+  }
+  return { ok: true }
+}
+
 const DNC_TRUTHY = new Set(['1', 'true', 'yes', 'on'])
 const DNC_FALSY = new Set(['0', 'false', 'no', 'off'])
 
 const MAX_IMPORT_ROWS = 1000
 
-function csvRowToInput(header: string[], row: string[]): { ok: true; value: ProspectInput } | { ok: false; error: string } {
+export function csvRowToInput(header: string[], row: string[]): { ok: true; value: ProspectInput } | { ok: false; error: string } {
   const obj: Record<string, unknown> = {}
   const sns: Record<string, string> = {}
   for (let j = 0; j < header.length; j++) {
@@ -524,16 +546,9 @@ export async function importCsv(
   }
 
   const header = (rows[0] ?? []).map((h) => h.trim())
-  const missing = REQUIRED_CSV_HEADERS.filter((h) => !header.includes(h))
-  if (missing.length > 0) {
-    return err('INVALID_INPUT', 'Missing required columns', missing.join(', '))
-  }
-  if (projectId && !header.includes('matchReason')) {
-    return err('INVALID_INPUT', 'Missing required columns', 'matchReason is required when projectId is provided')
-  }
-  const unknown = header.filter((h) => !ALLOWED_CSV_HEADERS.has(h))
-  if (unknown.length > 0) {
-    return err('INVALID_INPUT', 'Unknown columns', unknown.join(', '))
+  const headerCheck = validateCsvHeader(header, Boolean(projectId))
+  if (!headerCheck.ok) {
+    return err('INVALID_INPUT', headerCheck.error, headerCheck.detail)
   }
 
   // Lifetime prospect limit counts new insertions only, not overwrites.

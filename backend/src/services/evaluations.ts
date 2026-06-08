@@ -395,6 +395,12 @@ export async function recordEvaluation(
   // regardless of list size. The schema caps the list (max 50, no duplicate
   // industries); RETURNING the matched industry lets us report per-industry
   // rowsAffected. Only 'new' rows are touched, matching the prior behavior.
+  //
+  // Raw db.execute bypasses drizzle's column-type mappers, so two casts the
+  // builder would normally insert must be written by hand against postgres-js's
+  // text-typed bind params: `${NEW}::prospect_status` (enum column = text param
+  // has no operator) and `now()` instead of a JS Date param (postgres-js's cf
+  // build can't serialize a Date in this raw bind path).
   const priorityUpdates = input.priorityUpdates ?? []
   let priorityResults: Array<{ industry: string; rowsAffected: number }> = []
   if (priorityUpdates.length > 0) {
@@ -406,10 +412,10 @@ export async function recordEvaluation(
     const updatedRows = Array.from(
       await db.execute(sql`
         UPDATE project_prospects pp
-        SET priority = v.priority, updated_at = ${now}
+        SET priority = v.priority, updated_at = now()
         FROM (VALUES ${valuesList}) AS v(industry, priority)
         JOIN prospects p ON p.industry = v.industry
-        WHERE pp.prospect_id = p.id AND pp.project_id = ${input.projectId} AND pp.status = ${NEW}
+        WHERE pp.prospect_id = p.id AND pp.project_id = ${input.projectId} AND pp.status = ${NEW}::prospect_status
         RETURNING v.industry AS industry
       `),
     ) as Row[]

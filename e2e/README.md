@@ -52,14 +52,19 @@ browser already expects it.
 - Daily-cycle and reply-detection scenarios (the recipient redirect below
   is the building block; the scripts that drive those flows haven't
   landed yet)
-- Plan-tier quota enforcement (the `self-hosted` edition resolves every
-  tenant to `unlimited`; quota tests need a `cloud`-edition stack with
-  a manual `subscriptions` row)
 - Headless browser side effects (`claude-in-chrome`)
-- Stripe webhook handling
+- The `checkout.session.completed` + cancel/refund Stripe paths — these
+  issue an unconditional fetch to the real `api.stripe.com`, so they need
+  Stripe test mode (out of harness scope, like the real-Gmail send leg)
 
-Three curl-only regressions cover the server contracts the plugin depends on,
-need no Claude session, and run fast:
+Plan-tier quota enforcement and the data-driven half of Stripe webhook
+handling **are** covered now — by the cloud-edition cluster, which runs
+against a second worker booted with `LEADACE_EDITION=cloud` (see "Cloud-edition
+regression cluster" below). On the default self-hosted worker every tenant
+resolves to `unlimited`, so those caps never bind there.
+
+Several curl-only regressions cover the server contracts the plugin depends
+on, need no Claude session, and run fast:
 
 - `regression-outbound.sh` — `send-and-record`: compliance gate, draft mode,
   country guardrail, and the real-Gmail send happy path (redirected to
@@ -67,8 +72,42 @@ need no Claude session, and run fast:
 - `regression-build-list-dedup.sh` — the 0.5.91 dedup flow.
 - `regression-skip-reachable.sh` — `skip_prospect` ('skipped' audit row) and
   the `listReachable` candidate-stage country filter.
+- `regression-unsubscribe.sh` — the public unsubscribe-token route family
+  (GET info / POST one-click DNC / idempotent re-POST / with-reason). Tokens
+  minted by `sign-unsubscribe-token.sh` (HMAC mirror of the backend).
+- `regression-import-dnc.sh` — the CSV import one-way do-not-contact ratchet
+  (existing-DNC re-import is skipped; overwrite never clears an opt-out).
+- `regression-record-outreach.sh` — the `record_outreach` MCP path: status
+  `sent` re-runs the compliance/DNC/country gates + contacted flip;
+  `pending_review`/`failed` branches.
+- `regression-update-outreach-status.sh` — `update_outreach_status` confirm step:
+  `pre_send`→`sent` (contacts) / →`failed` (defers); non-`pre_send` → 404; one-shot
+  guard; zValidator 400s.
+- `regression-record-with-inquiry.sh` — `record_outreach_with_inquiry` footer
+  persistence by mode (draft bakes the `/q/<shortId>` footer into the row; send
+  keeps `body==input` verbatim) + send-mode DNC/country gates.
+- `regression-draft-send.sh` — `sendDraft`/`markDraftSent` preconditions +
+  re-applied compliance/country at send time; `markDraftSent` happy path (no
+  Gmail); `sendDraft` Gmail leg gated on `gmail_credentials` + override.
+- `regression-inflight-reachable.sh` — `get_outbound_targets` in-flight exclusion
+  (open `pending_review` / in-TTL `pre_send` dropped; aged-out `pre_send`
+  re-included) — the daily-cycle double-send guard.
+- `regression-prospect-update-channel.sh` — `PATCH /prospects/:id` post-merge
+  contact-channel invariant (can't strip the last channel → 422).
+- `regression-record-evaluation-priority.sh` — `record_evaluation`
+  `priorityUpdates` touches only `status='new'` rows; per-industry `rowsAffected`.
+- `regression-rejection-cycle.sh` — rejection-cycle cap scoped per
+  `(prospect,project)`; bounce / cap-reached `do_not_contact` flip.
+- `regression-inquiry-unsubscribe.sh` — inquiry landing unsubscribe ratchet
+  (chip-less first-tap + with-chip follow-up both set DNC on the same session).
+- `regression-decision-maker-pointer.sh` — `decision_maker_pointer` derivation
+  (no-create-when-DNC, email dedup fill-missing-only, self-ref skip, cross-tenant
+  isolation + create-new).
+- `regression-tenant-isolation.sh` — cross-tenant RLS isolation with a real second
+  tenant (read + write + pooled reset + WITH CHECK backstop + account-deletion
+  blast radius). Provisions tenant B via the GoTrue Admin API.
 
-Run all three in sequence with `./e2e/regression-all.sh`. See the sections
+Run all of them in sequence with `./e2e/regression-all.sh`. See the sections
 below for what each asserts.
 
 ## Recipient redirect for real Gmail sends
@@ -278,9 +317,67 @@ tenant settings or `gmail_credentials`.
 SKIP_CLEANUP=1 ./e2e/regression-all.sh
 ```
 
-Sequences the three curl-only suites above and prints an aggregate pass/fail,
-exiting non-zero if any suite fails. The onboarding-chain smoke (`smoke.sh`) is
-not included — it needs the Claude CLI and a live MCP grant; run it separately.
+Sequences the self-hosted curl-only suites above and prints an aggregate
+pass/fail, exiting non-zero if any suite fails. The cloud-edition cluster
+(below) is NOT included — it needs the separate `LEADACE_EDITION=cloud` worker.
+The onboarding-chain smoke (`smoke.sh`) is not included either — it needs the
+Claude CLI and a live MCP grant; run it separately.
+
+### Cloud-edition regression cluster (quota / plan limits / Stripe webhook)
+
+The suites above run against the default dev worker (`:8787`), which is the
+`self-hosted` edition — `getTenantPlan` short-circuits every tenant to
+`unlimited`, so plan-tier caps and the Stripe webhook never fire there. The
+cloud-edition cluster covers exactly those paths by running against a **second**
+API Worker booted with `LEADACE_EDITION=cloud`:
+
+```bash
+# Terminal 1 — leave running (foreground, like npm run dev:api):
+./e2e/cloud-edition-up.sh            # API Worker on :8789, edition=cloud + Stripe test secrets
+
+# Terminal 2:
+./e2e/regression-cloud-all.sh        # runs the four cloud suites
+SKIP_CLEANUP=1 ./e2e/regression-cloud-all.sh
+```
+
+`cloud-edition-up.sh` reuses the same local Postgres/Supabase from
+`backend/.dev.vars`; only the edition flag and dummy Stripe **test** secrets are
+injected (via `wrangler dev --var`). It does not disturb the `:8787` dev worker.
+
+Each suite provisions its **own throwaway tenant** (a fresh GoTrue user via the
+Admin API → a fresh tenant with every counter at 0), seeds its plan and counters
+(`tenant_plans` / `outreach_logs` / `prospects` / `inquiry_*` via psql), asserts,
+then deletes the tenant (`DELETE FROM tenants` cascades all its rows) — so the
+suites are deterministic, don't interfere, and leave no residue in your real
+tenant. Shared helpers live in `e2e/lib-cloud.sh`.
+
+- `regression-cloud-quota.sh` — outreach quota binding end-to-end: free
+  daily-5 (send-and-record → 403 with the daily message and NO `pre_send` row
+  allocated; `record_outreach('sent')` → 403; `reachable` → empty list +
+  "try again tomorrow"), free lifetime-50, starter monthly-1500, and the
+  `effectiveLimit = min(limit, remaining)` clamp on `reachable` (incl. an
+  in-flight `pre_send` row counting toward used).
+- `regression-cloud-limits.sh` — `maxProjects` (free=1, pro=5 → 403 at the cap,
+  N+1 allowed after delete) and the `maxProspects` 500 budget (mid-batch
+  truncation to remaining budget with `plan_limit` skips; full 403 at budget 0;
+  count is over the `prospects` table, so a no-`projectId` batch still counts).
+- `regression-cloud-stripe-webhook.sh` — signature verification (missing → 400,
+  bad → 401, stale ts → 401, valid-but-unknown-sub → 200 no-op) and the
+  data-driven `tenant_plans` mutations: `customer.subscription.updated` grants
+  the tier / mirrors the period / is idempotent / no-ops on missing metadata;
+  `customer.subscription.deleted` downgrades to free; and the `unlimited`-tier
+  protection refuses both. Events are HMAC-signed locally by
+  `sign-stripe-event.sh`. The `checkout.session.completed` + refund paths are
+  out of scope (they call the real `api.stripe.com`).
+- `regression-cloud-inquiry-quota.sh` — the free-tier inquiry-chat lifetime cap
+  (25 turns) returning 403 before the OpenAI call (so no LLM round-trip / cost),
+  plus the per-session hard-cap (5) precedence and the revoked-token 404 gate.
+
+The `:8789` worker's `STRIPE_WEBHOOK_SECRET` must match what
+`regression-cloud-stripe-webhook.sh` signs with (both default to
+`whsec_e2e_test_secret`). If `wrangler dev`'s in-memory state is reset, just
+restart `cloud-edition-up.sh` — the suites re-provision their own tenants each
+run.
 
 ### Triggering Cloudflare cron jobs
 

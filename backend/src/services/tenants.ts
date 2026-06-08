@@ -100,6 +100,23 @@ export type TenantComplianceProjection = {
   privacyPolicyUrl: string | null
 }
 
+// privacyPolicyUrl is intentionally absent — set, it appears in the footer but
+// never blocks a send.
+export const COMPLIANCE_FIELDS = ['legalName', 'physicalAddress', 'defaultSenderCountry'] as const
+export type ComplianceField = (typeof COMPLIANCE_FIELDS)[number]
+
+export function computeComplianceMissing(fields: {
+  legalName: string | null
+  physicalAddress: string | null
+  defaultSenderCountry: string | null
+}): ComplianceField[] {
+  const missing: ComplianceField[] = []
+  if (!fields.legalName) missing.push('legalName')
+  if (!fields.physicalAddress) missing.push('physicalAddress')
+  if (!fields.defaultSenderCountry) missing.push('defaultSenderCountry')
+  return missing
+}
+
 export async function assertTenantComplianceReady(
   db: Db,
   tenantId: TenantId,
@@ -108,10 +125,7 @@ export async function assertTenantComplianceReady(
   if (!result.ok) return result
 
   const row = result.value
-  const missing: string[] = []
-  if (!row.legalName) missing.push('legalName')
-  if (!row.physicalAddress) missing.push('physicalAddress')
-  if (!row.defaultSenderCountry) missing.push('defaultSenderCountry')
+  const missing = computeComplianceMissing(row)
 
   if (missing.length > 0) {
     return err(
@@ -134,9 +148,6 @@ export async function assertTenantComplianceReady(
 // { ready, missing } so callers branch on the boolean without parsing a
 // PRECONDITION_FAILED envelope. Tiny response so the skill can call it
 // cheaply on every run.
-const COMPLIANCE_FIELDS = ['legalName', 'physicalAddress', 'defaultSenderCountry'] as const
-type ComplianceField = (typeof COMPLIANCE_FIELDS)[number]
-
 export type TenantComplianceStatus = {
   ready: boolean
   missing: ComplianceField[]
@@ -149,11 +160,7 @@ export async function getTenantComplianceStatus(
   const result = await loadTenantSettings(db, tenantId)
   if (!result.ok) return result
 
-  const row = result.value
-  const missing: ComplianceField[] = []
-  if (!row.legalName) missing.push('legalName')
-  if (!row.physicalAddress) missing.push('physicalAddress')
-  if (!row.defaultSenderCountry) missing.push('defaultSenderCountry')
+  const missing = computeComplianceMissing(result.value)
 
   return ok({ ready: missing.length === 0, missing })
 }

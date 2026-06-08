@@ -24,6 +24,19 @@ SUITES=(
   regression-outbound
   regression-build-list-dedup
   regression-skip-reachable
+  regression-unsubscribe
+  regression-import-dnc
+  regression-record-outreach
+  regression-update-outreach-status
+  regression-record-with-inquiry
+  regression-draft-send
+  regression-inflight-reachable
+  regression-prospect-update-channel
+  regression-record-evaluation-priority
+  regression-rejection-cycle
+  regression-inquiry-unsubscribe
+  regression-decision-maker-pointer
+  regression-tenant-isolation
 )
 
 fail=0

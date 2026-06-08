@@ -888,7 +888,7 @@ const httpsOrNull = (u: string | null): string | null =>
 // https URL — the write path enforces this, but a row that pre-dates the
 // constraint or stores a non-https URL falls back to meeting notify-only
 // here so the landing page always renders a coherent CTA.
-const buildCta = (
+export const buildCta = (
   type: InquiryCtaType | null,
   rawUrl: string | null,
 ): InquiryLandingPayload['cta'] => {

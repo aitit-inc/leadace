@@ -5,6 +5,16 @@ import type { TenantId } from '../domain/ids'
 import { ok, err, type ServiceResult } from './result'
 import { stripeApiRequest } from './stripe-api'
 
+// resource_missing means an earlier delete attempt already canceled the
+// subscription, so a non-ok cancel carrying that code is still tolerable.
+export function isStripeCancelTolerable(
+  result: { ok: boolean; data: Record<string, unknown> },
+): boolean {
+  if (result.ok) return true
+  const stripeErr = result.data['error'] as { code?: string } | undefined
+  return stripeErr?.code === 'resource_missing'
+}
+
 export type DeleteAccountConfig = {
   databaseUrl: string
   supabaseUrl: string
@@ -39,12 +49,8 @@ export async function deleteOwnAccount(
         null,
         cfg.stripeKey,
       )
-      if (!cancel.ok) {
-        const stripeErr = cancel.data['error'] as { code?: string } | undefined
-        // resource_missing = already canceled by an earlier attempt.
-        if (stripeErr?.code !== 'resource_missing') {
-          return err('BAD_GATEWAY', 'Failed to cancel Stripe subscription', cancel.data)
-        }
+      if (!isStripeCancelTolerable(cancel)) {
+        return err('BAD_GATEWAY', 'Failed to cancel Stripe subscription', cancel.data)
       }
     }
   }

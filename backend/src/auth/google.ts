@@ -143,7 +143,7 @@ export function buildRfc822(args: {
   return lines.join('\r\n')
 }
 
-function plainTextToHtmlBody(plain: string): string {
+export function plainTextToHtmlBody(plain: string): string {
   const escaped = plain
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -310,7 +310,7 @@ export type GmailSendForUserResult =
   | { ok: false; httpStatus: 412; error: 'Gmail not connected' | 'Gmail token revoked'; detail: string }
   | { ok: false; httpStatus: 502; error: 'Send failed'; detail: string; from: string }
 
-function formatFromHeader(email: string, displayName: string | null): string {
+export function formatFromHeader(email: string, displayName: string | null): string {
   if (!displayName) return email
   // Non-ASCII goes through RFC 2047 encoded-word. encoded-word MUST NOT appear
   // inside a quoted-string (RFC 2047 §5), so we branch here rather than
