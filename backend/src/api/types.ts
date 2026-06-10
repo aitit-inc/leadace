@@ -34,6 +34,9 @@ export type Env = {
   // to this single mailbox and preserves the originals in an
   // X-E2E-Original-To header. Unset (the production default) is a no-op.
   E2E_RECIPIENT_OVERRIDE?: string
+  // Cloud-only error tracking. Set as a Worker secret on the hosted deploy;
+  // unset everywhere else (local dev, self-host), where Sentry stays a no-op.
+  SENTRY_DSN?: string
 }
 
 export type Variables = {

@@ -16,6 +16,8 @@
   //                        value as on lead-ace-api; pull it from Supabase Dashboard → Settings → API.)
   //   SUPABASE_URL
   //   SUPABASE_ANON_KEY
+  //   SENTRY_DSN          (cloud-only error tracking. Set on the hosted deploy to send unhandled
+  //                        errors to Sentry; unset for local/self-host, where Sentry is a no-op.)
   // Local dev: wrangler simulates KV in-memory regardless of the id.
   "kv_namespaces": [
     {

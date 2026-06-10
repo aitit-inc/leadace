@@ -1,3 +1,5 @@
+import * as Sentry from '@sentry/cloudflare'
+import { sentryOptions } from '../sentry'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
@@ -37,6 +39,9 @@ type Env = {
   ENVIRONMENT: string
   FRONTEND_URL: string
   MCP_OAUTH_STORE: KVNamespace
+  // Cloud-only error tracking. Worker secret on the hosted deploy; unset for
+  // local dev / self-host, where Sentry is a no-op.
+  SENTRY_DSN?: string
 }
 
 // SERVER_VERSION is informational — the deployed backend's own version.
@@ -1574,19 +1579,28 @@ function createMcpServer(ctx: ToolCtx): McpServer {
   return server
 }
 
-export default {
+const mcpHandler = {
   async fetch(request: Request, env: Env): Promise<Response> {
     try {
       return await handleRequest(request, env)
     } catch (e) {
       console.error('Unhandled error:', e)
+      // No-op when SENTRY_DSN is unset (self-host / local). The full exception
+      // (incl. message) goes to Sentry, so the response stays opaque — no
+      // internal detail to unauthenticated callers (matches the API worker).
+      Sentry.captureException(e)
       return withCors(Response.json(
-        { error: 'Internal server error', detail: e instanceof Error ? e.message : undefined },
+        { error: 'Internal server error' },
         { status: 500 },
       ))
     }
   },
 }
+
+export default Sentry.withSentry(
+  (env: Env) => sentryOptions(env.SENTRY_DSN, env.ENVIRONMENT),
+  mcpHandler,
+)
 
 async function handleRequest(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url)

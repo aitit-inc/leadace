@@ -1,5 +1,7 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
+import * as Sentry from '@sentry/cloudflare'
+import { sentryOptions } from '../sentry'
 import { authMiddleware } from './middleware/auth'
 import { rlsMiddleware } from './middleware/rls'
 import { editionMiddleware } from './middleware/edition'
@@ -74,10 +76,13 @@ app.route('/api', bugReportsRouter)
 
 app.onError((err, c) => {
   console.error(err)
+  // onError returns a clean 500 without rethrowing, so withSentry alone would
+  // never see these — capture here. No-op when SENTRY_DSN is unset.
+  Sentry.captureException(err)
   return c.json({ error: 'Internal server error' }, 500)
 })
 
-export default {
+const handler = {
   fetch: app.fetch,
 
   // Cloudflare cron handler. Runs as the system (no auth, no RLS) and only
@@ -86,7 +91,7 @@ export default {
   // ctx.waitUntil keeps the worker alive past the cron tick's quick return
   // until the refresh batch settles.
   async scheduled(
-    _event: ScheduledEvent,
+    _controller: ScheduledController,
     env: Env,
     ctx: ExecutionContext,
   ): Promise<void> {
@@ -98,7 +103,14 @@ export default {
         })
         .catch((e: unknown) => {
           console.error('[scheduled] org-signals refresh failed', e)
+          // Scheduled failures never hit Hono onError — report them directly.
+          Sentry.captureException(e)
         }),
     )
   },
 }
+
+export default Sentry.withSentry(
+  (env: Env) => sentryOptions(env.SENTRY_DSN, env.ENVIRONMENT),
+  handler,
+)

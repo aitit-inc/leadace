@@ -34,6 +34,9 @@
   //   OPENAI_API_KEY              (REQUIRED for inquiry-chat — sk-... key from
   //                                platform.openai.com. Used by services/inquiry-chat.ts +
   //                                inquiry-summarize.ts; chat is disabled if absent.)
+  //   SENTRY_DSN                  (cloud-only error tracking. Set on the hosted deploy to send
+  //                                unhandled errors to Sentry; unset for local/self-host, where
+  //                                Sentry is a no-op — see src/api/index.ts withSentry wrapper.)
   // Daily org-signal refresh: runs the signal extractor across all stale
   // organizations once a day. The handler is `scheduled` in src/api/index.ts.
   // 03:00 UTC stays out of US/EU business hours; the per-run cap inside
