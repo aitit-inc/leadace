@@ -35,6 +35,7 @@ The plugin prioritizes **stability, reliability, controllability, and versatilit
 - Do not hard-code values that depend on specific businesses or use cases (target numbers, success rates, etc.) into skills or templates
 - Defer business-specific decisions to project configuration (stored as documents in the DB: business, sales_strategy, etc.); the plugin provides control mechanisms and visibility
 - Improve skills by increasing user control, not by enforcing specific behavior
+- MCP tool surface: liberal with read tools, conservative with write/action tools. A destructive tool needs a read counterpart so the agent can preview what it is about to touch (`list_drafts` → `discard_drafts`)
 
 ### Design Principles
 

@@ -931,7 +931,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'discard_drafts',
-    'Batch-delete pending_review drafts. Pass either ids (explicit list, max 200) for selective cleanup, or projectId to wipe every pending_review draft in that project. Already-sent / failed rows are silently excluded. Returns deletedIds + skippedIds (the latter only meaningful in id-list mode — ids that did not match a pending_review row in this tenant).',
+    'Batch-delete pending_review drafts. Pass either ids (explicit list, max 200) for selective cleanup, or projectId to wipe every pending_review draft in that project. Already-sent / failed rows are silently excluded. Returns deletedIds + skippedIds (the latter only meaningful in id-list mode — ids that did not match a pending_review row in this tenant). Preview targets first with list_drafts.',
     {
       ids: z.array(z.number().int().positive()).min(1).max(200).optional()
         .describe('Explicit list of outreach log ids to discard. Mutually exclusive with projectId.'),
@@ -971,6 +971,62 @@ function buildToolRegistry(): ToolDef[] {
         content: [{
           type: 'text' as const,
           text: `Discarded ${result.deletedIds.length} draft(s).${skippedNote}`,
+        }],
+      }
+    },
+  )
+
+  defineTool(
+    'list_drafts',
+    'List pending_review drafts for a project (newest first, paginated). Returns total and rows with a truncated bodyPreview; full review/edit/send happens at https://app.leadace.ai/drafts. Use to check pending drafts or preview a discard_drafts.',
+    {
+      projectId: z.string().describe('Project name or ID'),
+      limit: z.number().int().min(1).max(200).default(20),
+      offset: z.number().int().min(0).default(0),
+    },
+    async ({ projectId, limit, offset }, { apiUrl, authHeader }) => {
+      const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
+      if (!resolved.id) {
+        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
+      }
+      const { ok, data } = await callApi(
+        'GET',
+        `/projects/${resolved.id}/drafts?limit=${limit}&offset=${offset}`,
+        null,
+        apiUrl,
+        authHeader,
+      )
+      if (!ok) {
+        const err = data as { error: string }
+        return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
+      }
+      const { drafts, total } = data as {
+        drafts: Array<{
+          id: number
+          prospectId: number
+          prospectName: string
+          prospectEmail: string | null
+          channel: string
+          subject: string | null
+          body: string
+          createdAt: string
+        }>
+        total: number
+      }
+      const rows = drafts.map((d) => ({
+        id: d.id,
+        prospectId: d.prospectId,
+        prospectName: d.prospectName,
+        prospectEmail: d.prospectEmail,
+        channel: d.channel,
+        subject: d.subject,
+        bodyPreview: d.body.length > 200 ? `${d.body.slice(0, 200)}…` : d.body,
+        createdAt: d.createdAt,
+      }))
+      return {
+        content: [{
+          type: 'text' as const,
+          text: `${total} pending_review draft(s); showing ${rows.length} from offset ${offset}.\n${JSON.stringify(rows, null, 2)}`,
         }],
       }
     },
@@ -1101,7 +1157,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_recent_outreach',
-    'Get recent outreach logs for a project. Used by check-responses to match Gmail/SNS replies to sent messages. Each log carries the recipient identifiers (prospectName, contactName, prospectEmail, organizationDomain) so the skill can match by domain and name leads in the report without a second lookup. Each log also carries inquiry-landing aggregates: inquirySessionCount, inquiryOutcome (opened / inquired / unsubscribed / signup_clicked / lead / null — most-significant outcome ever recorded; signup_clicked is the self-serve counterpart to lead, surfaced only when the project runs in inquiryCtaType="signup"), inquiryMeetingSource (button / chat / null — only set when inquiryOutcome === "lead"), inquiryLastVisitAt — surface lead-via-landing and signup-via-landing alongside email replies, and skip reply-draft creation for outreach where the recipient already became a lead or signup via the inquiry page.',
+    'Get recent outreach logs for a project. Confirmed events only (sent / failed / skipped) — pending_review drafts and pre_send rows are excluded; use list_drafts for drafts. Used by check-responses to match Gmail/SNS replies to sent messages. Each log carries the recipient identifiers (prospectName, contactName, prospectEmail, organizationDomain) so the skill can match by domain and name leads in the report without a second lookup. Each log also carries inquiry-landing aggregates: inquirySessionCount, inquiryOutcome (opened / inquired / unsubscribed / signup_clicked / lead / null — most-significant outcome ever recorded; signup_clicked is the self-serve counterpart to lead, surfaced only when the project runs in inquiryCtaType="signup"), inquiryMeetingSource (button / chat / null — only set when inquiryOutcome === "lead"), inquiryLastVisitAt — surface lead-via-landing and signup-via-landing alongside email replies, and skip reply-draft creation for outreach where the recipient already became a lead or signup via the inquiry page.',
     {
       projectId: z.string().describe('Project name or ID'),
       limit: z.number().int().min(1).max(200).default(100),
