@@ -10,7 +10,8 @@ const ISO_DATE_PREFIX = /^\d{4}-\d{2}-\d{2}/
 export const HIGHLIGHT_MAX_LENGTH = 200
 export const HIGHLIGHTS_MAX_COUNT = 5
 
-const CITATION_MARKER = /\[\d+(?:\s*,\s*\d+)*\]/g
+// Covers [1], [1, 2], and the dotted [1.5.2] form observed from grounded Gemini.
+const CITATION_MARKER = /\[\d+(?:\s*[.,]\s*\d+)*\]/g
 
 // Postgres jsonb rejects \u0000 (and unpaired surrogates) -- strip C0/DEL
 // controls and make every payload string well-formed (toWellFormed) so a
@@ -115,13 +116,8 @@ export function parseOrgSignals(raw: unknown): OrgSignals | null {
 }
 
 export function parseOrgSignalsText(text: string): OrgSignals | null {
-  const cleaned = text
-    .trim()
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/```$/, '')
-    .trim()
   try {
-    return parseOrgSignals(JSON.parse(cleaned))
+    return parseOrgSignals(JSON.parse(text))
   } catch {
     return null
   }

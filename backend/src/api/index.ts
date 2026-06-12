@@ -100,7 +100,10 @@ const handler = {
     ctx.waitUntil(
       runDailySignalRefresh(db, env)
         .then((summary) => {
-          console.log('[scheduled] org-signals refresh', summary)
+          // Workers Logs only indexes the message string for search.
+          console.log(
+            `[scheduled] org-signals refresh picked=${summary.picked} updated=${summary.updated} empty=${summary.empty} failed=${summary.failed} staleRemaining=${summary.staleRemaining}`,
+          )
         })
         .catch((e: unknown) => {
           console.error('[scheduled] org-signals refresh failed', e)

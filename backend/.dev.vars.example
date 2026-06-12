@@ -57,9 +57,15 @@ GMAIL_TOKEN_ENCRYPTION_KEY=""
 UNSUBSCRIBE_TOKEN_SECRET=""
 
 # --- Inquiry chat (optional) ---
-# Powers the inquiry-landing AI chat and org-signal extraction. Chat is
-# disabled if absent; the rest of the API still works.
+# Powers the inquiry-landing AI chat. Chat is disabled if absent; the rest
+# of the API still works.
 OPENAI_API_KEY=""
+
+# --- Org-signal refresh (required) ---
+# Google AI Studio key (paid tier — the free tier may train on your data).
+# Powers the daily org-signal refresh, which searches recent company events
+# via Gemini + Google Search grounding. The daily cron fails without it.
+GEMINI_API_KEY=""
 
 # --- Stripe (cloud edition only) ---
 # Required only when LEADACE_EDITION=cloud. Self-hosted ignores them and

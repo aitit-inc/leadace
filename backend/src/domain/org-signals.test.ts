@@ -8,17 +8,17 @@ import {
 } from './org-signals'
 
 describe('parseOrgSignalsText', () => {
-  it('parses plain JSON and fence-wrapped JSON identically', () => {
-    const payload = '{"highlights":["Raised Series B on 2026-05-01"]}'
-    const expected = { highlights: ['Raised Series B on 2026-05-01'] }
-    expect(parseOrgSignalsText(payload)).toEqual(expected)
-    expect(parseOrgSignalsText('```json\n' + payload + '\n```')).toEqual(expected)
+  it('parses a JSON object payload', () => {
+    expect(parseOrgSignalsText('{"highlights":["Raised Series B on 2026-05-01"]}')).toEqual({
+      highlights: ['Raised Series B on 2026-05-01'],
+    })
   })
 
-  it('returns null for prose, JSON arrays, and JSON scalars', () => {
+  it('returns null for prose, JSON arrays, JSON scalars, and truncated JSON', () => {
     expect(parseOrgSignalsText('Sorry, I could not find anything.')).toBeNull()
     expect(parseOrgSignalsText('[1, 2]')).toBeNull()
     expect(parseOrgSignalsText('"just a string"')).toBeNull()
+    expect(parseOrgSignalsText('{"highlights":["Raised Series B on 2026-')).toBeNull()
   })
 })
 
@@ -83,7 +83,7 @@ describe('parseOrgSignals', () => {
     const long = 'x'.repeat(HIGHLIGHT_MAX_LENGTH + 50)
     const parsed = parseOrgSignals({
       highlights: [
-        'Raised $30M [1] on 2026-05-20 [2, 3]',
+        'Raised $30M [1] on 2026-05-20 [2, 3] [1.5.2]',
         long,
         42,
         '   ',

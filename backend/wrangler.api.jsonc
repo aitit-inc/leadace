@@ -34,6 +34,9 @@
   //   OPENAI_API_KEY              (REQUIRED for inquiry-chat — sk-... key from
   //                                platform.openai.com. Used by services/inquiry-chat.ts +
   //                                inquiry-summarize.ts; chat is disabled if absent.)
+  //   GEMINI_API_KEY              (REQUIRED — Google AI Studio key, paid tier. Powers the daily
+  //                                org-signal refresh via Gemini + Google Search grounding;
+  //                                the cron throws when unset.)
   //   SENTRY_DSN                  (cloud-only error tracking. Set on the hosted deploy to send
   //                                unhandled errors to Sentry; unset for local/self-host, where
   //                                Sentry is a no-op — see src/api/index.ts withSentry wrapper.)

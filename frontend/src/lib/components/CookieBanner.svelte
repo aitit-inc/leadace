@@ -35,7 +35,7 @@
   >
     <p class="leading-relaxed">
       We use first-party cookies and local storage for authentication and to remember your
-      preferences. We don't use analytics or advertising trackers.
+      preferences. We don't use analytics or advertising trackers in this app.
       {#if EDITION === 'cloud'}
         <a href="/privacy#cookies" class="underline hover:text-text">Learn more</a>.
       {/if}

@@ -26,6 +26,9 @@ export type Env = {
   UNSUBSCRIBE_TOKEN_SECRET: string
   APP_URL: string
   OPENAI_API_KEY: string
+  // Google AI Studio key for the daily org-signal refresh. Required — the
+  // cron throws without it.
+  GEMINI_API_KEY: string
   // 'cloud' on the hosted SurpassOne deploy, 'self-hosted' (default) for
   // local dev and public-repo self-hosters. See domain/edition.ts.
   LEADACE_EDITION: string
