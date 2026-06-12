@@ -7,7 +7,7 @@ import {
   listEvaluations,
   listEvaluationsQuerySchema,
 } from '../../services/evaluations'
-import { projectIdParamSchema } from '../../services/projects'
+import { projectRefParamSchema } from '../../services/projects'
 import { respondWithError } from '../respond'
 import type { Env, Variables } from '../types'
 
@@ -15,7 +15,7 @@ export const evaluationsRouter = new Hono<{ Bindings: Env; Variables: Variables 
 
 evaluationsRouter.get(
   '/projects/:id/stats',
-  zValidator('param', projectIdParamSchema),
+  zValidator('param', projectRefParamSchema),
   async (c) => {
     const result = await getProjectStats(c.get('db'), c.get('tenantId'), c.req.valid('param').id)
     if (!result.ok) return respondWithError(c, result)
@@ -31,7 +31,7 @@ evaluationsRouter.post('/evaluations', zValidator('json', recordEvaluationSchema
 
 evaluationsRouter.get(
   '/projects/:id/evaluations',
-  zValidator('param', projectIdParamSchema),
+  zValidator('param', projectRefParamSchema),
   zValidator('query', listEvaluationsQuerySchema),
   async (c) => {
     const result = await listEvaluations(

@@ -20,10 +20,11 @@ import {
 import type { Db } from '../db/connection'
 import {
   outreachLogIdSchema,
-  projectIdSchema,
+  projectRefSchema,
   prospectIdSchema,
   variantIdSchema,
   type ProjectId,
+  type ProjectRef,
   type TenantId,
 } from '../domain/ids'
 export { outreachLogIdParamSchema } from '../domain/ids'
@@ -36,8 +37,8 @@ import {
   buildComplianceAttachments,
 } from '../auth/google'
 import { ok, err, type ServiceResult } from './result'
-import { requireProject } from './projects'
-import { requireProspect } from './prospects'
+import { resolveProject } from './projects'
+import { requireProspect, prospectHadFreshSignal } from './prospects'
 import { allocateInquiryUrl } from './inquiry-token'
 import { loadProjectReapproachSettings, loadProjectSendSettings } from './project-settings'
 import { assertTenantComplianceReady } from './tenants'
@@ -66,7 +67,7 @@ export type ListDraftsQuery = z.infer<typeof listDraftsQuerySchema>
 // Discriminated by status so the type system enforces "errorMessage required
 // iff status='failed'". Mirrors updateOutreachStatusSchema.
 const recordOutreachCommonFields = {
-  projectId: projectIdSchema,
+  projectId: projectRefSchema,
   prospectId: prospectIdSchema,
   channel: z.enum(channelEnum.enumValues),
   subject: z.string().optional(),
@@ -97,7 +98,7 @@ export type RecordOutreachInput = z.infer<typeof recordOutreachSchema>
 // `note` is optional free-text context. `.strict()` rejects stray keys.
 export const skipProspectSchema = z
   .object({
-    projectId: projectIdSchema,
+    projectId: projectRefSchema,
     prospectId: prospectIdSchema,
     channel: z.enum(channelEnum.enumValues),
     reason: z.enum(skipReasonEnum.enumValues),
@@ -108,7 +109,7 @@ export type SkipProspectInput = z.infer<typeof skipProspectSchema>
 
 export const sendAndRecordSchema = z
   .object({
-    projectId: projectIdSchema,
+    projectId: projectRefSchema,
     prospectId: prospectIdSchema,
     to: z.array(z.email()).min(1),
     cc: z.array(z.email()).optional(),
@@ -150,7 +151,7 @@ export type EditDraftPatch = z.infer<typeof editDraftSchema>
 //     the inquiry URL from manually-submitted form/SNS messages.
 export const recordOutreachWithInquirySchema = z
   .object({
-    projectId: projectIdSchema,
+    projectId: projectRefSchema,
     prospectId: prospectIdSchema,
     channel: z.enum(['form', 'sns_twitter', 'sns_linkedin']),
     subject: z.string().optional(),
@@ -254,13 +255,14 @@ export async function recordOutreach(
   // stamps must remain recordable on incomplete tenants so failed-send logs
   // aren't lost.
   const sending = input.status === 'sent'
-  const [guard, prospectGuard, quota, compliance] = await Promise.all([
-    requireProject(db, input.projectId, tenantId),
+  const [resolved, prospectGuard, quota, compliance] = await Promise.all([
+    resolveProject(db, tenantId, input.projectId),
     requireProspect(db, tenantId, input.prospectId),
     sending ? getRemainingOutreachQuota(db, tenantId, edition) : Promise.resolve(null),
     sending ? assertTenantComplianceReady(db, tenantId) : Promise.resolve(null),
   ])
-  if (!guard.ok) return guard
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
   if (!prospectGuard.ok) return prospectGuard
   if (compliance && !compliance.ok) return compliance
   const quotaErr = quota ? outreachQuotaErrorIfExhausted(quota) : null
@@ -274,12 +276,13 @@ export async function recordOutreach(
   }
 
   const sentAt = new Date()
+  const hadFreshSignal = await prospectHadFreshSignal(db, tenantId, input.prospectId)
 
   const [log] = await db
     .insert(outreachLogs)
     .values({
       tenantId,
-      projectId: input.projectId,
+      projectId,
       prospectId: input.prospectId,
       channel: input.channel,
       subject: input.subject ?? null,
@@ -288,6 +291,7 @@ export async function recordOutreach(
       status: input.status,
       sentAt,
       errorMessage: input.status === 'failed' ? input.errorMessage : null,
+      hadFreshSignal,
     })
     .returning({ id: outreachLogs.id })
 
@@ -295,9 +299,9 @@ export async function recordOutreach(
   // listReachable excludes them via a separate NOT EXISTS so the status
   // keeps its real-world meaning.
   if (input.status === 'sent' && log) {
-    await markProspectContacted(db, input.projectId, input.prospectId, sentAt)
+    await markProspectContacted(db, projectId, input.prospectId, sentAt)
   } else if (input.status === 'failed' && log) {
-    await deferProspectReeligibility(db, input.projectId, input.prospectId, sentAt)
+    await deferProspectReeligibility(db, projectId, input.prospectId, sentAt)
   }
 
   return ok({ id: log?.id as number | undefined })
@@ -315,20 +319,22 @@ export async function skipProspect(
   tenantId: TenantId,
   input: SkipProspectInput,
 ): Promise<ServiceResult<{ id: number | undefined }>> {
-  const [guard, prospectGuard] = await Promise.all([
-    requireProject(db, input.projectId, tenantId),
+  const [resolved, prospectGuard] = await Promise.all([
+    resolveProject(db, tenantId, input.projectId),
     requireProspect(db, tenantId, input.prospectId),
   ])
-  if (!guard.ok) return guard
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
   if (!prospectGuard.ok) return prospectGuard
 
   const sentAt = new Date()
+  const hadFreshSignal = await prospectHadFreshSignal(db, tenantId, input.prospectId)
 
   const [log] = await db
     .insert(outreachLogs)
     .values({
       tenantId,
-      projectId: input.projectId,
+      projectId,
       prospectId: input.prospectId,
       channel: input.channel,
       // body carries the human-readable skip line (incl. the note); skipReason
@@ -339,11 +345,12 @@ export async function skipProspect(
       status: 'skipped',
       skipReason: input.reason,
       sentAt,
+      hadFreshSignal,
     })
     .returning({ id: outreachLogs.id })
 
   if (log) {
-    await deferProspectReeligibility(db, input.projectId, input.prospectId, sentAt)
+    await deferProspectReeligibility(db, projectId, input.prospectId, sentAt)
   }
 
   return ok({ id: log?.id as number | undefined })
@@ -370,11 +377,12 @@ export async function recordOutreachWithInquiry(
 ): Promise<ServiceResult<RecordOutreachWithInquiryResult>> {
   // Gate project existence before loadProjectSendSettings, which asserts the
   // settings row exists — loading it for a missing project would 500 not 404.
-  const guard = await requireProject(db, input.projectId, tenantId)
-  if (!guard.ok) return guard
+  const resolved = await resolveProject(db, tenantId, input.projectId)
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
   const [prospectGuard, sendSettings, complianceResult] = await Promise.all([
     requireProspect(db, tenantId, input.prospectId),
-    loadProjectSendSettings(db, input.projectId),
+    loadProjectSendSettings(db, projectId),
     assertTenantComplianceReady(db, tenantId),
   ])
   if (!prospectGuard.ok) return prospectGuard
@@ -394,12 +402,13 @@ export async function recordOutreachWithInquiry(
 
   const sentAt = new Date()
   const status: OutreachStatus = willSend ? 'pre_send' : 'pending_review'
+  const hadFreshSignal = await prospectHadFreshSignal(db, tenantId, input.prospectId)
 
   const [log] = await db
     .insert(outreachLogs)
     .values({
       tenantId,
-      projectId: input.projectId,
+      projectId,
       prospectId: input.prospectId,
       channel: input.channel,
       subject: input.subject ?? null,
@@ -407,6 +416,7 @@ export async function recordOutreachWithInquiry(
       variantId: input.variantId ?? null,
       status,
       sentAt,
+      hadFreshSignal,
     })
     .returning({ id: outreachLogs.id })
 
@@ -511,11 +521,12 @@ export async function sendAndRecord(
 ): Promise<ServiceResult<SendOutcome>> {
   // Gate project existence before loadProjectSendSettings, which asserts the
   // settings row exists — loading it for a missing project would 500 not 404.
-  const guard = await requireProject(db, input.projectId, tenantId)
-  if (!guard.ok) return guard
+  const resolved = await resolveProject(db, tenantId, input.projectId)
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
   const [prospectGuard, sendSettings, complianceResult] = await Promise.all([
     requireProspect(db, tenantId, input.prospectId),
-    loadProjectSendSettings(db, input.projectId),
+    loadProjectSendSettings(db, projectId),
     assertTenantComplianceReady(db, tenantId),
   ])
   if (!prospectGuard.ok) return prospectGuard
@@ -524,13 +535,14 @@ export async function sendAndRecord(
   // (skill, /outbound report) rather than at confirm time after the body's
   // already been composed.
   if (!complianceResult.ok) return complianceResult
+  const hadFreshSignal = await prospectHadFreshSignal(db, tenantId, input.prospectId)
   if (sendSettings.outboundMode === 'draft') {
     const sentAt = new Date()
     const [log] = await db
       .insert(outreachLogs)
       .values({
         tenantId,
-        projectId: input.projectId,
+        projectId,
         prospectId: input.prospectId,
         channel: 'email',
         subject: input.subject,
@@ -538,6 +550,7 @@ export async function sendAndRecord(
         status: 'pending_review',
         sentAt,
         variantId: input.variantId ?? null,
+        hadFreshSignal,
       })
       .returning({ id: outreachLogs.id })
 
@@ -566,7 +579,7 @@ export async function sendAndRecord(
     .insert(outreachLogs)
     .values({
       tenantId,
-      projectId: input.projectId,
+      projectId,
       prospectId: input.prospectId,
       channel: 'email',
       subject: input.subject,
@@ -574,6 +587,7 @@ export async function sendAndRecord(
       status: 'pre_send',
       sentAt,
       variantId: input.variantId ?? null,
+      hadFreshSignal,
     })
     .returning({ id: outreachLogs.id })
 
@@ -633,7 +647,7 @@ export async function sendAndRecord(
       .update(outreachLogs)
       .set({ status: 'failed', errorMessage: result.detail })
       .where(eq(outreachLogs.id, log.id))
-    await deferProspectReeligibility(db, input.projectId, input.prospectId, sentAt)
+    await deferProspectReeligibility(db, projectId, input.prospectId, sentAt)
     return err('BAD_GATEWAY', result.error, result.detail, { outreachId: log.id })
   }
 
@@ -642,7 +656,7 @@ export async function sendAndRecord(
     .update(outreachLogs)
     .set({ status: 'sent' })
     .where(eq(outreachLogs.id, log.id))
-  await markProspectContacted(db, input.projectId, input.prospectId, sentAt)
+  await markProspectContacted(db, projectId, input.prospectId, sentAt)
 
   return ok({
     mode: 'sent',
@@ -679,11 +693,12 @@ export type RecentOutreachLog = {
 export async function listRecentOutreach(
   db: Db,
   tenantId: TenantId,
-  projectId: ProjectId,
+  projectRef: ProjectRef,
   query: RecentOutreachQuery,
 ): Promise<ServiceResult<{ logs: RecentOutreachLog[]; total: number }>> {
-  const guard = await requireProject(db, projectId, tenantId)
-  if (!guard.ok) return guard
+  const resolved = await resolveProject(db, tenantId, projectRef)
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
 
   const { limit, offset } = query
 
@@ -849,11 +864,12 @@ export type DraftRow = {
 export async function listDrafts(
   db: Db,
   tenantId: TenantId,
-  projectId: ProjectId,
+  projectRef: ProjectRef,
   query: ListDraftsQuery,
 ): Promise<ServiceResult<{ drafts: DraftRow[]; total: number }>> {
-  const guard = await requireProject(db, projectId, tenantId)
-  if (!guard.ok) return guard
+  const resolved = await resolveProject(db, tenantId, projectRef)
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
 
   const { limit, offset } = query
 
@@ -1137,7 +1153,7 @@ export const discardDraftsBodySchema = z
       ids: z.array(outreachLogIdSchema).min(1).max(200),
     }).strict(),
     z.object({
-      allInProjectId: projectIdSchema,
+      allInProjectId: projectRefSchema,
     }).strict(),
   ])
 export type DiscardDraftsInput = z.infer<typeof discardDraftsBodySchema>
@@ -1148,13 +1164,14 @@ export async function discardDrafts(
   input: DiscardDraftsInput,
 ): Promise<ServiceResult<{ deletedIds: number[]; skippedIds: number[] }>> {
   if ('allInProjectId' in input) {
-    const guard = await requireProject(db, input.allInProjectId, tenantId)
-    if (!guard.ok) return guard
+    const resolved = await resolveProject(db, tenantId, input.allInProjectId)
+    if (!resolved.ok) return resolved
+    const projectId = resolved.value
 
     const deleted = await db
       .delete(outreachLogs)
       .where(and(
-        eq(outreachLogs.projectId, input.allInProjectId),
+        eq(outreachLogs.projectId, projectId),
         eq(outreachLogs.tenantId, tenantId),
         eq(outreachLogs.status, 'pending_review'),
       ))

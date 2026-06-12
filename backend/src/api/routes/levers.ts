@@ -6,7 +6,7 @@ import {
   getLeverDecisionsHistory,
   leverDecisionsHistoryQuerySchema,
 } from '../../services/levers'
-import { projectIdParamSchema } from '../../services/projects'
+import { projectRefParamSchema } from '../../services/projects'
 import { respondWithError } from '../respond'
 import type { Env, Variables } from '../types'
 
@@ -14,7 +14,7 @@ export const leversRouter = new Hono<{ Bindings: Env; Variables: Variables }>()
 
 leversRouter.post(
   '/projects/:id/run-lever-tick',
-  zValidator('param', projectIdParamSchema),
+  zValidator('param', projectRefParamSchema),
   async (c) => {
     const result = await runLeverTick(c.get('db'), c.get('tenantId'), c.req.valid('param').id)
     if (!result.ok) return respondWithError(c, result)
@@ -24,7 +24,7 @@ leversRouter.post(
 
 leversRouter.get(
   '/projects/:id/lever-state',
-  zValidator('param', projectIdParamSchema),
+  zValidator('param', projectRefParamSchema),
   async (c) => {
     const result = await getLeverState(c.get('db'), c.get('tenantId'), c.req.valid('param').id)
     if (!result.ok) return respondWithError(c, result)
@@ -34,7 +34,7 @@ leversRouter.get(
 
 leversRouter.get(
   '/projects/:id/lever-decisions',
-  zValidator('param', projectIdParamSchema),
+  zValidator('param', projectRefParamSchema),
   zValidator('query', leverDecisionsHistoryQuerySchema),
   async (c) => {
     const result = await getLeverDecisionsHistory(

@@ -9,7 +9,7 @@ import {
   getDocumentHistory,
   saveDocument,
 } from '../../services/documents'
-import { projectIdParamSchema } from '../../services/projects'
+import { projectRefParamSchema } from '../../services/projects'
 import { respondWithError } from '../respond'
 import type { Env, Variables } from '../types'
 
@@ -17,7 +17,7 @@ export const documentsRouter = new Hono<{ Bindings: Env; Variables: Variables }>
 
 documentsRouter.get(
   '/projects/:id/documents',
-  zValidator('param', projectIdParamSchema),
+  zValidator('param', projectRefParamSchema),
   async (c) => {
     const result = await listDocuments(c.get('db'), c.get('tenantId'), c.req.valid('param').id)
     if (!result.ok) return respondWithError(c, result)

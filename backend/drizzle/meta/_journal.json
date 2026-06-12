@@ -260,6 +260,13 @@
       "when": 1780741421471,
       "tag": "0036_damp_butterfly",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1781257132913,
+      "tag": "0037_odd_goblin_queen",
+      "breakpoints": true
     }
   ]
 }

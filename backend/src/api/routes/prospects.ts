@@ -25,7 +25,7 @@ import {
   importCsv,
   checkProspectDedup,
 } from '../../services/prospect-import'
-import { projectIdParamSchema } from '../../services/projects'
+import { projectRefParamSchema } from '../../services/projects'
 import { respondWithError } from '../respond'
 import type { Env, Variables } from '../types'
 
@@ -65,7 +65,7 @@ prospectsRouter.post('/prospects/check-dedup', zValidator('json', checkDedupSche
 
 prospectsRouter.get(
   '/projects/:id/prospects/reachable',
-  zValidator('param', projectIdParamSchema),
+  zValidator('param', projectRefParamSchema),
   zValidator('query', reachableQuerySchema),
   async (c) => {
     const result = await listReachable(
@@ -98,7 +98,7 @@ prospectsRouter.patch(
 
 prospectsRouter.get(
   '/projects/:id/prospects',
-  zValidator('param', projectIdParamSchema),
+  zValidator('param', projectRefParamSchema),
   zValidator('query', listProjectProspectsQuerySchema),
   async (c) => {
     const result = await listProjectProspects(
@@ -124,7 +124,7 @@ prospectsRouter.get(
 
 prospectsRouter.post(
   '/projects/:id/prospects/link',
-  zValidator('param', projectIdParamSchema),
+  zValidator('param', projectRefParamSchema),
   zValidator('json', linkSchema),
   async (c) => {
     const result = await linkProspects(

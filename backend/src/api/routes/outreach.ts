@@ -26,7 +26,7 @@ import {
   discardDraftsBodySchema,
   type SendContext,
 } from '../../services/outreach'
-import { projectIdParamSchema } from '../../services/projects'
+import { projectRefParamSchema } from '../../services/projects'
 import { respondWithError } from '../respond'
 import type { Env, Variables } from '../types'
 import type { Context } from 'hono'
@@ -100,7 +100,7 @@ outreachRouter.patch(
 
 outreachRouter.get(
   '/projects/:id/outreach/recent',
-  zValidator('param', projectIdParamSchema),
+  zValidator('param', projectRefParamSchema),
   zValidator('query', recentOutreachQuerySchema),
   async (c) => {
     const result = await listRecentOutreach(
@@ -126,7 +126,7 @@ outreachRouter.get(
 
 outreachRouter.get(
   '/projects/:id/drafts',
-  zValidator('param', projectIdParamSchema),
+  zValidator('param', projectRefParamSchema),
   zValidator('query', listDraftsQuerySchema),
   async (c) => {
     const result = await listDrafts(

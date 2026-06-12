@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { zValidator } from '../zvalidator'
 import {
-  projectIdParamSchema,
+  projectRefParamSchema,
   createProjectBodySchema,
   listProjects,
   createProject,
@@ -29,7 +29,7 @@ projectsRouter.post('/', zValidator('json', createProjectBodySchema), async (c) 
   return c.json(result.value, 201)
 })
 
-projectsRouter.delete('/:id', zValidator('param', projectIdParamSchema), async (c) => {
+projectsRouter.delete('/:id', zValidator('param', projectRefParamSchema), async (c) => {
   const result = await deleteProject(c.get('db'), c.get('tenantId'), c.req.valid('param').id)
   if (!result.ok) return respondWithError(c, result)
   return c.json(result.value)

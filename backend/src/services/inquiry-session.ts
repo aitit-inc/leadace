@@ -26,14 +26,14 @@ import type { Db } from '../db/connection'
 import {
   asShortId,
   asTenantId,
-  projectIdSchema,
-  type ProjectId,
+  projectRefSchema,
+  type ProjectRef,
   type ShortId,
   type TenantId,
 } from '../domain/ids'
 import { ok, err, type ServiceResult } from './result'
 import type { InquiryTokenRow } from './inquiry-token'
-import { requireProject } from './projects'
+import { resolveProject } from './projects'
 import { recordResponse } from './responses'
 import { isHttpsUrl } from '../domain/url'
 import { rejectionConsentSchema } from '../domain/rejection-feedback'
@@ -974,7 +974,7 @@ export async function loadLandingContext(
 }
 
 export const inquiryPreviewQuerySchema = z.object({
-  projectId: projectIdSchema,
+  projectId: projectRefSchema,
   prospectId: z.coerce.number().int().positive().optional(),
 })
 export type InquiryPreviewQuery = z.infer<typeof inquiryPreviewQuerySchema>
@@ -982,11 +982,12 @@ export type InquiryPreviewQuery = z.infer<typeof inquiryPreviewQuerySchema>
 export async function loadPreviewContext(
   db: Db,
   tenantId: TenantId,
-  projectId: ProjectId,
+  projectRef: ProjectRef,
   prospectId: number | null,
 ): Promise<ServiceResult<InquiryLandingPayload>> {
-  const guard = await requireProject(db, projectId, tenantId)
-  if (!guard.ok) return guard
+  const resolved = await resolveProject(db, tenantId, projectRef)
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
 
   const [row] = await db
     .select({

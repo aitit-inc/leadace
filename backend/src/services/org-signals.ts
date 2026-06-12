@@ -2,15 +2,12 @@ import { sql } from 'drizzle-orm'
 import { orgSignalsGlobal, type OrgSignals } from '../db/schema'
 import type { Db } from '../db/connection'
 import { callOpenAIResponses, OpenAIError, type OpenAIEnv } from './openai'
+import { isEmptySignals, parseOrgSignalsText } from '../domain/org-signals'
 
-// How long a signal entry stays "fresh" before the daily picker considers
-// it stale. 14d balances freshness for fast-moving funding / hiring news
-// against per-tenant fetch volume on a Worker cron budget.
-const REFRESH_INTERVAL_DAYS = 14
+// 7d keeps successful payloads well inside the 14-day freshness window
+// listReachable's ordering consumes.
+const REFRESH_INTERVAL_DAYS = 7
 
-// Per-cron-run cap. The cron schedule below runs daily, so steady-state
-// throughput is MAX_ORGS_PER_RUN orgs per day. Tune up once we have
-// observability on per-org refresh latency / failure rate.
 export const MAX_ORGS_PER_RUN = 20
 
 // Per-org HTTP fetch budget. Workers cron triggers run with a CPU/wallclock
@@ -25,30 +22,21 @@ const HTML_MAX_BYTES = 200_000
 
 const SIGNAL_MODEL = 'gpt-5.4-mini'
 
-// org_signals_global is keyed on apex domain so cross-tenant overlap is
-// shared. The picker selects domains with no cache entry yet, or whose
-// cache is older than REFRESH_INTERVAL_DAYS. signals stays untouched on
-// failure runs (we only bump signals_updated_at on success or hard-skip)
-// so a successful but signal-empty extract still rotates out of the queue.
 export async function pickStaleOrgDomains(db: Db, limit: number): Promise<string[]> {
   // sql.raw is fine for the integer `REFRESH_INTERVAL_DAYS` constant —
   // there's no user input on this path. INTERVAL '<n> days' takes a literal.
   const rows = await db.execute<{ domain: string }>(sql`
-    SELECT DISTINCT o.domain
+    SELECT DISTINCT o.domain, g.last_attempt_at
     FROM organizations o
     LEFT JOIN org_signals_global g ON g.domain = o.domain
-    WHERE g.signals_updated_at IS NULL
-       OR g.signals_updated_at < NOW() - INTERVAL '${sql.raw(String(REFRESH_INTERVAL_DAYS))} days'
-    ORDER BY o.domain
+    WHERE g.domain IS NULL
+       OR g.last_attempt_at < NOW() - INTERVAL '${sql.raw(String(REFRESH_INTERVAL_DAYS))} days'
+    ORDER BY g.last_attempt_at ASC NULLS FIRST, o.domain
     LIMIT ${limit}
   `)
   return rows.map((r) => r.domain)
 }
 
-// Best-effort: HTTP failures, parse failures, and LLM failures all log and
-// return without writing the signals payload. The DB signals_updated_at is
-// bumped even on partial / empty results so the picker doesn't keep
-// selecting the same broken domain every run.
 export type RefreshOutcome =
   | { updated: true }
   | { updated: false; reason: 'fetch_failed' | 'extract_failed' | 'no_signals' }
@@ -79,39 +67,28 @@ export async function refreshOrgSignal(
   return { updated: true }
 }
 
+export function refreshWriteSet(
+  signals: OrgSignals | null,
+  now: Date,
+): { lastAttemptAt: Date; signals?: OrgSignals; signalsUpdatedAt?: Date } {
+  return signals === null
+    ? { lastAttemptAt: now }
+    : { lastAttemptAt: now, signals, signalsUpdatedAt: now }
+}
+
 async function recordRefreshAttempt(
   db: Db,
   domain: string,
   signals: OrgSignals | null,
 ): Promise<void> {
-  const now = new Date()
+  const set = refreshWriteSet(signals, new Date())
   await db
     .insert(orgSignalsGlobal)
-    .values({
-      domain,
-      signals: signals ?? undefined,
-      signalsUpdatedAt: now,
-    })
+    .values({ domain, ...set })
     .onConflictDoUpdate({
       target: orgSignalsGlobal.domain,
-      set: {
-        // On a no-signal refresh we leave the old payload in place rather
-        // than wiping a previously-successful extract — only the timestamp
-        // is rolled forward to defer the next pick.
-        ...(signals !== null ? { signals } : {}),
-        signalsUpdatedAt: now,
-      },
+      set,
     })
-}
-
-function isEmptySignals(s: OrgSignals): boolean {
-  return (
-    !s.pressReleases?.length &&
-    !s.funding &&
-    !s.hiring &&
-    !s.leadership?.length &&
-    !s.highlights?.length
-  )
 }
 
 // We deliberately do NOT spider /news, /press, /about etc. for v1.0; the
@@ -165,7 +142,10 @@ async function extractSignalsViaLLM(
     'Rules:',
     '- Output ONLY JSON. No prose, no markdown code fence.',
     '- Omit fields when no information is available — do NOT fabricate.',
-    '- highlights: up to 5 short factual recent items, one sentence each.',
+    '- Dates (publishedAt / announcedAt) must be absolute ISO YYYY-MM-DD — never relative.',
+    '- highlights: up to 5 short factual recent items, one sentence each. Use',
+    '  absolute dates ("on 2026-05-01"), never relative ones ("last week") —',
+    '  the text is shown days later, when relative dates have gone stale.',
     '- If the page contains no useful business signals, return {}.',
   ].join('\n')
 
@@ -178,30 +158,13 @@ async function extractSignalsViaLLM(
       temperature: 0.1,
       maxOutputTokens: 800,
     })
-    return parseSignalsJson(result.outputText)
+    return parseOrgSignalsText(result.outputText)
   } catch (e) {
     if (e instanceof OpenAIError) {
       console.warn(`[org-signals] OpenAI extraction failed for ${domain}: ${e.message}`)
     } else {
       console.warn(`[org-signals] unexpected error for ${domain}: ${(e as Error).message}`)
     }
-    return null
-  }
-}
-
-function parseSignalsJson(text: string): OrgSignals | null {
-  const cleaned = text
-    .trim()
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/```$/, '')
-    .trim()
-  try {
-    const parsed: unknown = JSON.parse(cleaned)
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null
-    // We trust the shape — the model is given the type and rules. Downstream
-    // readers degrade gracefully on missing / unexpected fields.
-    return parsed as OrgSignals
-  } catch {
     return null
   }
 }
@@ -215,20 +178,39 @@ export type DailyRefreshSummary = {
 
 export async function runDailySignalRefresh(
   db: Db,
-  env: OpenAIEnv,
+  // Wider than OpenAIEnv: keyless self-host installs are decided here.
+  env: { OPENAI_API_KEY: string | undefined },
 ): Promise<DailyRefreshSummary> {
+  const apiKey = env.OPENAI_API_KEY
+  if (!apiKey) {
+    console.log('[org-signals] no LLM API key configured — skipping signal refresh')
+    return { picked: 0, updated: 0, empty: 0, failed: 0 }
+  }
+  const openaiEnv: OpenAIEnv = { OPENAI_API_KEY: apiKey }
+
   const domains = await pickStaleOrgDomains(db, MAX_ORGS_PER_RUN)
   let updated = 0
   let empty = 0
   let failed = 0
   for (const d of domains) {
-    const r = await refreshOrgSignal(db, env, d)
-    if (r.updated) {
-      updated++
-    } else if (r.reason === 'no_signals') {
-      empty++
-    } else {
+    try {
+      const r = await refreshOrgSignal(db, openaiEnv, d)
+      if (r.updated) {
+        updated++
+      } else if (r.reason === 'no_signals') {
+        empty++
+      } else {
+        failed++
+      }
+    } catch (e) {
+      // Only the DB write can throw here (fetch/LLM failures are caught in
+      // refreshOrgSignal). Record a payload-less attempt so a
+      // deterministically-bad payload can't pin the domain at the picker head.
       failed++
+      console.error(
+        `[org-signals] refresh crashed for ${d}: ${e instanceof Error ? e.message : String(e)}`,
+      )
+      await recordRefreshAttempt(db, d, null)
     }
   }
   return { picked: domains.length, updated, empty, failed }

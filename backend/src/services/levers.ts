@@ -7,7 +7,7 @@ import {
   type LeverDecisionPayload,
 } from '../db/schema'
 import type { Db } from '../db/connection'
-import type { ProjectId, TenantId } from '../domain/ids'
+import type { ProjectId, ProjectRef, TenantId } from '../domain/ids'
 import {
   computeVariantWeights,
   type ArchiveDecision,
@@ -20,7 +20,7 @@ import {
   type ChannelCoarseStat,
 } from '../domain/channel-affinity'
 import { ok, type ServiceResult } from './result'
-import { requireProject } from './projects'
+import { resolveProject } from './projects'
 import { loadLeverConfig } from './project-settings'
 import { getVariantStats, getChannelStats } from './evaluations'
 
@@ -51,10 +51,11 @@ export type LeverTickResult = {
 export async function runLeverTick(
   db: Db,
   tenantId: TenantId,
-  projectId: ProjectId,
+  projectRef: ProjectRef,
 ): Promise<ServiceResult<LeverTickResult>> {
-  const guard = await requireProject(db, projectId, tenantId)
-  if (!guard.ok) return guard
+  const resolved = await resolveProject(db, tenantId, projectRef)
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
 
   const config = await loadLeverConfig(db, projectId)
   const activeIds = await loadActiveVariantIds(db, projectId)
@@ -160,10 +161,11 @@ export type LeverStateView = {
 export async function getLeverState(
   db: Db,
   tenantId: TenantId,
-  projectId: ProjectId,
+  projectRef: ProjectRef,
 ): Promise<ServiceResult<LeverStateView>> {
-  const guard = await requireProject(db, projectId, tenantId)
-  if (!guard.ok) return guard
+  const resolved = await resolveProject(db, tenantId, projectRef)
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
 
   const config = await loadLeverConfig(db, projectId)
   const activeIds = await loadActiveVariantIds(db, projectId)
@@ -236,11 +238,12 @@ export type LeverDecisionHistoryEntry = {
 export async function getLeverDecisionsHistory(
   db: Db,
   tenantId: TenantId,
-  projectId: ProjectId,
+  projectRef: ProjectRef,
   days: number,
 ): Promise<ServiceResult<{ decisions: LeverDecisionHistoryEntry[] }>> {
-  const guard = await requireProject(db, projectId, tenantId)
-  if (!guard.ok) return guard
+  const resolved = await resolveProject(db, tenantId, projectRef)
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
 
   const rows = await db
     .select({ cycleDate: leverDecisions.cycleDate, decision: leverDecisions.decision })

@@ -10,9 +10,9 @@ import {
   type InquiryCtaType,
 } from '../db/schema'
 import type { Db } from '../db/connection'
-import type { ProjectId, TenantId } from '../domain/ids'
+import type { ProjectId, ProjectRef, TenantId } from '../domain/ids'
 import { ok, err, type ServiceResult } from './result'
-import { requireProject } from './projects'
+import { resolveProject } from './projects'
 import { isHttpsUrl, HTTPS_ONLY_MSG } from '../domain/url'
 import { ALLOWED_SEND_COUNTRIES } from '../domain/country'
 import { leverConfigSchema, leverConfigPatchSchema, type LeverConfig } from '../domain/lever-config'
@@ -213,10 +213,11 @@ export async function loadLeverConfig(db: Db, projectId: ProjectId): Promise<Lev
 export async function getProjectSettings(
   db: Db,
   tenantId: TenantId,
-  projectId: ProjectId,
+  projectRef: ProjectRef,
 ): Promise<ServiceResult<ProjectSettingsRow>> {
-  const guard = await requireProject(db, projectId, tenantId)
-  if (!guard.ok) return guard
+  const resolved = await resolveProject(db, tenantId, projectRef)
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
 
   const [row] = await db
     .select(settingsCols)
@@ -234,11 +235,12 @@ export async function getProjectSettings(
 export async function updateProjectSettings(
   db: Db,
   tenantId: TenantId,
-  projectId: ProjectId,
+  projectRef: ProjectRef,
   patch: UpdateSettingsPatch,
 ): Promise<ServiceResult<ProjectSettingsRow>> {
-  const guard = await requireProject(db, projectId, tenantId)
-  if (!guard.ok) return guard
+  const resolved = await resolveProject(db, tenantId, projectRef)
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
 
   // type='signup' requires a URL. The pre-load gives a friendly 400 in the
   // single-writer case; the atomic guarantee is chk_inquiry_cta_signup_requires_url

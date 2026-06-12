@@ -12,8 +12,9 @@ import {
 } from '../db/schema'
 import type { Db } from '../db/connection'
 import {
-  projectIdSchema,
+  projectRefSchema,
   type ProjectId,
+  type ProjectRef,
   type TenantId,
 } from '../domain/ids'
 import {
@@ -22,7 +23,7 @@ import {
   countTenantProspects,
 } from './plan-limits'
 import { ok, err, type ServiceResult } from './result'
-import { requireProject } from './projects'
+import { resolveProject } from './projects'
 import { parseCsv } from '../domain/csv'
 import type { Edition } from '../domain/edition'
 import { projectProspectInsertValues } from '../domain/project-prospect'
@@ -90,13 +91,13 @@ const prospectInputSchema = z.object({
 type ProspectInput = z.infer<typeof prospectInputSchema>
 
 export const batchSchema = z.object({
-  projectId: projectIdSchema.optional(),
+  projectId: projectRefSchema.optional(),
   prospects: z.array(prospectInputSchema).min(1).max(100),
 })
 export type BatchInput = z.infer<typeof batchSchema>
 
 export const importSchema = z.object({
-  projectId: projectIdSchema.optional(),
+  projectId: projectRefSchema.optional(),
   csvText: z.string().min(1),
   dedupPolicy: z.enum(['skip', 'overwrite']).default('skip'),
 })
@@ -111,7 +112,7 @@ const dedupCandidateSchema = z.object({
 })
 
 export const checkDedupSchema = z.object({
-  projectId: projectIdSchema.optional(),
+  projectId: projectRefSchema.optional(),
   candidates: z.array(dedupCandidateSchema).min(1).max(100),
 })
 export type CheckDedupInput = z.infer<typeof checkDedupSchema>
@@ -359,13 +360,14 @@ export async function batchRegister(
   edition: Edition,
   input: BatchInput,
 ): Promise<ServiceResult<BatchRegisterResult>> {
-  const { projectId, prospects: inputs } = input
+  const { projectId: projectRef, prospects: inputs } = input
 
-  const [guard, tp] = await Promise.all([
-    projectId ? requireProject(db, projectId, tenantId) : Promise.resolve(null),
+  const [resolved, tp] = await Promise.all([
+    projectRef ? resolveProject(db, tenantId, projectRef) : Promise.resolve(null),
     getTenantPlan(db, tenantId, edition),
   ])
-  if (guard && !guard.ok) return guard
+  if (resolved && !resolved.ok) return resolved
+  const projectId = resolved?.value
 
   if (projectId) {
     const missingReason = inputs.find((p) => !p.matchReason || p.matchReason.trim() === '')
@@ -472,10 +474,11 @@ export async function checkProspectDedup(
   tenantId: TenantId,
   input: CheckDedupInput,
 ): Promise<ServiceResult<CheckDedupResult>> {
-  const { projectId, candidates } = input
+  const { projectId: projectRef, candidates } = input
 
-  const guard = projectId ? await requireProject(db, projectId, tenantId) : null
-  if (guard && !guard.ok) return guard
+  const resolved = projectRef ? await resolveProject(db, tenantId, projectRef) : null
+  if (resolved && !resolved.ok) return resolved
+  const projectId = resolved?.value
 
   const dedup = await buildDedupIndex(db, tenantId, projectId, candidates)
 
@@ -517,13 +520,14 @@ export async function importCsv(
   edition: Edition,
   input: ImportInput,
 ): Promise<ServiceResult<ImportCsvResult>> {
-  const { projectId, csvText, dedupPolicy } = input
+  const { projectId: projectRef, csvText, dedupPolicy } = input
 
-  const [guard, tp] = await Promise.all([
-    projectId ? requireProject(db, projectId, tenantId) : Promise.resolve(null),
+  const [resolved, tp] = await Promise.all([
+    projectRef ? resolveProject(db, tenantId, projectRef) : Promise.resolve(null),
     getTenantPlan(db, tenantId, edition),
   ])
-  if (guard && !guard.ok) return guard
+  if (resolved && !resolved.ok) return resolved
+  const projectId = resolved?.value
 
   let rows: string[][]
   try {

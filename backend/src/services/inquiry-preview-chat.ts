@@ -8,7 +8,7 @@ import {
   projectSettings,
 } from '../db/schema'
 import type { Db } from '../db/connection'
-import { projectIdSchema, prospectIdSchema, type ProjectId, type TenantId } from '../domain/ids'
+import { projectRefSchema, prospectIdSchema, type ProjectId, type TenantId } from '../domain/ids'
 import { ok, err, type ServiceResult } from './result'
 import {
   callOpenAIResponses,
@@ -16,7 +16,7 @@ import {
   type OpenAIEnv,
   type OpenAIInputMessage,
 } from './openai'
-import { requireProject } from './projects'
+import { resolveProject } from './projects'
 import { composeContextSnapshot, INQUIRY_CHAT_TURNS_MAX } from './inquiry-session'
 import {
   buildSystemPrompt,
@@ -33,7 +33,7 @@ import {
 // inquiry-chat so the preview mirrors the live chat instead of drifting.
 
 export const inquiryPreviewChatBodySchema = z.object({
-  projectId: projectIdSchema,
+  projectId: projectRefSchema,
   prospectId: prospectIdSchema.optional(),
   transcript: z
     .array(
@@ -62,8 +62,9 @@ export async function runInquiryPreviewChat(
   tenantId: TenantId,
   input: InquiryPreviewChatInput,
 ): Promise<ServiceResult<InquiryPreviewChatResult>> {
-  const guard = await requireProject(db, input.projectId, tenantId)
-  if (!guard.ok) return guard
+  const resolved = await resolveProject(db, tenantId, input.projectId)
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
 
   const [settings] = await db
     .select({
@@ -73,7 +74,7 @@ export async function runInquiryPreviewChat(
       senderJobTitle: projectSettings.senderJobTitle,
     })
     .from(projectSettings)
-    .where(eq(projectSettings.projectId, input.projectId))
+    .where(eq(projectSettings.projectId, projectId))
     .limit(1)
 
   const projectBrief = settings?.brief ?? null
@@ -91,7 +92,7 @@ export async function runInquiryPreviewChat(
     )
   }
 
-  const promptCtx = await loadPreviewPromptContext(db, input.projectId, input.prospectId ?? null, {
+  const promptCtx = await loadPreviewPromptContext(db, projectId, input.prospectId ?? null, {
     brief: projectBrief,
     senderName: settings?.senderName ?? null,
     senderCompany: settings?.senderCompany ?? null,

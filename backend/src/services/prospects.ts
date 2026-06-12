@@ -32,14 +32,15 @@ import {
   isOutreachQuotaExhausted,
 } from './plan-limits'
 import { ok, err, type ServiceResult } from './result'
-import { requireProject } from './projects'
+import { resolveProject } from './projects'
 import { getOutboundMode, loadProjectOutboundAllowlist } from './project-settings'
 import { projectProspectInsertValues } from '../domain/project-prospect'
 import type { Edition } from '../domain/edition'
 import {
-  projectIdSchema,
+  projectRefSchema,
   prospectIdSchema,
   type ProjectId,
+  type ProjectRef,
   type TenantId,
 } from '../domain/ids'
 import { isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG } from '../domain/url'
@@ -49,6 +50,32 @@ import type { ChannelRank } from '../domain/channel-affinity'
 
 // See get_outbound_targets / B §4.2-F.
 const SIGNAL_FRESH_DAYS = 14
+
+// Up to 200 targets ride in one JSON response — digest, not the full payload.
+const RECENT_SIGNALS_MAX = 3
+
+// The `signals IS NOT NULL` guard keeps legacy rows (failure-bumped
+// timestamp, NULL payload) from counting as fresh.
+const freshSignalExpr = sql<boolean>`(
+  ${orgSignalsGlobal.signals} IS NOT NULL
+  AND ${orgSignalsGlobal.signalsUpdatedAt} IS NOT NULL
+  AND ${orgSignalsGlobal.signalsUpdatedAt} >= NOW() - (${SIGNAL_FRESH_DAYS} * INTERVAL '1 day')
+)`
+
+export async function prospectHadFreshSignal(
+  db: Db,
+  tenantId: TenantId,
+  prospectId: number,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ fresh: freshSignalExpr })
+    .from(prospects)
+    .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
+    .leftJoin(orgSignalsGlobal, eq(orgSignalsGlobal.domain, organizations.domain))
+    .where(and(eq(prospects.id, prospectId), eq(prospects.tenantId, tenantId)))
+    .limit(1)
+  return row?.fresh ?? false
+}
 
 function channelAvailabilityClause(ch: OutboundChannel): SQL {
   switch (ch) {
@@ -96,12 +123,12 @@ export const listTenantProspectsQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).default(0),
   q: z.string().trim().min(1).optional(),
   industry: z.string().trim().min(1).optional(),
-  excludeProjectId: projectIdSchema.optional(),
+  excludeProjectId: projectRefSchema.optional(),
 })
 export type ListTenantProspectsQuery = z.infer<typeof listTenantProspectsQuerySchema>
 
 export const updateProspectStatusBodySchema = z.object({
-  projectId: projectIdSchema,
+  projectId: projectRefSchema,
   status: z.enum(prospectStatusEnum.enumValues),
 })
 export type UpdateProspectStatusBody = z.infer<typeof updateProspectStatusBodySchema>
@@ -200,9 +227,13 @@ export type ReachableProspect = {
   // so the US/CA/JP-only delivery scope is enforced at the skill layer
   // rather than failing 422 at send time.
   country: string | null
-  // True when signals_updated_at is within SIGNAL_FRESH_DAYS. Drives both
-  // skill UX and server-side ordering (fresh-signal prospects float up).
+  // True when the org has non-empty signals extracted within
+  // SIGNAL_FRESH_DAYS. Drives both skill UX and server-side ordering
+  // (fresh-signal prospects float up).
   hasFreshSignal: boolean
+  // Up to RECENT_SIGNALS_MAX highlights from a fresh org_signals_global
+  // payload; absent when it carries none (hasFreshSignal may still be true).
+  recentSignals?: string[]
   hypothesis: { bestChannel: string | null; bestKeyperson: string | null }
   channelAffinity: ChannelRank[]
   cycle: ReachableCycle
@@ -256,7 +287,7 @@ export async function listReachable(
   db: Db,
   tenantId: TenantId,
   edition: Edition,
-  projectId: ProjectId,
+  projectRef: ProjectRef,
   query: ReachableQuery,
 ): Promise<ServiceResult<{
   prospects: ReachableProspect[]
@@ -266,8 +297,9 @@ export async function listReachable(
   outboundMode: OutboundMode
   message?: string
 }>> {
-  const guard = await requireProject(db, projectId, tenantId)
-  if (!guard.ok) return guard
+  const resolved = await resolveProject(db, tenantId, projectRef)
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
 
   const { limit } = query
 
@@ -379,10 +411,6 @@ export async function listReachable(
 
   // Stale-signal / signal-less rows are demoted by adding a virtual +1 to
   // their priority for ordering only.
-  const freshSignalExpr = sql<boolean>`(
-    ${orgSignalsGlobal.signalsUpdatedAt} IS NOT NULL
-    AND ${orgSignalsGlobal.signalsUpdatedAt} >= NOW() - (${SIGNAL_FRESH_DAYS} * INTERVAL '1 day')
-  )`
   const orderingPriorityExpr = sql<number>`(${projectProspects.priority} + (CASE WHEN ${freshSignalExpr} THEN 0 ELSE 1 END))`
 
   const [rows, summaryRows, stateRows] = await Promise.all([
@@ -409,6 +437,7 @@ export async function listReachable(
         // /outbound's pre-flight country gate works on a single field.
         country: sql<string | null>`COALESCE(${prospects.country}, ${organizations.country})`,
         hasFreshSignal: freshSignalExpr,
+        signals: orgSignalsGlobal.signals,
       })
       .from(projectProspects)
       .innerJoin(prospects, eq(prospects.id, projectProspects.prospectId))
@@ -441,7 +470,7 @@ export async function listReachable(
   const prospectIds = rows.map((r) => r.prospectId)
   const cycleByProspect = await loadCycleContext(db, projectId, prospectIds)
 
-  const enriched: ReachableProspect[] = rows.map((r) => ({
+  const enriched: ReachableProspect[] = rows.map(({ signals, ...r }) => ({
     ...r,
     hypothesis: {
       bestChannel: r.hypothesis?.bestChannel ?? null,
@@ -449,6 +478,10 @@ export async function listReachable(
     },
     channelAffinity: channelAffinityByBucket[coarseIndustry(r.industry)] ?? [],
     cycle: cycleByProspect.get(r.prospectId) ?? EMPTY_CYCLE,
+    // `signals` is destructured out above so the raw column never leaks out.
+    ...(r.hasFreshSignal && signals?.highlights?.length
+      ? { recentSignals: signals.highlights.slice(0, RECENT_SIGNALS_MAX) }
+      : {}),
   }))
 
   return ok({
@@ -555,10 +588,11 @@ export async function updateProspectStatus(
   prospectId: number,
   body: UpdateProspectStatusBody,
 ): Promise<ServiceResult<{ updated: true; prospectId: number; status: ProspectStatus }>> {
-  const { projectId, status } = body
+  const { projectId: projectRef, status } = body
 
-  const guard = await requireProject(db, projectId, tenantId)
-  if (!guard.ok) return guard
+  const resolved = await resolveProject(db, tenantId, projectRef)
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
 
   const [pp] = await db
     .update(projectProspects)
@@ -582,14 +616,15 @@ export async function updateProspectStatus(
 export async function listProjectProspects(
   db: Db,
   tenantId: TenantId,
-  projectId: ProjectId,
+  projectRef: ProjectRef,
   query: ListProjectProspectsQuery,
 ): Promise<ServiceResult<{
   prospects: ProjectProspectRow[]
   total: number
 }>> {
-  const guard = await requireProject(db, projectId, tenantId)
-  if (!guard.ok) return guard
+  const resolved = await resolveProject(db, tenantId, projectRef)
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
 
   const { limit, offset, status, priority, q } = query
 
@@ -670,7 +705,14 @@ export async function listTenantProspects(
   prospects: TenantProspectRow[]
   total: number
 }>> {
-  const { limit, offset, q, industry, excludeProjectId } = query
+  const { limit, offset, q, industry, excludeProjectId: excludeProjectRef } = query
+
+  let excludeProjectId: ProjectId | null = null
+  if (excludeProjectRef) {
+    const resolved = await resolveProject(db, tenantId, excludeProjectRef)
+    if (!resolved.ok) return resolved
+    excludeProjectId = resolved.value
+  }
 
   const conditions = [
     eq(prospects.tenantId, tenantId),
@@ -762,11 +804,12 @@ export type LinkResult = {
 export async function linkProspects(
   db: Db,
   tenantId: TenantId,
-  projectId: ProjectId,
+  projectRef: ProjectRef,
   input: LinkInput,
 ): Promise<ServiceResult<LinkResult>> {
-  const guard = await requireProject(db, projectId, tenantId)
-  if (!guard.ok) return guard
+  const resolved = await resolveProject(db, tenantId, projectRef)
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
 
   const { links } = input
   const ids = links.map((l) => l.prospectId)

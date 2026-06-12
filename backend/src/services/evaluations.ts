@@ -14,8 +14,9 @@ import {
 } from '../db/schema'
 import type { Db } from '../db/connection'
 import {
-  projectIdSchema,
+  projectRefSchema,
   type ProjectId,
+  type ProjectRef,
   type TenantId,
 } from '../domain/ids'
 import { replyReward } from '../domain/reward'
@@ -24,7 +25,7 @@ import type { VariantStat } from '../domain/subject-bandit'
 import type { ChannelFineStat } from '../domain/channel-affinity'
 import { loadLeverConfig } from './project-settings'
 import { ok, err, type ServiceResult } from './result'
-import { requireProject } from './projects'
+import { resolveProject } from './projects'
 
 const priorityUpdateSchema = z.object({
   industry: z.string().min(1),
@@ -38,7 +39,7 @@ export const listEvaluationsQuerySchema = z.object({
 export type ListEvaluationsQuery = z.infer<typeof listEvaluationsQuerySchema>
 
 export const recordEvaluationSchema = z.object({
-  projectId: projectIdSchema,
+  projectId: projectRefSchema,
   metrics: z.record(z.string(), z.unknown()),
   findings: z.string().min(1),
   improvements: z.string().min(1),
@@ -198,10 +199,11 @@ export async function getChannelStats(
 export async function getProjectStats(
   db: Db,
   tenantId: TenantId,
-  projectId: ProjectId,
+  projectRef: ProjectRef,
 ): Promise<ServiceResult<ProjectStatsResult>> {
-  const guard = await requireProject(db, projectId, tenantId)
-  if (!guard.ok) return guard
+  const resolved = await resolveProject(db, tenantId, projectRef)
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
 
   const rawQuery = async (query: ReturnType<typeof sql>): Promise<Row[]> => {
     const result = await db.execute(query)
@@ -373,8 +375,9 @@ export async function recordEvaluation(
   tenantId: TenantId,
   input: RecordEvaluationInput,
 ): Promise<ServiceResult<RecordEvaluationResult>> {
-  const guard = await requireProject(db, input.projectId, tenantId)
-  if (!guard.ok) return guard
+  const resolved = await resolveProject(db, tenantId, input.projectId)
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
 
   const now = new Date()
 
@@ -382,7 +385,7 @@ export async function recordEvaluation(
     .insert(evaluations)
     .values({
       tenantId,
-      projectId: input.projectId,
+      projectId,
       evaluationDate: now,
       metrics: input.metrics as EvaluationMetrics,
       findings: input.findings,
@@ -415,7 +418,7 @@ export async function recordEvaluation(
         SET priority = v.priority, updated_at = now()
         FROM (VALUES ${valuesList}) AS v(industry, priority)
         JOIN prospects p ON p.industry = v.industry
-        WHERE pp.prospect_id = p.id AND pp.project_id = ${input.projectId} AND pp.status = ${NEW}::prospect_status
+        WHERE pp.prospect_id = p.id AND pp.project_id = ${projectId} AND pp.status = ${NEW}::prospect_status
         RETURNING v.industry AS industry
       `),
     ) as Row[]
@@ -448,11 +451,12 @@ export type EvaluationHistoryRow = {
 export async function listEvaluations(
   db: Db,
   tenantId: TenantId,
-  projectId: ProjectId,
+  projectRef: ProjectRef,
   query: ListEvaluationsQuery,
 ): Promise<ServiceResult<{ evaluations: EvaluationHistoryRow[]; total: number }>> {
-  const guard = await requireProject(db, projectId, tenantId)
-  if (!guard.ok) return guard
+  const resolved = await resolveProject(db, tenantId, projectRef)
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
 
   const { limit, offset } = query
   const where = eq(evaluations.projectId, projectId)

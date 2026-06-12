@@ -21,6 +21,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 SUITES=(
+  regression-project-ref
   regression-outbound
   regression-build-list-dedup
   regression-skip-reachable

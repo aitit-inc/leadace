@@ -5,7 +5,7 @@ import {
   getProjectSettings,
   updateProjectSettings,
 } from '../../services/project-settings'
-import { projectIdParamSchema } from '../../services/projects'
+import { projectRefParamSchema } from '../../services/projects'
 import { respondWithError } from '../respond'
 import type { Env, Variables } from '../types'
 
@@ -13,7 +13,7 @@ export const projectSettingsRouter = new Hono<{ Bindings: Env; Variables: Variab
 
 projectSettingsRouter.get(
   '/projects/:id/settings',
-  zValidator('param', projectIdParamSchema),
+  zValidator('param', projectRefParamSchema),
   async (c) => {
     const result = await getProjectSettings(c.get('db'), c.get('tenantId'), c.req.valid('param').id)
     if (!result.ok) return respondWithError(c, result)
@@ -23,7 +23,7 @@ projectSettingsRouter.get(
 
 projectSettingsRouter.put(
   '/projects/:id/settings',
-  zValidator('param', projectIdParamSchema),
+  zValidator('param', projectRefParamSchema),
   zValidator('json', updateSettingsSchema),
   async (c) => {
     const result = await updateProjectSettings(

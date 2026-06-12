@@ -238,9 +238,10 @@ relevant turns up, leave the section out. `/outbound` reads `## Recent
 Signals` and decides whether to open with a signal-aware hook; absent
 section means no signal mention.
 
-This is **one query per prospect**, not deep research. The SaaS-side daily
-batch (B §4.2-B) refines signals over time; the goal here is to seed the
-field at registration time.
+This is **one query per prospect**, not deep research. This section is a
+registration-time snapshot and is never updated afterwards; ongoing signal
+refresh happens in a server-side daily batch and reaches `/outbound` as the
+per-target `recentSignals` field.
 
 ## Phase 2: Contact + Keyperson Retrieval
 

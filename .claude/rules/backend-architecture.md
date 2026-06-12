@@ -231,11 +231,11 @@ export const recordResponseBodySchema = z.object({ ... })
 export type RecordResponseBody = z.infer<typeof recordResponseBodySchema>
 ```
 
-**Exception — entity-identity primitives.** Entity-identity schemas (`projectIdSchema`, `prospectIdSchema`, ...) and their param wrappers (`projectIdParamSchema = z.object({ id: projectIdSchema })`) live in `domain/ids.ts` — both the branded string-shaped ones and the unbranded aliases for number-shaped row PKs. `z.infer` co-location buys nothing for trivial primitives.
+**Exception — entity-identity primitives.** Entity-identity schemas (`projectRefSchema`, `prospectIdSchema`, ...) and their param wrappers (`projectRefParamSchema = z.object({ id: projectRefSchema })`) live in `domain/ids.ts` — both the branded string-shaped ones and the unbranded aliases for number-shaped row PKs. `z.infer` co-location buys nothing for trivial primitives.
 
 Schemas are object-shaped because `zValidator('param'/'query', ...)` requires it. Service signatures prefer scalars when trivial:
 
-- **Single-field path** (`/:id`): route destructures, service takes the branded scalar — `(db, tenantId: TenantId, projectId: ProjectId, ...)`.
+- **Single-field path** (`/:id`): route destructures, service takes the branded scalar — `(db, tenantId: TenantId, projectRef: ProjectRef, ...)`.
 - **Multi-field path** (`/:id/:slug`): route passes the validated object — `(db, tenantId, param: DocumentParam, ...)`.
 - **Body / query**: always pass the validated object — multi-field by nature.
 
@@ -244,7 +244,7 @@ Route shape:
 ```ts
 router.post(
   '/projects/:id/responses',
-  zValidator('param', projectIdParamSchema),
+  zValidator('param', projectRefParamSchema),
   zValidator('json', recordResponseBodySchema),
   async (c) => {
     const result = await recordResponse(
@@ -275,17 +275,29 @@ time.
 // domain/ids.ts — one branded primitive per string-shaped entity.
 export type TenantId = string & { readonly __brand: 'TenantId' }
 export type ProjectId = string & { readonly __brand: 'ProjectId' }
+// Unresolved project reference (name or id). The brand union makes every
+// ProjectId a valid ProjectRef, never the reverse.
+export type ProjectRef = string & { readonly __brand: 'ProjectId' | 'ProjectRef' }
 
 export const tenantIdSchema = z.string().min(1).transform((v) => v as TenantId)
-export const projectIdSchema = z.string().min(1).transform((v) => v as ProjectId)
+export const projectRefSchema = z.string().min(1).transform((v) => v as ProjectRef)
 
 // Path / query param wrapper: same schema; the path-string wire format
 // is already string-typed so no `z.coerce` is needed.
-export const projectIdParamSchema = z.object({ id: projectIdSchema })
+export const projectRefParamSchema = z.object({ id: projectRefSchema })
 
 export const asTenantId = (v: string) => v as TenantId
 export const asProjectId = (v: string) => v as ProjectId
 ```
+
+**Project name-or-id resolution.** Every project-scoped endpoint accepts a
+project name OR id. External input parses to `ProjectRef`; the service's
+first step is `resolveProject(db, tenantId, ref)` (`services/projects.ts`),
+which returns the `ServiceResult<ProjectId>` (NOT_FOUND when neither matches;
+id match wins over a name collision) and doubles as the existence guard.
+Queries and inserts below it use only the resolved `ProjectId` — the brand
+direction makes "forgot to resolve" a compile error wherever a `ProjectId`
+is required.
 
 Number-shaped row PKs (prospect / outreach_log / response / inquiry_session / evaluation / project_document / bug_report) are NOT branded — plain `number`. Compile-time payoff was small (only catches same-shape `number` arg swaps), ceremony cost was high (every DB row read needed an unverifiable `as XxxId` cast). The composite `(entity_id, tenant_id)` FKs + RLS already enforce the cross-tenant invariant at the DB level.
 

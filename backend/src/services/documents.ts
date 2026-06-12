@@ -3,15 +3,15 @@ import { eq, and, desc } from 'drizzle-orm'
 import { projectDocuments } from '../db/schema'
 import type { Db } from '../db/connection'
 import {
-  projectIdSchema,
-  type ProjectId,
+  projectRefSchema,
+  type ProjectRef,
   type TenantId,
 } from '../domain/ids'
 import { ok, err, type ServiceResult } from './result'
-import { requireProject } from './projects'
+import { resolveProject } from './projects'
 
 export const documentParamSchema = z.object({
-  id: projectIdSchema,
+  id: projectRefSchema,
   slug: z.string().min(1),
 })
 export type DocumentParam = z.infer<typeof documentParamSchema>
@@ -29,10 +29,11 @@ export type SaveDocumentInput = z.infer<typeof saveDocumentSchema>
 export async function listDocuments(
   db: Db,
   tenantId: TenantId,
-  projectId: ProjectId,
+  projectRef: ProjectRef,
 ): Promise<ServiceResult<{ documents: Array<{ slug: string; updatedAt: Date }> }>> {
-  const guard = await requireProject(db, projectId, tenantId)
-  if (!guard.ok) return guard
+  const resolved = await resolveProject(db, tenantId, projectRef)
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
 
   const rows = await db
     .selectDistinctOn([projectDocuments.slug], {
@@ -58,9 +59,10 @@ export async function getDocument(
   tenantId: TenantId,
   param: DocumentParam,
 ): Promise<ServiceResult<DocumentRow>> {
-  const { id: projectId, slug } = param
-  const guard = await requireProject(db, projectId, tenantId)
-  if (!guard.ok) return guard
+  const { id: projectRef, slug } = param
+  const resolved = await resolveProject(db, tenantId, projectRef)
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
 
   const [doc] = await db
     .select({
@@ -87,9 +89,10 @@ export async function getDocumentHistory(
   param: DocumentParam,
   query: DocumentHistoryQuery,
 ): Promise<ServiceResult<{ history: Array<{ id: number; content: string; createdAt: Date }> }>> {
-  const { id: projectId, slug } = param
-  const guard = await requireProject(db, projectId, tenantId)
-  if (!guard.ok) return guard
+  const { id: projectRef, slug } = param
+  const resolved = await resolveProject(db, tenantId, projectRef)
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
 
   const rows = await db
     .select({
@@ -114,9 +117,10 @@ export async function saveDocument(
   param: DocumentParam,
   input: SaveDocumentInput,
 ): Promise<ServiceResult<{ id: number; slug: string; createdAt: Date }>> {
-  const { id: projectId, slug } = param
-  const guard = await requireProject(db, projectId, tenantId)
-  if (!guard.ok) return guard
+  const { id: projectRef, slug } = param
+  const resolved = await resolveProject(db, tenantId, projectRef)
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
 
   const [doc] = await db
     .insert(projectDocuments)

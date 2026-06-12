@@ -121,9 +121,18 @@ Each prospect in the targets list also carries:
   `primaryReason` (e.g. `wrong_timing` / `budget`) and `freeText` (their own
   words, may be null) — so a re-approach can answer the actual reason. Drives
   tone selection in step 3 and the re-approach branch in step 3b.
-- `hasFreshSignal: boolean` — true when `org_signals_global.signals_updated_at`
-  is within the last 14 days. Used by the prioritisation server-side; you
-  may surface it in the report.
+- `hasFreshSignal: boolean` — true when the org has non-empty signals
+  extracted within the last 14 days. Used by the prioritisation server-side;
+  you may surface it in the report.
+- `recentSignals?: string[]` — up to 3 dated signal highlights from the
+  server-side daily refresh (e.g. `"Raised Series B on 2026-05-20"`).
+  Present only when a fresh payload carries highlights (may be absent even
+  when `hasFreshSignal` is true). This is the **refreshed**
+  counterpart to overview's `## Recent Signals` (a registration-time
+  snapshot that never updates): when both exist, use whichever carries the
+  more recent dated entries — usually `recentSignals`, except for freshly
+  registered prospects. Raw material for the opening line, the bad-timing
+  judgment, and re-approach hooks below.
 - `hypothesis: { bestChannel, bestKeyperson }` — the build-list registrant's
   first-touch guess at the best channel (e.g. `personal_email` / `linkedin_dm`)
   and a named keyperson, when one was obvious. Either may be null. Use as
@@ -170,8 +179,9 @@ supported recipient countries server-side (step 1).
 
 **Bad-timing skip (optional, on by default).** Before composing, judge from
 what you already have on the prospect — the `overview` (including any
-`## Recent Signals`), the `hypothesis`, and the `cycle` context — whether now
-is clearly a bad moment to reach this specific recipient. What counts as "bad"
+`## Recent Signals`), `recentSignals`, the `hypothesis`, and the `cycle`
+context — whether now is clearly a bad moment to reach this specific
+recipient. What counts as "bad"
 depends on the recipient; representative cases are a recent negative event that
 removes or freezes the buyer (layoffs, an announced bankruptcy / wind-down, a
 leadership shake-up implying the buyer left, a post-acquisition integration
@@ -215,14 +225,16 @@ the run-end report so the operator can add patterns via
 fabricate a SALES_STRATEGY.md "Subject Line Patterns" section; that
 content is no longer the authoritative source.
 
-**Signal-aware opening (Phase 1.5 hook).** If the prospect's `overview`
-contains a `## Recent Signals` section with at least one entry, the email's
-**first sentence** must reference the most recent / most relevant signal
-in concrete terms ("Saw the Series B announcement on TechCrunch last
-week — congrats on…", "Noticed you're hiring senior platform engineers in
-Seattle…"). One signal mention, then move to the actual ask. If
-`## Recent Signals` is absent or empty, do not invent one; open per
-SALES_STRATEGY's normal pattern.
+**Signal-aware opening (Phase 1.5 hook).** If the prospect has signal
+material — `recentSignals`, or a `## Recent Signals` section in `overview`
+with at least one entry — the email's **first sentence** must reference the
+most recent / most relevant signal in concrete terms ("Saw the Series B
+announcement on TechCrunch last week — congrats on…", "Noticed you're
+hiring senior platform engineers in Seattle…"). When both sources exist,
+pick by entry date (both carry dates; `recentSignals` is usually fresher
+since the overview section is frozen at registration). One signal mention,
+then move to the actual ask. If neither source has an entry, do not invent
+one; open per SALES_STRATEGY's normal pattern.
 
 **Inquiry-aware CTA branch.** When `inquiryLandingEnabled === true`
 (captured in step 1):
@@ -290,8 +302,9 @@ When `cycle.kind === 'first'`, use the normal first-touch composition above.
 When `cycle.kind === 'no_response'`:
 - This is a follow-up after silence. Acknowledge the silence lightly
   ("circling back on my note from <approx month>"), then **lead with
-  what's new** — a fresh signal from `## Recent Signals`, a new product
-  release, a different angle in `matchReason`. If you genuinely have no
+  what's new** — a fresh signal from `recentSignals` or `## Recent Signals`
+  (whichever is newer), a new product release, a different angle in
+  `matchReason`. If you genuinely have no
   new material to add, **skip the prospect**: call
   `mcp__plugin_leadace_api__skip_prospect` with:
   - `projectId: "$0"`, `prospectId`: the prospect's id.
@@ -318,7 +331,7 @@ When `cycle.kind === 'rejection_followup'`:
     `lastResponse.rejectionFeedback.primaryReason` (and `freeText` if
     present) to open against the actual objection — reference it, don't
     quote verbatim — then lead with what's specifically changed since
-    (Phase 1.5 signals, product updates, pricing changes).
+    (`recentSignals`, Phase 1.5 signals, product updates, pricing changes).
   - `'meeting_request'` / positive `'reply'`: unusual to be back in
     the candidate pool — only happens if the recycle window elapsed
     without a follow-up booking. Reference the earlier interest neutrally.

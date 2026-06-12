@@ -8,7 +8,7 @@ import {
   listProjectResponses,
   getRejectionFeedbackSummary,
 } from '../../services/responses'
-import { projectIdParamSchema } from '../../services/projects'
+import { projectRefParamSchema } from '../../services/projects'
 import { respondWithError } from '../respond'
 import type { Env, Variables } from '../types'
 
@@ -22,7 +22,7 @@ responsesRouter.post('/responses', zValidator('json', recordResponseSchema), asy
 
 responsesRouter.get(
   '/projects/:id/responses',
-  zValidator('param', projectIdParamSchema),
+  zValidator('param', projectRefParamSchema),
   zValidator('query', listResponsesQuerySchema),
   async (c) => {
     const result = await listProjectResponses(
@@ -38,7 +38,7 @@ responsesRouter.get(
 
 responsesRouter.get(
   '/projects/:id/rejection-feedback/summary',
-  zValidator('param', projectIdParamSchema),
+  zValidator('param', projectRefParamSchema),
   zValidator('query', rejectionFeedbackSummaryQuerySchema),
   async (c) => {
     const result = await getRejectionFeedbackSummary(

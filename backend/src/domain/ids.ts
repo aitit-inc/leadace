@@ -23,6 +23,10 @@ export type TenantId = string & { readonly __brand: 'TenantId' }
 export type ProjectId = string & { readonly __brand: 'ProjectId' }
 export type ShortId = string & { readonly __brand: 'ShortId' }
 
+// Project name or id, unresolved. The brand union admits ProjectId but not the
+// reverse — resolveProject() is the only path from ProjectRef to ProjectId.
+export type ProjectRef = string & { readonly __brand: 'ProjectId' | 'ProjectRef' }
+
 // Body / programmatic-input validators: strict — no coercion. JSON is typed
 // at the wire, so `{"prospectId": "5"}`, `{"prospectId": true}`, or
 // `{"ids": [[1]]}` must be rejected (z.coerce.number() would silently map
@@ -33,7 +37,7 @@ const coercedPositiveInt = z.coerce.number().int().positive()
 const nonEmptyString = z.string().min(1)
 
 export const tenantIdSchema = nonEmptyString.transform((v): TenantId => v as TenantId)
-export const projectIdSchema = nonEmptyString.transform((v): ProjectId => v as ProjectId)
+export const projectRefSchema = nonEmptyString.transform((v): ProjectRef => v as ProjectRef)
 // `ShortId` carries the inquiry-token shape invariant — 8-char [A-Za-z0-9_-].
 // Bake the regex into the brand parser so any code holding a `ShortId` can
 // assume it matches the inquiry-token DB column.
@@ -51,7 +55,7 @@ export const variantIdSchema = z.string().regex(variantIdRegex)
 
 // Path / query param wrappers — only for entities with a `:id` route segment.
 // The path-string wire format is `Record<string, string>`, so coerce here.
-export const projectIdParamSchema = z.object({ id: projectIdSchema })
+export const projectRefParamSchema = z.object({ id: projectRefSchema })
 export const prospectIdParamSchema = z.object({ id: coercedPositiveInt })
 export const organizationIdParamSchema = z.object({ id: coercedPositiveInt })
 export const outreachLogIdParamSchema = z.object({ id: coercedPositiveInt })

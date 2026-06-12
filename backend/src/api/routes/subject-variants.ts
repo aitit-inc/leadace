@@ -7,7 +7,7 @@ import {
   upsertSubjectVariant,
   pickSubjectVariant,
 } from '../../services/subject-variants'
-import { projectIdParamSchema } from '../../services/projects'
+import { projectRefParamSchema } from '../../services/projects'
 import { variantIdSchema } from '../../domain/ids'
 import { respondWithError } from '../respond'
 import { err } from '../../services/result'
@@ -17,7 +17,7 @@ export const subjectVariantsRouter = new Hono<{ Bindings: Env; Variables: Variab
 
 subjectVariantsRouter.get(
   '/projects/:id/subject-variants',
-  zValidator('param', projectIdParamSchema),
+  zValidator('param', projectRefParamSchema),
   async (c) => {
     const result = await listSubjectVariants(
       c.get('db'),
@@ -31,7 +31,7 @@ subjectVariantsRouter.get(
 
 subjectVariantsRouter.put(
   '/projects/:id/subject-variants',
-  zValidator('param', projectIdParamSchema),
+  zValidator('param', projectRefParamSchema),
   zValidator('json', upsertVariantBodySchema),
   async (c) => {
     const result = await upsertSubjectVariant(
@@ -55,7 +55,7 @@ const pickQuerySchema = z.object({
 // which variant + pattern to render before composing the subject.
 subjectVariantsRouter.post(
   '/projects/:id/subject-variants/pick',
-  zValidator('param', projectIdParamSchema),
+  zValidator('param', projectRefParamSchema),
   zValidator('query', pickQuerySchema),
   async (c) => {
     const { id: projectId } = c.req.valid('param')

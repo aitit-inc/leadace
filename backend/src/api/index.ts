@@ -85,9 +85,10 @@ app.onError((err, c) => {
 const handler = {
   fetch: app.fetch,
 
-  // Cloudflare cron handler. Runs as the system (no auth, no RLS) and only
-  // touches the global org_signals_global table — keeping the surface
-  // narrow so we don't accidentally bypass tenant isolation here.
+  // Cloudflare cron handler. Runs as the system (no auth, no RLS): reads
+  // organizations cross-tenant to pick stale domains, and writes only the
+  // global org_signals_global table — no tenant-scoped writes, keeping the
+  // surface narrow so we don't accidentally bypass tenant isolation here.
   // ctx.waitUntil keeps the worker alive past the cron tick's quick return
   // until the refresh batch settles.
   async scheduled(

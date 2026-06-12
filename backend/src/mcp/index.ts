@@ -100,24 +100,6 @@ async function callApi(
   return { ok: res.ok, status: res.status, data }
 }
 
-async function resolveProjectId(
-  projectRef: string,
-  apiUrl: string,
-  authHeader: string,
-): Promise<{ id: string | null; error?: string }> {
-  const { ok, data } = await callApi('GET', '/projects', null, apiUrl, authHeader)
-  if (!ok) {
-    const err = data as { error?: string }
-    return { id: null, error: err.error ?? 'Failed to list projects' }
-  }
-  const { projects } = data as { projects: Array<{ id: string; name: string }> }
-  const match = projects.find((p) => p.id === projectRef || p.name === projectRef)
-  if (!match) {
-    return { id: null, error: `Project "${projectRef}" not found` }
-  }
-  return { id: match.id }
-}
-
 const formatTarget = (id?: string) => id ? `project ${id}` : 'tenant assets'
 
 const corsHeaders = {
@@ -242,13 +224,9 @@ function buildToolRegistry(): ToolDef[] {
   defineTool(
     'delete_project',
     'Delete a project and its project-scoped data (project-prospect links, outreach logs, responses, evaluations, settings, subject variants). Prospects themselves are tenant assets and are NOT deleted — they survive for other projects and /match-prospects.',
-    { projectId: z.string().describe('Project name or ID') },
+    { projectId: z.string().min(1).describe('Project name or ID') },
     async ({ projectId }, { apiUrl, authHeader }) => {
-      const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
-      if (!resolved.id) {
-        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-      }
-      const { ok, data } = await callApi('DELETE', `/projects/${resolved.id}`, null, apiUrl, authHeader)
+      const { ok, data } = await callApi('DELETE', `/projects/${encodeURIComponent(projectId)}`, null, apiUrl, authHeader)
       if (!ok) {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
@@ -261,7 +239,7 @@ function buildToolRegistry(): ToolDef[] {
     'add_prospects',
     'Batch register prospects. Server-side dedup is the single source of truth for duplicate avoidance. Each skipped row comes back in skippedDetails as {name, reason} where reason ∈ "email_duplicate" | "form_url_duplicate" | "already_in_project" | "do_not_contact" | "duplicate_in_batch" | "plan_limit". Use those codes to adjust your search keywords (e.g. lots of "email_duplicate" → narrow the search; lots of "already_in_project" → cluster is exhausted). projectId is optional: omit it to save prospects as tenant-only assets (no project link). When projectId is provided, every prospect must include matchReason. Set doNotContact=true on rows the source data marks as unsubscribed/opted-out so /build-list will not re-contact them later (DNC is a one-way ratchet on overwrite — false never clears an existing flag). Pair tenant-only imports with /match-prospects to link the right ones into a project later.',
     {
-      projectId: z.string().optional().describe('Project name or ID. Omit to save prospects as tenant-only assets without linking to any project.'),
+      projectId: z.string().min(1).optional().describe('Project name or ID. Omit to save prospects as tenant-only assets without linking to any project.'),
       prospects: z.array(z.object({
         organizationDomain: z.string().describe('Organization domain. Apex form preferred (e.g. example.com); raw URLs and "www." prefix are tolerated and normalized server-side.'),
         organizationName: z.string(),
@@ -299,15 +277,7 @@ function buildToolRegistry(): ToolDef[] {
       })).describe('Array of prospects to register (max 100)'),
     },
     async ({ projectId, prospects }, { apiUrl, authHeader }) => {
-      let resolvedId: string | undefined
-      if (projectId) {
-        const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
-        if (!resolved.id) {
-          return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-        }
-        resolvedId = resolved.id
-      }
-      const { ok, data } = await callApi('POST', '/prospects/batch', { projectId: resolvedId, prospects }, apiUrl, authHeader)
+      const { ok, data } = await callApi('POST', '/prospects/batch', { projectId, prospects }, apiUrl, authHeader)
       if (!ok) {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
@@ -316,7 +286,7 @@ function buildToolRegistry(): ToolDef[] {
       return {
         content: [{
           type: 'text' as const,
-          text: `Registered (${formatTarget(resolvedId)}): ${result.inserted}, Skipped: ${result.skipped}\nSkipped details: ${JSON.stringify(result.skippedDetails)}`,
+          text: `Registered (${formatTarget(projectId)}): ${result.inserted}, Skipped: ${result.skipped}\nSkipped details: ${JSON.stringify(result.skippedDetails)}`,
         }],
       }
     },
@@ -326,7 +296,7 @@ function buildToolRegistry(): ToolDef[] {
     'check_prospect_dedup',
     'Read-only pre-flight duplicate check. Use after candidate discovery, before paying for heavy contact retrieval: pass each candidate\'s organizationDomain (and email / contactFormUrl if surfaced incidentally), receive {kind: "fresh" | "skip", reason?} per candidate in input order. Skip reasons are the dedup-only subset of add_prospects: "email_duplicate" | "form_url_duplicate" | "already_in_project" | "do_not_contact" | "duplicate_in_batch". add_prospects also emits "plan_limit" — that is a budget signal, never emitted here. Drop kind="skip" candidates before launching contact-retrieval sub-agents; add_prospects re-runs the same dedup as a safety net. Up to 100 candidates per call.',
     {
-      projectId: z.string().optional().describe('Project name or ID. Omit for tenant-scope dedup only (no project-link check).'),
+      projectId: z.string().min(1).optional().describe('Project name or ID. Omit for tenant-scope dedup only (no project-link check).'),
       candidates: z.array(z.object({
         organizationDomain: z.string().describe('Organization domain. Apex form preferred (e.g. example.com); raw URLs and "www." prefix are tolerated and normalized server-side. Required.'),
         email: z.email().optional(),
@@ -334,15 +304,7 @@ function buildToolRegistry(): ToolDef[] {
       })).describe('Array of candidates to check (max 100)'),
     },
     async ({ projectId, candidates }, { apiUrl, authHeader }) => {
-      let resolvedId: string | undefined
-      if (projectId) {
-        const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
-        if (!resolved.id) {
-          return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-        }
-        resolvedId = resolved.id
-      }
-      const { ok, data } = await callApi('POST', '/prospects/check-dedup', { projectId: resolvedId, candidates }, apiUrl, authHeader)
+      const { ok, data } = await callApi('POST', '/prospects/check-dedup', { projectId, candidates }, apiUrl, authHeader)
       if (!ok) {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
@@ -353,7 +315,7 @@ function buildToolRegistry(): ToolDef[] {
       return {
         content: [{
           type: 'text' as const,
-          text: `Checked ${result.decisions.length} (${formatTarget(resolvedId)}): ${fresh} fresh, ${skip} skip.\nDecisions: ${JSON.stringify(result.decisions)}`,
+          text: `Checked ${result.decisions.length} (${formatTarget(projectId)}): ${fresh} fresh, ${skip} skip.\nDecisions: ${JSON.stringify(result.decisions)}`,
         }],
       }
     },
@@ -363,23 +325,15 @@ function buildToolRegistry(): ToolDef[] {
     'import_prospects_from_csv',
     'Import prospects from a canonical CSV string. Required headers: organizationDomain, organizationName, organizationWebsiteUrl, name, overview, websiteUrl. matchReason is required only when projectId is provided. Optional headers: contactName, department, industry, email, contactFormUrl, formType, snsAccounts.x, snsAccounts.linkedin, snsAccounts.instagram, snsAccounts.facebook, notes, priority, doNotContact. At least one of email / contactFormUrl / snsAccounts.* per row. doNotContact accepts 1/true/yes/on (DNC) or 0/false/no/off (not DNC); empty cells are treated as not provided. Set it on rows the source marks as unsubscribed/opted-out so /build-list will not re-discover and contact them. On overwrite, doNotContact=true sets the flag on existing prospects; false (or column absent) never clears an existing flag (one-way ratchet). projectId is optional: omit it to save prospects as tenant-only assets (no project_prospects link is created — pair with /match-prospects to link them into a project later). dedupPolicy "skip" leaves existing prospects alone; "overwrite" updates prospect fields (matched by email or contactFormUrl) and re-links to the project. Rows that match only by organization domain are skipped as "already_in_project" even with "overwrite" — the prospect identity within that organization is ambiguous and cannot be safely updated. Existing prospects already flagged do_not_contact are always skipped (their record is preserved). Skipped rows are returned in skippedDetails as {row, name, reason} where reason ∈ "email_duplicate" | "form_url_duplicate" | "already_in_project" | "do_not_contact" | "duplicate_in_batch" | "plan_limit". Max 1000 data rows.',
     {
-      projectId: z.string().optional().describe('Project name or ID. Omit to save prospects as tenant-only assets without linking to any project.'),
+      projectId: z.string().min(1).optional().describe('Project name or ID. Omit to save prospects as tenant-only assets without linking to any project.'),
       csvText: z.string().describe('Full CSV text including header row'),
       dedupPolicy: z.enum(['skip', 'overwrite']).default('skip'),
     },
     async ({ projectId, csvText, dedupPolicy }, { apiUrl, authHeader }) => {
-      let resolvedId: string | undefined
-      if (projectId) {
-        const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
-        if (!resolved.id) {
-          return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-        }
-        resolvedId = resolved.id
-      }
       const { ok, data } = await callApi(
         'POST',
         '/prospects/import',
-        { projectId: resolvedId, csvText, dedupPolicy },
+        { projectId, csvText, dedupPolicy },
         apiUrl,
         authHeader,
       )
@@ -399,7 +353,7 @@ function buildToolRegistry(): ToolDef[] {
       return {
         content: [{
           type: 'text' as const,
-          text: `Imported (${formatTarget(resolvedId)}): ${result.inserted} new, ${result.overwritten} overwritten, ${result.skipped} skipped, ${result.errors} errors.\nSkipped: ${JSON.stringify(result.skippedDetails)}\nErrors: ${JSON.stringify(result.errorDetails)}`,
+          text: `Imported (${formatTarget(projectId)}): ${result.inserted} new, ${result.overwritten} overwritten, ${result.skipped} skipped, ${result.errors} errors.\nSkipped: ${JSON.stringify(result.skippedDetails)}\nErrors: ${JSON.stringify(result.errorDetails)}`,
         }],
       }
     },
@@ -409,15 +363,11 @@ function buildToolRegistry(): ToolDef[] {
     'get_outbound_targets',
     'Get uncontacted prospects ordered by priority for outbound outreach. Each prospect carries `country` (effective code = prospect override > org country > null) for pre-flight skipping against the currently-allowed US/CA/JP delivery scope.',
     {
-      projectId: z.string().describe('Project name or ID'),
+      projectId: z.string().min(1).describe('Project name or ID'),
       limit: z.number().int().min(1).max(200).default(50).describe('Max number of prospects to return'),
     },
     async ({ projectId, limit }, { apiUrl, authHeader }) => {
-      const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
-      if (!resolved.id) {
-        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-      }
-      const { ok, data } = await callApi('GET', `/projects/${resolved.id}/prospects/reachable?limit=${limit}`, null, apiUrl, authHeader)
+      const { ok, data } = await callApi('GET', `/projects/${encodeURIComponent(projectId)}/prospects/reachable?limit=${limit}`, null, apiUrl, authHeader)
       if (!ok) {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
@@ -460,7 +410,7 @@ function buildToolRegistry(): ToolDef[] {
     'record_outreach_with_inquiry',
     'Pre-submit allocation for form / SNS DM channels: reserves the outreach log row (status="pre_send" in send mode, "pending_review" in draft mode) and returns finalBody with the inquiry-landing URL footer baked in (when project_settings.inquiryLandingEnabled=true). The skill submits finalBody verbatim, then resolves the row by calling update_outreach_status with "sent" on success or "failed" on failure. The prospect is flipped to "contacted" only on the "sent" transition. In draft mode the user submits manually from app.leadace.ai/drafts — no follow-up call needed. For email use send_email_and_record instead.',
     {
-      projectId: z.string().describe('Project name or ID'),
+      projectId: z.string().min(1).describe('Project name or ID'),
       prospectId: z.number().int(),
       channel: z.enum(['form', 'sns_twitter', 'sns_linkedin']),
       subject: z.string().optional(),
@@ -468,11 +418,7 @@ function buildToolRegistry(): ToolDef[] {
       variantId: variantIdSchema.optional().describe('Subject variant id from pick_subject_variant. Stamps outreach_logs.variant_id so per-variant reply rates are not biased to email-only sends.'),
     },
     async (input, { apiUrl, authHeader }) => {
-      const resolved = await resolveProjectId(input.projectId, apiUrl, authHeader)
-      if (!resolved.id) {
-        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-      }
-      const { ok, data } = await callApi('POST', '/outreach/record-with-inquiry', { ...input, projectId: resolved.id }, apiUrl, authHeader)
+      const { ok, data } = await callApi('POST', '/outreach/record-with-inquiry', input, apiUrl, authHeader)
       if (!ok) {
         const err = data as { error: string; detail?: string }
         const msg = err.detail ? `${err.error}: ${err.detail}` : err.error
@@ -597,14 +543,10 @@ function buildToolRegistry(): ToolDef[] {
     'list_subject_variants',
     'List the project\'s subject-line variants (active + archived) so /leadace can detect whether seeding is needed and /evaluate can review existing rotation. Returns `{ variants: [{ variantId, subjectPattern, label, archivedAt, ... }] }` ordered by createdAt asc.',
     {
-      projectId: z.string().describe('Project name or ID'),
+      projectId: z.string().min(1).describe('Project name or ID'),
     },
     async ({ projectId }, { apiUrl, authHeader }) => {
-      const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
-      if (!resolved.id) {
-        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-      }
-      const { ok, data } = await callApi('GET', `/projects/${resolved.id}/subject-variants`, null, apiUrl, authHeader)
+      const { ok, data } = await callApi('GET', `/projects/${encodeURIComponent(projectId)}/subject-variants`, null, apiUrl, authHeader)
       if (!ok) {
         const e = data as { error: string; detail?: string }
         const msg = e.detail ? `${e.error}: ${e.detail}` : e.error
@@ -626,21 +568,17 @@ function buildToolRegistry(): ToolDef[] {
     'upsert_subject_variant',
     'Register or update a subject-line A/B variant on a project. variantId is a stable slug (e.g. "v1", "warm_intro", "signal_funded"); subjectPattern may include {{org}} / {{name}} / {{signal}} placeholders that the skill substitutes at send time. Setting archived=true retires the slug from rotation while keeping it analysable for historic outreach rows. Idempotent: re-calling with the same variantId updates the pattern / label / archived state. /leadace onboarding seeds the first 2-3 variants; /evaluate may suggest adding new ones based on response rates.',
     {
-      projectId: z.string().describe('Project name or ID'),
+      projectId: z.string().min(1).describe('Project name or ID'),
       variantId: variantIdSchema.describe('Stable slug, max 32 chars [A-Za-z0-9_-]'),
       subjectPattern: z.string().min(1).max(300).describe('Subject template; may use {{placeholders}}.'),
       label: z.string().min(1).max(120).nullable().optional().describe('Optional human-readable label for /evaluate.'),
       archived: z.boolean().optional().describe('Set true to retire the slug from rotation.'),
     },
     async (input, { apiUrl, authHeader }) => {
-      const resolved = await resolveProjectId(input.projectId, apiUrl, authHeader)
-      if (!resolved.id) {
-        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-      }
-      const { projectId: _, ...body } = input
+      const { projectId, ...body } = input
       const { ok, data } = await callApi(
         'PUT',
-        `/projects/${resolved.id}/subject-variants`,
+        `/projects/${encodeURIComponent(projectId)}/subject-variants`,
         body,
         apiUrl,
         authHeader,
@@ -660,15 +598,11 @@ function buildToolRegistry(): ToolDef[] {
     'pick_subject_variant',
     'Pick an active subject-line variant for the project via a server-side weighted draw (weights are recomputed daily by run_lever_tick; an un-ticked / under-sampled project draws uniformly). Pass an explicit variantId to bypass the draw; unknown / archived ids fall through to the draw. Returns { variantId, subjectPattern, label }. For any subject-bearing send: the skill renders the pattern (substitutes {{org}} / {{name}} / {{signal}} placeholders) into the final subject and forwards variantId to send_email_and_record (email) or record_outreach_with_inquiry (a contact form that carries a subject) so outreach_logs.variant_id is stamped. NOT_FOUND when no active variants are registered — generate a one-off subject and send without variantId in that case.',
     {
-      projectId: z.string().describe('Project name or ID'),
+      projectId: z.string().min(1).describe('Project name or ID'),
       variantId: variantIdSchema.optional().describe('Override the weighted draw with a specific variant id.'),
     },
     async (input, { apiUrl, authHeader }) => {
-      const resolved = await resolveProjectId(input.projectId, apiUrl, authHeader)
-      if (!resolved.id) {
-        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-      }
-      const path = `/projects/${resolved.id}/subject-variants/pick${input.variantId ? `?variantId=${encodeURIComponent(input.variantId)}` : ''}`
+      const path = `/projects/${encodeURIComponent(input.projectId)}/subject-variants/pick${input.variantId ? `?variantId=${encodeURIComponent(input.variantId)}` : ''}`
       const { ok, data } = await callApi('POST', path, null, apiUrl, authHeader)
       if (!ok) {
         const e = data as { error: string; detail?: string }
@@ -690,14 +624,10 @@ function buildToolRegistry(): ToolDef[] {
     'run_lever_tick',
     'Run the daily outbound-optimization tick for the project. (1) Subject lines: measures per-variant reply rates over the reward-mature window, recomputes the weighted-draw weights pick_subject_variant reads, and archives any clearly-dominated variant (never below two active; reversible by un-archiving). (2) Channel affinity: measures (channel × coarse-industry) reply rates and recomputes the per-industry channel ranking get_outbound_targets surfaces — cells under min-sample stay on policy order, so low-volume projects are unaffected. Idempotent per UTC day — a second call the same day reports the already-recorded decision without re-applying. Call once per day from /daily-cycle after results are in. Returns the decision (subject weights, archived variants, sample counts, channel affinity by industry bucket) plus needsReplenishment: true when the subject pool has converged to the two-active floor with a dominated arm (the lever prunes/re-weights but never generates — /evaluate supplies a fresh angle).',
     {
-      projectId: z.string().describe('Project name or ID'),
+      projectId: z.string().min(1).describe('Project name or ID'),
     },
     async (input, { apiUrl, authHeader }) => {
-      const resolved = await resolveProjectId(input.projectId, apiUrl, authHeader)
-      if (!resolved.id) {
-        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-      }
-      const { ok, data } = await callApi('POST', `/projects/${resolved.id}/run-lever-tick`, null, apiUrl, authHeader)
+      const { ok, data } = await callApi('POST', `/projects/${encodeURIComponent(input.projectId)}/run-lever-tick`, null, apiUrl, authHeader)
       if (!ok) {
         const e = data as { error: string; detail?: string }
         const msg = e.detail ? `${e.error}: ${e.detail}` : e.error
@@ -738,14 +668,10 @@ function buildToolRegistry(): ToolDef[] {
     'get_lever_state',
     'Inspect the outbound optimizer state for the project: current subject draw weights (null = no tick yet → uniform), the measured channel affinity per coarse-industry bucket ({} = none yet → policy order), when they were last updated, the mature sample progress per active variant, today\'s tick decision if it has run, and needsReplenishment (true when the pool has converged to the two-active floor with a dominated arm → /evaluate should supply one fresh subject angle). Read-only — use it to see whether optimization has enough data and what it last decided.',
     {
-      projectId: z.string().describe('Project name or ID'),
+      projectId: z.string().min(1).describe('Project name or ID'),
     },
     async (input, { apiUrl, authHeader }) => {
-      const resolved = await resolveProjectId(input.projectId, apiUrl, authHeader)
-      if (!resolved.id) {
-        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-      }
-      const { ok, data } = await callApi('GET', `/projects/${resolved.id}/lever-state`, null, apiUrl, authHeader)
+      const { ok, data } = await callApi('GET', `/projects/${encodeURIComponent(input.projectId)}/lever-state`, null, apiUrl, authHeader)
       if (!ok) {
         const e = data as { error: string; detail?: string }
         const msg = e.detail ? `${e.error}: ${e.detail}` : e.error
@@ -759,16 +685,12 @@ function buildToolRegistry(): ToolDef[] {
     'get_lever_decisions',
     'Read the recent daily lever-tick decision history for the project (newest first; default last 30 days, override with days). Each entry is one UTC day\'s recorded decision: subject draw weights, any variants archived that day, per-variant sample counts, and the channel affinity per coarse-industry bucket. Read-only audit trail — use it to narrate how the no-control levers trended (weight shifts, archive events, channel-affinity moves) without trying to A/B or revert them. Empty until the tick has run at least once.',
     {
-      projectId: z.string().describe('Project name or ID'),
+      projectId: z.string().min(1).describe('Project name or ID'),
       days: z.number().int().min(1).max(365).optional().describe('Lookback window in days (default 30)'),
     },
     async (input, { apiUrl, authHeader }) => {
-      const resolved = await resolveProjectId(input.projectId, apiUrl, authHeader)
-      if (!resolved.id) {
-        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-      }
       const qs = input.days ? `?days=${input.days}` : ''
-      const { ok, data } = await callApi('GET', `/projects/${resolved.id}/lever-decisions${qs}`, null, apiUrl, authHeader)
+      const { ok, data } = await callApi('GET', `/projects/${encodeURIComponent(input.projectId)}/lever-decisions${qs}`, null, apiUrl, authHeader)
       if (!ok) {
         const e = data as { error: string; detail?: string }
         const msg = e.detail ? `${e.error}: ${e.detail}` : e.error
@@ -782,7 +704,7 @@ function buildToolRegistry(): ToolDef[] {
     'record_outreach',
     'Record an outreach log entry. status="sent" flips the prospect to "contacted". status="failed" REQUIRES errorMessage and stamps next_outreach_after = sentAt + noResponseRecycleDays (project setting, default 90) so the prospect drops out of get_outbound_targets for that window — covers both intentional skips (errorMessage starting with "skipped: …") and real send errors. status="pending_review" leaves the prospect unchanged but excludes it from get_outbound_targets while the draft is open. errorMessage is rejected with 400 on "sent" / "pending_review". For form / SNS DM where you intend to submit, prefer record_outreach_with_inquiry — it allocates the row pre-submit and returns finalBody with the inquiry-landing URL footer baked in.',
     {
-      projectId: z.string().describe('Project name or ID'),
+      projectId: z.string().min(1).describe('Project name or ID'),
       prospectId: z.number().int(),
       channel: z.enum(['email', 'form', 'sns_twitter', 'sns_linkedin']),
       subject: z.string().optional(),
@@ -794,11 +716,7 @@ function buildToolRegistry(): ToolDef[] {
         .describe('Required when status="failed"; rejected when status="sent" or "pending_review".'),
     },
     async (input, { apiUrl, authHeader }) => {
-      const resolved = await resolveProjectId(input.projectId, apiUrl, authHeader)
-      if (!resolved.id) {
-        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-      }
-      const { ok, data } = await callApi('POST', '/outreach', { ...input, projectId: resolved.id }, apiUrl, authHeader)
+      const { ok, data } = await callApi('POST', '/outreach', input, apiUrl, authHeader)
       if (!ok) {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
@@ -812,7 +730,7 @@ function buildToolRegistry(): ToolDef[] {
     'skip_prospect',
     'Record a deliberate decision NOT to contact a prospect on this outbound run — no send is attempted. Use only for the LLM judgment calls the server cannot make: reason="bad_timing" (the prospect overview flags now as a bad moment — layoffs, wind-down, post-acquisition freeze) or reason="no_fresh_material" (a re-approach with nothing new to say). Writes a "skipped" audit row and stamps next_outreach_after = sentAt + noResponseRecycleDays so the prospect drops out of get_outbound_targets for that window (longer existing windows preserved via GREATEST). No quota is consumed and the prospect is NOT marked contacted. Do NOT use this for unsupported-country prospects — get_outbound_targets already filters those server-side.',
     {
-      projectId: z.string().describe('Project name or ID'),
+      projectId: z.string().min(1).describe('Project name or ID'),
       prospectId: z.number().int(),
       channel: z.enum(['email', 'form', 'sns_twitter', 'sns_linkedin'])
         .describe('The channel the run was about to use. Recorded on the audit row only; no send happens.'),
@@ -822,11 +740,7 @@ function buildToolRegistry(): ToolDef[] {
         .describe('Optional one-line context shown in the recent-outreach feed.'),
     },
     async (input, { apiUrl, authHeader }) => {
-      const resolved = await resolveProjectId(input.projectId, apiUrl, authHeader)
-      if (!resolved.id) {
-        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-      }
-      const { ok, data } = await callApi('POST', '/outreach/skip', { ...input, projectId: resolved.id }, apiUrl, authHeader)
+      const { ok, data } = await callApi('POST', '/outreach/skip', input, apiUrl, authHeader)
       if (!ok) {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
@@ -892,7 +806,7 @@ function buildToolRegistry(): ToolDef[] {
     'send_email_and_record',
     'Compose and submit a prospect email + outreach log in one call. The server reads the project\'s outboundMode setting and either sends via the user\'s Gmail (mode "send") or stores a pending_review draft for the user to send from the LeadAce web app (mode "draft"). Skills should call this regardless of mode — do not branch on outboundMode in skill logic.',
     {
-      projectId: z.string().describe('Project name or ID'),
+      projectId: z.string().min(1).describe('Project name or ID'),
       prospectId: z.number().int(),
       to: z.array(z.email()).min(1),
       subject: z.string().min(1),
@@ -903,14 +817,10 @@ function buildToolRegistry(): ToolDef[] {
       variantId: variantIdSchema.optional().describe('Subject variant id from pick_subject_variant. Stamps outreach_logs.variant_id so /evaluate can join reply rates per variant.'),
     },
     async (input, { apiUrl, authHeader }) => {
-      const resolved = await resolveProjectId(input.projectId, apiUrl, authHeader)
-      if (!resolved.id) {
-        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-      }
       const { ok, data } = await callApi(
         'POST',
         '/outreach/send-and-record',
-        { ...input, projectId: resolved.id },
+        input,
         apiUrl,
         authHeader,
       )
@@ -935,7 +845,7 @@ function buildToolRegistry(): ToolDef[] {
     {
       ids: z.array(z.number().int().positive()).min(1).max(200).optional()
         .describe('Explicit list of outreach log ids to discard. Mutually exclusive with projectId.'),
-      projectId: z.string().optional()
+      projectId: z.string().min(1).optional()
         .describe('Project name or ID. When set (and ids omitted), wipes every pending_review draft in that project. Mutually exclusive with ids.'),
     },
     async ({ ids, projectId }, { apiUrl, authHeader }) => {
@@ -948,16 +858,9 @@ function buildToolRegistry(): ToolDef[] {
           isError: true,
         }
       }
-      let body: { ids: number[] } | { allInProjectId: string }
-      if (ids) {
-        body = { ids }
-      } else {
-        const resolved = await resolveProjectId(projectId!, apiUrl, authHeader)
-        if (!resolved.id) {
-          return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-        }
-        body = { allInProjectId: resolved.id }
-      }
+      const body: { ids: number[] } | { allInProjectId: string } = ids
+        ? { ids }
+        : { allInProjectId: projectId! }
       const { ok, data } = await callApi('POST', '/outreach/drafts/discard', body, apiUrl, authHeader)
       if (!ok) {
         const err = data as { error: string }
@@ -980,18 +883,14 @@ function buildToolRegistry(): ToolDef[] {
     'list_drafts',
     'List pending_review drafts for a project (newest first, paginated). Returns total and rows with a truncated bodyPreview; full review/edit/send happens at https://app.leadace.ai/drafts. Use to check pending drafts or preview a discard_drafts.',
     {
-      projectId: z.string().describe('Project name or ID'),
+      projectId: z.string().min(1).describe('Project name or ID'),
       limit: z.number().int().min(1).max(200).default(20),
       offset: z.number().int().min(0).default(0),
     },
     async ({ projectId, limit, offset }, { apiUrl, authHeader }) => {
-      const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
-      if (!resolved.id) {
-        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-      }
       const { ok, data } = await callApi(
         'GET',
-        `/projects/${resolved.id}/drafts?limit=${limit}&offset=${offset}`,
+        `/projects/${encodeURIComponent(projectId)}/drafts?limit=${limit}&offset=${offset}`,
         null,
         apiUrl,
         authHeader,
@@ -1036,19 +935,15 @@ function buildToolRegistry(): ToolDef[] {
     'update_prospect_status',
     'Update the status of a prospect in a project (e.g. mark as inactive, rejected).',
     {
-      projectId: z.string().describe('Project name or ID'),
+      projectId: z.string().min(1).describe('Project name or ID'),
       prospectId: z.number().int(),
       status: z.enum(prospectStatusEnum.enumValues),
     },
     async ({ projectId, prospectId, status }, { apiUrl, authHeader }) => {
-      const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
-      if (!resolved.id) {
-        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-      }
       const { ok, data } = await callApi(
         'PATCH',
         `/prospects/${prospectId}/status`,
-        { projectId: resolved.id, status },
+        { projectId, status },
         apiUrl,
         authHeader,
       )
@@ -1159,15 +1054,11 @@ function buildToolRegistry(): ToolDef[] {
     'get_recent_outreach',
     'Get recent outreach logs for a project. Confirmed events only (sent / failed / skipped) — pending_review drafts and pre_send rows are excluded; use list_drafts for drafts. Used by check-responses to match Gmail/SNS replies to sent messages. Each log carries the recipient identifiers (prospectName, contactName, prospectEmail, organizationDomain) so the skill can match by domain and name leads in the report without a second lookup. Each log also carries inquiry-landing aggregates: inquirySessionCount, inquiryOutcome (opened / inquired / unsubscribed / signup_clicked / lead / null — most-significant outcome ever recorded; signup_clicked is the self-serve counterpart to lead, surfaced only when the project runs in inquiryCtaType="signup"), inquiryMeetingSource (button / chat / null — only set when inquiryOutcome === "lead"), inquiryLastVisitAt — surface lead-via-landing and signup-via-landing alongside email replies, and skip reply-draft creation for outreach where the recipient already became a lead or signup via the inquiry page.',
     {
-      projectId: z.string().describe('Project name or ID'),
+      projectId: z.string().min(1).describe('Project name or ID'),
       limit: z.number().int().min(1).max(200).default(100),
     },
     async ({ projectId, limit }, { apiUrl, authHeader }) => {
-      const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
-      if (!resolved.id) {
-        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-      }
-      const { ok, data } = await callApi('GET', `/projects/${resolved.id}/outreach/recent?limit=${limit}`, null, apiUrl, authHeader)
+      const { ok, data } = await callApi('GET', `/projects/${encodeURIComponent(projectId)}/outreach/recent?limit=${limit}`, null, apiUrl, authHeader)
       if (!ok) {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
@@ -1232,20 +1123,16 @@ function buildToolRegistry(): ToolDef[] {
     'get_rejection_feedback_summary',
     'Aggregate rejection_feedback. With scope="pmf" returns the PMF slice (feature_gap, already_have_solution, competitor_locked) — primary_reason distribution + feature_gap free-text notes, with total and percentages computed within the PMF subset. Used by /check-feedback. With scope="tactical" returns the non-PMF slice — primary_reason distribution + recontactWindows (per-bucket count + samples for every RejectionRecontactWindow value: "never", "3_months", "6_months", "12_months", "unspecified" — empty buckets carry {count:0,samples:[]}) + decision_maker_pointer + not_relevant notes (with industry context). Used by /evaluate to drive targeting; recontact-window prospects are auto-deferred and decision_maker_pointer rows auto-create or update prospects at record_response time, both surface here as a transparency log only. scope="all" (default) returns the unfiltered union.',
     {
-      projectId: z.string().describe('Project name or ID'),
+      projectId: z.string().min(1).describe('Project name or ID'),
       windowDays: z.number().int().min(1).max(3650).optional().describe('Restrict to rejections received within the last N days. Omit for all-time.'),
       scope: z.enum(['pmf', 'tactical', 'all']).optional().describe('"pmf" → PMF slice only; "tactical" → non-PMF slice only; "all" (default) → unfiltered union.'),
     },
     async ({ projectId, windowDays, scope }, { apiUrl, authHeader }) => {
-      const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
-      if (!resolved.id) {
-        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-      }
       const params = new URLSearchParams()
       if (windowDays != null) params.set('windowDays', String(windowDays))
       if (scope != null) params.set('scope', scope)
       const qs = params.toString() ? `?${params.toString()}` : ''
-      const { ok, data } = await callApi('GET', `/projects/${resolved.id}/rejection-feedback/summary${qs}`, null, apiUrl, authHeader)
+      const { ok, data } = await callApi('GET', `/projects/${encodeURIComponent(projectId)}/rejection-feedback/summary${qs}`, null, apiUrl, authHeader)
       if (!ok) {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
@@ -1257,13 +1144,9 @@ function buildToolRegistry(): ToolDef[] {
   defineTool(
     'get_eval_data',
     'Get evaluation statistics for a project: response rates, channel performance, sentiment breakdown, and inquiry-landing outcome counts (opened / inquired / lead / signup_clicked / unsubscribed). Also returns responded message bodies and a data sufficiency check.',
-    { projectId: z.string().describe('Project name or ID') },
+    { projectId: z.string().min(1).describe('Project name or ID') },
     async ({ projectId }, { apiUrl, authHeader }) => {
-      const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
-      if (!resolved.id) {
-        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-      }
-      const { ok, data } = await callApi('GET', `/projects/${resolved.id}/stats`, null, apiUrl, authHeader)
+      const { ok, data } = await callApi('GET', `/projects/${encodeURIComponent(projectId)}/stats`, null, apiUrl, authHeader)
       if (!ok) {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
@@ -1278,7 +1161,7 @@ function buildToolRegistry(): ToolDef[] {
     'record_evaluation',
     'Record an evaluation result and optionally bulk-update prospect priorities by industry.',
     {
-      projectId: z.string().describe('Project name or ID'),
+      projectId: z.string().min(1).describe('Project name or ID'),
       metrics: z.record(z.string(), z.unknown()).describe('Summary metrics (from get_eval_data, excluding respondedMessages/noResponseSample)'),
       findings: z.string().describe('Analysis findings text'),
       improvements: z.string().describe('Improvement actions applied (free text or JSON)'),
@@ -1288,11 +1171,7 @@ function buildToolRegistry(): ToolDef[] {
       })).optional().describe('Bulk priority updates by industry'),
     },
     async (input, { apiUrl, authHeader }) => {
-      const resolved = await resolveProjectId(input.projectId, apiUrl, authHeader)
-      if (!resolved.id) {
-        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-      }
-      const { ok, data } = await callApi('POST', '/evaluations', { ...input, projectId: resolved.id }, apiUrl, authHeader)
+      const { ok, data } = await callApi('POST', '/evaluations', input, apiUrl, authHeader)
       if (!ok) {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
@@ -1310,13 +1189,9 @@ function buildToolRegistry(): ToolDef[] {
   defineTool(
     'get_evaluation_history',
     'Get past evaluation records for a project (findings, improvements, dates).',
-    { projectId: z.string().describe('Project name or ID') },
+    { projectId: z.string().min(1).describe('Project name or ID') },
     async ({ projectId }, { apiUrl, authHeader }) => {
-      const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
-      if (!resolved.id) {
-        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-      }
-      const { ok, data } = await callApi('GET', `/projects/${resolved.id}/evaluations`, null, apiUrl, authHeader)
+      const { ok, data } = await callApi('GET', `/projects/${encodeURIComponent(projectId)}/evaluations`, null, apiUrl, authHeader)
       if (!ok) {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
@@ -1337,15 +1212,11 @@ function buildToolRegistry(): ToolDef[] {
     'get_document',
     'Get the latest version of a project document (business, sales_strategy, search_notes).',
     {
-      projectId: z.string().describe('Project name or ID'),
+      projectId: z.string().min(1).describe('Project name or ID'),
       slug: z.string().describe('Document slug: "business", "sales_strategy", or "search_notes"'),
     },
     async ({ projectId, slug }, { apiUrl, authHeader }) => {
-      const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
-      if (!resolved.id) {
-        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-      }
-      const { ok, status, data } = await callApi('GET', `/projects/${resolved.id}/documents/${slug}`, null, apiUrl, authHeader)
+      const { ok, status, data } = await callApi('GET', `/projects/${encodeURIComponent(projectId)}/documents/${slug}`, null, apiUrl, authHeader)
       if (!ok) {
         if (status === 404) {
           return { content: [{ type: 'text' as const, text: `Document "${slug}" not found for project "${projectId}".` }] }
@@ -1364,16 +1235,12 @@ function buildToolRegistry(): ToolDef[] {
     'save_document',
     'Save a new version of a project document. Appends a new version (immutable); previous versions are preserved.',
     {
-      projectId: z.string().describe('Project name or ID'),
+      projectId: z.string().min(1).describe('Project name or ID'),
       slug: z.string().describe('Document slug: "business", "sales_strategy", or "search_notes"'),
       content: z.string().describe('Full markdown content of the document'),
     },
     async ({ projectId, slug, content }, { apiUrl, authHeader }) => {
-      const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
-      if (!resolved.id) {
-        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-      }
-      const { ok, data } = await callApi('PUT', `/projects/${resolved.id}/documents/${slug}`, { content }, apiUrl, authHeader)
+      const { ok, data } = await callApi('PUT', `/projects/${encodeURIComponent(projectId)}/documents/${slug}`, { content }, apiUrl, authHeader)
       if (!ok) {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
@@ -1387,14 +1254,10 @@ function buildToolRegistry(): ToolDef[] {
     'list_documents',
     'List all documents for a project with their last updated timestamps.',
     {
-      projectId: z.string().describe('Project name or ID'),
+      projectId: z.string().min(1).describe('Project name or ID'),
     },
     async ({ projectId }, { apiUrl, authHeader }) => {
-      const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
-      if (!resolved.id) {
-        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-      }
-      const { ok, data } = await callApi('GET', `/projects/${resolved.id}/documents`, null, apiUrl, authHeader)
+      const { ok, data } = await callApi('GET', `/projects/${encodeURIComponent(projectId)}/documents`, null, apiUrl, authHeader)
       if (!ok) {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
@@ -1461,7 +1324,7 @@ function buildToolRegistry(): ToolDef[] {
     'list_tenant_prospects',
     'List existing prospects across the entire tenant (every project the user owns). Use this in /match-prospects to find prospects gathered for past projects that may fit the current project. Excludes do-not-contact prospects. excludeProjectId omits prospects already linked to that project. q is a substring match on name / overview / industry / organization name. Returns up to 1000 rows.',
     {
-      excludeProjectId: z.string().optional()
+      excludeProjectId: z.string().min(1).optional()
         .describe('Project name or ID — omit prospects already linked to this project'),
       q: z.string().optional().describe('Substring search on name / overview / industry / org name'),
       industry: z.string().optional().describe('Exact-match industry filter'),
@@ -1469,13 +1332,7 @@ function buildToolRegistry(): ToolDef[] {
     },
     async ({ excludeProjectId, q, industry, limit }, { apiUrl, authHeader }) => {
       const params = new URLSearchParams()
-      if (excludeProjectId) {
-        const resolved = await resolveProjectId(excludeProjectId, apiUrl, authHeader)
-        if (!resolved.id) {
-          return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-        }
-        params.set('excludeProjectId', resolved.id)
-      }
+      if (excludeProjectId) params.set('excludeProjectId', excludeProjectId)
       if (q) params.set('q', q)
       if (industry) params.set('industry', industry)
       params.set('limit', String(limit))
@@ -1499,7 +1356,7 @@ function buildToolRegistry(): ToolDef[] {
     'link_existing_prospects_to_project',
     'Link existing tenant prospects to a project by creating project_prospects junction rows. Does NOT create new prospects or organizations — pair with list_tenant_prospects to discover candidates first. Skips prospects flagged do_not_contact and reports prospects already linked. Use this in /match-prospects after the LLM picks targets and the user approves.',
     {
-      projectId: z.string().describe('Project name or ID'),
+      projectId: z.string().min(1).describe('Project name or ID'),
       links: z.array(z.object({
         prospectId: z.number().int(),
         matchReason: z.string().min(1).describe('Why this prospect fits the current project'),
@@ -1507,13 +1364,9 @@ function buildToolRegistry(): ToolDef[] {
       })).min(1).max(200),
     },
     async ({ projectId, links }, { apiUrl, authHeader }) => {
-      const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
-      if (!resolved.id) {
-        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-      }
       const { ok, data } = await callApi(
         'POST',
-        `/projects/${resolved.id}/prospects/link`,
+        `/projects/${encodeURIComponent(projectId)}/prospects/link`,
         { links },
         apiUrl,
         authHeader,
@@ -1541,13 +1394,9 @@ function buildToolRegistry(): ToolDef[] {
   defineTool(
     'get_project_settings',
     'Get user-editable project settings (outboundMode, senderEmailAlias, senderDisplayName, senderCompanyName, senderJobTitle, unsubscribeEnabled, outboundChannels, targetCountries, ...). Returns defaults if no row exists yet. Skills should call this before strategy/build-list/outbound/daily-cycle to honor user-controlled behavior — especially outboundChannels (skip prospects whose only channel is disabled) and targetCountries (narrow discovery / exclude prospects outside the allowlist when non-empty).',
-    { projectId: z.string().describe('Project name or ID') },
+    { projectId: z.string().min(1).describe('Project name or ID') },
     async ({ projectId }, { apiUrl, authHeader }) => {
-      const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
-      if (!resolved.id) {
-        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-      }
-      const { ok, data } = await callApi('GET', `/projects/${resolved.id}/settings`, null, apiUrl, authHeader)
+      const { ok, data } = await callApi('GET', `/projects/${encodeURIComponent(projectId)}/settings`, null, apiUrl, authHeader)
       if (!ok) {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
@@ -1560,7 +1409,7 @@ function buildToolRegistry(): ToolDef[] {
     'update_project_settings',
     'Update user-editable project settings. Any omitted field keeps its current value. Pass null to clear nullable fields.',
     {
-      projectId: z.string().describe('Project name or ID'),
+      projectId: z.string().min(1).describe('Project name or ID'),
       outboundMode: z.enum(OUTBOUND_MODES).optional()
         .describe('"send" = send immediately. "draft" = store as LeadAce drafts for review (user sends from app.leadace.ai/drafts).'),
       senderEmailAlias: z.email().nullable().optional()
@@ -1605,11 +1454,7 @@ function buildToolRegistry(): ToolDef[] {
         .describe('ISO 3166-1 alpha-2 codes that further narrow the compliance-level send allowlist (currently US / CA / JP). Empty array (default) = no project-level restriction. Non-empty = explicit allowlist; /build-list focuses discovery on these countries and /outbound excludes prospects outside the set in addition to the unchanged send-time compliance gate.'),
     },
     async ({ projectId, ...patch }, { apiUrl, authHeader }) => {
-      const resolved = await resolveProjectId(projectId, apiUrl, authHeader)
-      if (!resolved.id) {
-        return { content: [{ type: 'text' as const, text: `Error: ${resolved.error}` }], isError: true }
-      }
-      const { ok, data } = await callApi('PUT', `/projects/${resolved.id}/settings`, patch, apiUrl, authHeader)
+      const { ok, data } = await callApi('PUT', `/projects/${encodeURIComponent(projectId)}/settings`, patch, apiUrl, authHeader)
       if (!ok) {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }

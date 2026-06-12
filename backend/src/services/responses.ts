@@ -19,6 +19,7 @@ import type { Db } from '../db/connection'
 import {
   outreachLogIdSchema,
   type ProjectId,
+  type ProjectRef,
   type TenantId,
 } from '../domain/ids'
 import {
@@ -34,7 +35,7 @@ import {
 import { addMonthsUtc, nextStatusFromResponse } from '../domain/prospect-status'
 import { projectProspectInsertValues } from '../domain/project-prospect'
 import { ok, err, type ServiceResult } from './result'
-import { requireProject } from './projects'
+import { resolveProject } from './projects'
 import { loadProjectReapproachSettings } from './project-settings'
 
 const rejectionFeedbackSchema = rejectionFeedbackCommonSchema.extend({
@@ -427,11 +428,12 @@ export type ListedResponse = {
 export async function listProjectResponses(
   db: Db,
   tenantId: TenantId,
-  projectId: ProjectId,
+  projectRef: ProjectRef,
   query: ListResponsesQuery,
 ): Promise<ServiceResult<{ responses: ListedResponse[]; total: number }>> {
-  const guard = await requireProject(db, projectId, tenantId)
-  if (!guard.ok) return guard
+  const resolved = await resolveProject(db, tenantId, projectRef)
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
 
   const { limit, offset, sentiment, responseType } = query
 
@@ -558,11 +560,12 @@ function bucketRecontactRows(
 export async function getRejectionFeedbackSummary(
   db: Db,
   tenantId: TenantId,
-  projectId: ProjectId,
+  projectRef: ProjectRef,
   query: RejectionFeedbackSummaryQuery,
 ): Promise<ServiceResult<RejectionFeedbackSummary>> {
-  const guard = await requireProject(db, projectId, tenantId)
-  if (!guard.ok) return guard
+  const resolved = await resolveProject(db, tenantId, projectRef)
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
 
   const { scope, freeTextLimit, recontactLimit, notRelevantLimit } = query
   const windowDays = query.windowDays ?? null
