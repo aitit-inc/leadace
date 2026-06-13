@@ -155,7 +155,9 @@ those alongside another stack, pass their own `--port` flags.
 
 What you need:
 
-- **Cloudflare account** (free tier works for low traffic).
+- **Cloudflare account** on the **Workers Paid plan** — the daily
+  org-signals cron makes up to 200 Gemini calls in one invocation,
+  past the Free plan's 50-subrequest limit.
 - **Supabase project** (free tier works for evaluation).
 - **Domain** (optional — you can run on `*.workers.dev` /
   `*.pages.dev` URLs without a custom domain).

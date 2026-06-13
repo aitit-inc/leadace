@@ -1,4 +1,5 @@
 import { sql } from 'drizzle-orm'
+import { Type, type Schema } from '@google/genai'
 import { orgSignalsGlobal, type OrgSignals } from '../db/schema'
 import type { Db } from '../db/connection'
 import { callGeminiGrounded, GeminiError, type GeminiEnv } from './gemini'
@@ -8,7 +9,11 @@ import { isEmptySignals, parseOrgSignalsText } from '../domain/org-signals'
 // listReachable's ordering consumes.
 const REFRESH_INTERVAL_DAYS = 7
 
-export const MAX_ORGS_PER_RUN = 20
+const MAX_ORGS_PER_RUN = 200
+
+// 5 workers keep a full 200-domain run around 2 minutes (~2.3s/call measured),
+// well inside the 15-minute cron wall-time and the subrequest budget.
+const REFRESH_CONCURRENCY = 5
 
 const GEMINI_SIGNAL_MODEL = 'gemini-3.1-flash-lite'
 
@@ -19,9 +24,9 @@ const staleCondition = sql`
   OR g.last_attempt_at < NOW() - INTERVAL '${sql.raw(String(REFRESH_INTERVAL_DAYS))} days'
 `
 
-export type StaleOrg = { domain: string; name: string }
+type StaleOrg = { domain: string; name: string }
 
-export async function pickStaleOrgs(db: Db, limit: number): Promise<StaleOrg[]> {
+async function pickStaleOrgs(db: Db, limit: number): Promise<StaleOrg[]> {
   // MIN(name): tenants may register the same domain under different names.
   const rows = await db.execute<StaleOrg>(sql`
     SELECT o.domain, MIN(o.name) AS name
@@ -45,11 +50,11 @@ export async function countStaleOrgDomains(db: Db): Promise<number> {
   return rows[0]?.count ?? 0
 }
 
-export type RefreshOutcome =
+type RefreshOutcome =
   | { updated: true }
   | { updated: false; reason: 'api_failed' | 'parse_failed' | 'no_signals' }
 
-export async function refreshOrgSignal(
+async function refreshOrgSignal(
   db: Db,
   env: GeminiEnv,
   org: StaleOrg,
@@ -94,53 +99,53 @@ async function recordRefreshAttempt(
     })
 }
 
-// Gemini response schema (OpenAPI subset) mirroring OrgSignals in db/schema.ts.
-const ORG_SIGNALS_RESPONSE_SCHEMA = {
-  type: 'OBJECT',
+// Gemini response schema mirroring OrgSignals in db/schema.ts.
+const ORG_SIGNALS_RESPONSE_SCHEMA: Schema = {
+  type: Type.OBJECT,
   properties: {
     pressReleases: {
-      type: 'ARRAY',
+      type: Type.ARRAY,
       items: {
-        type: 'OBJECT',
+        type: Type.OBJECT,
         properties: {
-          title: { type: 'STRING' },
-          url: { type: 'STRING' },
-          publishedAt: { type: 'STRING' },
+          title: { type: Type.STRING },
+          url: { type: Type.STRING },
+          publishedAt: { type: Type.STRING },
         },
         required: ['title'],
       },
     },
     funding: {
-      type: 'OBJECT',
+      type: Type.OBJECT,
       properties: {
-        round: { type: 'STRING' },
-        amount: { type: 'STRING' },
-        investors: { type: 'ARRAY', items: { type: 'STRING' } },
-        announcedAt: { type: 'STRING' },
+        round: { type: Type.STRING },
+        amount: { type: Type.STRING },
+        investors: { type: Type.ARRAY, items: { type: Type.STRING } },
+        announcedAt: { type: Type.STRING },
       },
     },
     hiring: {
-      type: 'OBJECT',
+      type: Type.OBJECT,
       properties: {
-        totalOpen: { type: 'INTEGER' },
-        departments: { type: 'ARRAY', items: { type: 'STRING' } },
-        sampleTitles: { type: 'ARRAY', items: { type: 'STRING' } },
-        sourceUrl: { type: 'STRING' },
+        totalOpen: { type: Type.INTEGER },
+        departments: { type: Type.ARRAY, items: { type: Type.STRING } },
+        sampleTitles: { type: Type.ARRAY, items: { type: Type.STRING } },
+        sourceUrl: { type: Type.STRING },
       },
     },
     leadership: {
-      type: 'ARRAY',
+      type: Type.ARRAY,
       items: {
-        type: 'OBJECT',
+        type: Type.OBJECT,
         properties: {
-          name: { type: 'STRING' },
-          role: { type: 'STRING' },
-          sourceUrl: { type: 'STRING' },
+          name: { type: Type.STRING },
+          role: { type: Type.STRING },
+          sourceUrl: { type: Type.STRING },
         },
         required: ['name'],
       },
     },
-    highlights: { type: 'ARRAY', items: { type: 'STRING' } },
+    highlights: { type: Type.ARRAY, items: { type: Type.STRING } },
   },
 }
 
@@ -197,7 +202,7 @@ async function searchSignalsViaGemini(env: GeminiEnv, org: StaleOrg): Promise<Ex
   }
 }
 
-export type DailyRefreshSummary = {
+type DailyRefreshSummary = {
   picked: number
   updated: number
   empty: number
@@ -219,37 +224,41 @@ export async function runDailySignalRefresh(
   let updated = 0
   let empty = 0
   let failed = 0
-  for (const org of orgs) {
-    const startedAt = Date.now()
-    let outcome: string
-    try {
-      const r = await refreshOrgSignal(db, geminiEnv, org)
-      if (r.updated) {
-        updated++
-        outcome = 'updated'
-      } else {
-        outcome = r.reason
-        if (r.reason === 'no_signals') {
-          empty++
+  const queue = [...orgs]
+  const worker = async () => {
+    for (let org = queue.shift(); org !== undefined; org = queue.shift()) {
+      const startedAt = Date.now()
+      let outcome: string
+      try {
+        const r = await refreshOrgSignal(db, geminiEnv, org)
+        if (r.updated) {
+          updated++
+          outcome = 'updated'
         } else {
-          failed++
+          outcome = r.reason
+          if (r.reason === 'no_signals') {
+            empty++
+          } else {
+            failed++
+          }
         }
+      } catch (e) {
+        // Only the DB write can throw here (API/parse failures are caught in
+        // refreshOrgSignal). Record a payload-less attempt so a
+        // deterministically-bad payload can't pin the domain at the picker head.
+        failed++
+        outcome = 'crashed'
+        console.error(
+          `[org-signals] refresh crashed for ${org.domain}: ${e instanceof Error ? e.message : String(e)}`,
+        )
+        await recordRefreshAttempt(db, org.domain, null)
       }
-    } catch (e) {
-      // Only the DB write can throw here (API/parse failures are caught in
-      // refreshOrgSignal). Record a payload-less attempt so a
-      // deterministically-bad payload can't pin the domain at the picker head.
-      failed++
-      outcome = 'crashed'
-      console.error(
-        `[org-signals] refresh crashed for ${org.domain}: ${e instanceof Error ? e.message : String(e)}`,
+      console.log(
+        `[org-signals] refresh domain=${org.domain} outcome=${outcome} ms=${Date.now() - startedAt}`,
       )
-      await recordRefreshAttempt(db, org.domain, null)
     }
-    console.log(
-      `[org-signals] refresh domain=${org.domain} outcome=${outcome} ms=${Date.now() - startedAt}`,
-    )
   }
+  await Promise.all(Array.from({ length: REFRESH_CONCURRENCY }, () => worker()))
   const staleRemaining = await countStaleOrgDomains(db)
   return { picked: orgs.length, updated, empty, failed, staleRemaining }
 }

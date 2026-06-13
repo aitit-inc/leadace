@@ -26,6 +26,7 @@ import { unsubscribeRouter } from './routes/unsubscribe'
 import { inquiryRouter } from './routes/inquiry'
 import { createDb } from '../db/connection'
 import { runDailySignalRefresh } from '../services/org-signals'
+import { runDailyBetaStats } from '../services/beta-stats'
 import type { Env, Variables } from './types'
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>()
@@ -92,11 +93,26 @@ const handler = {
   // ctx.waitUntil keeps the worker alive past the cron tick's quick return
   // until the refresh batch settles.
   async scheduled(
-    _controller: ScheduledController,
+    controller: ScheduledController,
     env: Env,
     ctx: ExecutionContext,
   ): Promise<void> {
     const db = createDb(env.DATABASE_URL)
+
+    // Two daily crons (declared in wrangler.api.jsonc):
+    //   0 3 * * *  org-signals refresh
+    //   0 4 * * *  beta KPI digest → Google Chat (cloud only; runs an hour
+    //              after the refresh so it can report that run's outcome)
+    if (controller.cron === '0 4 * * *') {
+      ctx.waitUntil(
+        runDailyBetaStats(db, env).catch((e: unknown) => {
+          console.error('[scheduled] beta-stats failed', e)
+          Sentry.captureException(e)
+        }),
+      )
+      return
+    }
+
     ctx.waitUntil(
       runDailySignalRefresh(db, env)
         .then((summary) => {

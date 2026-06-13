@@ -16,11 +16,13 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@google/genai": "^2.8.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@sentry/cloudflare": "^10.57.0",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.12.25",
     "jose": "^6.2.3",
+    "openai": "^6.42.0",
     "postgres": "^3.4.9",
     "zod": "^4.4.3"
   },

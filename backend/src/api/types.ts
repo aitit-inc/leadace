@@ -40,6 +40,10 @@ export type Env = {
   // Cloud-only error tracking. Set as a Worker secret on the hosted deploy;
   // unset everywhere else (local dev, self-host), where Sentry stays a no-op.
   SENTRY_DSN?: string
+  // Cloud-only daily KPI digest → Google Chat incoming webhook. Set as a
+  // Worker secret on the hosted deploy; unset everywhere else, where the
+  // beta-stats cron no-ops.
+  BETA_STATS_WEBHOOK_URL?: string
 }
 
 export type Variables = {
