@@ -504,13 +504,13 @@
       {#if landing.chatEnabled}
         <section class="mt-12 border-t border-border pt-8">
           <div class="flex items-baseline justify-between">
-            <h2 class="text-xs font-medium uppercase tracking-[0.12em] text-text-muted">
+            <h2 class="text-sm font-semibold uppercase tracking-[0.12em] text-text-secondary">
               Ask a question
             </h2>
             <span class="text-xs tabular-nums text-text-muted">{chatTurnsUsed} / {chatTurnsMax}</span>
           </div>
 
-          {#if chatTurns.length === 0 && !reachedTurnLimit && landing.chatFaqSuggestions.length > 0}
+          {#if !reachedTurnLimit && landing.chatFaqSuggestions.length > 0}
             <div class="mt-4 flex flex-wrap gap-2">
               {#each landing.chatFaqSuggestions as question}
                 <button

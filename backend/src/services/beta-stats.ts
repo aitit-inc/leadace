@@ -1,5 +1,5 @@
-import { sql } from 'drizzle-orm'
-import { planEnum, type OrgSignals } from '../db/schema'
+import { sql, count, gte } from 'drizzle-orm'
+import { planEnum, tenantPlans, orgSignalsGlobal, type OrgSignals } from '../db/schema'
 import type { Db } from '../db/connection'
 import { countStaleOrgDomains } from './org-signals'
 import { callGeminiText } from './gemini'
@@ -107,11 +107,12 @@ export async function collectBetaStats(db: Db): Promise<BetaStats> {
   `)
   if (!snap) throw new Error('beta-stats snapshot returned no row')
 
-  const planRows = await db.execute<{ plan: Plan; n: string | number }>(sql`
-    SELECT plan, count(*)::int AS n FROM tenant_plans GROUP BY plan
-  `)
+  const planRows = await db
+    .select({ plan: tenantPlans.plan, n: count() })
+    .from(tenantPlans)
+    .groupBy(tenantPlans.plan)
   const plans: Partial<Record<Plan, number>> = {}
-  for (const r of planRows) plans[r.plan] = Number(r.n)
+  for (const r of planRows) plans[r.plan] = r.n
 
   const backlog = await countStaleOrgDomains(db)
 
@@ -150,13 +151,12 @@ export async function collectBetaStats(db: Db): Promise<BetaStats> {
 type SignalUpdate = { domain: string; signals: OrgSignals }
 
 export async function fetchTodaySignalUpdates(db: Db): Promise<SignalUpdate[]> {
-  const rows = await db.execute<SignalUpdate>(sql`
-    SELECT domain, signals
-    FROM org_signals_global
-    WHERE signals_updated_at >= CURRENT_DATE
-    ORDER BY domain
-  `)
-  return rows.map((r) => ({ domain: r.domain, signals: r.signals }))
+  const rows = await db
+    .select({ domain: orgSignalsGlobal.domain, signals: orgSignalsGlobal.signals })
+    .from(orgSignalsGlobal)
+    .where(gte(orgSignalsGlobal.signalsUpdatedAt, sql`CURRENT_DATE`))
+    .orderBy(orgSignalsGlobal.domain)
+  return rows.flatMap((r) => (r.signals ? [{ domain: r.domain, signals: r.signals }] : []))
 }
 
 // One compact line per company capturing which signal categories were found,

@@ -529,13 +529,16 @@ function emptyRecontactWindows(): Record<RejectionRecontactWindow, RecontactWind
   return buckets
 }
 
+// Raw db.execute bypasses drizzle's column mappers, so through the prod
+// transaction pooler these arrive as strings (a direct connection parses them).
+// bucketRecontactRows normalizes to the Date/number RecontactSample needs.
 type RecontactRawRow = {
   window: RejectionRecontactWindow
-  received_at: Date
-  prospect_id: number
+  received_at: string | Date
+  prospect_id: string | number
   prospect_name: string
   organization_name: string
-  bucket_count: number
+  bucket_count: string | number
 }
 
 function bucketRecontactRows(
@@ -546,10 +549,10 @@ function bucketRecontactRows(
   for (const r of rows) {
     const bucket = buckets[r.window]
     // bucket_count is identical across every row in the partition.
-    bucket.count = r.bucket_count
+    bucket.count = Number(r.bucket_count)
     bucket.samples.push({
-      receivedAt: r.received_at,
-      prospectId: r.prospect_id,
+      receivedAt: new Date(r.received_at),
+      prospectId: Number(r.prospect_id),
       prospectName: r.prospect_name,
       organizationName: r.organization_name,
     })
@@ -635,14 +638,7 @@ export async function getRejectionFeedbackSummary(
     // per-window total so callers see "N of M" without a second pass.
     // Filtered to REJECTION_RECONTACT_WINDOWS to drop junk/future-enum values.
     gated(scope !== 'pmf', () =>
-      db.execute<{
-        window: RejectionRecontactWindow
-        received_at: Date
-        prospect_id: number
-        prospect_name: string
-        organization_name: string
-        bucket_count: number
-      }>(sql`
+      db.execute<RecontactRawRow>(sql`
         WITH ranked AS (
           SELECT
             -- "window" is a reserved keyword; quoted so the outer SELECT/ORDER BY parse.

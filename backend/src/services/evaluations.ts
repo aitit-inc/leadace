@@ -53,24 +53,38 @@ export const recordEvaluationSchema = z.object({
 })
 export type RecordEvaluationInput = z.infer<typeof recordEvaluationSchema>
 
-// Aggregation-heavy: 15 independent COUNT/GROUP BY queries pipelined over the
-// RLS transaction connection. Most rely on `COUNT() FILTER (WHERE ...)`,
-// multi-table joins, or `ROUND(... NULLIF, 1)::float` ratios that drizzle's
-// typed builder doesn't express directly. Each query returns a well-known
-// shape that we cast into `EvaluationMetrics`; if the SQL or the result type
-// drifts, both edits land here.
-
-type Row = Record<string, unknown>
+// Through the prod transaction pooler (Supavisor, prepare:false) postgres-js
+// can't read column type OIDs, so raw db.execute returns numeric/timestamp
+// columns as strings (a direct connection parses them to number/Date). Row
+// types below are honest about that (`string | number`) and reads normalize
+// with Number(...); the bandit relies on it (wilsonBounds compares responses ≤
+// total — a string compare would lie).
 
 type ResponseType = (typeof responseTypeEnum.enumValues)[number]
 type Sentiment = (typeof sentimentEnum.enumValues)[number]
 
 export type DailyActivity = { date: string; sent: number; responses: number }
 
+export type RespondedMessage = {
+  id: number
+  channel: Channel
+  subject: string | null
+  body: string
+  sentiment: Sentiment
+  responseType: ResponseType
+}
+
+export type NoResponseMessage = {
+  id: number
+  channel: Channel
+  subject: string | null
+  body: string
+}
+
 export type ProjectStatsResult = {
   metrics: EvaluationMetrics
-  respondedMessages: Row[]
-  noResponseSample: Row[]
+  respondedMessages: RespondedMessage[]
+  noResponseSample: NoResponseMessage[]
   dataSufficiency: {
     sufficient: boolean
     totalSent: number
@@ -104,22 +118,22 @@ export async function getVariantStats(
       : undefined
   const forgetBare = lookbackDays === undefined ? sql`` : sql` AND sent_at >= now() - make_interval(days => ${lookbackDays})`
   const forgetOl = lookbackDays === undefined ? sql`` : sql` AND ol.sent_at >= now() - make_interval(days => ${lookbackDays})`
-  const exec = async (q: ReturnType<typeof sql>): Promise<Row[]> =>
-    Array.from(await db.execute(q)) as Row[]
+  const exec = async <T extends Record<string, unknown>>(q: ReturnType<typeof sql>): Promise<T[]> =>
+    Array.from(await db.execute<T>(q)) as T[]
 
   const [denomRows, responseRows, rewardRows] = await Promise.all([
-    exec(sql`SELECT variant_id AS "variantId", COUNT(*)::int AS total
+    exec<{ variantId: string; total: string | number }>(sql`SELECT variant_id AS "variantId", COUNT(*)::int AS total
              FROM outreach_logs
              WHERE project_id = ${projectId} AND status = ${SENT}
                AND variant_id IS NOT NULL AND sent_at < ${matureBefore}${forgetBare}
              GROUP BY variant_id ORDER BY variant_id`),
-    exec(sql`SELECT ol.variant_id AS "variantId", COUNT(DISTINCT ol.id)::int AS responses
+    exec<{ variantId: string; responses: string | number }>(sql`SELECT ol.variant_id AS "variantId", COUNT(DISTINCT ol.id)::int AS responses
              FROM outreach_logs ol JOIN responses r ON r.outreach_log_id = ol.id
              WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}
                AND ol.variant_id IS NOT NULL AND ol.sent_at < ${matureBefore}${forgetOl}
                AND r.response_type NOT IN ('bounce', 'auto_reply')
              GROUP BY ol.variant_id`),
-    exec(sql`SELECT ol.variant_id AS "variantId", r.response_type AS "responseType", r.sentiment, COUNT(*)::int AS count
+    exec<{ variantId: string; responseType: ResponseType; sentiment: Sentiment; count: string | number }>(sql`SELECT ol.variant_id AS "variantId", r.response_type AS "responseType", r.sentiment, COUNT(*)::int AS count
              FROM outreach_logs ol JOIN responses r ON r.outreach_log_id = ol.id
              WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}
                AND ol.variant_id IS NOT NULL AND ol.sent_at < ${matureBefore}${forgetOl}
@@ -129,23 +143,19 @@ export async function getVariantStats(
 
   const agg = new Map<string, VariantStat>()
   for (const row of denomRows) {
-    const variantId = row['variantId'] as string
-    agg.set(variantId, { variantId, total: (row['total'] as number | undefined) ?? 0, responses: 0, rewardSum: 0 })
+    agg.set(row.variantId, { variantId: row.variantId, total: Number(row.total), responses: 0, rewardSum: 0 })
   }
   for (const row of responseRows) {
-    const entry = agg.get(row['variantId'] as string)
+    const entry = agg.get(row.variantId)
     if (!entry) continue
-    entry.responses = (row['responses'] as number | undefined) ?? 0
+    entry.responses = Number(row.responses)
   }
   for (const row of rewardRows) {
-    const entry = agg.get(row['variantId'] as string)
+    const entry = agg.get(row.variantId)
     if (!entry) continue
-    const count = (row['count'] as number | undefined) ?? 0
     entry.rewardSum +=
-      replyReward(
-        { responseType: row['responseType'] as ResponseType, sentiment: row['sentiment'] as Sentiment },
-        config.reward,
-      ) * count
+      replyReward({ responseType: row.responseType, sentiment: row.sentiment }, config.reward) *
+      Number(row.count)
   }
   return Array.from(agg.values())
 }
@@ -160,16 +170,16 @@ export async function getChannelStats(
 ): Promise<ChannelFineStat[]> {
   const SENT: OutreachStatus = 'sent'
   const matureBefore = sql`now() - make_interval(days => ${config.rewardWindowDays})`
-  const exec = async (q: ReturnType<typeof sql>): Promise<Row[]> =>
-    Array.from(await db.execute(q)) as Row[]
+  const exec = async <T extends Record<string, unknown>>(q: ReturnType<typeof sql>): Promise<T[]> =>
+    Array.from(await db.execute<T>(q)) as T[]
 
   const [denomRows, responseRows] = await Promise.all([
-    exec(sql`SELECT ol.channel AS "channel", p.industry AS "industry", COUNT(*)::int AS total
+    exec<{ channel: Channel; industry: string | null; total: string | number }>(sql`SELECT ol.channel AS "channel", p.industry AS "industry", COUNT(*)::int AS total
              FROM outreach_logs ol JOIN prospects p ON p.id = ol.prospect_id
              WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}
                AND ol.sent_at < ${matureBefore}
              GROUP BY ol.channel, p.industry`),
-    exec(sql`SELECT ol.channel AS "channel", p.industry AS "industry", COUNT(DISTINCT ol.id)::int AS responses
+    exec<{ channel: Channel; industry: string | null; responses: string | number }>(sql`SELECT ol.channel AS "channel", p.industry AS "industry", COUNT(DISTINCT ol.id)::int AS responses
              FROM outreach_logs ol
                JOIN prospects p ON p.id = ol.prospect_id
                JOIN responses r ON r.outreach_log_id = ol.id
@@ -182,16 +192,14 @@ export async function getChannelStats(
   const keyOf = (channel: string, industry: string | null): string => `${channel} ${industry ?? ''}`
   const agg = new Map<string, ChannelFineStat>()
   for (const row of denomRows) {
-    const channel = row['channel'] as Channel
-    const industry = (row['industry'] as string | null) ?? null
-    agg.set(keyOf(channel, industry), { channel, industry, total: (row['total'] as number | undefined) ?? 0, responses: 0 })
+    const industry = row.industry ?? null
+    agg.set(keyOf(row.channel, industry), { channel: row.channel, industry, total: Number(row.total), responses: 0 })
   }
   for (const row of responseRows) {
-    const channel = row['channel'] as Channel
-    const industry = (row['industry'] as string | null) ?? null
-    const entry = agg.get(keyOf(channel, industry))
+    const industry = row.industry ?? null
+    const entry = agg.get(keyOf(row.channel, industry))
     if (!entry) continue
-    entry.responses = (row['responses'] as number | undefined) ?? 0
+    entry.responses = Number(row.responses)
   }
   return Array.from(agg.values())
 }
@@ -205,10 +213,8 @@ export async function getProjectStats(
   if (!resolved.ok) return resolved
   const projectId = resolved.value
 
-  const rawQuery = async (query: ReturnType<typeof sql>): Promise<Row[]> => {
-    const result = await db.execute(query)
-    return Array.from(result) as Row[]
-  }
+  const rawQuery = async <T extends Record<string, unknown>>(query: ReturnType<typeof sql>): Promise<T[]> =>
+    Array.from(await db.execute<T>(query)) as T[]
 
   // Bind enum literals as parameters so a typo would surface at compile time.
   const SENT: OutreachStatus = 'sent'
@@ -233,17 +239,17 @@ export async function getProjectStats(
     dailySentRows,
     dailyResponseRows,
   ] = await Promise.all([
-    rawQuery(sql`SELECT COUNT(*)::int AS "totalOutreach" FROM outreach_logs WHERE project_id = ${projectId} AND status = ${SENT}`),
+    rawQuery<{ totalOutreach: string | number }>(sql`SELECT COUNT(*)::int AS "totalOutreach" FROM outreach_logs WHERE project_id = ${projectId} AND status = ${SENT}`),
     // Channel mix counts confirmed activity only — exclude in-flight rows
     // ('pending_review' drafts and 'pre_send' allocations) so neither a
     // queued draft nor a stuck skill submit skews the breakdown.
-    rawQuery(sql`SELECT channel, COUNT(*)::int AS count FROM outreach_logs WHERE project_id = ${projectId} AND status IN (${SENT}, ${FAILED}) GROUP BY channel`),
-    rawQuery(sql`SELECT COUNT(r.id)::int AS "totalResponses", COUNT(DISTINCT ol.prospect_id)::int AS "uniqueResponders"
+    rawQuery<{ channel: Channel; count: string | number }>(sql`SELECT channel, COUNT(*)::int AS count FROM outreach_logs WHERE project_id = ${projectId} AND status IN (${SENT}, ${FAILED}) GROUP BY channel`),
+    rawQuery<{ totalResponses: string | number; uniqueResponders: string | number }>(sql`SELECT COUNT(r.id)::int AS "totalResponses", COUNT(DISTINCT ol.prospect_id)::int AS "uniqueResponders"
                  FROM responses r JOIN outreach_logs ol ON r.outreach_log_id = ol.id WHERE ol.project_id = ${projectId}`),
-    rawQuery(sql`SELECT r.sentiment, r.response_type AS "responseType", COUNT(*)::int AS count
+    rawQuery<{ sentiment: Sentiment; responseType: ResponseType; count: string | number }>(sql`SELECT r.sentiment, r.response_type AS "responseType", COUNT(*)::int AS count
                  FROM responses r JOIN outreach_logs ol ON r.outreach_log_id = ol.id WHERE ol.project_id = ${projectId}
                  GROUP BY r.sentiment, r.response_type`),
-    rawQuery(sql`SELECT pp.priority,
+    rawQuery<{ priority: string | number; total: string | number; responses: string | number; rate: string | number | null }>(sql`SELECT pp.priority,
                    COUNT(DISTINCT ol.id)::int AS total,
                    COUNT(DISTINCT r.id)::int AS responses,
                    ROUND(COUNT(DISTINCT r.id)::numeric / NULLIF(COUNT(DISTINCT ol.id), 0) * 100, 1)::float AS rate
@@ -252,50 +258,50 @@ export async function getProjectStats(
                  LEFT JOIN responses r ON r.outreach_log_id = ol.id
                  WHERE pp.project_id = ${projectId}
                  GROUP BY pp.priority ORDER BY pp.priority`),
-    rawQuery(sql`SELECT status, COUNT(*)::int AS count FROM project_prospects WHERE project_id = ${projectId} GROUP BY status`),
+    rawQuery<{ status: ProspectStatus; count: string | number }>(sql`SELECT status, COUNT(*)::int AS count FROM project_prospects WHERE project_id = ${projectId} GROUP BY status`),
     // Per-channel response rate uses confirmed activity for the denominator
     // (matches channelCounts above) — in-flight rows have no chance of
     // being responded to yet, so including them would dilute the rate.
-    rawQuery(sql`SELECT ol.channel,
+    rawQuery<{ channel: Channel; total: string | number; responses: string | number; rate: string | number | null }>(sql`SELECT ol.channel,
                    COUNT(ol.id)::int AS total,
                    COUNT(r.id)::int AS responses,
                    ROUND(COUNT(r.id)::numeric / NULLIF(COUNT(ol.id), 0) * 100, 1)::float AS rate
                  FROM outreach_logs ol LEFT JOIN responses r ON r.outreach_log_id = ol.id
                  WHERE ol.project_id = ${projectId} AND ol.status IN (${SENT}, ${FAILED}) GROUP BY ol.channel`),
-    rawQuery(sql`SELECT ol.id, ol.channel, ol.subject, ol.body, r.sentiment, r.response_type AS "responseType"
+    rawQuery<{ id: string | number; channel: Channel; subject: string | null; body: string; sentiment: Sentiment; responseType: ResponseType }>(sql`SELECT ol.id, ol.channel, ol.subject, ol.body, r.sentiment, r.response_type AS "responseType"
                  FROM responses r JOIN outreach_logs ol ON r.outreach_log_id = ol.id WHERE ol.project_id = ${projectId}`),
-    rawQuery(sql`SELECT ol.id, ol.channel, ol.subject, ol.body
+    rawQuery<{ id: string | number; channel: Channel; subject: string | null; body: string }>(sql`SELECT ol.id, ol.channel, ol.subject, ol.body
                  FROM outreach_logs ol WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}
                    AND NOT EXISTS (SELECT 1 FROM responses r WHERE r.outreach_log_id = ol.id)
                  ORDER BY ol.sent_at DESC LIMIT 10`),
-    rawQuery(sql`SELECT COUNT(*)::int AS "totalSent", MAX(sent_at) AS "lastSentAt"
+    rawQuery<{ totalSent: string | number; lastSentAt: string | Date | null }>(sql`SELECT COUNT(*)::int AS "totalSent", MAX(sent_at) AS "lastSentAt"
                  FROM outreach_logs WHERE project_id = ${projectId} AND status = ${SENT}`),
     // inquiry_sessions has no project_id column — project scope flows through
     // outreach_logs. Counts every session ever opened for this project,
     // grouped by terminal-or-current outcome.
-    rawQuery(sql`SELECT s.outcome, COUNT(*)::int AS count
+    rawQuery<{ outcome: InquiryOutcome; count: string | number }>(sql`SELECT s.outcome, COUNT(*)::int AS count
                  FROM inquiry_sessions s
                  JOIN outreach_logs ol ON ol.id = s.outreach_log_id
                  WHERE ol.project_id = ${projectId}
                  GROUP BY s.outcome`),
     // Daily sent / response counts over the last 30 days, bucketed by UTC day
     // (matches the UTC-midnight quota window). Drives the activity-trend table.
-    rawQuery(sql`SELECT (sent_at AT TIME ZONE 'UTC')::date::text AS day, COUNT(*)::int AS count
+    rawQuery<{ day: string; count: string | number }>(sql`SELECT (sent_at AT TIME ZONE 'UTC')::date::text AS day, COUNT(*)::int AS count
                  FROM outreach_logs
                  WHERE project_id = ${projectId} AND status = ${SENT}
                    AND sent_at >= ${trendSince}
                  GROUP BY day`),
-    rawQuery(sql`SELECT (r.received_at AT TIME ZONE 'UTC')::date::text AS day, COUNT(*)::int AS count
+    rawQuery<{ day: string; count: string | number }>(sql`SELECT (r.received_at AT TIME ZONE 'UTC')::date::text AS day, COUNT(*)::int AS count
                  FROM responses r JOIN outreach_logs ol ON r.outreach_log_id = ol.id
                  WHERE ol.project_id = ${projectId}
                    AND r.received_at >= ${trendSince}
                  GROUP BY day`),
   ])
 
-  const totalOutreach = (totalOutreachRows[0]?.['totalOutreach'] as number | undefined) ?? 0
+  const totalOutreach = Number(totalOutreachRows[0]?.totalOutreach ?? 0)
   const lastSentRow = lastSentRows[0]
-  const totalSent = (lastSentRow?.['totalSent'] as number | undefined) ?? 0
-  const lastSentAt = (lastSentRow?.['lastSentAt'] as string | null | undefined) ?? null
+  const totalSent = Number(lastSentRow?.totalSent ?? 0)
+  const lastSentAt = lastSentRow?.lastSentAt ?? null
   const daysSinceLastSend = lastSentAt
     ? Math.floor((Date.now() - new Date(lastSentAt).getTime()) / 86_400_000)
     : null
@@ -306,9 +312,7 @@ export async function getProjectStats(
     INQUIRY_OUTCOMES.map((o) => [o, 0]),
   ) as Record<InquiryOutcome, number>
   for (const row of inquiryOutcomeRows) {
-    const outcome = row['outcome'] as InquiryOutcome
-    const count = (row['count'] as number | undefined) ?? 0
-    inquiryOutcomeCounts[outcome] = count
+    inquiryOutcomeCounts[row.outcome] = Number(row.count)
   }
 
   const config = await loadLeverConfig(db, projectId)
@@ -323,12 +327,29 @@ export async function getProjectStats(
 
   const metrics: EvaluationMetrics = {
     totalOutreach,
-    channelCounts: channelCountsRows as EvaluationMetrics['channelCounts'],
-    responseCounts: (responseCountsRows[0] ?? { totalResponses: 0, uniqueResponders: 0 }) as EvaluationMetrics['responseCounts'],
-    sentimentBreakdown: sentimentBreakdownRows as EvaluationMetrics['sentimentBreakdown'],
-    priorityResponseRate: priorityResponseRateRows as EvaluationMetrics['priorityResponseRate'],
-    statusCounts: statusCountsRows as EvaluationMetrics['statusCounts'],
-    channelResponseRate: channelResponseRateRows as EvaluationMetrics['channelResponseRate'],
+    channelCounts: channelCountsRows.map((r) => ({ channel: r.channel, count: Number(r.count) })),
+    responseCounts: {
+      totalResponses: Number(responseCountsRows[0]?.totalResponses ?? 0),
+      uniqueResponders: Number(responseCountsRows[0]?.uniqueResponders ?? 0),
+    },
+    sentimentBreakdown: sentimentBreakdownRows.map((r) => ({
+      sentiment: r.sentiment,
+      responseType: r.responseType,
+      count: Number(r.count),
+    })),
+    priorityResponseRate: priorityResponseRateRows.map((r) => ({
+      priority: Number(r.priority),
+      total: Number(r.total),
+      responses: Number(r.responses),
+      rate: Number(r.rate ?? 0),
+    })),
+    statusCounts: statusCountsRows.map((r) => ({ status: r.status, count: Number(r.count) })),
+    channelResponseRate: channelResponseRateRows.map((r) => ({
+      channel: r.channel,
+      total: Number(r.total),
+      responses: Number(r.responses),
+      rate: Number(r.rate ?? 0),
+    })),
     variantResponseRate,
     inquiryOutcomeCounts,
   }
@@ -339,14 +360,12 @@ export async function getProjectStats(
   // / responses rows are the single source of truth).
   const dailyMap = new Map<string, DailyActivity>()
   for (const row of dailySentRows) {
-    const date = row['day'] as string
-    dailyMap.set(date, { date, sent: (row['count'] as number | undefined) ?? 0, responses: 0 })
+    dailyMap.set(row.day, { date: row.day, sent: Number(row.count), responses: 0 })
   }
   for (const row of dailyResponseRows) {
-    const date = row['day'] as string
-    const entry = dailyMap.get(date) ?? { date, sent: 0, responses: 0 }
-    entry.responses = (row['count'] as number | undefined) ?? 0
-    dailyMap.set(date, entry)
+    const entry = dailyMap.get(row.day) ?? { date: row.day, sent: 0, responses: 0 }
+    entry.responses = Number(row.count)
+    dailyMap.set(row.day, entry)
   }
   const dailyActivity = Array.from(dailyMap.values()).sort((a, b) =>
     a.date < b.date ? 1 : a.date > b.date ? -1 : 0,
@@ -354,8 +373,20 @@ export async function getProjectStats(
 
   return ok({
     metrics,
-    respondedMessages: respondedMessagesRows,
-    noResponseSample: noResponseSampleRows,
+    respondedMessages: respondedMessagesRows.map((r) => ({
+      id: Number(r.id),
+      channel: r.channel,
+      subject: r.subject,
+      body: r.body,
+      sentiment: r.sentiment,
+      responseType: r.responseType,
+    })),
+    noResponseSample: noResponseSampleRows.map((r) => ({
+      id: Number(r.id),
+      channel: r.channel,
+      subject: r.subject,
+      body: r.body,
+    })),
     dataSufficiency: {
       sufficient: totalSent >= 30 && (daysSinceLastSend === null || daysSinceLastSend >= 3),
       totalSent,
@@ -413,7 +444,7 @@ export async function recordEvaluation(
       sql`, `,
     )
     const updatedRows = Array.from(
-      await db.execute(sql`
+      await db.execute<{ industry: string }>(sql`
         UPDATE project_prospects pp
         SET priority = v.priority, updated_at = now()
         FROM (VALUES ${valuesList}) AS v(industry, priority)
@@ -421,13 +452,12 @@ export async function recordEvaluation(
         WHERE pp.prospect_id = p.id AND pp.project_id = ${projectId} AND pp.status = ${NEW}::prospect_status
         RETURNING v.industry AS industry
       `),
-    ) as Row[]
+    )
     // Seed every requested industry at 0 so an industry that matched no 'new'
     // prospect still appears in the result (preserves prior behavior).
     const counts = new Map<string, number>(priorityUpdates.map((pu) => [pu.industry, 0]))
     for (const row of updatedRows) {
-      const industry = row['industry'] as string
-      counts.set(industry, (counts.get(industry) ?? 0) + 1)
+      counts.set(row.industry, (counts.get(row.industry) ?? 0) + 1)
     }
     priorityResults = priorityUpdates.map((pu) => ({
       industry: pu.industry,

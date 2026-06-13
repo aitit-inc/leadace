@@ -84,6 +84,7 @@ const documents = [
   { slug: 'tpl_targeting_guide', file: 'backend/seed-content/tpl_targeting_guide.md' },
   { slug: 'tpl_email_templates', file: 'backend/seed-content/tpl_email_templates.md' },
   { slug: 'tpl_email_guidelines', file: 'backend/seed-content/tpl_email_guidelines.md' },
+  { slug: 'tpl_email_base', file: 'backend/seed-content/tpl_email_base.md' },
   { slug: 'tpl_channel_policy', file: 'backend/seed-content/tpl_channel_policy.md' },
   { slug: 'tpl_enrich_contacts', file: 'backend/seed-content/tpl_enrich_contacts.md' },
   { slug: 'tpl_industries', file: 'backend/seed-content/tpl_industries.md' },

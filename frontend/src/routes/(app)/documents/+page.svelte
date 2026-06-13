@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { getDocument, listDocumentHistory } from '$lib/api/documents';
+  import { invalidate } from '$app/navigation';
+  import { getDocument, listDocumentHistory, saveDocument, getMasterDocument } from '$lib/api/documents';
   import type { DocumentVersion } from '$lib/types/documents';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import type { PageProps } from './$types';
@@ -8,18 +9,32 @@
     business: 'Business',
     sales_strategy: 'Sales Strategy',
     search_notes: 'Search Notes',
+    email_template: 'Email Template',
   };
+
+  // email_template is opt-in: surface it as editable even before the doc exists.
+  const ALWAYS_EDITABLE = ['email_template'];
 
   let { data }: PageProps = $props();
   let token = $derived(data.session?.access_token);
 
-  // Drilldown into a specific document is page-local (the API returns the
-  // full version) — only the document index is server-loaded.
+  let displayedDocs = $derived<Array<{ slug: string; updatedAt: string | null }>>([
+    ...data.documents,
+    ...ALWAYS_EDITABLE.filter((s) => !data.documents.some((d) => d.slug === s)).map(
+      (slug) => ({ slug, updatedAt: null as string | null }),
+    ),
+  ]);
+
   let selectedSlug = $state<string | null>(null);
   let currentDoc = $state<DocumentVersion | null>(null);
   let history = $state<DocumentVersion[]>([]);
   let showHistory = $state(false);
   let loadingDoc = $state(false);
+
+  let editing = $state(false);
+  let draft = $state('');
+  let saving = $state(false);
+  let saveError = $state<string | null>(null);
 
   // Reset the drilldown when the project (and its index) changes.
   $effect(() => {
@@ -28,6 +43,8 @@
     currentDoc = null;
     history = [];
     showHistory = false;
+    editing = false;
+    saveError = null;
   });
 
   async function selectDoc(slug: string) {
@@ -36,6 +53,8 @@
     loadingDoc = true;
     showHistory = false;
     history = [];
+    editing = false;
+    saveError = null;
     try {
       currentDoc = await getDocument(data.activeProjectId, slug, fetch, token);
     } catch {
@@ -57,6 +76,43 @@
     history = res.history;
   }
 
+  function startEdit() {
+    draft = currentDoc?.content ?? '';
+    saveError = null;
+    editing = true;
+  }
+
+  function cancelEdit() {
+    editing = false;
+    saveError = null;
+  }
+
+  async function loadDefault() {
+    saveError = null;
+    try {
+      const def = await getMasterDocument('tpl_email_base', fetch, token);
+      draft = def.content;
+    } catch {
+      saveError = 'Could not load the default template.';
+    }
+  }
+
+  async function save() {
+    if (!data.activeProjectId || !selectedSlug || !draft.trim() || saving) return;
+    saving = true;
+    saveError = null;
+    try {
+      await saveDocument(data.activeProjectId, selectedSlug, draft, fetch, token);
+      editing = false;
+      await selectDoc(selectedSlug);
+      await invalidate('app:documents');
+    } catch (e) {
+      saveError = e instanceof Error ? e.message : 'Save failed.';
+    } finally {
+      saving = false;
+    }
+  }
+
   function formatDate(iso: string) {
     return new Date(iso).toLocaleString('en-US', {
       year: 'numeric',
@@ -70,17 +126,19 @@
   function label(slug: string) {
     return SLUG_LABELS[slug] ?? slug;
   }
+
+  let isEditable = $derived(selectedSlug !== null && ALWAYS_EDITABLE.includes(selectedSlug));
 </script>
 
 <h2 class="text-lg font-semibold text-text mb-6">Documents</h2>
 
-{#if data.documents.length === 0}
-  <EmptyState message="No documents yet. Ask /leadace to draft your business and strategy documents." />
+{#if !data.activeProjectId}
+  <EmptyState message="No active project. Create one with /leadace first." />
 {:else}
   <div class="flex flex-col md:flex-row gap-4 md:gap-6">
     <div class="md:w-48 md:shrink-0">
       <div class="flex flex-wrap gap-2 md:flex-col md:gap-1">
-        {#each data.documents as doc}
+        {#each displayedDocs as doc}
           <button
             onclick={() => selectDoc(doc.slug)}
             class="text-left px-3 py-2 rounded text-sm transition-colors md:w-full
@@ -89,7 +147,9 @@
                 : 'text-text-secondary hover:text-text hover:bg-surface'}"
           >
             <span class="block">{label(doc.slug)}</span>
-            <span class="block text-xs text-text-muted mt-0.5">{formatDate(doc.updatedAt)}</span>
+            <span class="block text-xs text-text-muted mt-0.5">
+              {doc.updatedAt ? formatDate(doc.updatedAt) : 'Not created yet'}
+            </span>
           </button>
         {/each}
       </div>
@@ -100,20 +160,62 @@
         <p class="text-text-muted text-sm">Select a document to view</p>
       {:else if loadingDoc}
         <p class="text-text-muted text-sm">Loading...</p>
+      {:else if editing}
+        <div class="mb-3 flex items-center justify-between gap-2">
+          <h3 class="text-base font-semibold text-text">{label(selectedSlug)}</h3>
+          <div class="flex items-center gap-3">
+            {#if isEditable}
+              <button onclick={loadDefault} class="text-xs text-accent hover:underline">
+                Load default
+              </button>
+            {/if}
+            <button onclick={cancelEdit} class="text-xs text-text-muted hover:text-text">
+              Cancel
+            </button>
+            <button
+              onclick={save}
+              disabled={saving || !draft.trim()}
+              class="rounded bg-text px-3 py-1 text-xs font-medium text-page transition-opacity hover:opacity-90 disabled:opacity-40"
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </div>
+        <textarea
+          bind:value={draft}
+          aria-label={label(selectedSlug)}
+          rows="22"
+          spellcheck="false"
+          class="w-full resize-y rounded border border-border bg-page p-4 text-sm text-text font-mono leading-relaxed focus:border-text/60 focus:outline-none"
+        ></textarea>
+        {#if saveError}
+          <p class="mt-2 text-xs text-danger">{saveError}</p>
+        {/if}
       {:else if !currentDoc}
-        <EmptyState message="Document not found" />
+        {#if isEditable}
+          <div class="mb-4 flex items-center justify-between">
+            <h3 class="text-base font-semibold text-text">{label(selectedSlug)}</h3>
+            <button onclick={startEdit} class="text-xs text-accent hover:underline">Create</button>
+          </div>
+          <EmptyState message="No email template yet. Create one to override the default outreach voice, or click “Create” then “Load default” to start from the standard template." />
+        {:else}
+          <EmptyState message="Document not found" />
+        {/if}
       {:else}
-        <div class="mb-4 flex items-center justify-between">
+        <div class="mb-4 flex items-center justify-between gap-2">
           <div>
             <h3 class="text-base font-semibold text-text">{label(selectedSlug)}</h3>
             <p class="text-xs text-text-muted mt-0.5">Last updated: {formatDate(currentDoc.createdAt)}</p>
           </div>
-          <button
-            onclick={() => (showHistory ? (showHistory = false) : loadHistory())}
-            class="text-xs text-accent hover:underline"
-          >
-            {showHistory ? 'Hide history' : 'Show history'}
-          </button>
+          <div class="flex items-center gap-3">
+            <button onclick={startEdit} class="text-xs text-accent hover:underline">Edit</button>
+            <button
+              onclick={() => (showHistory ? (showHistory = false) : loadHistory())}
+              class="text-xs text-accent hover:underline"
+            >
+              {showHistory ? 'Hide history' : 'Show history'}
+            </button>
+          </div>
         </div>
 
         <div class="rounded border border-border bg-page p-4 overflow-x-auto">

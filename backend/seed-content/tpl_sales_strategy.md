@@ -41,7 +41,7 @@ Examples:
 ## Sender Information
 - Sender name: (Name displayed as email sender)
 - Sender email address: (The From: address shown to recipients)
-- Signature: (Signature block appended to emails. Organization name, full name, title, phone number, URL, etc.)
+- Signature: (A light sign-off appended to emails — e.g., `Best,` + your full name, optionally your role. Keep it light; avoid phone / postal address / multiple URLs. The backend appends the compliance footer with legal name + physical address automatically.)
 - Scheduling link: (Timerex / Calendly / Cal.com URL. In meeting CTA mode, the inquiry-landing page uses this URL behind its "Book a meeting" button. If inquiry landing is disabled, this URL is also embedded inline in email CTAs as the meeting fallback.)
 - Signup URL: (SaaS self-serve signup / "Get started" / "Start your trial" URL. In signup CTA mode, the inquiry-landing page uses this URL behind its "Sign up" button. **Never embedded in email bodies** — the recipient reaches the signup page through the inquiry-landing footer link. Mutually exclusive with the scheduling link — the project picks one CTA mode.)
 
@@ -62,11 +62,11 @@ Subject: {specific subject line that addresses the recipient's challenge}
 
 {Solution: 2-3 lines on how your service solves it}
 
-{Track record / proof: 1-2 lines with numbers or case studies if available}
+{Proof (optional): one line with a number or comparable customer -- only if one genuinely fits}
 
 {CTA: One next action only. When inquiry landing is enabled (typical), invite the recipient to the inquiry-landing conversation — the landing URL is appended automatically as the email footer, do NOT paste any URL inline. When inquiry landing is disabled (meeting-only legacy mode), include the scheduling link with a question framing. The signup URL is never embedded in the email body in any mode — it is reached through the inquiry-landing Sign up button.}
 
-{Signature}
+{Sign-off: Best, + your name}
 ```
 
 ### Inquiry Landing CTA Mode

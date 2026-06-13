@@ -1,6 +1,6 @@
-import { sql } from 'drizzle-orm'
+import { sql, or, eq, isNull, lt, min, countDistinct } from 'drizzle-orm'
 import { Type, type Schema } from '@google/genai'
-import { orgSignalsGlobal, type OrgSignals } from '../db/schema'
+import { organizations, orgSignalsGlobal, type OrgSignals } from '../db/schema'
 import type { Db } from '../db/connection'
 import { callGeminiGrounded, GeminiError, type GeminiEnv } from './gemini'
 import { isEmptySignals, parseOrgSignalsText } from '../domain/org-signals'
@@ -17,37 +17,40 @@ const REFRESH_CONCURRENCY = 5
 
 const GEMINI_SIGNAL_MODEL = 'gemini-3.1-flash-lite'
 
-// sql.raw is fine for the integer `REFRESH_INTERVAL_DAYS` constant — there's
-// no user input on this path. INTERVAL '<n> days' takes a literal.
-const staleCondition = sql`
-  g.domain IS NULL
-  OR g.last_attempt_at < NOW() - INTERVAL '${sql.raw(String(REFRESH_INTERVAL_DAYS))} days'
-`
+// Stale = never attempted (LEFT JOIN miss → domain IS NULL) or last attempt
+// older than the refresh interval. sql.raw is fine for the integer constant —
+// no user input on this path; INTERVAL '<n> days' takes a literal.
+const staleCondition = or(
+  isNull(orgSignalsGlobal.domain),
+  lt(
+    orgSignalsGlobal.lastAttemptAt,
+    sql`NOW() - INTERVAL '${sql.raw(String(REFRESH_INTERVAL_DAYS))} days'`,
+  ),
+)
 
 type StaleOrg = { domain: string; name: string }
 
 async function pickStaleOrgs(db: Db, limit: number): Promise<StaleOrg[]> {
   // MIN(name): tenants may register the same domain under different names.
-  const rows = await db.execute<StaleOrg>(sql`
-    SELECT o.domain, MIN(o.name) AS name
-    FROM organizations o
-    LEFT JOIN org_signals_global g ON g.domain = o.domain
-    WHERE ${staleCondition}
-    GROUP BY o.domain, g.last_attempt_at
-    ORDER BY g.last_attempt_at ASC NULLS FIRST, o.domain
-    LIMIT ${limit}
-  `)
-  return rows.map((r) => ({ domain: r.domain, name: r.name }))
+  const rows = await db
+    .select({ domain: organizations.domain, name: min(organizations.name) })
+    .from(organizations)
+    .leftJoin(orgSignalsGlobal, eq(orgSignalsGlobal.domain, organizations.domain))
+    .where(staleCondition)
+    .groupBy(organizations.domain, orgSignalsGlobal.lastAttemptAt)
+    .orderBy(sql`${orgSignalsGlobal.lastAttemptAt} ASC NULLS FIRST`, organizations.domain)
+    .limit(limit)
+  // name is NOT NULL and each group has >=1 row, so min() is never null here.
+  return rows.map((r) => ({ domain: r.domain, name: r.name! }))
 }
 
 export async function countStaleOrgDomains(db: Db): Promise<number> {
-  const rows = await db.execute<{ count: number }>(sql`
-    SELECT COUNT(DISTINCT o.domain)::int AS count
-    FROM organizations o
-    LEFT JOIN org_signals_global g ON g.domain = o.domain
-    WHERE ${staleCondition}
-  `)
-  return rows[0]?.count ?? 0
+  const [row] = await db
+    .select({ count: countDistinct(organizations.domain) })
+    .from(organizations)
+    .leftJoin(orgSignalsGlobal, eq(orgSignalsGlobal.domain, organizations.domain))
+    .where(staleCondition)
+  return row?.count ?? 0
 }
 
 type RefreshOutcome =

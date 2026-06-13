@@ -40,10 +40,10 @@ Prioritize efficiency with template-based semi-personalization.
 1. **Opening greeting** (1-2 lines): Use "{full name}" if the prospect's `contact_name` is in the DB, otherwise use "{organization name} Team" — using "Team" alone reads as mass outreach and is prohibited. Briefly explain why you're reaching out
 2. **Problem framing** (2-3 lines): Specifically address the challenge the recipient likely faces
 3. **Solution** (2-3 lines): How your service solves it
-4. **Track record / proof** (1-2 lines): Quote at least one item from the "Track Record / Social Proof" section of SALES_STRATEGY.md. Specific numbers significantly increase credibility
+4. **Proof (optional, 1 line)**: If you have a concrete, relevant proof point — a number or a comparable customer from the "Track Record / Social Proof" section of SALES_STRATEGY.md — include one short line; specifics build credibility. If none fits naturally, skip it. A short honest ask beats forced credentials
 5. **CTA** (1 line): Present exactly one next action
 6. **Legal required disclosures**: Opt-out notice (see below)
-7. **Signature**: Use the "Sender Information" section from SALES_STRATEGY.md
+7. **Sign-off** (1-2 lines): Close light — `Best,` (or similar) on one line, your name on the next; add your role only if it helps. Do **not** paste a full signature block (phone, postal address, multiple URLs): English-standard cold email closes light, and the backend appends the compliance footer (legal name, physical address, unsubscribe) automatically. Take the name/role from the "Sender Information" section of SALES_STRATEGY.md
 
 ## CTA (Call to Action)
 
@@ -82,13 +82,7 @@ When the project's `inquiryCtaType` is `signup`, the recipient reaches the self-
 
 ## Required Legal Disclosures
 
-Outbound email regulations vary by country. Always comply with the laws applicable to your recipients' location (e.g., CAN-SPAM in the US, GDPR in the EU/UK, CASL in Canada, Spam Act in Australia). Common requirements across most jurisdictions:
-
-- **Sender identification**: Sender's name or company name (acceptable if included in signature)
-- **Physical or postal address**: A valid mailing address (acceptable if included in signature)
-- **Opt-out mechanism**: A clear and easy way for recipients to opt out — e.g., "If you prefer not to receive further emails, please reply to this message." Process opt-out requests promptly
-
-Verify that these are included in the signature block in SALES_STRATEGY.md. If the opt-out notice is missing, add it at the end of the email.
+Outbound email is regulated by the recipient's jurisdiction (CAN-SPAM in the US, CASL in Canada, Japan's Act on Regulation of Transmission of Specified Electronic Mail, and others). The required disclosures — **sender identity (legal name), a valid physical/postal address, and an opt-out mechanism** — are appended automatically by the backend as a compliance footer on every send. **Do not add them to the body, and do not duplicate them in the sign-off** (a second address block yields a confused-looking footer). If `send_email_and_record` returns `412 Tenant compliance settings incomplete`, the footer can't be built — surface the message and have the user complete Workspace settings before retrying.
 
 > Note: If targeting recipients in specific countries, research the applicable regulations for those jurisdictions before sending.
 
@@ -104,15 +98,15 @@ Check each email against these patterns that significantly lower response rates 
 |---|---|---|
 | Salutation is "Team" only | Perceived as mass outreach; likely to be ignored | Use "{organization name} Team" or "{full name}" |
 | CTA is just a URL | Unclear what action is expected; clicking a URL is a high-friction action | Use question format to prompt a reply (URL is supplementary) |
-| Zero track record / social proof | No basis for trust from a stranger | Quote at least one item from the track record in SALES_STRATEGY.md |
+| Forced, irrelevant, or fabricated proof | A bolted-on stat reads as filler and can erode trust | Use a proof point only when one genuinely fits the recipient; otherwise lean on specific personalization |
 | Only opening is changed; rest is template | Recipient can tell it's not meant for them | Weave overview / match_reason throughout the body (in precision mode) |
 | Bare URL spam | Prone to spam filters | Embed naturally in text, or include just one URL in the CTA |
 | Self-promotion comes first | Without empathy for the recipient's challenges, they won't read on | Structure as: their situation → challenge → solution |
 
 ## Notes
 
-- Body text should be **75–150 words** (excluding signature and legal disclosures). Shorter emails have higher response rates
+- Body text should be **75–150 words** (excluding sign-off and legal disclosures). Shorter emails have higher response rates
 - One CTA per email
 - No attachments (for first contact)
-- Polite but not overly formal. Excessive formality creates distance
+- **Default voice is English-standard casual**: write the way a real person emails — warm, direct, conversational. No formal honorifics, no heavy signature block; close with a light sign-off (`Best,` + your name). Excessive formality creates distance. (A project's own `email_template` document, when present, overrides this default voice)
 - Avoid spam trigger words: "free", "limited", "act now", etc.

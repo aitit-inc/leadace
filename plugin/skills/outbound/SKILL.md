@@ -64,7 +64,7 @@ Pay particular attention to these sections in the sales_strategy document:
 - **Outreach mode**: `precision` (deep personalization) or `volume` (template-based semi-personalization). The document always carries a concrete value — read it; do not assume a default
 - **Sales channels**: tactical preferences only (channel ordering, sub-channel preferences, tone). Channel enablement (on/off) is owned by `outboundChannels` in project settings — read below, not from this section.
 - **Messaging**: Subject line patterns, body structure, and A/B test instructions if any -- follow them
-- **Sender information**: Signature block (organization phone, name, title, etc.). Sender display name and email come from project settings, **not** from this document — the backend send path uses them automatically
+- **Sender information**: the name (and optional role) for the light sign-off — not a full signature block; the backend appends the compliance footer (legal name, address, unsubscribe) automatically. Sender display name and email come from project settings, **not** from this document — the backend send path uses them automatically
 - **Email template**: If a template is defined, use it as a base (especially important in volume mode)
 - **SNS messages**: SNS DM messaging policy
 
@@ -201,7 +201,11 @@ skip the skip — they own the trade-off.
 
 ### 3. Email Sending
 
-Retrieve email guidelines via `mcp__plugin_leadace_api__get_master_document` with `slug: "tpl_email_guidelines"` and follow them. Get the signature block from the "Sender Information" section of SALES_STRATEGY.md (append it to the body). Sender display name and `From:` address are applied automatically by `send_email_and_record` from project settings — do not pass them as arguments.
+Retrieve email guidelines via `mcp__plugin_leadace_api__get_master_document` with `slug: "tpl_email_guidelines"` and follow them.
+
+**Body template precedence.** If the project has an `email_template` document (`mcp__plugin_leadace_api__get_document`, `slug: "email_template"`), use it as the authoritative body template — it holds the operator's chosen voice and supersedes the "Email Template" section of SALES_STRATEGY.md. If `get_document` reports that document does not exist, fall back to that SALES_STRATEGY.md section. The shared English-standard-casual default lives in master doc `tpl_email_base`.
+
+Close with a light sign-off (name + optional role) drawn from the "Sender Information" section of SALES_STRATEGY.md — not a full signature block; the backend appends the compliance footer (legal name, address, unsubscribe) automatically. Sender display name and `From:` address are applied automatically by `send_email_and_record` from project settings — do not pass them as arguments.
 
 **Subject line variation (weighted draw).** Subject patterns are stored
 server-side in `subject_variants`; the server picks one per send by a

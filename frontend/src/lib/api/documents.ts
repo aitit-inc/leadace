@@ -28,6 +28,35 @@ export function getDocument(
   });
 }
 
+export function saveDocument(
+  projectId: string,
+  slug: string,
+  content: string,
+  fetchFn: RequestFetch = fetch,
+  token?: string,
+): Promise<{ id: number; slug: string; createdAt: string }> {
+  return request<{ id: number; slug: string; createdAt: string }>(fetchFn, {
+    method: 'PUT',
+    path: `/projects/${projectId}/documents/${slug}`,
+    body: { content },
+    auth: 'required',
+    token,
+  });
+}
+
+export function getMasterDocument(
+  slug: string,
+  fetchFn: RequestFetch = fetch,
+  token?: string,
+): Promise<{ slug: string; content: string }> {
+  return request<{ slug: string; content: string }>(fetchFn, {
+    method: 'GET',
+    path: `/master-documents/${slug}`,
+    auth: 'required',
+    token,
+  });
+}
+
 export type ListDocumentHistoryParams = {
   limit?: number;
 };
