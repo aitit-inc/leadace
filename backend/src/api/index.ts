@@ -83,6 +83,12 @@ app.onError((err, c) => {
   return c.json({ error: 'Internal server error' }, 500)
 })
 
+// org-signals refresh is pinned to this schedule; keep in sync with the
+// `crons` arrays in wrangler.api.jsonc. Every other scheduled trigger (the
+// 0 4 beta digest, or a temporary test cron) falls through to the digest, so
+// its schedule can change in wrangler without touching this dispatch.
+const ORG_SIGNALS_CRON = '0 3 * * *'
+
 const handler = {
   fetch: app.fetch,
 
@@ -99,33 +105,33 @@ const handler = {
   ): Promise<void> {
     const db = createDb(env.DATABASE_URL)
 
-    // Two daily crons (declared in wrangler.api.jsonc):
-    //   0 3 * * *  org-signals refresh
-    //   0 4 * * *  beta KPI digest → Google Chat (cloud only; runs an hour
-    //              after the refresh so it can report that run's outcome)
-    if (controller.cron === '0 4 * * *') {
+    if (controller.cron === ORG_SIGNALS_CRON) {
       ctx.waitUntil(
-        runDailyBetaStats(db, env).catch((e: unknown) => {
-          console.error('[scheduled] beta-stats failed', e)
-          Sentry.captureException(e)
-        }),
+        runDailySignalRefresh(db, env)
+          .then((summary) => {
+            // Workers Logs only indexes the message string for search.
+            console.log(
+              `[scheduled] org-signals refresh picked=${summary.picked} updated=${summary.updated} empty=${summary.empty} failed=${summary.failed} staleRemaining=${summary.staleRemaining}`,
+            )
+          })
+          .catch((e: unknown) => {
+            console.error('[scheduled] org-signals refresh failed', e)
+            // Scheduled failures never hit Hono onError — report them directly.
+            Sentry.captureException(e)
+          }),
       )
       return
     }
 
+    // Every other scheduled trigger (the 0 4 beta digest, or a temporary test
+    // cron) runs the beta KPI digest. Log the dispatch so a test/temporary cron
+    // is visible in Workers Logs even on a successful or no-op run.
+    console.log(`[scheduled] beta-stats digest cron=${controller.cron}`)
     ctx.waitUntil(
-      runDailySignalRefresh(db, env)
-        .then((summary) => {
-          // Workers Logs only indexes the message string for search.
-          console.log(
-            `[scheduled] org-signals refresh picked=${summary.picked} updated=${summary.updated} empty=${summary.empty} failed=${summary.failed} staleRemaining=${summary.staleRemaining}`,
-          )
-        })
-        .catch((e: unknown) => {
-          console.error('[scheduled] org-signals refresh failed', e)
-          // Scheduled failures never hit Hono onError — report them directly.
-          Sentry.captureException(e)
-        }),
+      runDailyBetaStats(db, env).catch((e: unknown) => {
+        console.error(`[scheduled] beta-stats failed cron=${controller.cron}`, e)
+        Sentry.captureException(e)
+      }),
     )
   },
 }
