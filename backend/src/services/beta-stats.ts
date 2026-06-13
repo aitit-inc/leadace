@@ -13,8 +13,26 @@ export type BetaStats = {
   usersTotal: number
   sent: number
   senders: number
-  inquiriesOpened: number
-  replies: number
+  // Inquiry-landing sessions opened in the window, split by outcome. The four
+  // outcome buckets are subsets of `total`; the remainder opened but took no
+  // further action.
+  inquiries: {
+    total: number
+    inquired: number
+    lead: number
+    signupClicked: number
+    unsubscribed: number
+  }
+  // Responses received in the window. sentiment (positive/neutral/negative)
+  // partitions `total`; meeting/bounce are cross-cutting response-type callouts.
+  replies: {
+    total: number
+    positive: number
+    neutral: number
+    negative: number
+    meeting: number
+    bounce: number
+  }
   bugs: number
   plans: Partial<Record<Plan, number>>
   orgSignals: {
@@ -33,28 +51,59 @@ type SnapshotRow = {
   users_total: string | number
   sent: string | number
   senders: string | number
-  opened: string | number
-  replies: string | number
+  inq_total: string | number
+  inq_inquired: string | number
+  inq_lead: string | number
+  inq_signup: string | number
+  inq_unsub: string | number
+  rep_total: string | number
+  rep_positive: string | number
+  rep_neutral: string | number
+  rep_negative: string | number
+  rep_meeting: string | number
+  rep_bounce: string | number
   bugs: string | number
   os_last_attempt: string | Date | null
   os_updated_today: string | number
 }
 
 export async function collectBetaStats(db: Db): Promise<BetaStats> {
-  // One round-trip for all scalar counts. tenants stands in for signups: a
-  // signed-in user triggers tenant auto-provisioning on their first API call,
-  // so an auth.users row without a tenant is effectively unreachable.
+  // One round-trip for all counts. tenants stands in for signups: a signed-in
+  // user triggers tenant auto-provisioning on their first API call, so an
+  // auth.users row without a tenant is effectively unreachable. The inquiry /
+  // reply breakdowns are FILTER aggregates inside a single per-table scan
+  // (cross-joined as 1×1 rows), so adding resolution costs no extra scans on
+  // the growing inquiry_sessions / responses tables.
   const [snap] = await db.execute<SnapshotRow>(sql`
     SELECT
       (SELECT count(*) FROM tenants WHERE created_at >= now() - INTERVAL '24 hours')::int AS users_day,
       (SELECT count(*) FROM tenants)::int AS users_total,
       (SELECT count(*) FROM outreach_logs WHERE status = 'sent' AND sent_at >= now() - INTERVAL '24 hours')::int AS sent,
       (SELECT count(DISTINCT tenant_id) FROM outreach_logs WHERE status = 'sent' AND sent_at >= now() - INTERVAL '24 hours')::int AS senders,
-      (SELECT count(*) FROM inquiry_sessions WHERE opened_at >= now() - INTERVAL '24 hours')::int AS opened,
-      (SELECT count(*) FROM responses WHERE received_at >= now() - INTERVAL '24 hours')::int AS replies,
+      iq.inq_total, iq.inq_inquired, iq.inq_lead, iq.inq_signup, iq.inq_unsub,
+      rp.rep_total, rp.rep_positive, rp.rep_neutral, rp.rep_negative, rp.rep_meeting, rp.rep_bounce,
       (SELECT count(*) FROM bug_reports WHERE created_at >= now() - INTERVAL '24 hours')::int AS bugs,
       (SELECT max(last_attempt_at) FROM org_signals_global) AS os_last_attempt,
       (SELECT count(*) FROM org_signals_global WHERE signals_updated_at >= CURRENT_DATE)::int AS os_updated_today
+    FROM
+      (SELECT
+         count(*)::int AS inq_total,
+         count(*) FILTER (WHERE outcome = 'inquired')::int AS inq_inquired,
+         count(*) FILTER (WHERE outcome = 'lead')::int AS inq_lead,
+         count(*) FILTER (WHERE outcome = 'signup_clicked')::int AS inq_signup,
+         count(*) FILTER (WHERE outcome = 'unsubscribed')::int AS inq_unsub
+       FROM inquiry_sessions
+       WHERE opened_at >= now() - INTERVAL '24 hours') iq
+      CROSS JOIN
+      (SELECT
+         count(*)::int AS rep_total,
+         count(*) FILTER (WHERE sentiment = 'positive')::int AS rep_positive,
+         count(*) FILTER (WHERE sentiment = 'neutral')::int AS rep_neutral,
+         count(*) FILTER (WHERE sentiment = 'negative')::int AS rep_negative,
+         count(*) FILTER (WHERE response_type = 'meeting_request')::int AS rep_meeting,
+         count(*) FILTER (WHERE response_type = 'bounce')::int AS rep_bounce
+       FROM responses
+       WHERE received_at >= now() - INTERVAL '24 hours') rp
   `)
   if (!snap) throw new Error('beta-stats snapshot returned no row')
 
@@ -71,8 +120,21 @@ export async function collectBetaStats(db: Db): Promise<BetaStats> {
     usersTotal: Number(snap.users_total),
     sent: Number(snap.sent),
     senders: Number(snap.senders),
-    inquiriesOpened: Number(snap.opened),
-    replies: Number(snap.replies),
+    inquiries: {
+      total: Number(snap.inq_total),
+      inquired: Number(snap.inq_inquired),
+      lead: Number(snap.inq_lead),
+      signupClicked: Number(snap.inq_signup),
+      unsubscribed: Number(snap.inq_unsub),
+    },
+    replies: {
+      total: Number(snap.rep_total),
+      positive: Number(snap.rep_positive),
+      neutral: Number(snap.rep_neutral),
+      negative: Number(snap.rep_negative),
+      meeting: Number(snap.rep_meeting),
+      bounce: Number(snap.rep_bounce),
+    },
     bugs: Number(snap.bugs),
     plans,
     orgSignals: {
@@ -190,14 +252,25 @@ export function formatBetaStats(
     orgLine = `🔄 org-signals ⚠️ no run today / backlog ${os.backlog} (last attempt ${last ? `${ymdHmUtc(last)} UTC` : 'never'})`
   }
 
+  const iq = stats.inquiries
+  const rep = stats.replies
   const lines = [
     `📊 LeadAce Daily (last 24h) — ${jstDate} JST`,
     `👤 Users +${stats.usersDay} (total ${stats.usersTotal})`,
     `📤 Sent ${stats.sent} (senders ${stats.senders})`,
-    `💬 Inquiries ${stats.inquiriesOpened}  ·  📨 Replies ${stats.replies}  ·  🐛 Bugs ${stats.bugs}`,
-    `💳 ${planLine}`,
-    orgLine,
+    `💬 Inquiries ${iq.total}  ·  📨 Replies ${rep.total}  ·  🐛 Bugs ${stats.bugs}`,
   ]
+  if (iq.total > 0) {
+    lines.push(
+      `   ↳ Inquiries: 🎯 ${iq.lead} lead · 🔗 ${iq.signupClicked} signup · ✍️ ${iq.inquired} chat · 🚫 ${iq.unsubscribed} unsub`,
+    )
+  }
+  if (rep.total > 0) {
+    lines.push(
+      `   ↳ Replies: 👍 ${rep.positive} · 😐 ${rep.neutral} · 👎 ${rep.negative} · 🤝 ${rep.meeting} mtg · ⚠️ ${rep.bounce} bounce`,
+    )
+  }
+  lines.push(`💳 ${planLine}`, orgLine)
   if (trends !== null) lines.push(`🧠 Signal trends:\n${trends}`)
   return lines.join('\n')
 }
