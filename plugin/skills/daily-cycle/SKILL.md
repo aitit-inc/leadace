@@ -158,7 +158,7 @@ You are an outbound sales agent. Please reach out to each company on the prospec
    - Outreach mode (precision / volume) — the document always carries a concrete value; read it, do not assume a default
    - SALES_STRATEGY "Sales Channels" section: tactical preferences only (ordering, tone, sub-channel preferences). Channel enablement is owned by `outboundChannels` in project settings (applied in outbound/SKILL.md step 1).
    - Subject line pattern variations (if A/B test instructions exist, follow them)
-   - Email body structure and template (especially important in volume mode)
+   - Email messaging hints (First Outreach approach). The body template itself is the `email_template` document, retrieved in the outbound step (outbound/SKILL.md) — not in SALES_STRATEGY.md
    - Sender information: signature block only (sender display name + email live in project settings and are applied automatically by `send_email` / `send_email_and_record`)
    - SNS messaging policy
 

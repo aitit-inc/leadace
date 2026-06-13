@@ -12,7 +12,7 @@
     email_template: 'Email Template',
   };
 
-  // email_template is opt-in: surface it as editable even before the doc exists.
+  // email_template is the outbound body template; surface it as editable even before the doc exists.
   const ALWAYS_EDITABLE = ['email_template'];
 
   let { data }: PageProps = $props();
@@ -197,7 +197,7 @@
             <h3 class="text-base font-semibold text-text">{label(selectedSlug)}</h3>
             <button onclick={startEdit} class="text-xs text-accent hover:underline">Create</button>
           </div>
-          <EmptyState message="No email template yet. Create one to override the default outreach voice, or click “Create” then “Load default” to start from the standard template." />
+          <EmptyState message="No email template yet. This is the body template the outbound run uses — click “Create” then “Load default” to start from the standard template." />
         {:else}
           <EmptyState message="Document not found" />
         {/if}

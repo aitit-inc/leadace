@@ -84,7 +84,7 @@ Check completeness of each section in existing `SALES_STRATEGY.md`:
 | Outbound mode | send / draft is set in project settings |
 | Sales channels | Optional — tactical notes (ordering, tone) present, OR explicitly empty when no project-specific notes. Channel enablement lives in Project Settings (`outboundChannels`), not here. |
 | Sender information | Display name + email in project settings; phone + signature in document |
-| Messaging / email template | Template defined |
+| Messaging | First Outreach approach present |
 | Response definition | Conditions counting as response specified |
 | Notification settings | Content present ("none" is a valid value) |
 | KPI | Metrics set |
@@ -401,6 +401,16 @@ mcp__plugin_leadace_api__save_document
   slug: "sales_strategy"
   content: <full markdown>
 ```
+
+**Then handle the `email_template` document** — the project's first-outreach email body template and the single source the outbound step reads (the body template no longer lives in SALES_STRATEGY.md):
+- **Initial**: generate it from master `tpl_email_base` (`get_master_document`), adapting its voice to the business while keeping the per-prospect `{placeholders}`, then save:
+```
+mcp__plugin_leadace_api__save_document
+  projectId: "$0"
+  slug: "email_template"
+  content: <full markdown>
+```
+- **Update** (Mode A): the `email_template` is user-authored — rewrite only on explicit user request (same rule as Messaging); otherwise leave the existing document untouched.
 
 ## Step 7.5. Generate inquiry_chat_brief (AI Inquiry chat input)
 

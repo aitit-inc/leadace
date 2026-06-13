@@ -48,27 +48,6 @@ Examples:
 ## Messaging
 ### First Outreach (Email/Form)
 (Template-like structure: subject line patterns, opening hook, problem framing, solution presentation, CTA)
-### Email Template
-The following is a reference template for first outreach emails. Customize for each prospect.
-
-```
-Subject: {specific subject line that addresses the recipient's challenge}
-
-{Recipient's organization name}
-
-{Opening: 1-2 lines on why you're reaching out}
-
-{Problem framing: 2-3 lines on the specific challenge the recipient likely faces}
-
-{Solution: 2-3 lines on how your service solves it}
-
-{Proof (optional): one line with a number or comparable customer -- only if one genuinely fits}
-
-{CTA: One next action only. When inquiry landing is enabled (typical), invite the recipient to the inquiry-landing conversation — the landing URL is appended automatically as the email footer, do NOT paste any URL inline. When inquiry landing is disabled (meeting-only legacy mode), include the scheduling link with a question framing. The signup URL is never embedded in the email body in any mode — it is reached through the inquiry-landing Sign up button.}
-
-{Sign-off: Best, + your name}
-```
-
 ### Inquiry Landing CTA Mode
 
 The project picks one CTA mode for the inquiry-landing page (`/q/<short_id>`):
@@ -112,7 +91,7 @@ The two modes are mutually exclusive per project — the inquiry-settings page e
 - Make targets as specific as possible (not "small businesses" but "SaaS companies with 50-200 employees in the US"; not "retailers" but "DTC e-commerce brands with under 50 employees")
 - Structure messaging to lead with recipient benefits
 - List at least 10 search keywords
-- **Outreach Mode**: write a single concrete value. `precision` = deep per-prospect personalization (specific news, job postings, funding rounds, initiatives), best for high-value targets. `volume` = semi-personalized from company / industry / overview using the email template, best for broad market testing. When the user hasn't indicated a preference, choose `precision` and write it — never leave the section ambiguous or defer to a runtime default.
+- **Outreach Mode**: write a single concrete value. `precision` = deep per-prospect personalization (specific news, job postings, funding rounds, initiatives), best for high-value targets. `volume` = semi-personalized from company / industry / overview using the project's `email_template` document, best for broad market testing. When the user hasn't indicated a preference, choose `precision` and write it — never leave the section ambiguous or defer to a runtime default.
 - **Sales Channels section rules:**
   - Channel on/off (`email` / `form` / `sns_twitter` / `sns_linkedin`) is owned by Project Settings (`outboundChannels`) and read by `/outbound` and `/build-list`. **Never restate enablement / disablement here.**
   - This section may carry tactical preferences Project Settings can't express: channel ordering ("SNS DM before email for consumer-facing prospects"), tone, sub-channel preferences ("prefer named-personal emails over generic"). `/outbound` reads the order from here when present.

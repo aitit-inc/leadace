@@ -63,9 +63,8 @@ Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "
 Pay particular attention to these sections in the sales_strategy document:
 - **Outreach mode**: `precision` (deep personalization) or `volume` (template-based semi-personalization). The document always carries a concrete value — read it; do not assume a default
 - **Sales channels**: tactical preferences only (channel ordering, sub-channel preferences, tone). Channel enablement (on/off) is owned by `outboundChannels` in project settings — read below, not from this section.
-- **Messaging**: Subject line patterns, body structure, and A/B test instructions if any -- follow them
+- **Messaging**: Subject line patterns and A/B test instructions if any -- follow them. The email body template itself is the `email_template` document (read at send), not this section
 - **Sender information**: the name (and optional role) for the light sign-off — not a full signature block; the backend appends the compliance footer (legal name, address, unsubscribe) automatically. Sender display name and email come from project settings, **not** from this document — the backend send path uses them automatically
-- **Email template**: If a template is defined, use it as a base (especially important in volume mode)
 - **SNS messages**: SNS DM messaging policy
 
 **Important:** If SALES_STRATEGY.md has specific instructions on subject line variations, A/B tests, etc., always follow them. Never ignore instructions and revert to default behavior.
@@ -203,7 +202,7 @@ skip the skip — they own the trade-off.
 
 Retrieve email guidelines via `mcp__plugin_leadace_api__get_master_document` with `slug: "tpl_email_guidelines"` and follow them.
 
-**Body template precedence.** If the project has an `email_template` document (`mcp__plugin_leadace_api__get_document`, `slug: "email_template"`), use it as the authoritative body template — it holds the operator's chosen voice and supersedes the "Email Template" section of SALES_STRATEGY.md. If `get_document` reports that document does not exist, fall back to that SALES_STRATEGY.md section. The shared English-standard-casual default lives in master doc `tpl_email_base`.
+**Body template.** Retrieve the project's `email_template` document (`mcp__plugin_leadace_api__get_document`, `slug: "email_template"`) and use it as the body template — it is the single source for the email body (created by `/leadace` onboarding from master `tpl_email_base`). If `get_document` reports it does not exist, the project hasn't completed email setup: **skip the email channel entirely for this run — do not compose, draft, or send** (this holds in draft mode too), surface it in the run-end report, and tell the operator to create the template (WebUI Documents → Email Template, or run `/leadace`). Do not fabricate a template or fall back to another document.
 
 Close with a light sign-off (name + optional role) drawn from the "Sender Information" section of SALES_STRATEGY.md — not a full signature block; the backend appends the compliance footer (legal name, address, unsubscribe) automatically. Sender display name and `From:` address are applied automatically by `send_email_and_record` from project settings — do not pass them as arguments.
 
@@ -276,9 +275,9 @@ retrying.
 **Body personalization (vary depth by outreach mode):**
 
 - **Precision mode**: Refer to each prospect's `overview` and `matchReason`, and write the entire body tailored to the recipient -- not just the opening. Reference specific numbers, achievements, and initiatives of the target company. Generic openers like "I visited your website" alone are insufficient
-- **Volume mode**: Use the SALES_STRATEGY.md email template as a base, adjusting the opening (why you're reaching out) and the problem statement in 2 places based on `overview` / `matchReason`. The solution through CTA can follow the template structure as-is
+- **Volume mode**: Use the `email_template` document (retrieved in step 3) as the base, adjusting the opening (why you're reaching out) and the problem statement in 2 places based on `overview` / `matchReason`. The solution through CTA can follow the template structure as-is
 
-Always call `mcp__plugin_leadace_api__send_email_and_record` regardless of mode:
+Having composed the body (reached only when the `email_template` exists), call `mcp__plugin_leadace_api__send_email_and_record` — the same call for both outreach modes (precision or volume):
 - `projectId: "$0"`
 - `prospectId`: the prospect's id
 - `to`: array with the recipient address

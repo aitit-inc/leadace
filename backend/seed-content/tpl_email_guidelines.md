@@ -23,7 +23,7 @@ Prioritize efficiency with template-based semi-personalization.
 
 - **Information gathering**: Use only `overview` and `match_reason`. No additional research needed
 - **Opening**: Reference the recipient's company name, industry, and main service (one line is sufficient)
-- **Problem framing → solution**: Use the email template structure from SALES_STRATEGY.md as-is. Adjust only to swap in industry-relevant challenges
+- **Problem framing → solution**: Use the project's `email_template` document structure as-is. Adjust only to swap in industry-relevant challenges
 - **Overall body**: Maintain the template skeleton while varying the opening and problem framing per prospect
 
 ## Subject Line
@@ -108,5 +108,5 @@ Check each email against these patterns that significantly lower response rates 
 - Body text should be **75–150 words** (excluding sign-off and legal disclosures). Shorter emails have higher response rates
 - One CTA per email
 - No attachments (for first contact)
-- **Default voice is English-standard casual**: write the way a real person emails — warm, direct, conversational. No formal honorifics, no heavy signature block; close with a light sign-off (`Best,` + your name). Excessive formality creates distance. (A project's own `email_template` document, when present, overrides this default voice)
+- **Default voice is English-standard casual**: write the way a real person emails — warm, direct, conversational. No formal honorifics, no heavy signature block; close with a light sign-off (`Best,` + your name). Excessive formality creates distance. (The project's `email_template` document holds the body template; apply these voice rules when composing the outbound email from it.)
 - Avoid spam trigger words: "free", "limited", "act now", etc.
