@@ -2,6 +2,7 @@ import { dev } from '$app/environment';
 import { ACTIVE_PROJECT_COOKIE } from '$lib/active-project';
 import { getGmailStatus } from '$lib/api/auth-google';
 import { getPlan } from '$lib/api/billing';
+import { getOnboardingStatus } from '$lib/api/onboarding';
 import { listProjects } from '$lib/api/projects';
 import type { GmailStatus } from '$lib/types/auth-google';
 import type { PlanInfo } from '$lib/types/plan';
@@ -15,7 +16,7 @@ import type { LayoutServerLoad } from './$types';
 // project switcher) so the server can pre-render the right project on first
 // paint without waiting for client localStorage reconciliation.
 export const load: LayoutServerLoad = async ({ fetch, locals, cookies, depends }) => {
-	depends('app:active-project', 'app:projects', 'app:plan', 'app:gmail-status');
+	depends('app:active-project', 'app:projects', 'app:plan', 'app:gmail-status', 'app:onboarding');
 
 	const session = locals.session;
 	if (!session) {
@@ -34,7 +35,7 @@ export const load: LayoutServerLoad = async ({ fetch, locals, cookies, depends }
 	// warning), not tear down the whole app. Gmail status lives here (not on
 	// the account-settings page only) so the header can surface a "Gmail not
 	// connected" banner with a Connect button on every authenticated page.
-	const [projects, planResult, gmailStatus] = await Promise.all([
+	const [projects, planResult, gmailStatus, mcpConnected] = await Promise.all([
 		listProjects(fetch, token),
 		getPlan(fetch, token).then(
 			(p) => ({ ok: true as const, plan: p }),
@@ -52,6 +53,11 @@ export const load: LayoutServerLoad = async ({ fetch, locals, cookies, depends }
 				state: 'error',
 				message: e instanceof Error ? e.message : 'Failed to load Gmail status',
 			}),
+		),
+		// Default to connected on failure so a transient error never traps the user.
+		getOnboardingStatus(fetch, token).then(
+			(s) => s.mcpConnected,
+			() => true,
 		),
 	]);
 	const plan: PlanInfo | null = planResult.ok ? planResult.plan : null;
@@ -87,5 +93,5 @@ export const load: LayoutServerLoad = async ({ fetch, locals, cookies, depends }
 		}
 	}
 
-	return { activeProjectId: next, projects, plan, planError, gmailStatus };
+	return { activeProjectId: next, projects, plan, planError, gmailStatus, mcpConnected };
 };

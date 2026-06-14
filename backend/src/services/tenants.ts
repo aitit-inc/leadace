@@ -164,3 +164,20 @@ export async function getTenantComplianceStatus(
 
   return ok({ ready: missing.length === 0, missing })
 }
+
+export type OnboardingStatus = {
+  mcpConnected: boolean
+}
+
+export async function getOnboardingStatus(
+  db: Db,
+  tenantId: TenantId,
+): Promise<ServiceResult<OnboardingStatus>> {
+  const [row] = await db
+    .select({ firstMcpConnectedAt: tenants.firstMcpConnectedAt })
+    .from(tenants)
+    .where(eq(tenants.id, tenantId))
+    .limit(1)
+  if (!row) return err('INTERNAL_ERROR', 'Tenant row missing')
+  return ok({ mcpConnected: row.firstMcpConnectedAt !== null })
+}

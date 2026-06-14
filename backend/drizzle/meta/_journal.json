@@ -267,6 +267,13 @@
       "when": 1781257132913,
       "tag": "0037_odd_goblin_queen",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1781367242274,
+      "tag": "0038_sleepy_roxanne_simpson",
+      "breakpoints": true
     }
   ]
 }

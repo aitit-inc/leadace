@@ -292,6 +292,8 @@ export const tenants = pgTable('tenants', {
   defaultSenderCountry: text('default_sender_country'),
   privacyPolicyUrl: text('privacy_policy_url'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  // NULL = the plugin has never connected; gates the web onboarding flow.
+  firstMcpConnectedAt: timestamp('first_mcp_connected_at', { withTimezone: true }),
 })
 
 export const tenantMembers = pgTable('tenant_members', {

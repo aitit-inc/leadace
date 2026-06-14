@@ -19,13 +19,13 @@
 
 import { SignJWT } from 'jose'
 import { z } from 'zod'
-import { verifyJwt } from '../auth/verify-jwt'
+import { MCP_AUDIENCE, verifyJwt } from '../auth/verify-jwt'
 
 // Audience claim stamped on MCP-minted access tokens. Used by callers
 // that must distinguish Supabase-issued tokens from MCP-issued tokens
 // (e.g. /authorize/finalize, /sessions*). Supabase tokens carry
 // `aud: 'authenticated'`; ours carry `aud: 'mcp'`.
-export const MCP_ACCESS_TOKEN_AUDIENCE = 'mcp'
+export const MCP_ACCESS_TOKEN_AUDIENCE = MCP_AUDIENCE
 
 interface AuthSession {
   clientId: string

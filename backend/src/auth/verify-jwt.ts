@@ -1,5 +1,7 @@
 import { jwtVerify, createRemoteJWKSet, type JWTPayload } from 'jose'
 
+export const MCP_AUDIENCE = 'mcp'
+
 export interface VerifiedJwt {
   sub: string
   /**

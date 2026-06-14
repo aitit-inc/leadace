@@ -1,0 +1,1 @@
+ALTER TABLE "tenants" ADD COLUMN "first_mcp_connected_at" timestamp with time zone;

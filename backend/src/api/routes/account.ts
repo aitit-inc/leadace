@@ -4,10 +4,16 @@ import {
   requireStripeEnv,
   requireSupabaseAdminEnv,
 } from '../../services/runtime-guards'
+import { getOnboardingStatus } from '../../services/tenants'
 import { respondWithError } from '../respond'
 import type { Env, Variables } from '../types'
 
 export const accountRouter = new Hono<{ Bindings: Env; Variables: Variables }>()
+
+accountRouter.get('/me/onboarding-status', async (c) => {
+  const result = await getOnboardingStatus(c.get('db'), c.get('tenantId'))
+  return result.ok ? c.json(result.value) : respondWithError(c, result)
+})
 
 accountRouter.delete('/me/account', async (c) => {
   let stripeKey: string | null = null

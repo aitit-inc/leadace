@@ -17,6 +17,7 @@
     Menu,
     X,
     TriangleAlert,
+    Rocket,
   } from '@lucide/svelte';
   import type { Component } from 'svelte';
   import { connectGmail } from '$lib/gmail-oauth';
@@ -59,6 +60,7 @@
   // projects.length === 0 — the +layout.server.ts reconciliation guarantees
   // activeProjectId is non-null whenever any project exists.
   const tenantScopedPaths = [
+    '/onboarding',
     '/organizations',
     '/workspace-settings',
     '/account-settings',
@@ -158,6 +160,23 @@
         <ProjectSwitcher projects={data.projects} activeProjectId={data.activeProjectId} />
       </div>
     </header>
+
+    {#if !data.mcpConnected && page.url.pathname !== '/onboarding'}
+      <div class="border-b border-accent/40 bg-accent/10 px-4 py-2 md:px-6">
+        <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <div class="flex items-center gap-2 text-sm text-text">
+            <Rocket size={16} class="text-accent" />
+            <span>Connect the LeadAce plugin in Claude Code to start finding and emailing prospects.</span>
+          </div>
+          <a
+            href="/onboarding"
+            class="rounded border border-accent/60 bg-page px-3 py-1 text-xs font-medium text-accent hover:bg-accent/10"
+          >
+            Finish setup
+          </a>
+        </div>
+      </div>
+    {/if}
 
     {#if data.gmailStatus.state === 'disconnected'}
       <!--

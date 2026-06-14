@@ -1,11 +1,13 @@
 import { isHttpError, redirect, type Cookies } from '@sveltejs/kit';
 import { ApiError } from '$lib/api';
 import { saveGoogleCredentials } from '$lib/api/auth-google';
+import { getOnboardingStatus } from '$lib/api/onboarding';
 import { isSafeRelativePath } from '$lib/redirect';
 import type { RequestHandler } from './$types';
 
 const NEXT_COOKIE = 'lp-next';
 const DEFAULT_DEST = '/prospects';
+const ONBOARDING_DEST = '/onboarding';
 
 function loginRedirect(reason: string): never {
 	redirect(303, `/login?error=${encodeURIComponent(reason)}`);
@@ -98,5 +100,17 @@ export const GET: RequestHandler = async ({ url, cookies, fetch, locals }) => {
 		}
 	}
 
-	redirect(303, next);
+	// redirect() throws, so pick dest inside the try but redirect outside it —
+	// calling redirect() inside would let the catch swallow its control signal.
+	let dest = next;
+	if (next === DEFAULT_DEST) {
+		try {
+			const { mcpConnected } = await getOnboardingStatus(fetch, session.access_token);
+			if (!mcpConnected) dest = ONBOARDING_DEST;
+		} catch {
+			// keep the default dashboard
+		}
+	}
+
+	redirect(303, dest);
 };
