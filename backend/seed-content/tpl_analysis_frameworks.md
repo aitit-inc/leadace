@@ -30,11 +30,11 @@ When response rates fall below expectations, examine the following 6 causes in o
 - Symptoms: No response from email but responses from SNS (or vice versa)
 - Owned by the lever (report-only): channel ranking is the affinity re-rank per coarse-industry. Report the measured `channelResponseRate` / `channelAffinity` and any shift — do not rewrite channel priority
 
-## Message Pattern Analysis (report-only)
+## Message Pattern Analysis (no deterministic edits — narrate, and route repeated findings to the Learnings Log)
 
 There is no manual A/B test to design or "adopt as default" here. Subject lines are optimized by the lever tick (the bandit's continuous weighted draw across `subject_variants`, learning from replies); channel ranking by the affinity re-rank. /evaluate reads their measured performance and narrates it — it does not run subject / channel experiments or write `ab_test` records.
 
-For message elements no lever owns (body length, CTA phrasing, tone, hook), analyze what correlates with responses and report it as an observation in the evaluation report and as a hint the user may add to their SALES_STRATEGY Messaging section. Do not encode them as evaluate-applied changes.
+For message elements no lever owns (body length, CTA phrasing, tone, hook), the structured home for a *repeated, number-anchored* finding is the Learnings Log: write it as a gated `[body]` / `[channel]` entry (per /evaluate SKILL.md step 4) so outbound applies it as a composition hint next cycle, instead of the observation evaporating into the report. Still narrate it in the report, and still do not rewrite SALES_STRATEGY messaging or encode it as a deterministic / evaluate-applied change — learnings steer authoring, they are not rules.
 
 ### Dimensions to compare when reporting
 - **Subject patterns**: curiosity vs. number vs. problem-mention (from variant performance — lever-owned)

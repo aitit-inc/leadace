@@ -67,6 +67,8 @@ Pay particular attention to these sections in the sales_strategy document:
 - **Sender information**: the name (and optional role) for the light sign-off — not a full signature block; the backend appends the compliance footer (legal name, address, unsubscribe) automatically. Sender display name and email come from project settings, **not** from this document — the backend send path uses them automatically
 - **SNS messages**: SNS DM messaging policy
 
+Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "learnings"`. Apply its `[body]` / `[timing]` / `[channel]` entries as composition hints: let `[body]` shape how you open and structure the message, `[timing]` inform re-approach cadence (the step-3b judgment, not send time-of-day — see the Note below), `[channel]` color how you use the chosen channel. They are evidence-cited hints, not rules — skip the document if missing.
+
 **Important:** If SALES_STRATEGY.md has specific instructions on subject line variations, A/B tests, etc., always follow them. Never ignore instructions and revert to default behavior.
 **Note:** Sending timing (day of week, time of day) is not controlled by this skill.
 
@@ -168,6 +170,8 @@ the **default** order. Apply it together with these project inputs, highest prec
   picking the top-ranked channel that is available and enabled; fall back to the policy
   order for any channels it doesn't cover. Empty (the common early state) → ignore it.
 - **`tpl_channel_policy`** default order when none of the above decide.
+
+The `learnings` `[channel]` entries (step 1) are *advisory color on how to use a channel*, never a precedence input — channel selection ranking is decided only by the inputs above.
 
 Country eligibility is no longer a skill-side concern — `get_outbound_targets` filters to
 supported recipient countries server-side (step 1).

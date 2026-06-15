@@ -1210,10 +1210,10 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_document',
-    'Get the latest version of a project document (business, sales_strategy, search_notes, email_template).',
+    'Get the latest version of a project document (business, sales_strategy, search_notes, email_template, learnings).',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
-      slug: z.string().describe('Document slug: "business", "sales_strategy", "search_notes", or "email_template"'),
+      slug: z.string().describe('Document slug: "business", "sales_strategy", "search_notes", "email_template", or "learnings"'),
     },
     async ({ projectId, slug }, { apiUrl, authHeader }) => {
       const { ok, status, data } = await callApi('GET', `/projects/${encodeURIComponent(projectId)}/documents/${slug}`, null, apiUrl, authHeader)
@@ -1233,10 +1233,10 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'save_document',
-    'Save a new version of a project document. Appends a new version (immutable); previous versions are preserved. Use slug "email_template" to set the project-specific outreach email body template (the default base is master doc tpl_email_base).',
+    'Save a new version of a project document. Appends a new version (immutable); previous versions are preserved. Use slug "email_template" to set the project-specific outreach email body template (the default base is master doc tpl_email_base); slug "learnings" is the cross-stage Learnings Log /evaluate maintains.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
-      slug: z.string().describe('Document slug: "business", "sales_strategy", "search_notes", or "email_template"'),
+      slug: z.string().describe('Document slug: "business", "sales_strategy", "search_notes", "email_template", or "learnings"'),
       content: z.string().describe('Full markdown content of the document'),
     },
     async ({ projectId, slug, content }, { apiUrl, authHeader }) => {

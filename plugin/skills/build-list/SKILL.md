@@ -78,6 +78,13 @@ Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "
 Use this to continue exploration from where the last session left off. If
 `search_notes` is missing, treat every cell of the matrix as unexplored.
 
+Also call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and
+`slug: "learnings"`, then apply its `[targeting]` entries to the search strategy: explore
+more of the segments evaluate found to respond above average, and deprioritize ones it
+flagged as low-response or targeting mismatches. These are evaluate's distilled,
+evidence-cited learnings (each carries the metric + sample it came from) — treat
+them as steering, not hard rules. Skip if the document is missing.
+
 ### 3. Search Strategy
 
 Based on the "Search Keywords" and "Target" sections of SALES_STRATEGY.md, formulate multiple search queries.
@@ -401,8 +408,6 @@ entry: `keyword — reason — date`.
 ## Notes
 - (Areas where prospects were found unexpectedly, insights for next time)
 ```
-
-If the previous version (from step 2) has a `## Hints from evaluate` section, preserve its content and carry it over to the end of the new document (to preserve response pattern info added by evaluate).
 
 If the previous version already has `## Coverage Matrix` / `## Exhausted
 Keywords` sections, **merge into them** — don't overwrite. Only mark a

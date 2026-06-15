@@ -66,6 +66,8 @@ Call `mcp__plugin_leadace_api__get_evaluation_history` with `projectId: "$0"` to
 
 If past evaluations exist, organize each record's `evaluationDate`, `findings`, and `improvements` chronologically to understand what has been tried, what was effective, and what was not. Use this information when deciding on improvement actions in step 4.
 
+Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "learnings"` to load the current Learnings Log — the distilled, evidence-cited learnings this skill routes to build-list and outbound. You will reconcile and update it in step 4. Skip if missing (you may create it in step 4).
+
 ### 3. Multi-angle Analysis
 
 Retrieve analysis frameworks via `mcp__plugin_leadace_api__get_master_document` with `slug: "tpl_analysis_frameworks"` and analyze from the following perspectives:
@@ -76,28 +78,28 @@ Retrieve analysis frameworks via `mcp__plugin_leadace_api__get_master_document` 
 - Response rate by priority
 - Trends by time of day and day of week (analyze from send timestamps. However, since sending timing is determined by the daily-cycle execution schedule, do not write sending time constraints in SALES_STRATEGY.md. Report analysis results as "recommended execution timing" in the report only)
 
-**Message Analysis (report-only — the subject lever applies, you narrate):**
+**Message Analysis (the subject lever applies — narrate it, don't rewrite SALES_STRATEGY; body traits feed the `[body]` Learnings Log entry):**
 - Read all outreach bodies that received responses (from `respondedMessages`) and extract common traits
 - Compare with non-response samples (from `noResponseSample`)
 - Effectiveness of subject lines (cross-reference `variantResponseRate` and the lever weights)
 - Effectiveness of body length and structure
 
-These feed the Step 6 report. Do **not** translate them into SALES_STRATEGY messaging edits — subject-line optimization is owned by the lever tick.
+These feed the Step 6 report and the `[body]` entries of the Learnings Log (step 4). Do **not** translate them into SALES_STRATEGY messaging edits — subject-line optimization is owned by the lever tick.
 
 **Target Analysis:**
 - Industries and sizes with good responses
 - Segments with poor responses
 - Unexpected response patterns
 
-**Channel Analysis (report-only — the channel lever applies, you narrate):**
+**Channel Analysis (the channel lever applies — narrate it, don't rewrite SALES_STRATEGY; channel-usage traits feed the `[channel]` Learnings Log entry):**
 - Most effective channel (cross-reference `channelResponseRate` and the lever's `channelAffinity`)
 - Cost-effectiveness by channel
 
-These feed the Step 6 report. Do **not** translate them into SALES_STRATEGY channel-priority edits — channel ranking is owned by the lever tick.
+These feed the Step 6 report and the `[channel]` entries of the Learnings Log (step 4 — how to *use* a channel; channel selection itself stays lever-owned). Do **not** translate them into SALES_STRATEGY channel-priority edits — channel ranking is owned by the lever tick.
 
 **Rejection Tactical Analysis (from `get_rejection_feedback_summary` scope="tactical"):**
 - `primaryReasonDistribution`: which tactical reasons dominate (e.g. `not_relevant` heavy → targeting issue; `wrong_timing` / `budget` heavy → pipeline issue; `not_decision_maker` heavy → outreach is reaching wrong contacts)
-- `notRelevantNotes`: group rows by `industry` (and by `organizationName` when industries are missing). An industry with multiple `not_relevant` hits is a targeting-mismatch signal — use it in step 4 to update SEARCH_NOTES
+- `notRelevantNotes`: group rows by `industry` (and by `organizationName` when industries are missing). An industry with ≥2 `not_relevant` hits is a targeting-mismatch signal (1 hit is noise) — feed it into step 4's `[targeting]` Learnings Log entry
 - `recontactWindows`: per-bucket `count` across all five windows. `never` is a hard opt-out (DNC ratchet). `3_months` / `6_months` / `12_months` are auto-deferred via `prospects.next_outreach_after` and re-enter the outbound queue automatically when the window passes. `unspecified` defers using the project-configured `unspecifiedRecontactWindowMonths` fallback — a heavy `unspecified` count argues for tuning that setting. `samples` lists representative prospects for each non-empty bucket. Surface in the report as a transparency log only
 - `decisionMakerPointers`: each row is a referral to another contact. Auto-prospect-creation runs at record_response time (pointer with email creates a new prospect; pointer with name only updates an existing same-org contact's role). Surface in the report as a transparency log
 
@@ -143,16 +145,28 @@ Save the updated document via `mcp__plugin_leadace_api__save_document` with `pro
 - Add keywords related to high-response segments
 - Remove ineffective keywords
 
-**Reflect response patterns in SEARCH_NOTES.md:**
-Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "search_notes"`. If found, update the `## Hints from evaluate` section (add it at the end if not present) and save via `save_document`. build-list will preserve this section during the next run and adjust its search policy.
+**Update the Learnings Log (the cross-stage self-improvement memory):**
 
-Content to add:
-- Industries / segments with response rates above overall average -> "XX industry has X% response rate (vs overall average Y%). Explore more of this industry"
-- Characteristics similar to companies that responded (scale, business content, pain points) -> "Companies like XX respond well. Search for similar companies and competitors"
-- Segments with poor responses -> "XX industry has low response rate (X%). Lower priority"
-- **Industries with `not_relevant` rejection clusters** (from `notRelevantNotes` grouped by `industry`): if ≥2 rows in the same industry, add "XX industry has N `not_relevant` rejections — targeting mismatch, lower priority". Skip industries with only 1 hit (noise)
+The `learnings` document is the distilled, evidence-cited memory that build-list and outbound read each cycle — it is how a learning from one cycle re-enters every downstream stage automatically. Its honesty is enforced *here, at the write*.
 
-Skip if the document is not found (build-list hasn't been run yet).
+Each entry is one line: `[stage] [YYYY-MM-DD] claim — evidence: metric=<name>, n=<sample>`. Stage tags, one per downstream decision a skill can act on:
+- `[targeting]` — segments to collect / prioritize (read by build-list). Source: per-segment reply rates, `notRelevantNotes` targeting-mismatch clusters (the ≥2 rule from step 3).
+- `[body]` — what responding messages do that non-responding ones don't (read by outbound, composition hint). Source: Message Analysis traits.
+- `[timing]` — recontact-window / cadence patterns that converted (read by outbound). Source: priority / recontact data.
+- `[channel]` — how to *use* a channel well (tone, opener), NOT which channel to pick (lever-owned). Read by outbound as color only.
+
+**Write gate — all required; a claim that can't meet these is a hunch, drop it:**
+- `dataSufficiency.sufficient` is true and the stability discipline above says it is time to act.
+- The entry cites a measured metric and its sample size, with `n ≥ minSamplePerArm` (from step 1's `get_lever_state`).
+- The pattern repeated across cycles, not a one-off fluctuation.
+
+**Reconcile before adding (the effect-measurement loop):**
+- Re-check each existing entry's cited metric against this cycle. If its direction no longer reproduces, retire it: replace its leading tag with `[retired]`, keeping the rest of the line (`[retired] [YYYY-MM-DD] claim — evidence: …`). `[retired]` is a tombstone, not a stage tag — readers skip it; it stays only so a disproven claim isn't re-added. Cheap because the metric + n is already on the line.
+- Keep ≤15 active (non-retired) entries; over the cap, retire weakest-evidence or oldest first.
+
+Save the full list via `mcp__plugin_leadace_api__save_document` with `projectId: "$0"` and `slug: "learnings"`. When `dataSufficiency` is insufficient, do not write — an empty / unchanged log is the correct early state.
+
+**Boundary:** learnings *steer* downstream LLM authoring and collection; they are never deterministic selectors and never edit SALES_STRATEGY messaging or channel priority (the levers own those). Frame each as "what the data shows."
 
 **Replenish the subject-variant pool (supply candidates, never pick winners):**
 The lever tick prunes and re-weights subject variants but never *generates* new ones, so a converged pool plateaus on its least-bad seeds. Close that gap here — supply, don't select:

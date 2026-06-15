@@ -10,6 +10,7 @@
     sales_strategy: 'Sales Strategy',
     search_notes: 'Search Notes',
     email_template: 'Email Template',
+    learnings: 'Learnings Log',
   };
 
   // email_template is the outbound body template; surface it as editable even before the doc exists.
