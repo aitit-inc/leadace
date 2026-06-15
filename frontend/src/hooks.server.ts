@@ -70,7 +70,7 @@ const authGuard: Handle = async ({ event, resolve }) => {
 			// same-origin path. Without this guard, /login?next=https://evil
 			// would emit an external Location and become an open redirect.
 			const nextRaw = event.url.searchParams.get('next');
-			const next = nextRaw && isSafeRelativePath(nextRaw) ? nextRaw : '/prospects';
+			const next = nextRaw && isSafeRelativePath(nextRaw) ? nextRaw : '/dashboard';
 			redirect(303, next);
 		}
 	}

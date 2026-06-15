@@ -6,6 +6,6 @@ import type { PageServerLoad } from './$types';
 // out once the plugin connects.
 export const load: PageServerLoad = async ({ parent }) => {
 	const { mcpConnected } = await parent();
-	if (mcpConnected) redirect(303, '/prospects');
+	if (mcpConnected) redirect(303, '/dashboard');
 	return {};
 };

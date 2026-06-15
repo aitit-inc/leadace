@@ -568,8 +568,15 @@ export async function getRejectionFeedbackSummary(
 ): Promise<ServiceResult<RejectionFeedbackSummary>> {
   const resolved = await resolveProject(db, tenantId, projectRef)
   if (!resolved.ok) return resolved
-  const projectId = resolved.value
+  return getRejectionFeedbackSummaryById(db, tenantId, resolved.value, query)
+}
 
+export async function getRejectionFeedbackSummaryById(
+  db: Db,
+  tenantId: TenantId,
+  projectId: ProjectId,
+  query: RejectionFeedbackSummaryQuery,
+): Promise<ServiceResult<RejectionFeedbackSummary>> {
   const { scope, freeTextLimit, recontactLimit, notRelevantLimit } = query
   const windowDays = query.windowDays ?? null
 

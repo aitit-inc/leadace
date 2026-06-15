@@ -10,6 +10,7 @@ import { projectSettingsRouter } from './routes/project-settings'
 import { tenantSettingsRouter } from './routes/tenant-settings'
 import { subjectVariantsRouter } from './routes/subject-variants'
 import { leversRouter } from './routes/levers'
+import { dashboardRouter } from './routes/dashboard'
 import { prospectsRouter } from './routes/prospects'
 import { organizationsRouter } from './routes/organizations'
 import { outreachRouter } from './routes/outreach'
@@ -63,6 +64,7 @@ app.route('/api', projectSettingsRouter)
 app.route('/api', tenantSettingsRouter)
 app.route('/api', subjectVariantsRouter)
 app.route('/api', leversRouter)
+app.route('/api', dashboardRouter)
 app.route('/api', prospectsRouter)
 app.route('/api', organizationsRouter)
 app.route('/api', outreachRouter)

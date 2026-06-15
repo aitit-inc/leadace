@@ -118,7 +118,7 @@
 		</button>
 		<button
 			type="button"
-			onclick={() => goto('/prospects')}
+			onclick={() => goto('/dashboard')}
 			class="text-xs text-text-muted underline hover:text-text"
 		>
 			Skip for now

@@ -5,6 +5,7 @@
   import Logo from '$lib/components/Logo.svelte';
   import AccountMenu from '$lib/components/AccountMenu.svelte';
   import {
+    LayoutDashboard,
     Users,
     Building2,
     Send,
@@ -43,6 +44,7 @@
 
   type NavItem = { href: string; label: string; icon: Component };
   const nav: NavItem[] = [
+    { href: '/dashboard', label: 'Home', icon: LayoutDashboard },
     { href: '/prospects', label: 'Prospects', icon: Users },
     { href: '/organizations', label: 'Orgs', icon: Building2 },
     { href: '/outreach', label: 'Outreach', icon: Send },
@@ -100,7 +102,7 @@
     <div>
       <div class="mb-5 flex items-center justify-center px-1 relative">
         <a
-          href="/prospects"
+          href="/dashboard"
           title="LeadAce"
           class="text-accent hover:text-accent-strong transition-colors"
         >
@@ -161,7 +163,7 @@
       </div>
     </header>
 
-    {#if !data.mcpConnected && page.url.pathname !== '/onboarding'}
+    {#if !data.mcpConnected && page.url.pathname !== '/onboarding' && page.url.pathname !== '/dashboard'}
       <div class="border-b border-accent/40 bg-accent/10 px-4 py-2 md:px-6">
         <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
           <div class="flex items-center gap-2 text-sm text-text">
@@ -178,7 +180,7 @@
       </div>
     {/if}
 
-    {#if data.gmailStatus.state === 'disconnected'}
+    {#if data.gmailStatus.state === 'disconnected' && page.url.pathname !== '/dashboard'}
       <!--
         Gmail send permission lapsed (never granted, refresh token revoked, or
         scope dropped). Surface globally rather than only on /account-settings

@@ -165,8 +165,14 @@ export async function getLeverState(
 ): Promise<ServiceResult<LeverStateView>> {
   const resolved = await resolveProject(db, tenantId, projectRef)
   if (!resolved.ok) return resolved
-  const projectId = resolved.value
+  return getLeverStateById(db, tenantId, resolved.value)
+}
 
+export async function getLeverStateById(
+  db: Db,
+  tenantId: TenantId,
+  projectId: ProjectId,
+): Promise<ServiceResult<LeverStateView>> {
   const config = await loadLeverConfig(db, projectId)
   const activeIds = await loadActiveVariantIds(db, projectId)
   const statsMap = new Map((await getVariantStats(db, projectId, config, true)).map((s) => [s.variantId, s]))

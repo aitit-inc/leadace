@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { and, asc, eq, isNull } from 'drizzle-orm'
 import { leverState, subjectVariants } from '../db/schema'
 import type { Db } from '../db/connection'
-import { variantIdSchema, type ProjectRef, type TenantId } from '../domain/ids'
+import { variantIdSchema, type ProjectId, type ProjectRef, type TenantId } from '../domain/ids'
 import { prepareDrawDistribution, weightedDraw } from '../domain/subject-bandit'
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
@@ -43,8 +43,14 @@ export async function listSubjectVariants(
 ): Promise<ServiceResult<{ variants: SubjectVariantRow[] }>> {
   const resolved = await resolveProject(db, tenantId, projectRef)
   if (!resolved.ok) return resolved
-  const projectId = resolved.value
+  return listSubjectVariantsById(db, tenantId, resolved.value)
+}
 
+export async function listSubjectVariantsById(
+  db: Db,
+  tenantId: TenantId,
+  projectId: ProjectId,
+): Promise<ServiceResult<{ variants: SubjectVariantRow[] }>> {
   const rows = await db
     .select(variantCols)
     .from(subjectVariants)

@@ -6,7 +6,7 @@ import { isSafeRelativePath } from '$lib/redirect';
 import type { RequestHandler } from './$types';
 
 const NEXT_COOKIE = 'lp-next';
-const DEFAULT_DEST = '/prospects';
+const DEFAULT_DEST = '/dashboard';
 const ONBOARDING_DEST = '/onboarding';
 
 function loginRedirect(reason: string): never {

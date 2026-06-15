@@ -680,7 +680,10 @@ export type RecentOutreachLog = {
   sentAt: Date
   errorMessage: string | null
   responseCount: number
+  // Excludes bounce / auto_reply, so the dashboard feed doesn't show a bounce as a "Replied" event.
+  countableResponseCount: number
   latestResponseAt: string | null
+  hasMeetingRequest: boolean
   // Most-significant outcome ever recorded
   // (lead > signup_clicked > unsubscribed > inquired > opened), independent
   // of revisit order. signup_clicked appears only in inquiryCtaType='signup'.
@@ -698,8 +701,15 @@ export async function listRecentOutreach(
 ): Promise<ServiceResult<{ logs: RecentOutreachLog[]; total: number }>> {
   const resolved = await resolveProject(db, tenantId, projectRef)
   if (!resolved.ok) return resolved
-  const projectId = resolved.value
+  return listRecentOutreachById(db, tenantId, resolved.value, query)
+}
 
+export async function listRecentOutreachById(
+  db: Db,
+  tenantId: TenantId,
+  projectId: ProjectId,
+  query: RecentOutreachQuery,
+): Promise<ServiceResult<{ logs: RecentOutreachLog[]; total: number }>> {
   const { limit, offset } = query
 
   const visibleStatusFilter = and(
@@ -726,7 +736,9 @@ export async function listRecentOutreach(
         sentAt: outreachLogs.sentAt,
         errorMessage: outreachLogs.errorMessage,
         responseCount: sql<number>`COALESCE(COUNT(${responses.id})::int, 0)`,
+        countableResponseCount: sql<number>`COALESCE(COUNT(${responses.id}) FILTER (WHERE ${responses.responseType} NOT IN ('bounce', 'auto_reply'))::int, 0)`,
         latestResponseAt: sql<string | null>`MAX(${responses.receivedAt})`,
+        hasMeetingRequest: sql<boolean>`COALESCE(bool_or(${responses.responseType} = 'meeting_request'), false)`,
       })
       .from(outreachLogs)
       .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
