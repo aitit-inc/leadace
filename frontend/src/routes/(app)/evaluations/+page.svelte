@@ -1,32 +1,12 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
-  import { page } from '$app/state';
   import EmptyState from '$lib/components/EmptyState.svelte';
-  import Pagination from '$lib/components/Pagination.svelte';
   import type { PageProps } from './$types';
-  import { PAGE_SIZE } from '$lib/pagination';
 
   let { data }: PageProps = $props();
-
-  function onPageChange(n: number) {
-    const sp = new URLSearchParams(page.url.searchParams);
-    if (n > 1) sp.set('page', String(n));
-    else sp.delete('page');
-    const qs = sp.toString();
-    void goto(qs ? `?${qs}` : '?', { replaceState: true, keepFocus: true, noScroll: true });
-  }
 
   function pct(n: number, d: number) {
     if (d === 0) return '0%';
     return ((n / d) * 100).toFixed(1) + '%';
-  }
-
-  function formatDate(iso: string) {
-    return new Date(iso).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    });
   }
 </script>
 
@@ -180,31 +160,4 @@
       </div>
     </section>
   {/if}
-
-  <section>
-    <h3 class="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">History</h3>
-
-    {#if data.evaluations.length === 0}
-      <EmptyState message="No evaluations recorded yet" />
-    {:else}
-      <div class="space-y-6">
-        {#each data.evaluations as ev}
-          <div class="border-l-2 border-surface-2 pl-4">
-            <p class="text-xs font-mono text-text-muted mb-2">{formatDate(ev.evaluationDate)}</p>
-            <div class="space-y-2">
-              <div>
-                <p class="text-xs font-medium text-text-secondary mb-0.5">Findings</p>
-                <p class="text-sm text-text whitespace-pre-wrap">{ev.findings}</p>
-              </div>
-              <div>
-                <p class="text-xs font-medium text-text-secondary mb-0.5">Improvements</p>
-                <p class="text-sm text-text whitespace-pre-wrap">{ev.improvements}</p>
-              </div>
-            </div>
-          </div>
-        {/each}
-      </div>
-      <Pagination page={data.page} pageSize={PAGE_SIZE} total={data.total} onChange={onPageChange} />
-    {/if}
-  </section>
 {/if}

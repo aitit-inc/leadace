@@ -12,13 +12,6 @@ export interface EvaluationMetrics {
   inquiryOutcomeCounts: Record<InquiryOutcome, number>;
 }
 
-export interface Evaluation {
-  id: number;
-  evaluationDate: string;
-  findings: string;
-  improvements: string;
-}
-
 /** Mirrors backend `services/evaluations.ts` DailyActivity. */
 export interface DailyActivity {
   date: string;

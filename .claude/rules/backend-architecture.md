@@ -299,7 +299,7 @@ Queries and inserts below it use only the resolved `ProjectId` — the brand
 direction makes "forgot to resolve" a compile error wherever a `ProjectId`
 is required.
 
-Number-shaped row PKs (prospect / outreach_log / response / inquiry_session / evaluation / project_document / bug_report) are NOT branded — plain `number`. Compile-time payoff was small (only catches same-shape `number` arg swaps), ceremony cost was high (every DB row read needed an unverifiable `as XxxId` cast). The composite `(entity_id, tenant_id)` FKs + RLS already enforce the cross-tenant invariant at the DB level.
+Number-shaped row PKs (prospect / outreach_log / response / inquiry_session / project_document / bug_report) are NOT branded — plain `number`. Compile-time payoff was small (only catches same-shape `number` arg swaps), ceremony cost was high (every DB row read needed an unverifiable `as XxxId` cast). The composite `(entity_id, tenant_id)` FKs + RLS already enforce the cross-tenant invariant at the DB level.
 
 Input validation still uses strict positive integers: `prospectIdSchema` / `outreachLogIdSchema` in `domain/ids` are semantic aliases for the strict-`positiveInt` schema. Param wrappers (`prospectIdParamSchema`, `outreachLogIdParamSchema`, `organizationIdParamSchema`) use `z.coerce.number().int().positive()` since path/query strings are `Record<string, string>` at the wire.
 

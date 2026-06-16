@@ -912,27 +912,6 @@ export const orgSignalsGlobal = pgTable('org_signals_global', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 })
 
-export const evaluations = pgTable('evaluations', {
-  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
-  tenantId: text('tenant_id')
-    .notNull()
-    .references(() => tenants.id, { onDelete: 'cascade' }),
-  projectId: text('project_id').notNull(),
-  evaluationDate: timestamp('evaluation_date', { withTimezone: true }).defaultNow().notNull(),
-  metrics: jsonb('metrics').$type<EvaluationMetrics>().notNull(),
-  findings: text('findings').notNull(),
-  improvements: text('improvements').notNull(),
-}, (table) => [
-  // Composite FK ties project_id + tenant_id (defense-in-depth on top of RLS).
-  foreignKey({
-    columns: [table.projectId, table.tenantId],
-    foreignColumns: [projects.id, projects.tenantId],
-    name: 'fk_evaluation_project_tenant',
-  }).onDelete('cascade'),
-  index('idx_evaluations_tenant').on(table.tenantId),
-  index('idx_evaluations_project').on(table.projectId),
-])
-
 // Reviewed out-of-band by the maintainer — no admin UI yet.
 export const BUG_REPORT_CATEGORIES = ['bug', 'feedback', 'idea'] as const
 export type BugReportCategory = (typeof BUG_REPORT_CATEGORIES)[number]

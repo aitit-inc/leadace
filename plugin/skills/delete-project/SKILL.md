@@ -10,7 +10,7 @@ allowed-tools:
 
 # Delete Project
 
-A skill that permanently deletes a project and all its associated data (prospects, outreach logs, responses, evaluations) from the server.
+A skill that permanently deletes a project and all its associated data (prospects, outreach logs, responses, documents) from the server.
 
 **Before starting:** `Read` `${CLAUDE_PLUGIN_ROOT}/references/workspace-conventions.md` and follow the cross-cutting conventions there (data storage, MCP error handling, document writes, output discipline).
 
@@ -24,7 +24,7 @@ Return an error if `$0` is empty.
 
 ### 2. Confirm Deletion
 
-Use AskUserQuestion to ask: "Are you sure you want to delete project '$0' and ALL its data (prospects, outreach logs, responses, evaluations, documents)? This cannot be undone."
+Use AskUserQuestion to ask: "Are you sure you want to delete project '$0' and ALL its data (prospects, outreach logs, responses, documents)? This cannot be undone."
 
 If the user declines, abort.
 

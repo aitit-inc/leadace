@@ -4,8 +4,6 @@ import {
   getProjectStats,
   recordEvaluation,
   recordEvaluationSchema,
-  listEvaluations,
-  listEvaluationsQuerySchema,
 } from '../../services/evaluations'
 import { projectRefParamSchema } from '../../services/projects'
 import { respondWithError } from '../respond'
@@ -28,19 +26,3 @@ evaluationsRouter.post('/evaluations', zValidator('json', recordEvaluationSchema
   if (!result.ok) return respondWithError(c, result)
   return c.json(result.value, 201)
 })
-
-evaluationsRouter.get(
-  '/projects/:id/evaluations',
-  zValidator('param', projectRefParamSchema),
-  zValidator('query', listEvaluationsQuerySchema),
-  async (c) => {
-    const result = await listEvaluations(
-      c.get('db'),
-      c.get('tenantId'),
-      c.req.valid('param').id,
-      c.req.valid('query'),
-    )
-    if (!result.ok) return respondWithError(c, result)
-    return c.json(result.value)
-  },
-)

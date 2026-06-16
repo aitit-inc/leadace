@@ -8,7 +8,6 @@ allowed-tools:
   - WebSearch
   - mcp__plugin_leadace_api__get_eval_data
   - mcp__plugin_leadace_api__get_rejection_feedback_summary
-  - mcp__plugin_leadace_api__get_evaluation_history
   - mcp__plugin_leadace_api__get_lever_state
   - mcp__plugin_leadace_api__get_lever_decisions
   - mcp__plugin_leadace_api__list_subject_variants
@@ -62,11 +61,7 @@ Load documents via MCP:
 Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "business"`.
 Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "sales_strategy"`.
 
-Call `mcp__plugin_leadace_api__get_evaluation_history` with `projectId: "$0"` to retrieve past evaluation records.
-
-If past evaluations exist, organize each record's `evaluationDate`, `findings`, and `improvements` chronologically to understand what has been tried, what was effective, and what was not. Use this information when deciding on improvement actions in step 4.
-
-Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "learnings"` to load the current Learnings Log — the distilled, evidence-cited learnings this skill routes to build-list and outbound. You will reconcile and update it in step 4. Skip if missing (you may create it in step 4).
+Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "learnings"` to load the current Learnings Log — the distilled, evidence-cited learnings this skill routes to build-list and outbound, and the single memory of what has been tried and whether it worked (its `[retired]` tombstones record disproven claims so they are not re-adopted). You will reconcile and update it in step 4, and cross-reference it when deciding improvement actions. Skip if missing (you may create it in step 4).
 
 ### 3. Multi-angle Analysis
 
@@ -107,11 +102,11 @@ These feed the Step 6 report and the `[channel]` entries of the Learnings Log (s
 
 **Data volume check (required):**
 
-Use the `dataSufficiency` field from step 1. If `sufficient` is `false`, **do not apply changes to SALES_STRATEGY.md or recalculate priorities**. Only run report generation (steps 5 and 6) and report "Insufficient data -- continue monitoring":
+Use the `dataSufficiency` field from step 1. If `sufficient` is `false`, **do not apply changes to SALES_STRATEGY.md or recalculate priorities**. Only run the report (step 6; step 5 has nothing to apply) and report "Insufficient data -- continue monitoring":
 - Total approaches (status='sent') fewer than 30
 - Less than 3 business days since last send
 
-Even with insufficient data, still record to the evaluations table (step 5) and generate the report (step 6) -- they are useful for understanding current status.
+Even with insufficient data, still generate the report (step 6) -- it is useful for understanding current status. With no priority changes to apply, step 5 is simply skipped.
 
 ---
 
@@ -127,9 +122,9 @@ Judgment principles:
 - If the **effect of the last strategy change cannot yet be measured**, do not layer additional changes
 - When in doubt, don't change. Accumulating data is more valuable than changing direction on weak evidence
 
-**Cross-reference with improvement history (required):**
-Before deciding on improvement actions, review the past evaluations history organized in step 2 and follow these rules:
-- Do not re-adopt measures that were tried before and had no effect
+**Cross-reference with the Learnings Log (required):**
+Before deciding on improvement actions, review the Learnings Log loaded in step 2 (including its `[retired]` tombstones) and follow these rules:
+- Do not re-adopt measures recorded as ineffective (a `[retired]` entry is a disproven claim kept precisely so it is not re-tried)
 - Continue and deepen the direction of measures that were effective before
 - If proposing the same improvement as before, state why different results are expected this time
 
@@ -178,21 +173,20 @@ The lever tick prunes and re-weights subject variants but never *generates* new 
 **Recalculate priorities:**
 - Update prospect priorities based on response patterns (bulk execution in step 5)
 
-### 5. Save Evaluation Record
+### 5. Apply Priority Updates
 
-Call `mcp__plugin_leadace_api__record_evaluation` with:
+When step 4 produced per-industry priority changes, call `mcp__plugin_leadace_api__record_evaluation` with:
 - `projectId`: "$0"
-- `metrics`: the metrics object from step 1 (excluding respondedMessages and noResponseSample)
-- `findings`: analysis findings text from step 3
-- `improvements`: summary of improvement actions applied (or "Insufficient data -- no changes applied")
-- `priorityUpdates` (optional): array of `{ industry, priority }` for bulk priority updates. Omit if no priority changes due to insufficient data.
+- `priorityUpdates`: array of `{ industry, priority }` for the bulk priority updates (required, non-empty).
+
+Applying the recalculated priorities is the only persisted side effect of an evaluation — the analysis is reported to the user (step 6) and distilled into the Learnings Log (step 4), not stored as a record. If step 4 made no priority changes (e.g. insufficient data), skip this call entirely.
 
 ### 6. Results Report
 
-Report the following directly to the user (no file output needed -- evaluation data is stored in the DB):
+Report the following directly to the user (no file output needed -- live metrics are in the Web UI `/evaluations`; this report is the narration):
 - Key KPIs (response rate, positive rate, etc.)
 - **Inquiry landing conversions** (from step 1's `inquiryOutcomeCounts`): show whenever any of `lead` / `signup_clicked` / `inquired` / `unsubscribed` is non-zero. Report `lead` (meeting-request conversions) and `signup_clicked` (self-serve signup conversions) separately — they reflect different CTA modes and inform whether the project's chosen CTA is converting. Skip the section when all five outcomes are 0
-- Changes from previous evaluation (if any)
+- Changes since the last cycle (what the Learnings Log added or `[retired]` in step 4, plus notable lever shifts from `get_lever_decisions`)
 - Important findings from the analysis
 - List of improvements applied
 - **Tactical rejection signals** (from step 1's `get_rejection_feedback_summary`):

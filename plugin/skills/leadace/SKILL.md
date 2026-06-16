@@ -18,7 +18,7 @@ allowed-tools:
   - mcp__plugin_leadace_api__get_master_document
   - mcp__plugin_leadace_api__get_project_settings
   - mcp__plugin_leadace_api__update_project_settings
-  - mcp__plugin_leadace_api__get_evaluation_history
+  - mcp__plugin_leadace_api__get_eval_data
   - mcp__plugin_leadace_api__get_tenant_settings
   - mcp__plugin_leadace_api__update_tenant_settings
   - mcp__plugin_leadace_api__list_subject_variants
@@ -115,7 +115,7 @@ Then stop.
 
 Answer the user's question using the context already gathered (`PROJECTS`, `GMAIL`). If the question requires data not in context, call the relevant MCP tool for the most likely project (or ask which project if ambiguous):
 
-- "結果は?" / "evaluation" / "改善案" / past evaluation history → `get_evaluation_history`
+- "結果は?" / "evaluation" / "改善案" / current results → `get_eval_data` (live metrics & response rates, also visualized in the `/evaluations` and `/dashboard` Web UI; the distilled "what worked / what didn't" memory lives in the `learnings` document)
 - Project documents (business / sales_strategy / etc.) → `get_document` / `list_documents`
 - Project / tenant settings → `get_project_settings` / `get_tenant_settings`
 

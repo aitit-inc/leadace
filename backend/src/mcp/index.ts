@@ -51,12 +51,12 @@ type Env = {
 // that the old plugin cannot tolerate (removed tool, renamed required arg,
 // changed response shape). See .claude/rules/release.md.
 const SERVER_VERSION = '1.0.0'
-// 0.5.107 hard-cuts < 0.5.107 plugins because get_rejection_feedback_summary's
-// `recontactWindows` response shape changed from Array<{window, ...}> to
-// Record<RejectionRecontactWindow, {count, samples}>. Older plugin SKILL.md
-// (`/evaluate`, `/check-feedback`) instructs the LLM to "list recontactWindows
-// rows", which no longer matches the JSON.
-const MIN_PLUGIN_VERSION = '0.5.107'
+// 0.6.16 hard-cuts < 0.6.16 plugins because the evaluations table was dropped:
+// `get_evaluation_history` was removed (old `/evaluate`, `/daily-cycle`,
+// `/leadace` SKILL.md still call it) and `record_evaluation` now requires a
+// non-empty `priorityUpdates` (old skills also passed metrics/findings/
+// improvements and, on the insufficient-data path, no priorities at all → 400).
+const MIN_PLUGIN_VERSION = '0.6.16'
 
 async function extractUserId(request: Request, jwtSecret: string, supabaseUrl?: string): Promise<string | null> {
   const authHeader = request.headers.get('Authorization')
@@ -223,7 +223,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'delete_project',
-    'Delete a project and its project-scoped data (project-prospect links, outreach logs, responses, evaluations, settings, subject variants). Prospects themselves are tenant assets and are NOT deleted — they survive for other projects and /match-prospects.',
+    'Delete a project and its project-scoped data (project-prospect links, outreach logs, responses, documents, settings, subject variants). Prospects themselves are tenant assets and are NOT deleted — they survive for other projects and /match-prospects.',
     { projectId: z.string().min(1).describe('Project name or ID') },
     async ({ projectId }, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('DELETE', `/projects/${encodeURIComponent(projectId)}`, null, apiUrl, authHeader)
@@ -1159,16 +1159,13 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'record_evaluation',
-    'Record an evaluation result and optionally bulk-update prospect priorities by industry.',
+    'Apply an evaluation\'s conclusions by bulk-overriding prospect priorities by industry (only status=new prospects are affected). Returns per-industry rowsAffected. The analysis itself is reported to the user and distilled into the learnings document, not stored.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
-      metrics: z.record(z.string(), z.unknown()).describe('Summary metrics (from get_eval_data, excluding respondedMessages/noResponseSample)'),
-      findings: z.string().describe('Analysis findings text'),
-      improvements: z.string().describe('Improvement actions applied (free text or JSON)'),
       priorityUpdates: z.array(z.object({
-        industry: z.string(),
+        industry: z.string().min(1),
         priority: prioritySchema,
-      })).optional().describe('Bulk priority updates by industry'),
+      })).min(1).max(50).describe('Bulk priority updates by industry (required, non-empty, max 50, one row per industry — duplicates are rejected by the API).'),
     },
     async (input, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('POST', '/evaluations', input, apiUrl, authHeader)
@@ -1176,33 +1173,11 @@ function buildToolRegistry(): ToolDef[] {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
       }
-      const result = data as { evaluationId: number; priorityUpdates: unknown[] }
+      const result = data as { priorityUpdates: unknown[] }
       return {
         content: [{
           type: 'text' as const,
-          text: `Evaluation recorded (id: ${result.evaluationId}). Priority updates: ${JSON.stringify(result.priorityUpdates)}`,
-        }],
-      }
-    },
-  )
-
-  defineTool(
-    'get_evaluation_history',
-    'Get past evaluation records for a project (findings, improvements, dates).',
-    { projectId: z.string().min(1).describe('Project name or ID') },
-    async ({ projectId }, { apiUrl, authHeader }) => {
-      const { ok, data } = await callApi('GET', `/projects/${encodeURIComponent(projectId)}/evaluations`, null, apiUrl, authHeader)
-      if (!ok) {
-        const err = data as { error: string }
-        return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
-      }
-      const { evaluations } = data as { evaluations: unknown[] }
-      return {
-        content: [{
-          type: 'text' as const,
-          text: evaluations.length === 0
-            ? 'No evaluations recorded yet.'
-            : `${evaluations.length} evaluation(s).\n${JSON.stringify(evaluations, null, 2)}`,
+          text: `Priority updates applied: ${JSON.stringify(result.priorityUpdates)}`,
         }],
       }
     },

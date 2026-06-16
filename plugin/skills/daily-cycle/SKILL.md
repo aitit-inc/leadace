@@ -18,7 +18,6 @@ allowed-tools:
   - mcp__plugin_leadace_api__record_response
   - mcp__plugin_leadace_api__update_prospect_status
   - mcp__plugin_leadace_api__get_eval_data
-  - mcp__plugin_leadace_api__get_evaluation_history
   - mcp__plugin_leadace_api__record_evaluation
   - mcp__plugin_leadace_api__run_lever_tick
   - mcp__plugin_leadace_api__get_document
@@ -64,12 +63,12 @@ Call `mcp__plugin_leadace_api__list_projects` and check that `$0` appears in the
 
 Use DB queries to understand the state from the previous cycle:
 
-- Call `mcp__plugin_leadace_api__get_evaluation_history` with `projectId: "$0"` to check the latest evaluation (findings, improvements)
 - Call `mcp__plugin_leadace_api__get_outbound_targets` with `projectId: "$0"` and `limit: 1` to get the current reachable count
 
 Use this information to inform subsequent steps when relevant. For example:
 - If reachable count is very low -> Run build-list earlier
-- If recent evaluation shows low response rates on a channel -> Inform outbound sub-agent
+
+(The evaluate sub-agent reads the `learnings` document directly, and outbound reads it by stage tag, so the prior cycle's analysis re-enters downstream stages automatically — no need to pre-load it here.)
 
 ### 3. Start Notification Email
 
@@ -316,6 +315,6 @@ build-list: (summary)
 
 Call `mcp__plugin_leadace_api__send_email` with the notification recipient as `to`, subject `"daily-cycle completed: $0"`, and the report body. (Use `send_email`, not `send_email_and_record` — this is an internal report, not prospect outreach.)
 
-Per-cycle actuals are **not** written to any document. Send / draft / response counts live in structured storage (`outreach_logs`, `responses`) and analysis history in the `evaluations` table — all surfaced in the Web UI (`/evaluations`, `/drafts`, `/outreach`). Do **not** create or maintain a "KPI Actuals" section in SALES_STRATEGY.md.
+Per-cycle actuals are **not** written to any document. Send / draft / response counts live in structured storage (`outreach_logs`, `responses`) and are surfaced in the Web UI (`/evaluations`, `/drafts`, `/outreach`); the distilled analysis memory lives in the `learnings` document. Do **not** create or maintain a "KPI Actuals" section in SALES_STRATEGY.md.
 
 Sub-agent's return to main: Briefly report the notification email send status.

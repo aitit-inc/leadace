@@ -1,7 +1,6 @@
 import { z } from 'zod'
-import { eq, sql, desc } from 'drizzle-orm'
+import { sql } from 'drizzle-orm'
 import {
-  evaluations,
   prioritySchema,
   INQUIRY_OUTCOMES,
   responseTypeEnum,
@@ -32,24 +31,20 @@ const priorityUpdateSchema = z.object({
   priority: prioritySchema,
 })
 
-export const listEvaluationsQuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(200).default(100),
-  offset: z.coerce.number().int().min(0).default(0),
-})
-export type ListEvaluationsQuery = z.infer<typeof listEvaluationsQuerySchema>
-
+// `/evaluate` persists its conclusions only as per-industry prospect-priority
+// overrides — the analysis is reported to the user and distilled into the
+// `learnings` doc, not stored. priorityUpdates is required + non-empty: a run
+// with no priority changes carries no work, so the skill skips this call
+// entirely rather than sending an empty array (which the API rejects with 400).
 export const recordEvaluationSchema = z.object({
   projectId: projectRefSchema,
-  metrics: z.record(z.string(), z.unknown()),
-  findings: z.string().min(1),
-  improvements: z.string().min(1),
   priorityUpdates: z
     .array(priorityUpdateSchema)
+    .min(1)
     .max(50)
     .refine((arr) => new Set(arr.map((x) => x.industry)).size === arr.length, {
       message: 'priorityUpdates contains duplicate industries',
-    })
-    .optional(),
+    }),
 })
 export type RecordEvaluationInput = z.infer<typeof recordEvaluationSchema>
 
@@ -397,7 +392,6 @@ export async function getProjectStats(
 }
 
 export type RecordEvaluationResult = {
-  evaluationId: number | undefined
   priorityUpdates: Array<{ industry: string; rowsAffected: number }>
 }
 
@@ -410,108 +404,43 @@ export async function recordEvaluation(
   if (!resolved.ok) return resolved
   const projectId = resolved.value
 
-  const now = new Date()
-
-  const [evaluation] = await db
-    .insert(evaluations)
-    .values({
-      tenantId,
-      projectId,
-      evaluationDate: now,
-      metrics: input.metrics as EvaluationMetrics,
-      findings: input.findings,
-      improvements: input.improvements,
-    })
-    .returning({ id: evaluations.id })
-
   // Apply every per-industry priority override in a single
   // UPDATE ... FROM (VALUES ...) so the endpoint issues one round-trip
   // regardless of list size. The schema caps the list (max 50, no duplicate
   // industries); RETURNING the matched industry lets us report per-industry
-  // rowsAffected. Only 'new' rows are touched, matching the prior behavior.
+  // rowsAffected. Only 'new' rows are touched.
   //
   // Raw db.execute bypasses drizzle's column-type mappers, so two casts the
   // builder would normally insert must be written by hand against postgres-js's
   // text-typed bind params: `${NEW}::prospect_status` (enum column = text param
   // has no operator) and `now()` instead of a JS Date param (postgres-js's cf
   // build can't serialize a Date in this raw bind path).
-  const priorityUpdates = input.priorityUpdates ?? []
-  let priorityResults: Array<{ industry: string; rowsAffected: number }> = []
-  if (priorityUpdates.length > 0) {
-    const NEW: ProspectStatus = 'new'
-    const valuesList = sql.join(
-      priorityUpdates.map((pu) => sql`(${pu.industry}::text, ${pu.priority}::int)`),
-      sql`, `,
-    )
-    const updatedRows = Array.from(
-      await db.execute<{ industry: string }>(sql`
-        UPDATE project_prospects pp
-        SET priority = v.priority, updated_at = now()
-        FROM (VALUES ${valuesList}) AS v(industry, priority)
-        JOIN prospects p ON p.industry = v.industry
-        WHERE pp.prospect_id = p.id AND pp.project_id = ${projectId} AND pp.status = ${NEW}::prospect_status
-        RETURNING v.industry AS industry
-      `),
-    )
-    // Seed every requested industry at 0 so an industry that matched no 'new'
-    // prospect still appears in the result (preserves prior behavior).
-    const counts = new Map<string, number>(priorityUpdates.map((pu) => [pu.industry, 0]))
-    for (const row of updatedRows) {
-      counts.set(row.industry, (counts.get(row.industry) ?? 0) + 1)
-    }
-    priorityResults = priorityUpdates.map((pu) => ({
-      industry: pu.industry,
-      rowsAffected: counts.get(pu.industry) ?? 0,
-    }))
+  const NEW: ProspectStatus = 'new'
+  const valuesList = sql.join(
+    input.priorityUpdates.map((pu) => sql`(${pu.industry}::text, ${pu.priority}::int)`),
+    sql`, `,
+  )
+  const updatedRows = Array.from(
+    await db.execute<{ industry: string }>(sql`
+      UPDATE project_prospects pp
+      SET priority = v.priority, updated_at = now()
+      FROM (VALUES ${valuesList}) AS v(industry, priority)
+      JOIN prospects p ON p.industry = v.industry
+      WHERE pp.prospect_id = p.id AND pp.project_id = ${projectId} AND pp.status = ${NEW}::prospect_status
+      RETURNING v.industry AS industry
+    `),
+  )
+  // Seed every requested industry at 0 so an industry that matched no 'new'
+  // prospect still appears in the result.
+  const counts = new Map<string, number>(input.priorityUpdates.map((pu) => [pu.industry, 0]))
+  for (const row of updatedRows) {
+    counts.set(row.industry, (counts.get(row.industry) ?? 0) + 1)
   }
 
   return ok({
-    evaluationId: evaluation?.id,
-    priorityUpdates: priorityResults,
-  })
-}
-
-export type EvaluationHistoryRow = {
-  id: number
-  evaluationDate: Date
-  findings: string
-  improvements: string
-}
-
-export async function listEvaluations(
-  db: Db,
-  tenantId: TenantId,
-  projectRef: ProjectRef,
-  query: ListEvaluationsQuery,
-): Promise<ServiceResult<{ evaluations: EvaluationHistoryRow[]; total: number }>> {
-  const resolved = await resolveProject(db, tenantId, projectRef)
-  if (!resolved.ok) return resolved
-  const projectId = resolved.value
-
-  const { limit, offset } = query
-  const where = eq(evaluations.projectId, projectId)
-
-  const [rows, countRows] = await Promise.all([
-    db
-      .select({
-        id: evaluations.id,
-        evaluationDate: evaluations.evaluationDate,
-        findings: evaluations.findings,
-        improvements: evaluations.improvements,
-      })
-      .from(evaluations)
-      .where(where)
-      .orderBy(desc(evaluations.evaluationDate), desc(evaluations.id))
-      .limit(limit)
-      .offset(offset),
-    db
-      .select({ total: sql<number>`COUNT(*)::int` })
-      .from(evaluations)
-      .where(where),
-  ])
-
-  return ok({
-    evaluations: rows as EvaluationHistoryRow[],
-    total: countRows[0]?.total ?? 0,
+    priorityUpdates: input.priorityUpdates.map((pu) => ({
+      industry: pu.industry,
+      rowsAffected: counts.get(pu.industry) ?? 0,
+    })),
   })
 }

@@ -14,6 +14,8 @@ A list of prospect candidates. Each candidate includes at minimum:
 
 For each candidate, explore in the following order. **Prioritize finding an email address** — only look for a form URL if no email is found. Limit exploration to **a maximum of 8 pages** per candidate (extendable to **a maximum of 12 pages** if no email is found in step 2).
 
+**Record only contact details that appear verbatim in a tool result you received.** Every email, form URL, contact name, and SNS handle must be a literal string present in fetched page content (a `mailto:` link or visible text) or in the actual text of a search result — never construct an address from a name + domain pattern, infer it from a partial snippet, or recall one from memory. A fabricated email bounces and harms sender reputation. If you didn't find one, leave the field `null`: a missing value is correct, an invented one is a defect.
+
 **Use `fetch_url.py` for page retrieval (do not use WebFetch):**
 ```bash
 python3 ${CLAUDE_PLUGIN_ROOT}/scripts/fetch_url.py --url "<URL>" --prompt "<extraction instruction>" --timeout 15

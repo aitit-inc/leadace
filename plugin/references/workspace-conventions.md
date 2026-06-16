@@ -6,10 +6,14 @@ Common rules for all skills and sub-agents.
 
 All project data is stored on the server and accessed via MCP tools (`mcp__plugin_leadace_api__*`). There are no local project directories or databases.
 
-- **Structured data** (prospects, outreach logs, responses, evaluations): Dedicated MCP tools (`add_prospects`, `record_outreach`, etc.)
+- **Structured data** (prospects, outreach logs, responses): Dedicated MCP tools (`add_prospects`, `record_outreach`, etc.)
 - **Documents** (business info, sales strategy, email template, search notes, cross-stage learnings): `get_document` / `save_document` MCP tools with slugs: `business`, `sales_strategy`, `email_template`, `search_notes`, `learnings`
 - **Master documents** (templates, guidelines, frameworks): `get_master_document` MCP tool with slugs like `tpl_business`, `tpl_email_guidelines`, etc. These are shared across all users and updated centrally
 - **Local files**: Only plugin SKILL.md files, local-operation references (claude-in-chrome-guide, form-filling), and scripts in `${CLAUDE_PLUGIN_ROOT}/`
+
+## Never fabricate data
+
+Record and persist only what you actually observed — in a tool result, on a retrieved page, in a project document. Never invent, guess, or pattern-fill a value to fill a slot: an email address, a contact name, a company fact, a metric. When the information isn't there, omit the field (or set `null` where the schema uses null for absence) — never write an empty string or a placeholder. A missing value is correct and downstream handles it; a fabricated one corrupts data (bounced sends, wrong-name greetings, false strategy signals) and is far costlier to undo than a gap. This holds no matter how capable the model is.
 
 ## Where knowledge lives (skills write procedure, not values)
 
@@ -39,7 +43,7 @@ When calling `save_document` (or any MCP tool that persists user-visible documen
 Generated project documents (`business`, `sales_strategy`, `search_notes`, `learnings`) are design / reference artifacts, not activity logs. Keep them lean:
 
 - **Soft length targets** — a document materially past its target is carrying filler or data that belongs elsewhere; trim or relocate. `business` ~60 lines, `sales_strategy` ~180 lines, `search_notes` ~80 lines. `learnings` is bounded by entry count instead (≤15 active; evaluate retires the rest each cycle).
-- **Never persist runtime actuals or per-run history into a document.** Send / draft / response counts, rates, and per-cycle logs live in structured storage (`outreach_logs`, `responses`, `evaluations`) and are surfaced in the Web UI (`/evaluations`, `/drafts`, `/outreach`). The `sales_strategy` `## KPI` section holds *target* metrics (the reverse-calc tree) only — never an actuals / KPI-history table. A document that grows an append-only metrics table is a bug.
+- **Never persist runtime actuals or per-run history into a document.** Send / draft / response counts, rates, and per-cycle logs live in structured storage (`outreach_logs`, `responses`) and are surfaced in the Web UI (`/evaluations`, `/drafts`, `/outreach`). The `sales_strategy` `## KPI` section holds *target* metrics (the reverse-calc tree) only — never an actuals / KPI-history table. A document that grows an append-only metrics table is a bug.
 
 ## Explore wide, output narrow
 

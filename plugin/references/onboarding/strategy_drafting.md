@@ -90,15 +90,15 @@ Check completeness of each section in existing `SALES_STRATEGY.md`:
 | KPI | Metrics set |
 | Search keywords | 10 or more |
 
-Call `mcp__plugin_leadace_api__get_evaluation_history` with `projectId: "$0"`. Classify sections:
+Classify sections:
 
 | Category | Sections | Behavior |
 |---|---|---|
 | Not set | Missing / empty / incomplete | Subject to completion |
-| evaluate-managed | targeting, KPI, search keywords (when eval history exists) | **Do not touch by default** |
+| evaluate-managed | targeting, KPI, search keywords (when already populated) | **Do not touch by default** |
 | Static settings | Sender info, response def, notification, track record, outreach mode, messaging, channels | Update only if user explicitly requests |
 
-If 0 evaluations: treat as "not set" or "static settings".
+`/evaluate` auto-tunes targeting / KPI / search keywords once a project has activity, so treat those sections as evaluate-managed whenever they already carry content. An empty such section is simply "not set" and is fillable here.
 
 **Template update detection:** Compare section headings in `tpl_sales_strategy` master document with the existing file. Sections present in template but missing in file → report as "possibly added by an update".
 
@@ -106,14 +106,14 @@ If 0 evaluations: treat as "not set" or "static settings".
 
 Report to user:
 1. Completed sections (1-line summary each)
-2. Evaluate-managed sections (improvement count + recent summary)
+2. Evaluate-managed sections (current content summary)
 3. Missing / incomplete sections
 4. BUSINESS.md state (exists / main content)
 
 Confirm policy via `AskUserQuestion`:
 - **Fill in missing items** (default): Only collect missing, don't touch evaluate-managed.
 - **Update specific sections**: Collect only user-specified. Warn if evaluate-managed is included.
-- **Business pivot**: Reconstruct all sections including evaluate-managed (eval improvements reset).
+- **Business pivot**: Reconstruct all sections including evaluate-managed.
 
 **Pivot vs. new project:** "Business pivot" rebuilds the strategy in place but **keeps this project's engagement ledger** (already-contacted status + outreach / response history) — the right choice for *retargeting the same business* (shifted positioning / ICP / messaging on the same prospect base). If the user is selling a **genuinely different service / product**, or wants a clean slate that may legitimately re-approach previously-contacted (not unsubscribed) contacts, recommend a **new project** instead — a 2nd+ project can seed from this one via "Reference other projects" below, and tenant-wide unsubscribe / DNC / quota apply to it identically, so nothing compliance-relevant is lost. (Free / Starter cap projects at 1, so on those tiers pivot-in-place is the only *in-place* retarget path; a clean slate there means deleting and recreating the single project, which discards its engagement ledger.)
 

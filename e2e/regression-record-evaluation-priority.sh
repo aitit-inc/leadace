@@ -2,13 +2,14 @@
 # Net-new regression for record_evaluation priorityUpdates scope
 # (coverage-audit §2 gap #26).
 #
-# recordEvaluation's bulk per-industry priority override is restricted to
-# status='new' project_prospects rows (services/evaluations.ts:407-414, the
-# `pp.status = 'new'` filter). If the UPDATE...FROM VALUES regresses, it
-# overwrites priority on already-contacted/responded prospects, corrupting the
-# live pipeline. The per-industry rowsAffected report must count exactly the
-# 'new' rows in that industry (RETURNING-counted, seeded at 0 for every
-# requested industry — so a zero-match industry reports rowsAffected=0).
+# record_evaluation's sole persisted effect is a bulk per-industry priority
+# override, restricted to status='new' project_prospects rows (the
+# `pp.status = 'new'` filter in services/evaluations.ts). If the
+# UPDATE...FROM VALUES regresses, it overwrites priority on
+# already-contacted/responded prospects, corrupting the live pipeline. The
+# per-industry rowsAffected report must count exactly the 'new' rows in that
+# industry (RETURNING-counted, seeded at 0 for every requested industry — so a
+# zero-match industry reports rowsAffected=0).
 #
 # Runs against the local stack (localhost:8787 API + 54322 Postgres). No
 # compliance/quota/Gmail dependency — fully self-host runnable. Curl-only,
@@ -153,11 +154,10 @@ assert_eq "baseline saas-C priority=3" "$(pp_priority "$P_SAAS_C")" "3"
 
 step "record_evaluation priorityUpdates: saas→1, retail→5, fintech→2"
 EVAL_BODY="$(jq -nc --arg pid "$PROJECT_ID" \
-  '{projectId:$pid, metrics:{}, findings:"e2e eval", improvements:"e2e improvements",
+  '{projectId:$pid,
     priorityUpdates:[{industry:"saas",priority:1},{industry:"retail",priority:5},{industry:"fintech",priority:2}]}')"
 CODE="$(api_status POST /api/evaluations "$EVAL_BODY")"; BODY="$(api_body)"
 assert_eq "record_evaluation → 201" "$CODE" "201"
-assert_eq "response returns an evaluationId" "$(echo "$BODY" | jq -r 'if .evaluationId==null then "null" else "present" end')" "present"
 ra_of() { echo "$BODY" | jq -r --arg i "$1" '.priorityUpdates[]? | select(.industry==$i) | .rowsAffected'; }
 assert_eq "saas rowsAffected=1 (only the 'new' row, not all 3)" "$(ra_of saas)" "1"
 assert_eq "retail rowsAffected=2 (both 'new')" "$(ra_of retail)" "2"
@@ -176,7 +176,7 @@ assert_eq "fintech 'new' row got priority 2" "$(pp_priority "$P_FINTECH_A")" "2"
 step "Negative leg: industry with zero 'new' rows reports rowsAffected=0, changes nothing"
 set_status "$P_SAAS_A" contacted
 EVAL2_BODY="$(jq -nc --arg pid "$PROJECT_ID" \
-  '{projectId:$pid, metrics:{}, findings:"e2e eval2", improvements:"e2e", priorityUpdates:[{industry:"saas",priority:4}]}')"
+  '{projectId:$pid, priorityUpdates:[{industry:"saas",priority:4}]}')"
 CODE="$(api_status POST /api/evaluations "$EVAL2_BODY")"; BODY="$(api_body)"
 assert_eq "2nd eval → 201" "$CODE" "201"
 assert_eq "saas rowsAffected=0 (no 'new' rows left)" "$(echo "$BODY" | jq -r '.priorityUpdates[]? | select(.industry=="saas") | .rowsAffected')" "0"
@@ -184,9 +184,14 @@ assert_eq "saas-A priority unchanged (still 1, not 4)" "$(pp_priority "$P_SAAS_A
 
 step "Schema guard: duplicate industry → 400"
 DUP_BODY="$(jq -nc --arg pid "$PROJECT_ID" \
-  '{projectId:$pid, metrics:{}, findings:"e2e", improvements:"e2e", priorityUpdates:[{industry:"saas",priority:1},{industry:"saas",priority:2}]}')"
+  '{projectId:$pid, priorityUpdates:[{industry:"saas",priority:1},{industry:"saas",priority:2}]}')"
 CODE="$(api_status POST /api/evaluations "$DUP_BODY")"
 assert_eq "duplicate industry rejected → 400" "$CODE" "400"
+
+step "Schema guard: empty priorityUpdates → 400 (the call has no effect to apply)"
+EMPTY_BODY="$(jq -nc --arg pid "$PROJECT_ID" '{projectId:$pid, priorityUpdates:[]}')"
+CODE="$(api_status POST /api/evaluations "$EMPTY_BODY")"
+assert_eq "empty priorityUpdates rejected → 400" "$CODE" "400"
 
 step "summary"
 echo "  PASS=$PASS  FAIL=$FAIL" >&2

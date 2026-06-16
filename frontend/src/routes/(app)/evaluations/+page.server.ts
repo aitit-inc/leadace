@@ -1,32 +1,14 @@
-import { getProjectStats, listEvaluations } from '$lib/api/evaluations';
-import { PAGE_SIZE, parsePageNumber } from '$lib/pagination';
+import { getProjectStats } from '$lib/api/evaluations';
 import type { PageServerLoad } from './$types';
 
-export const load: PageServerLoad = async ({ fetch, parent, url, locals }) => {
+export const load: PageServerLoad = async ({ fetch, parent, locals }) => {
   const { activeProjectId } = await parent();
-  const page = parsePageNumber(url.searchParams.get('page'));
 
   if (!activeProjectId) {
-    return {
-      activeProjectId: null,
-      stats: null,
-      evaluations: [],
-      total: 0,
-      page,
-    };
+    return { activeProjectId: null, stats: null };
   }
 
-  const token = locals.session?.access_token;
-  const [stats, evaluationsRes] = await Promise.all([
-    getProjectStats(activeProjectId, fetch, token),
-    listEvaluations(activeProjectId, { page, limit: PAGE_SIZE }, fetch, token),
-  ]);
+  const stats = await getProjectStats(activeProjectId, fetch, locals.session?.access_token);
 
-  return {
-    activeProjectId,
-    stats,
-    evaluations: evaluationsRes.evaluations,
-    total: evaluationsRes.total,
-    page,
-  };
+  return { activeProjectId, stats };
 };
