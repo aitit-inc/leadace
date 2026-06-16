@@ -24,11 +24,20 @@ export interface DashboardTrendPoint {
   responses: number;
 }
 
+export type LearningStage = 'targeting' | 'body' | 'timing' | 'channel';
+
+export interface LearningEntry {
+  stage: LearningStage;
+  date: string;
+  claim: string;
+}
+
 export interface DashboardLearning {
   bestSubject: { pattern: string; replyRate: number; mature: boolean } | null;
   channelOrder: Array<{ channel: Channel; rate: number }>;
   testing: { activeVariants: number; needsNewAngle: boolean };
   state: 'learning' | 'optimizing';
+  log: LearningEntry[];
 }
 
 export type RejectionRecontactWindow = 'never' | '3_months' | '6_months' | '12_months' | 'unspecified';

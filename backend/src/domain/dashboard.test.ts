@@ -4,6 +4,7 @@ import {
   buildTrend,
   computeDeltaPct,
   deriveAttentionItems,
+  parseLearnings,
   periodToWindow,
   replyRate,
   trendWindowStartIso,
@@ -104,6 +105,61 @@ describe('periodToWindow', () => {
     const w = periodToWindow('all', now)
     expect(w.curStart.getTime()).toBe(0)
     expect(w.prevStart.getTime()).toBe(0)
+  })
+})
+
+describe('parseLearnings', () => {
+  it('parses a well-formed entry and trims the evidence tail', () => {
+    const entries = parseLearnings(
+      '[targeting] [2026-06-10] SaaS firms under 50 staff reply best — evidence: metric=replyRate, n=42',
+    )
+    expect(entries).toEqual([
+      { stage: 'targeting', date: '2026-06-10', claim: 'SaaS firms under 50 staff reply best' },
+    ])
+  })
+
+  it('keeps the claim when no evidence tail is present', () => {
+    const entries = parseLearnings('[body] [2026-06-01] short openers outperform long ones')
+    expect(entries).toEqual([{ stage: 'body', date: '2026-06-01', claim: 'short openers outperform long ones' }])
+  })
+
+  it('drops [retired] tombstones and unrecognized stages', () => {
+    const entries = parseLearnings(
+      [
+        '[retired] [2026-05-01] old claim — evidence: metric=x, n=9',
+        '[bogus] [2026-05-02] not a real stage',
+        '[channel] [2026-06-02] LinkedIn DMs land warmer when referencing a hire — evidence: metric=replyRate, n=31',
+      ].join('\n'),
+    )
+    expect(entries).toEqual([
+      { stage: 'channel', date: '2026-06-02', claim: 'LinkedIn DMs land warmer when referencing a hire' },
+    ])
+  })
+
+  it('skips headers/blank lines and tolerates a leading markdown bullet', () => {
+    const entries = parseLearnings(
+      ['# Learnings Log', '', '- [timing] [2026-06-05] 3-month recontacts convert — evidence: metric=meetingRate, n=12'].join(
+        '\n',
+      ),
+    )
+    expect(entries).toEqual([{ stage: 'timing', date: '2026-06-05', claim: '3-month recontacts convert' }])
+  })
+
+  it('returns entries newest-first regardless of document order (so the truncated glance is deterministic)', () => {
+    const entries = parseLearnings(
+      [
+        '[targeting] [2026-05-01] older claim',
+        '[body] [2026-06-15] newer claim',
+        '[channel] [2026-06-01] middle claim',
+      ].join('\n'),
+    )
+    expect(entries.map((e) => e.date)).toEqual(['2026-06-15', '2026-06-01', '2026-05-01'])
+  })
+
+  it('returns an empty list for null or blank content', () => {
+    expect(parseLearnings(null)).toEqual([])
+    expect(parseLearnings('')).toEqual([])
+    expect(parseLearnings('\n\n')).toEqual([])
   })
 })
 

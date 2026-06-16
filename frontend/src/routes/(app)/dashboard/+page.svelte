@@ -72,6 +72,13 @@
     sns_twitter: 'X/Twitter',
     sns_linkedin: 'LinkedIn',
   };
+  const LEARNING_STAGE_LABELS: Record<string, string> = {
+    targeting: 'Targeting',
+    body: 'Message',
+    timing: 'Timing',
+    channel: 'Channel',
+  };
+  const LEARNINGS_SHOWN = 6;
   const FUNNEL_BAR: Record<FunnelStageKey, string> = {
     sent: 'bg-accent/85',
     reached: 'bg-accent/65',
@@ -435,7 +442,7 @@
             <Brain size={16} class="text-accent" />
             <h3 class="text-sm font-semibold text-text">What the AI is learning</h3>
           </div>
-          {#if summary.learning.bestSubject || summary.learning.channelOrder.length > 0}
+          {#if summary.learning.bestSubject || summary.learning.channelOrder.length > 0 || summary.learning.log.length > 0}
             <ul class="space-y-3 text-sm">
               {#if summary.learning.bestSubject}
                 <li>
@@ -472,6 +479,24 @@
                   {/if}
                 </p>
               </li>
+              {#if summary.learning.log.length > 0}
+                <li class="border-t border-border pt-3">
+                  <p class="text-xs uppercase tracking-wider text-text-muted">Learnings</p>
+                  <ul class="mt-1.5 space-y-1.5">
+                    {#each summary.learning.log.slice(0, LEARNINGS_SHOWN) as entry}
+                      <li class="flex gap-2 text-xs" title={entry.date}>
+                        <span class="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 font-medium text-text-secondary">
+                          {LEARNING_STAGE_LABELS[entry.stage] ?? humanize(entry.stage)}
+                        </span>
+                        <span class="min-w-0 break-words text-text-secondary">{entry.claim}</span>
+                      </li>
+                    {/each}
+                  </ul>
+                  {#if summary.learning.log.length > LEARNINGS_SHOWN}
+                    <p class="mt-1.5 text-xs text-text-muted">+{summary.learning.log.length - LEARNINGS_SHOWN} more</p>
+                  {/if}
+                </li>
+              {/if}
             </ul>
           {:else}
             <p class="text-sm text-text-muted">

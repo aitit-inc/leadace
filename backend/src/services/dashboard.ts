@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { and, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, sql } from 'drizzle-orm'
 import { outreachLogs, projectDocuments, type Channel } from '../db/schema'
 import type { Db } from '../db/connection'
 import type { Edition } from '../domain/edition'
@@ -9,6 +9,7 @@ import {
   buildFunnel,
   buildTrend,
   deriveAttentionItems,
+  parseLearnings,
   periodToWindow,
   replyRate,
   toKpi,
@@ -17,6 +18,7 @@ import {
   type DashboardLearning,
   type DashboardRejections,
   type DashboardSummary,
+  type LearningEntry,
 } from '../domain/dashboard'
 import type { RejectionRecontactWindow } from '../db/schema'
 import { ok, type ServiceResult } from './result'
@@ -85,6 +87,7 @@ export async function getDashboardSummary(
     channelRateRows,
     pendingDraftsRows,
     emailTemplateRows,
+    learningsRows,
     outboundAllowlist,
     leverRes,
     variantsRes,
@@ -197,6 +200,12 @@ export async function getDashboardSummary(
       .from(projectDocuments)
       .where(and(eq(projectDocuments.projectId, projectId), eq(projectDocuments.slug, 'email_template')))
       .limit(1),
+    db
+      .select({ content: projectDocuments.content })
+      .from(projectDocuments)
+      .where(and(eq(projectDocuments.projectId, projectId), eq(projectDocuments.slug, 'learnings')))
+      .orderBy(desc(projectDocuments.createdAt))
+      .limit(1),
     loadProjectOutboundAllowlist(db, projectId),
     getLeverStateById(db, tenantId, projectId),
     listSubjectVariantsById(db, tenantId, projectId),
@@ -242,7 +251,12 @@ export async function getDashboardSummary(
     dailyResponseRows.map((r) => ({ day: r.day, count: Number(r.count) })),
   )
 
-  const learning = buildLearning(leverRes.value, variantsRes.value.variants, channelRateRows)
+  const learning = buildLearning(
+    leverRes.value,
+    variantsRes.value.variants,
+    channelRateRows,
+    parseLearnings(learningsRows[0]?.content ?? null),
+  )
   const rejections = buildRejections(rejectionRes.value)
   const recentActivity = recentRes.value.logs
     .map(toActivityEvent)
@@ -288,6 +302,7 @@ function buildLearning(
   lever: LeverStateLike,
   variants: SubjectVariantLike[],
   channelRows: { channel: Channel; total: string | number; responses: string | number }[],
+  log: LearningEntry[],
 ): DashboardLearning {
   const patternById = new Map(variants.map((v) => [v.variantId, v]))
 
@@ -319,6 +334,7 @@ function buildLearning(
     channelOrder,
     testing: { activeVariants: lever.variants.length, needsNewAngle: lever.needsReplenishment },
     state: lever.weights && matureCount >= 2 ? 'optimizing' : 'learning',
+    log,
   }
 }
 

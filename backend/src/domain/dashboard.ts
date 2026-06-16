@@ -19,11 +19,19 @@ export type FunnelStage = {
 
 export type DashboardTrendPoint = { date: string; sent: number; responses: number }
 
+// Stage tags /evaluate writes into the Learnings Log, one per downstream decision a
+// skill acts on. '[retired]' is a tombstone, not a stage — readers (and parseLearnings) skip it.
+export const LEARNING_STAGES = ['targeting', 'body', 'timing', 'channel'] as const
+export type LearningStage = (typeof LEARNING_STAGES)[number]
+
+export type LearningEntry = { stage: LearningStage; date: string; claim: string }
+
 export type DashboardLearning = {
   bestSubject: { pattern: string; replyRate: number; mature: boolean } | null
   channelOrder: { channel: Channel; rate: number }[]
   testing: { activeVariants: number; needsNewAngle: boolean }
   state: 'learning' | 'optimizing'
+  log: LearningEntry[]
 }
 
 export type DashboardRejections = {
@@ -133,6 +141,30 @@ export function buildFunnel(counts: {
 export function replyRate(numerator: number, denominator: number): number {
   if (denominator <= 0) return 0
   return Math.round((numerator / denominator) * 1000) / 10
+}
+
+const LEARNING_STAGE_SET = new Set<string>(LEARNING_STAGES)
+// Each entry: "[stage] [YYYY-MM-DD] claim — evidence: metric=…, n=…". Tolerant of a
+// leading markdown bullet since the doc is LLM-authored; the evidence tail is trimmed
+// for the glance card. Unrecognized lines (headers, '[retired]' tombstones) are dropped.
+const LEARNING_LINE = /^\[([a-z_]+)\]\s*\[(\d{4}-\d{2}-\d{2})\]\s*(.+)$/i
+
+export function parseLearnings(content: string | null): LearningEntry[] {
+  if (!content) return []
+  const out: LearningEntry[] = []
+  for (const raw of content.split('\n')) {
+    const line = raw.trim().replace(/^[-*]\s+/, '')
+    const m = LEARNING_LINE.exec(line)
+    if (!m) continue
+    const stage = m[1]!.toLowerCase()
+    if (!LEARNING_STAGE_SET.has(stage)) continue
+    const rest = m[3]!.trim()
+    const claim = rest.split(/\s*[—–-]+\s*evidence:/i)[0]!.trim()
+    out.push({ stage: stage as LearningStage, date: m[2]!, claim: claim || rest })
+  }
+  // Newest first: the doc's line order is LLM-authored and undefined, but the glance card
+  // truncates to the top few — surface the most recent learnings deterministically.
+  return out.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
 }
 
 export const TREND_DAYS = 30
