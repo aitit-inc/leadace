@@ -934,3 +934,27 @@ export const bugReports = pgTable('bug_reports', {
 }, (table) => [
   index('idx_bug_reports_tenant_created').on(table.tenantId, table.createdAt),
 ])
+
+// Global, NOT tenant-scoped: the row must outlive the tenant cascade-delete,
+// which also serves as a GDPR erasure — so it holds no tenant_id / user_id.
+export const ACCOUNT_DELETION_REASONS = [
+  'too_expensive',
+  'not_enough_results',
+  'missing_features',
+  'too_hard_to_use',
+  'switched_to_alternative',
+  'no_longer_needed',
+  'other',
+] as const
+export type AccountDeletionReason = (typeof ACCOUNT_DELETION_REASONS)[number]
+export const accountDeletionReasonEnum = pgEnum(
+  'account_deletion_reason',
+  ACCOUNT_DELETION_REASONS,
+)
+
+export const accountDeletionSurveys = pgTable('account_deletion_surveys', {
+  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+  reason: accountDeletionReasonEnum('reason').notNull(),
+  detail: text('detail'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+})

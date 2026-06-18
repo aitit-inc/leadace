@@ -144,10 +144,51 @@ docker-compose.yml               # Bare Postgres for non-Supabase local dev
 
 ### Quick start (local dev)
 
+One-time setup — copy the env templates:
+
+```bash
+cp backend/.dev.vars.example backend/.dev.vars
+cp frontend/.env.example frontend/.env
+```
+
+Fill in the Supabase keys from `supabase status` — it prints them once the
+local stack is running, so run `make dev` once first (it starts Supabase), then
+paste the keys in.
+
+For Google sign-in to your local stack, also create a Google OAuth client and
+export `SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID` / `_SECRET` in your shell (via
+`.envrc`) **before** the first `make dev` — it boots Supabase, which reads them
+from the shell at start time. See
+[docs/self-host.md → Local development](docs/self-host.md#local-development).
+(These shell vars gate sign-in; the `GOOGLE_CLIENT_ID` / `_SECRET` in
+`backend/.dev.vars` are separate — they power Gmail *send*.)
+
+Then start the whole stack with one command — Supabase, migrations, the master
+seed, the API/MCP Workers, and the frontend, all together. Ctrl-C tears the dev
+servers down (Supabase stays up for a fast restart; `make stop` halts it):
+
+```bash
+make dev          # or: ./scripts/dev.sh
+```
+
+| Service | URL |
+|---|---|
+| Frontend | http://localhost:5173 |
+| API Worker | http://localhost:8787 |
+| MCP Worker | http://localhost:8788 |
+| Supabase Studio | http://localhost:54323 |
+
+To run on different ports (e.g. 5173 is taken by another dev server), copy
+`dev.ports.env.example` to `dev.ports.env` and set the ports there — `dev.sh`
+rewires every dependent URL (and Google sign-in keeps working). Defaults are
+unchanged when the file is absent.
+
+<details>
+<summary>Run the steps manually instead</summary>
+
 ```bash
 npx supabase start                      # Auth + Postgres on ports 54321/54322
 cd backend
-cp .dev.vars.example .dev.vars          # then edit with `supabase status` values
 npm install
 npm run db:migrate
 npx tsx scripts/seed-master-documents.ts
@@ -156,10 +197,10 @@ npm run dev:api                         # API → http://localhost:8787
 npm run dev:mcp                         # MCP → http://localhost:8788  (separate terminal)
 
 cd ../frontend
-cp .env.example .env                    # set PUBLIC_SUPABASE_* from `supabase status`
 npm install
 npm run dev                             # → http://localhost:5173
 ```
+</details>
 
 Pre-release checks:
 

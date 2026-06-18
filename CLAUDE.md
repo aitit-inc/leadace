@@ -124,15 +124,16 @@ When a migration adds a new tenant-scoped table, append `GRANT SELECT, INSERT, U
 ### Local Dev
 
 ```bash
-npx supabase start         # Supabase local (Auth + PostgreSQL on port 54322)
-cd backend
-npm run dev:api            # API Worker (port 8787)
-npm run dev:mcp            # MCP Worker (port 8788) — separate terminal
-cd frontend
-npm run dev                # Frontend dev server (port 5173)
+make dev                   # or ./scripts/dev.sh — Supabase + migrate + seed +
+                           # API (:8787) + MCP (:8788) + frontend (:5173).
+                           # Ctrl-C stops the dev servers; `make stop` halts Supabase.
 ```
 
-See `README.md` -> For Developers for full details.
+`scripts/dev.sh` is the orchestrator; the Makefile is a thin wrapper. Supabase
+stays on the Supabase CLI (it is already Docker and is coupled to
+`supabase/config.toml`); the Workers run natively (wrangler `workerd`). The
+manual breakdown and first-time Google-OAuth setup live in `README.md` → For
+Developers and `docs/self-host.md` → Local development.
 
 ## Frontend Development (frontend/)
 

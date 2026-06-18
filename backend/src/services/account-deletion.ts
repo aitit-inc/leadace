@@ -1,9 +1,26 @@
 import { eq } from 'drizzle-orm'
-import { tenantPlans, tenants } from '../db/schema'
+import { z } from 'zod'
+import {
+  ACCOUNT_DELETION_REASONS,
+  accountDeletionSurveys,
+  tenantPlans,
+  tenants,
+} from '../db/schema'
 import { createDb, type Db } from '../db/connection'
 import type { TenantId } from '../domain/ids'
 import { ok, err, type ServiceResult } from './result'
 import { stripeApiRequest } from './stripe-api'
+
+export const accountDeletionSurveySchema = z
+  .object({
+    reason: z.enum(ACCOUNT_DELETION_REASONS),
+    detail: z.string().trim().max(500).optional(),
+  })
+  .refine((s) => s.reason !== 'other' || (s.detail?.length ?? 0) > 0, {
+    message: 'detail is required when reason is "other"',
+    path: ['detail'],
+  })
+export type AccountDeletionSurvey = z.infer<typeof accountDeletionSurveySchema>
 
 // resource_missing means an earlier delete attempt already canceled the
 // subscription, so a non-ok cancel carrying that code is still tolerable.
@@ -34,6 +51,7 @@ export async function deleteOwnAccount(
   rlsDb: Db,
   tenantId: TenantId,
   userId: string,
+  survey: AccountDeletionSurvey,
 ): Promise<ServiceResult<undefined>> {
   if (cfg.stripeKey) {
     const [plan] = await rlsDb
@@ -63,6 +81,16 @@ export async function deleteOwnAccount(
     .returning({ id: tenants.id })
   if (deleted.length === 0) {
     return err('NOT_FOUND', 'Tenant not found')
+  }
+
+  // Swallowed: the deletion is already irreversible, so analytics must not fail it.
+  try {
+    await adminDb.insert(accountDeletionSurveys).values({
+      reason: survey.reason,
+      detail: survey.reason === 'other' ? (survey.detail ?? null) : null,
+    })
+  } catch (e) {
+    console.error('account-deletion: survey insert failed', e)
   }
 
   if (cfg.adminKey) {

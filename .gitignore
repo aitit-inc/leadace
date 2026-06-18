@@ -7,6 +7,7 @@
 .env.local
 .env.production
 .envrc
+dev.ports.env
 
 # Dev
 plugin-test/

@@ -75,36 +75,71 @@ Set this up once before the first `npx supabase start`:
    screen's scopes if you want outbound email send to work locally.
    (Optional for the smoke / onboarding flow; required for `/outbound`.)
 
-Then bring up the stack:
+Then copy the env templates and fill them in:
 
 ```bash
-# 1. Auth + Postgres
-npx supabase start
-# Note the JWT secret, anon key, and DB URL printed by `supabase status`.
+cp backend/.dev.vars.example backend/.dev.vars  # values from `supabase status`,
+                                                # plus GOOGLE_CLIENT_ID/SECRET from step 1
+cp frontend/.env.example frontend/.env          # PUBLIC_SUPABASE_*, PUBLIC_API_URL, PUBLIC_MCP_URL
+```
 
-# 2. Backend
-cd backend
-cp .dev.vars.example .dev.vars            # fill in values from `supabase status`,
-                                          # plus GOOGLE_CLIENT_ID/SECRET from step 1
-npm install
-npm run db:migrate                        # apply schema
-npx tsx scripts/seed-master-documents.ts  # seed plugin templates
+`supabase status` prints the JWT secret, anon key, and DB URL the templates ask
+for, but only once the local stack is running — so on a first run, fill them in
+after the `make dev` below has started Supabase. That one command brings the
+whole stack up — Supabase, migrations, the master seed, the API/MCP Workers, and
+the frontend:
 
-npm run dev:api    # API → http://localhost:8787
-npm run dev:mcp    # MCP → http://localhost:8788  (separate terminal)
+```bash
+make dev          # or: ./scripts/dev.sh
+```
 
-# 3. Frontend
-cd ../frontend
-cp .env.example .env                      # set PUBLIC_SUPABASE_*, PUBLIC_API_URL, PUBLIC_MCP_URL
-npm install
-npm run dev                               # → http://localhost:5173
+It starts Supabase via the CLI if it isn't already up, runs `db:migrate` +
+the master-document seed (both idempotent), then runs all three dev servers
+(API :8787, MCP :8788, frontend :5173) with prefixed logs. Ctrl-C stops the
+dev servers; Supabase stays up for a fast restart (`make stop` halts it). On
+first run it `npm ci`s the backend / frontend deps if `node_modules` is absent.
 
-# 4. Plugin (in Claude Code)
+If you change the Google OAuth env (`.envrc`) after a first run, Supabase
+won't pick it up — `supabase start` reuses the existing stopped container and
+does not re-read `config.toml`'s `env()` interpolation. Run `make stop` then
+`make dev` in the same shell to recreate it.
+
+To run the app servers on non-default ports (e.g. 5173 clashes with another
+local stack), copy `dev.ports.env.example` to `dev.ports.env` and set
+`LEADACE_FRONTEND_PORT` / `LEADACE_API_PORT` / `LEADACE_MCP_PORT`. `dev.sh`
+derives every dependent URL from them, and `supabase/config.toml` already
+allow-lists `http://localhost:*/auth/callback`, so Google sign-in works on a
+custom frontend port without further setup. (Supabase's own ports are separate
+— shift them with `SUPABASE_PORT_OFFSET`, below, which additionally needs the
+shifted callback registered in Google Cloud Console for interactive sign-in.)
+If you change the MCP port, point the plugin at it:
+`export LEADACE_MCP_URL=http://localhost:<port>/mcp`.
+
+To connect the plugin from Claude Code:
+
+```bash
 # /plugin marketplace add aitit-inc/leadace
 # /plugin install leadace@leadace
 export LEADACE_MCP_URL=http://localhost:8788/mcp
 claude
 ```
+
+<details>
+<summary>Run the steps manually instead</summary>
+
+```bash
+npx supabase start                        # Auth + Postgres
+cd backend
+npm install
+npm run db:migrate                        # apply schema
+npx tsx scripts/seed-master-documents.ts  # seed plugin templates
+npm run dev:api    # API → http://localhost:8787
+npm run dev:mcp    # MCP → http://localhost:8788  (separate terminal)
+cd ../frontend
+npm install
+npm run dev                               # → http://localhost:5173
+```
+</details>
 
 `docker-compose.yml` at the repo root is a bare Postgres alternative for
 users who don't want Supabase Auth. It won't satisfy the backend's auth

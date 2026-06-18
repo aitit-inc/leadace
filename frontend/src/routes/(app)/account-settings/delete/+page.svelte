@@ -1,12 +1,24 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
-  import { deleteAccount } from '$lib/api/account';
+  import { deleteAccount, type AccountDeletionReason } from '$lib/api/account';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
   let token = $derived(data.session?.access_token);
   let supabase = $derived(data.supabase);
 
+  const reasonOptions: { value: AccountDeletionReason; label: string }[] = [
+    { value: 'not_enough_results', label: "I didn't get enough results (replies / leads)" },
+    { value: 'too_expensive', label: 'Too expensive' },
+    { value: 'missing_features', label: 'Missing features I needed' },
+    { value: 'too_hard_to_use', label: 'Too hard to set up or use' },
+    { value: 'switched_to_alternative', label: 'Switching to another tool' },
+    { value: 'no_longer_needed', label: 'No longer need it' },
+    { value: 'other', label: 'Other' },
+  ];
+
+  let reason = $state<AccountDeletionReason | ''>('');
+  let detail = $state('');
   let confirmText = $state('');
   let deleting = $state(false);
   let errorMessage = $state('');
@@ -15,15 +27,22 @@
   let isPaid = $derived(
     data.plan ? data.plan.plan !== 'free' && data.plan.plan !== 'unlimited' : true,
   );
-  let canSubmit = $derived(confirmText === 'DELETE' && !deleting);
+  let surveyAnswered = $derived(
+    reason !== '' && (reason !== 'other' || detail.trim().length > 0),
+  );
+  let canSubmit = $derived(confirmText === 'DELETE' && surveyAnswered && !deleting);
 
   async function handleDelete(e: Event) {
     e.preventDefault();
-    if (!canSubmit) return;
+    if (!canSubmit || reason === '') return;
     deleting = true;
     errorMessage = '';
     try {
-      await deleteAccount(fetch, token);
+      await deleteAccount(
+        reason === 'other' ? { reason, detail: detail.trim() } : { reason },
+        fetch,
+        token,
+      );
       await supabase.auth.signOut().catch(() => undefined);
       await goto('/login?deleted=1', { replaceState: true });
     } catch (err) {
@@ -66,7 +85,45 @@
     {/if}
   </div>
 
-  <form onsubmit={handleDelete} class="space-y-4">
+  <form onsubmit={handleDelete} class="space-y-5">
+    <fieldset class="space-y-3">
+      <legend class="text-sm font-medium text-text">
+        Before you go — why are you leaving? <span class="text-danger">*</span>
+      </legend>
+      <div class="space-y-2">
+        {#each reasonOptions as option (option.value)}
+          <label class="flex items-center gap-2 text-sm text-text">
+            <input
+              type="radio"
+              name="deletion-reason"
+              value={option.value}
+              bind:group={reason}
+              class="accent-accent"
+            />
+            <span>{option.label}</span>
+          </label>
+        {/each}
+      </div>
+
+      {#if reason === 'other'}
+        <label class="block">
+          <span class="sr-only">Tell us more</span>
+          <textarea
+            bind:value={detail}
+            rows="3"
+            maxlength="500"
+            placeholder="Tell us more…"
+            class="mt-1 block w-full rounded-md border border-border bg-page px-3 py-2 text-sm text-text focus:border-accent focus:outline-none"
+          ></textarea>
+        </label>
+      {/if}
+
+      <p class="text-xs text-text-muted">
+        Stored anonymously to help us improve — it can't be linked back to you, so
+        please don't include any personal information.
+      </p>
+    </fieldset>
+
     <label class="block">
       <span class="text-sm text-text">Type <span class="font-mono font-semibold">DELETE</span> to confirm.</span>
       <input
