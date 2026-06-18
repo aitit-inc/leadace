@@ -233,7 +233,14 @@ function prospectCountryPatch(input: ProspectInput): {
   }
 }
 
-function prospectInsertValues(tenantId: TenantId, input: ProspectInput, orgId: number, now: Date) {
+// emailDeliverability is left to its column default ('unknown'); the verdict is
+// resolved off the request path and stamped by stampEmailDeliverability.
+function prospectInsertValues(
+  tenantId: TenantId,
+  input: ProspectInput,
+  orgId: number,
+  now: Date,
+) {
   return {
     tenantId,
     name: input.name,
@@ -265,7 +272,16 @@ function prospectUpdateSet(input: ProspectInput, orgId: number, now: Date) {
     ...(input.contactName !== undefined ? { contactName: input.contactName } : {}),
     ...(input.department !== undefined ? { department: input.department } : {}),
     ...(input.industry !== undefined ? { industry: input.industry } : {}),
-    ...(input.email !== undefined ? { email: input.email } : {}),
+    // Reset the verdict only when the stored email actually changes — evaluated
+    // in-SQL against the current row (no extra read), so an overwrite carrying the
+    // same address keeps any prior 'undeliverable' verdict instead of briefly
+    // re-opening it. The background stamp re-resolves it when it did change.
+    ...(input.email !== undefined
+      ? {
+          email: input.email,
+          emailDeliverability: sql`CASE WHEN ${prospects.email} IS DISTINCT FROM ${input.email} THEN 'unknown'::email_deliverability ELSE ${prospects.emailDeliverability} END`,
+        }
+      : {}),
     ...(input.contactFormUrl !== undefined ? { contactFormUrl: input.contactFormUrl } : {}),
     ...(input.formType !== undefined ? { formType: input.formType } : {}),
     ...(input.snsAccounts !== undefined ? { snsAccounts: input.snsAccounts as SnsAccounts } : {}),
@@ -352,6 +368,8 @@ export type BatchRegisterResult = {
   skipped: number
   insertedIds: number[]
   skippedDetails: BatchSkipped[]
+  // Emails for the caller to resolve via the background deliverability stamp.
+  emailsToVerify: string[]
 }
 
 export async function batchRegister(
@@ -396,6 +414,7 @@ export async function batchRegister(
           skipped: inputs.length,
           insertedIds: [],
           skippedDetails: inputs.map((i) => ({ name: i.name, reason: 'plan_limit' as const })),
+          emailsToVerify: [],
         },
       )
     }
@@ -405,6 +424,7 @@ export async function batchRegister(
 
   const inserted: number[] = []
   const skipped: BatchSkipped[] = []
+  const emailsToVerify: string[] = []
 
   for (const input of inputs) {
     if (prospectBudget !== null && inserted.length >= prospectBudget) {
@@ -447,6 +467,7 @@ export async function batchRegister(
 
     claimRow(dedup, projectId, input)
     inserted.push(newProspect.id)
+    if (input.email) emailsToVerify.push(input.email)
   }
 
   return ok({
@@ -454,6 +475,7 @@ export async function batchRegister(
     skipped: skipped.length,
     insertedIds: inserted,
     skippedDetails: skipped,
+    emailsToVerify,
   })
 }
 
@@ -512,6 +534,8 @@ export type ImportCsvResult = {
   overwrittenIds: number[]
   skippedDetails: ImportSkipped[]
   errorDetails: ImportError[]
+  // Emails for the caller to resolve via the background deliverability stamp.
+  emailsToVerify: string[]
 }
 
 export async function importCsv(
@@ -589,6 +613,7 @@ export async function importCsv(
   const inserted: number[] = []
   const overwritten: number[] = []
   const skipped: ImportSkipped[] = []
+  const emailsToVerify: string[] = []
 
   for (const { row: rowNum, name: rowKey, input: rowInput } of parsedRows) {
     const resolution = resolveDedup(dedup, projectId, rowInput)
@@ -635,6 +660,7 @@ export async function importCsv(
       }
 
       overwritten.push(resolution.existingProspectId)
+      if (rowInput.email) emailsToVerify.push(rowInput.email)
       claimRow(dedup, projectId, rowInput)
       continue
     }
@@ -667,6 +693,7 @@ export async function importCsv(
 
     claimRow(dedup, projectId, rowInput)
     inserted.push(newProspect.id)
+    if (rowInput.email) emailsToVerify.push(rowInput.email)
   }
 
   return ok({
@@ -678,6 +705,7 @@ export async function importCsv(
     overwrittenIds: overwritten,
     skippedDetails: skipped,
     errorDetails: errors,
+    emailsToVerify,
   })
 }
 

@@ -9,6 +9,7 @@ import {
   getRejectionFeedbackSummary,
 } from '../../services/responses'
 import { projectRefParamSchema } from '../../services/projects'
+import { scheduleDeliverabilityStamp } from '../deliverability-stamp'
 import { respondWithError } from '../respond'
 import type { Env, Variables } from '../types'
 
@@ -17,7 +18,9 @@ export const responsesRouter = new Hono<{ Bindings: Env; Variables: Variables }>
 responsesRouter.post('/responses', zValidator('json', recordResponseSchema), async (c) => {
   const result = await recordResponse(c.get('db'), c.get('tenantId'), c.req.valid('json'))
   if (!result.ok) return respondWithError(c, result)
-  return c.json(result.value, 201)
+  const { emailsToVerify, ...body } = result.value
+  scheduleDeliverabilityStamp(c, emailsToVerify)
+  return c.json(body, 201)
 })
 
 responsesRouter.get(

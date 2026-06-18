@@ -474,6 +474,11 @@ export const organizations = pgTable('organizations', {
   index('idx_org_tenant').on(table.tenantId),
 ])
 
+// The outbound email gate drops only 'undeliverable'; 'unknown' (the default for
+// unverified or inconclusive rows) is accepted. Extend via ALTER TYPE ADD VALUE.
+export const emailDeliverabilityEnum = pgEnum('email_deliverability', ['unknown', 'undeliverable'])
+export type EmailDeliverability = (typeof emailDeliverabilityEnum.enumValues)[number]
+
 export const prospects = pgTable('prospects', {
   id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
   tenantId: text('tenant_id')
@@ -508,6 +513,7 @@ export const prospects = pgTable('prospects', {
   // organization.country.
   country: text('country'),
   countrySource: countrySourceEnum('country_source'),
+  emailDeliverability: emailDeliverabilityEnum('email_deliverability').notNull().default('unknown'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [

@@ -38,6 +38,7 @@ import {
 } from '../auth/google'
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
+import { UNDELIVERABLE } from '../domain/email-deliverability'
 import { requireProspect, prospectHadFreshSignal } from './prospects'
 import { allocateInquiryUrl } from './inquiry-token'
 import { loadProjectReapproachSettings, loadProjectSendSettings } from './project-settings'
@@ -241,6 +242,27 @@ async function assertProspectContactable(
   if (!row) return ok(undefined)
   if (row.doNotContact) {
     return err('UNPROCESSABLE', 'Prospect is on do-not-contact list')
+  }
+  return ok(undefined)
+}
+
+// Send-time backstop (column read, no network): listReachable already excludes
+// 'undeliverable', so this only catches a direct send bypassing the gate. Keyed
+// on the prospect's stored email, which `to` is expected to match.
+async function assertEmailDeliverable(
+  db: Db,
+  tenantId: TenantId,
+  prospectId: number,
+): Promise<ServiceResult<undefined>> {
+  const [row] = await db
+    .select({ emailDeliverability: prospects.emailDeliverability })
+    .from(prospects)
+    .where(and(eq(prospects.id, prospectId), eq(prospects.tenantId, tenantId)))
+    .limit(1)
+  // Missing prospect → defer to the caller's requireProspect NOT_FOUND.
+  if (!row) return ok(undefined)
+  if (row.emailDeliverability === UNDELIVERABLE) {
+    return err('UNPROCESSABLE', 'Recipient email domain cannot receive mail (DNS-confirmed undeliverable)')
   }
   return ok(undefined)
 }
@@ -562,6 +584,9 @@ export async function sendAndRecord(
 
   const contactable = await assertProspectContactable(db, tenantId, input.prospectId)
   if (!contactable.ok) return contactable
+
+  const deliverable = await assertEmailDeliverable(db, tenantId, input.prospectId)
+  if (!deliverable.ok) return deliverable
 
   const quota = await getRemainingOutreachQuota(db, tenantId, edition)
   const quotaErr = outreachQuotaErrorIfExhausted(quota)

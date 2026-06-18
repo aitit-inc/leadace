@@ -102,9 +102,15 @@ function gated<T>(when: boolean, q: () => Promise<T>): Promise<T | null> {
 export type DerivedProspectAction = 'created' | 'matched_existing'
 export type DerivedProspect = { id: number; name: string; action: DerivedProspectAction }
 
+// Internal carrier: a created prospect's email rides along only to feed the
+// background deliverability stamp, then is stripped from the public result.
+type DerivedProspectInternal = DerivedProspect & { email?: string }
+
 export type RecordResponseResult = {
   id: number | undefined
   derivedProspects: DerivedProspect[]
+  // Emails of newly-created derived prospects, for the background deliverability stamp.
+  emailsToVerify: string[]
 }
 
 export async function recordResponse(
@@ -225,16 +231,22 @@ export async function recordResponse(
 
   // Skipped when the rejection ratcheted DNC on the referring prospect —
   // a referral from someone who unsubscribed shouldn't seed a new contact.
-  const derivedProspects: DerivedProspect[] = []
+  const derivedProspects: DerivedProspectInternal[] = []
   const pointer = input.rejectionFeedback?.decision_maker_pointer
   if (pointer && !forceDnc) {
     const derived = await derivePointerProspect(db, tenantId, log.prospectId, pointer, now)
     if (derived) derivedProspects.push(derived)
   }
 
+  const emailsToVerify = derivedProspects
+    .filter((d) => d.action === 'created' && d.email)
+    .map((d) => d.email!)
+
   return ok({
     id: newResponse?.id,
-    derivedProspects,
+    // Strip the internal email carrier; the public result is { id, name, action }.
+    derivedProspects: derivedProspects.map(({ id, name, action }) => ({ id, name, action })),
+    emailsToVerify,
   })
 }
 
@@ -258,7 +270,7 @@ async function derivePointerProspect(
   referringProspectId: number,
   pointer: DecisionMakerPointer,
   now: Date,
-): Promise<DerivedProspect | null> {
+): Promise<DerivedProspectInternal | null> {
   const pointerName = pointer.name?.trim() || null
   const pointerEmail = pointer.email?.trim() || null
   const pointerRole = pointer.role?.trim() || null
@@ -368,8 +380,10 @@ async function createDerivedProspect(
   },
   pointer: { name: string | null; email: string; role: string | null },
   now: Date,
-): Promise<DerivedProspect> {
+): Promise<DerivedProspectInternal> {
   const dateStr = now.toISOString().slice(0, 10)
+  // emailDeliverability defaults to 'unknown'; resolved off-path by the caller's
+  // background stamp (the email is surfaced in the return value).
   const [created] = await db
     .insert(prospects)
     .values({
@@ -409,7 +423,7 @@ async function createDerivedProspect(
     )
   }
 
-  return { id: created.id, name: created.name, action: 'created' }
+  return { id: created.id, name: created.name, action: 'created', email: pointer.email }
 }
 
 export type ListedResponse = {

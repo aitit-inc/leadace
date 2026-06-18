@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { eq, and, sql, desc, or, ilike, inArray, isNotNull, isNull, lte, notExists, type SQL } from 'drizzle-orm'
+import { eq, ne, and, sql, desc, or, ilike, inArray, isNotNull, isNull, lte, notExists, type SQL } from 'drizzle-orm'
 import {
   organizations,
   orgSignalsGlobal,
@@ -35,6 +35,7 @@ import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { getOutboundMode, loadProjectOutboundAllowlist } from './project-settings'
 import { projectProspectInsertValues } from '../domain/project-prospect'
+import { UNDELIVERABLE } from '../domain/email-deliverability'
 import type { Edition } from '../domain/edition'
 import {
   projectRefSchema,
@@ -77,9 +78,15 @@ export async function prospectHadFreshSignal(
   return row?.fresh ?? false
 }
 
+// Shared by the reachable gate and the byChannel summary so both agree.
+const emailUsableExpr: SQL = and(
+  isNotNull(prospects.email),
+  ne(prospects.emailDeliverability, UNDELIVERABLE),
+)!
+
 function channelAvailabilityClause(ch: OutboundChannel): SQL {
   switch (ch) {
-    case 'email': return isNotNull(prospects.email)
+    case 'email': return emailUsableExpr
     case 'form': return isNotNull(prospects.contactFormUrl)
     case 'sns_twitter': return sql`${prospects.snsAccounts}->>'x' IS NOT NULL`
     case 'sns_linkedin': return sql`${prospects.snsAccounts}->>'linkedin' IS NOT NULL`
@@ -449,9 +456,9 @@ export async function listReachable(
     db
       .select({
         total: sql<number>`COUNT(*)::int`,
-        email: sql<number>`COUNT(*) FILTER (WHERE ${prospects.email} IS NOT NULL)::int`,
-        formOnly: sql<number>`COUNT(*) FILTER (WHERE ${prospects.email} IS NULL AND ${prospects.contactFormUrl} IS NOT NULL)::int`,
-        snsOnly: sql<number>`COUNT(*) FILTER (WHERE ${prospects.email} IS NULL AND ${prospects.contactFormUrl} IS NULL AND ${prospects.snsAccounts} IS NOT NULL)::int`,
+        email: sql<number>`COUNT(*) FILTER (WHERE ${emailUsableExpr})::int`,
+        formOnly: sql<number>`COUNT(*) FILTER (WHERE NOT (${emailUsableExpr}) AND ${prospects.contactFormUrl} IS NOT NULL)::int`,
+        snsOnly: sql<number>`COUNT(*) FILTER (WHERE NOT (${emailUsableExpr}) AND ${prospects.contactFormUrl} IS NULL AND ${prospects.snsAccounts} IS NOT NULL)::int`,
       })
       .from(projectProspects)
       .innerJoin(prospects, eq(prospects.id, projectProspects.prospectId))
@@ -878,7 +885,7 @@ export async function updateProspect(
   tenantId: TenantId,
   prospectId: number,
   patch: UpdateProspectBody,
-): Promise<ServiceResult<{ updated: true; prospectId: number }>> {
+): Promise<ServiceResult<{ updated: true; prospectId: number; emailToVerify?: string }>> {
   const [existing] = await db
     .select({
       email: prospects.email,
@@ -902,6 +909,10 @@ export async function updateProspect(
     )
   }
 
+  // Reset the deliverability verdict only on an actual email change (the existing
+  // row is already loaded), so re-submitting the same address keeps any prior
+  // 'undeliverable' verdict and skips a redundant background re-stamp.
+  const emailChanged = patch.email !== undefined && patch.email !== existing.email
   const updateSet = {
     ...(patch.name !== undefined ? { name: patch.name } : {}),
     ...(patch.contactName !== undefined ? { contactName: patch.contactName } : {}),
@@ -910,6 +921,7 @@ export async function updateProspect(
     ...(patch.industry !== undefined ? { industry: patch.industry } : {}),
     ...(patch.websiteUrl !== undefined ? { websiteUrl: patch.websiteUrl } : {}),
     ...(patch.email !== undefined ? { email: patch.email } : {}),
+    ...(emailChanged ? { emailDeliverability: 'unknown' as const } : {}),
     ...(patch.contactFormUrl !== undefined ? { contactFormUrl: patch.contactFormUrl } : {}),
     ...(patch.formType !== undefined ? { formType: patch.formType } : {}),
     ...(patch.snsAccounts !== undefined ? { snsAccounts: patch.snsAccounts } : {}),
@@ -938,7 +950,8 @@ export async function updateProspect(
     throw e
   }
 
-  return ok({ updated: true, prospectId })
+  const emailToVerify = emailChanged && typeof patch.email === 'string' ? patch.email : undefined
+  return ok({ updated: true, prospectId, emailToVerify })
 }
 
 export async function updateDoNotContact(

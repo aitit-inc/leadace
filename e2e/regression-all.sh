@@ -25,6 +25,7 @@ SUITES=(
   regression-outbound
   regression-build-list-dedup
   regression-skip-reachable
+  regression-email-deliverability
   regression-unsubscribe
   regression-import-dnc
   regression-record-outreach

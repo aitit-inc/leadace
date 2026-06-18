@@ -26,6 +26,7 @@ import {
   checkProspectDedup,
 } from '../../services/prospect-import'
 import { projectRefParamSchema } from '../../services/projects'
+import { scheduleDeliverabilityStamp } from '../deliverability-stamp'
 import { respondWithError } from '../respond'
 import type { Env, Variables } from '../types'
 
@@ -39,7 +40,9 @@ prospectsRouter.post('/prospects/batch', zValidator('json', batchSchema), async 
     c.req.valid('json'),
   )
   if (!result.ok) return respondWithError(c, result)
-  return c.json(result.value)
+  const { emailsToVerify, ...body } = result.value
+  scheduleDeliverabilityStamp(c, emailsToVerify)
+  return c.json(body)
 })
 
 prospectsRouter.post('/prospects/import', zValidator('json', importSchema), async (c) => {
@@ -50,7 +53,9 @@ prospectsRouter.post('/prospects/import', zValidator('json', importSchema), asyn
     c.req.valid('json'),
   )
   if (!result.ok) return respondWithError(c, result)
-  return c.json(result.value)
+  const { emailsToVerify, ...body } = result.value
+  scheduleDeliverabilityStamp(c, emailsToVerify)
+  return c.json(body)
 })
 
 prospectsRouter.post('/prospects/check-dedup', zValidator('json', checkDedupSchema), async (c) => {
@@ -150,7 +155,9 @@ prospectsRouter.patch(
       c.req.valid('json'),
     )
     if (!result.ok) return respondWithError(c, result)
-    return c.json(result.value)
+    const { emailToVerify, ...body } = result.value
+    if (emailToVerify) scheduleDeliverabilityStamp(c, [emailToVerify])
+    return c.json(body)
   },
 )
 

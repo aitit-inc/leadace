@@ -1,0 +1,2 @@
+CREATE TYPE "public"."email_deliverability" AS ENUM('unknown', 'undeliverable');--> statement-breakpoint
+ALTER TABLE "prospects" ADD COLUMN "email_deliverability" "email_deliverability" DEFAULT 'unknown' NOT NULL;
