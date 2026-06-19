@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { eq, and, desc, sql, inArray, notInArray } from 'drizzle-orm'
+import { eq, and, desc, sql, inArray, notInArray, isNotNull } from 'drizzle-orm'
 import {
   outreachLogs,
   organizations,
@@ -41,7 +41,7 @@ import { resolveProject } from './projects'
 import { UNDELIVERABLE } from '../domain/email-deliverability'
 import { requireProspect, prospectHadFreshSignal } from './prospects'
 import { allocateInquiryUrl } from './inquiry-token'
-import { loadProjectReapproachSettings, loadProjectSendSettings } from './project-settings'
+import { loadProjectReapproachSettings, loadProjectSendSettings, loadProjectFollowUpConfig } from './project-settings'
 import { assertTenantComplianceReady } from './tenants'
 import { addDays } from '../domain/prospect-status'
 import { isAllowedSendCountry } from '../domain/country'
@@ -321,7 +321,7 @@ export async function recordOutreach(
   // listReachable excludes them via a separate NOT EXISTS so the status
   // keeps its real-world meaning.
   if (input.status === 'sent' && log) {
-    await markProspectContacted(db, projectId, input.prospectId, sentAt)
+    await markProspectContacted(db, projectId, input.prospectId, sentAt, log.id)
   } else if (input.status === 'failed' && log) {
     await deferProspectReeligibility(db, projectId, input.prospectId, sentAt)
   }
@@ -518,7 +518,7 @@ export async function updateOutreachStatus(
   }
 
   if (input.status === 'sent') {
-    await markProspectContacted(db, updated.projectId as ProjectId, updated.prospectId, updated.sentAt)
+    await markProspectContacted(db, updated.projectId as ProjectId, updated.prospectId, updated.sentAt, updated.id)
   } else if (input.status === 'failed') {
     await deferProspectReeligibility(db, updated.projectId as ProjectId, updated.prospectId, updated.sentAt)
   }
@@ -681,7 +681,7 @@ export async function sendAndRecord(
     .update(outreachLogs)
     .set({ status: 'sent' })
     .where(eq(outreachLogs.id, log.id))
-  await markProspectContacted(db, projectId, input.prospectId, sentAt)
+  await markProspectContacted(db, projectId, input.prospectId, sentAt, log.id)
 
   return ok({
     mode: 'sent',
@@ -1077,7 +1077,7 @@ export async function sendDraft(
     return err('BAD_GATEWAY', result.error, result.detail, { outreachId: draft.id })
   }
 
-  await markProspectContacted(db, draft.projectId as ProjectId, draft.prospectId, sentAt)
+  await markProspectContacted(db, draft.projectId as ProjectId, draft.prospectId, sentAt, draft.id)
 
   return ok({
     mode: 'sent',
@@ -1144,7 +1144,7 @@ export async function markDraftSent(
     .set({ status: 'sent', sentAt })
     .where(eq(outreachLogs.id, draft.id))
 
-  await markProspectContacted(db, draft.projectId as ProjectId, draft.prospectId, sentAt)
+  await markProspectContacted(db, draft.projectId as ProjectId, draft.prospectId, sentAt, draft.id)
 
   return ok({ outreachId: draft.id })
 }
@@ -1237,37 +1237,67 @@ export async function discardDrafts(
   return ok({ deletedIds, skippedIds })
 }
 
-// Flip project_prospects to 'contacted' (from reachable) and advance
-// prospects.next_outreach_after to `at + noResponseRecycleDays` via GREATEST.
-// GREATEST is load-bearing: a re-approach send to a prospect whose
-// next_outreach_after is already past would otherwise leave that past
-// timestamp in place, and listReachable's contacted-with-elapsed-stamp branch
-// would re-pick the prospect on the very next /outbound run. A longer
-// explicit window (e.g. rejection feedback '12_months') is preserved.
+// Advances both scheduling axes on a successful 'sent'. The months-scale recycle
+// (prospects.next_outreach_after, GREATEST) is stamped on EVERY send, not just the
+// reachable→contacted flip: otherwise a recycle re-send to an already-'contacted'
+// prospect never advances the stamp and listReachable re-picks it every run. A
+// send with no active day-scale sequence (first contact or a recycle re-send)
+// starts a fresh sequence at touch 1; an in-progress one continues the count.
 async function markProspectContacted(
   db: Db,
   projectId: ProjectId,
   prospectId: number,
   at: Date,
+  outreachLogId: number,
 ): Promise<void> {
-  const flipped = await db
+  // FOR UPDATE serializes concurrent send finalizations for the same prospect on
+  // the touch advance below (a read-then-write of followupTouches). Already inside
+  // the per-request RLS transaction, so no nested db.transaction() is needed.
+  const [pp] = await db
+    .select({
+      id: projectProspects.id,
+      status: projectProspects.status,
+      followupTouches: projectProspects.followupTouches,
+      nextFollowupAfter: projectProspects.nextFollowupAfter,
+    })
+    .from(projectProspects)
+    .where(and(
+      eq(projectProspects.projectId, projectId),
+      eq(projectProspects.prospectId, prospectId),
+    ))
+    .limit(1)
+    .for('update')
+
+  if (!pp) return
+
+  const [followUp, settings] = await Promise.all([
+    loadProjectFollowUpConfig(db, projectId),
+    loadProjectReapproachSettings(db, projectId),
+  ])
+
+  const inSequence = pp.nextFollowupAfter !== null
+  const thisTouch = (inSequence ? pp.followupTouches : 0) + 1
+  // undefined once touches are exhausted (or follow-up disabled) ⇒ no next touch.
+  const gap = followUp.enabled ? followUp.gapDays[thisTouch - 1] : undefined
+  const nextFollowupAfter: Date | null = gap === undefined ? null : addDays(at, gap)
+  const wasReachable = REACHABLE_STATUSES.includes(pp.status)
+
+  await db
     .update(projectProspects)
-    .set({ status: 'contacted', updatedAt: at })
-    .where(
-      and(
-        eq(projectProspects.projectId, projectId),
-        eq(projectProspects.prospectId, prospectId),
-        inArray(projectProspects.status, REACHABLE_STATUSES),
-      ),
-    )
-    .returning({ id: projectProspects.id })
+    .set({
+      ...(wasReachable ? { status: 'contacted' as const } : {}),
+      followupTouches: thisTouch,
+      nextFollowupAfter,
+      updatedAt: at,
+    })
+    .where(eq(projectProspects.id, pp.id))
 
-  if (flipped.length === 0) return
+  await db
+    .update(outreachLogs)
+    .set({ touchNumber: thisTouch })
+    .where(eq(outreachLogs.id, outreachLogId))
 
-  const settings = await loadProjectReapproachSettings(db, projectId)
-  const recycleAt = addDays(at, settings.noResponseRecycleDays)
-  const recycleIso = recycleAt.toISOString()
-
+  const recycleIso = addDays(at, settings.noResponseRecycleDays).toISOString()
   await db
     .update(prospects)
     .set({
@@ -1292,6 +1322,18 @@ async function deferProspectReeligibility(
   const settings = await loadProjectReapproachSettings(db, projectId)
   const recycleAt = addDays(at, settings.noResponseRecycleDays)
   const recycleIso = recycleAt.toISOString()
+
+  // Clear any in-progress day-scale sequence so the follow-up arm doesn't re-
+  // present a failed/skipped prospect next run. project_prospects before prospects
+  // matches markProspectContacted's lock order (avoids a cross-path deadlock).
+  await db
+    .update(projectProspects)
+    .set({ nextFollowupAfter: null, updatedAt: at })
+    .where(and(
+      eq(projectProspects.projectId, projectId),
+      eq(projectProspects.prospectId, prospectId),
+      isNotNull(projectProspects.nextFollowupAfter),
+    ))
 
   await db
     .update(prospects)

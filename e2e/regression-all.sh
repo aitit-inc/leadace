@@ -33,6 +33,7 @@ SUITES=(
   regression-record-with-inquiry
   regression-draft-send
   regression-inflight-reachable
+  regression-followup-sequence
   regression-prospect-update-channel
   regression-record-evaluation-priority
   regression-rejection-cycle

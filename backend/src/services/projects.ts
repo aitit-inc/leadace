@@ -121,7 +121,15 @@ export async function createProject(
   const id = asProjectId(generateProjectId())
   const now = new Date()
   await db.insert(projects).values({ id, tenantId, name, createdAt: now, updatedAt: now })
-  await db.insert(projectSettings).values({ projectId: id, tenantId, createdAt: now, updatedAt: now })
+  // New projects opt in to follow-up sequencing (opt-out for new data); existing
+  // rows store {} and read back disabled.
+  await db.insert(projectSettings).values({
+    projectId: id,
+    tenantId,
+    followUpSequence: { enabled: true },
+    createdAt: now,
+    updatedAt: now,
+  })
 
   return ok({ id, name, tenantId, createdAt: now, updatedAt: now })
 }

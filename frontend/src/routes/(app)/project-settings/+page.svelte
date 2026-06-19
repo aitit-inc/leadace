@@ -8,6 +8,7 @@
     ALLOWED_SEND_COUNTRIES,
     OUTBOUND_CHANNELS,
     type AllowedSendCountry,
+    type FollowUpSequence,
     type OutboundChannel,
   } from '$lib/types/project-settings';
   import type { PageProps } from './$types';
@@ -36,8 +37,27 @@
   let activeProjectId = $derived(data.activeProjectId);
 
   let projectSettings = $state<ProjectSettingsData | null>(null);
+  // Sent back only when actually edited — an unrelated save must not materialize
+  // the resolved defaults into the overrides-only follow_up_sequence cell.
+  let followUpLoaded = $state<FollowUpSequence | null>(null);
   $effect(() => {
-    projectSettings = data.projectSettings ? { ...data.projectSettings } : null;
+    const loaded = data.projectSettings;
+    if (!loaded) {
+      projectSettings = null;
+      followUpLoaded = null;
+      return;
+    }
+    projectSettings = {
+      ...loaded,
+      followUpSequence: {
+        ...loaded.followUpSequence,
+        gapDays: [...loaded.followUpSequence.gapDays],
+      },
+    };
+    followUpLoaded = {
+      ...loaded.followUpSequence,
+      gapDays: [...loaded.followUpSequence.gapDays],
+    };
   });
 
   let savingSettings = $state(false);
@@ -65,6 +85,7 @@
         senderEmailAlias: projectSettings.senderEmailAlias?.trim() || null,
         senderDisplayName: projectSettings.senderDisplayName?.trim() || null,
         unsubscribeEnabled: projectSettings.unsubscribeEnabled,
+        ...(followUpChanged() ? { followUpSequence: projectSettings.followUpSequence } : {}),
         outboundChannels: projectSettings.outboundChannels,
         targetCountries: projectSettings.targetCountries,
       };
@@ -96,6 +117,43 @@
     if (checked) set.add(code);
     else set.delete(code);
     projectSettings.targetCountries = ALLOWED_SEND_COUNTRIES.filter((c) => set.has(c));
+  }
+
+  const MAX_FOLLOWUP_GAPS = 5;
+
+  function addFollowupTouch() {
+    if (!projectSettings) return;
+    const g = projectSettings.followUpSequence.gapDays;
+    if (g.length >= MAX_FOLLOWUP_GAPS) return;
+    projectSettings.followUpSequence.gapDays = [...g, 7];
+  }
+
+  function removeFollowupTouch(i: number) {
+    if (!projectSettings) return;
+    const g = projectSettings.followUpSequence.gapDays;
+    if (g.length <= 1) return;
+    projectSettings.followUpSequence.gapDays = g.filter((_, idx) => idx !== i);
+  }
+
+  let followupSendDays = $derived.by(() => {
+    const days = [0];
+    let acc = 0;
+    for (const gap of projectSettings?.followUpSequence.gapDays ?? []) {
+      acc += Number(gap) || 0;
+      days.push(acc);
+    }
+    return days;
+  });
+
+  function followUpChanged(): boolean {
+    if (!projectSettings || !followUpLoaded) return false;
+    const cur = projectSettings.followUpSequence;
+    const base = followUpLoaded;
+    return (
+      cur.enabled !== base.enabled ||
+      cur.gapDays.length !== base.gapDays.length ||
+      cur.gapDays.some((d, i) => d !== base.gapDays[i])
+    );
   }
 
   async function handleDelete() {
@@ -265,6 +323,65 @@
             countries and <span class="font-mono">/outbound</span> skips prospects outside the set.
             The send-time compliance check still applies independently.
           {/if}
+        </p>
+      </div>
+
+      <div>
+        <div class="flex items-start gap-2">
+          <input
+            id="followup-enabled"
+            type="checkbox"
+            bind:checked={s.followUpSequence.enabled}
+            class="mt-0.5"
+          />
+          <label for="followup-enabled" class="text-sm text-text">
+            Auto follow-up on unanswered emails
+          </label>
+        </div>
+
+        {#if s.followUpSequence.enabled}
+          <div class="mt-3 ml-6 space-y-2">
+            {#each s.followUpSequence.gapDays as _gap, i (i)}
+              <div class="flex items-center gap-2 text-sm text-text">
+                <span class="w-16 text-text-secondary">Touch {i + 2}</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="90"
+                  step="1"
+                  bind:value={s.followUpSequence.gapDays[i]}
+                  class="w-16 rounded border border-border bg-page px-2 py-1 text-sm text-text"
+                />
+                <span class="text-text-muted text-xs">days after the previous touch</span>
+                {#if s.followUpSequence.gapDays.length > 1}
+                  <button
+                    type="button"
+                    onclick={() => removeFollowupTouch(i)}
+                    aria-label="Remove touch {i + 2}"
+                    class="text-text-muted hover:text-danger transition-colors"
+                  >✕</button>
+                {/if}
+              </div>
+            {/each}
+            {#if s.followUpSequence.gapDays.length < MAX_FOLLOWUP_GAPS}
+              <button
+                type="button"
+                onclick={addFollowupTouch}
+                class="text-xs text-accent hover:text-accent-strong transition-colors"
+              >+ add touch</button>
+            {/if}
+            <p class="mt-1 text-xs text-text-muted">
+              Sends at day {followupSendDays.join(', ')}
+              <span class="text-text-secondary">({followupSendDays.length} emails total)</span>
+            </p>
+          </div>
+        {/if}
+
+        <p class="mt-2 text-xs text-text-muted">
+          When a prospect doesn't reply, <span class="font-mono">/outbound</span> queues a short,
+          fresh-angle follow-up on this cadence and stops automatically on any real reply, bounce, or
+          unsubscribe (auto-replies don't stop it). Each follow-up consumes 1 outreach action
+          (quota), so an N-email sequence multiplies send volume by N.
         </p>
       </div>
 

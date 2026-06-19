@@ -194,6 +194,12 @@ export async function recordResponse(
     reapproachMonths,
   })
 
+  // DNC ratchet: caller-requested, bounce, hard opt-out, or cycle cap reached.
+  const forceDnc = input.rejectionFeedback ? feedbackForcesDoNotContact(input.rejectionFeedback) : false
+  const dncForced = input.markDoNotContact || input.responseType === 'bounce' || forceDnc || cycleCapReached
+
+  // project_prospects writes before prospects writes — consistent lock order
+  // across every multi-row path (avoids a cross-path deadlock).
   if (newStatus) {
     await db
       .update(projectProspects)
@@ -204,6 +210,20 @@ export async function recordResponse(
           eq(projectProspects.prospectId, log.prospectId),
         ),
       )
+  }
+
+  // Stop the day-scale sequence on a real response or forced DNC. A bare
+  // auto_reply (null newStatus, no DNC) deliberately does NOT stop — follow-ups
+  // push through out-of-office replies.
+  if (newStatus !== null || dncForced) {
+    await db
+      .update(projectProspects)
+      .set({ nextFollowupAfter: null, updatedAt: now })
+      .where(and(
+        eq(projectProspects.projectId, log.projectId),
+        eq(projectProspects.prospectId, log.prospectId),
+        isNotNull(projectProspects.nextFollowupAfter),
+      ))
   }
 
   if (reapproachMonths !== null) {
@@ -220,9 +240,7 @@ export async function recordResponse(
       .where(eq(prospects.id, log.prospectId))
   }
 
-  // DNC ratchet: caller-requested, bounce, hard opt-out, or cycle cap reached.
-  const forceDnc = input.rejectionFeedback ? feedbackForcesDoNotContact(input.rejectionFeedback) : false
-  if (input.markDoNotContact || input.responseType === 'bounce' || forceDnc || cycleCapReached) {
+  if (dncForced) {
     await db
       .update(prospects)
       .set({ doNotContact: true, updatedAt: now })

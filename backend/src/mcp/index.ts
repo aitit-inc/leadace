@@ -361,7 +361,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_outbound_targets',
-    'Get uncontacted prospects ordered by priority for outbound outreach. Each prospect carries `country` (effective code = prospect override > org country > null) for pre-flight skipping against the currently-allowed US/CA/JP delivery scope.',
+    'Get prospects due for outreach ordered by priority — new prospects plus already-contacted prospects due for a follow-up touch or a months-scale recycle. Each carries `country` (effective code = prospect override > org country > null) for pre-flight skipping against the currently-allowed US/CA/JP delivery scope, and a `cycle` object: cycle.kind is "first" | "short_cycle_followup" (a day-scale follow-up to an unanswered email — write a brief nudge with a varied subject and a fresh angle, never a resend) | "no_response" (the months-scale recycle, noResponseRecycleDays, default 90) | "rejection_followup", and cycle.touchNumber is which touch the next send is.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       limit: z.number().int().min(1).max(200).default(50).describe('Max number of prospects to return'),
@@ -1423,6 +1423,11 @@ function buildToolRegistry(): ToolDef[] {
         .describe('Months to defer when rejection feedback preferred_recontact_window is "unspecified". Default 3.'),
       noResponseRecycleDays: z.coerce.number().int().min(7).max(365).optional()
         .describe('Days after a sent outreach to make the prospect re-eligible if no response arrived. Default 90. Stamped via GREATEST(existing, sentAt + days) — only advances the window forward, never shortens an explicit longer window (e.g. a rejection-feedback 12_months deferral).'),
+      followUpSequence: z.object({
+        enabled: z.boolean().optional(),
+        gapDays: z.array(z.coerce.number().int().min(1).max(90)).min(1).max(5).optional(),
+      }).optional()
+        .describe('Day-scale follow-up sequence for unanswered prospects (P1). gapDays = relative waits in DAYS before each next touch; default [3,7,7] yields touches at day 0 / 3 / 10 / 17 (max touches = gapDays.length + 1). Distinct from the months-scale noResponseRecycleDays (90-day recycle) and rejection re-approach windows. enabled defaults true for projects created after this shipped, false for older projects; setting enabled:false also clears any in-progress sequences. Whole-object replace — send the full override set you want, not a partial merge.'),
       outboundChannels: z.array(z.enum(OUTBOUND_CHANNELS)).optional()
         .describe('Channels the project is allowed to use for outbound. Subset of {email, form, sns_twitter, sns_linkedin}. Default is all four. Narrow this when the operator wants to avoid less-stable browser-driven channels — skills must skip prospects whose only reachable channel is disabled. An empty array effectively pauses the project for outbound.'),
       targetCountries: z.array(z.enum(ALLOWED_SEND_COUNTRIES)).optional()

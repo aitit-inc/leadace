@@ -10,6 +10,12 @@ export type OutboundChannel = (typeof OUTBOUND_CHANNELS)[number];
 export const ALLOWED_SEND_COUNTRIES = ['US', 'CA', 'JP'] as const;
 export type AllowedSendCountry = (typeof ALLOWED_SEND_COUNTRIES)[number];
 
+// Keep aligned with backend FollowUpSequence (domain/follow-up-sequence.ts).
+export type FollowUpSequence = {
+  enabled: boolean;
+  gapDays: number[];
+};
+
 export type ProjectSettings = {
   projectId: string;
   outboundMode: OutboundMode;
@@ -28,6 +34,7 @@ export type ProjectSettings = {
   inquiryDarkBackground: boolean;
   inquiryCtaType: InquiryCtaType;
   inquiryCtaUrl: string | null;
+  followUpSequence: FollowUpSequence;
   outboundChannels: OutboundChannel[];
   targetCountries: AllowedSendCountry[];
   updatedAt: string | null;

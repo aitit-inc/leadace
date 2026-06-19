@@ -113,11 +113,13 @@ prospects. This is a courtesy check (status is live, never cached); the 412 at s
 authoritative guard, and draft mode needs no Gmail connection.
 
 Each prospect in the targets list also carries:
-- `cycle: { n, kind, lastOutreach, lastResponse }` — the prospect's
+- `cycle: { n, kind, touchNumber, lastOutreach, lastResponse }` — the prospect's
   outreach history for this project. `n` is the count of confirmed sends.
-  `kind ∈ first | no_response | rejection_followup`. `lastOutreach.subject`
-  is the most recent subject used; `lastResponse.responseType` is the most
-  recent response (rejection / reply / etc.). When that response was a
+  `kind ∈ first | short_cycle_followup | no_response | rejection_followup`.
+  `touchNumber` is the position the next send occupies in the active sequence
+  (1 = first touch); for `short_cycle_followup` it is the 2nd/3rd/4th touch.
+  `lastOutreach.subject` is the most recent subject used; `lastResponse.responseType`
+  is the most recent response (rejection / reply / etc.). When that response was a
   rejection, `lastResponse.rejectionFeedback` carries the stated objection —
   `primaryReason` (e.g. `wrong_timing` / `budget`) and `freeText` (their own
   words, may be null) — so a re-approach can answer the actual reason. Drives
@@ -305,6 +307,21 @@ On a 502 `Send failed`, the outreach is still logged with `status: "failed"` and
 ### 3b. Re-approach Branching (cycle.kind != 'first')
 
 When `cycle.kind === 'first'`, use the normal first-touch composition above.
+
+When `cycle.kind === 'short_cycle_followup'`:
+- A day-scale follow-up to a still-unanswered email (the server schedules
+  touches a few days apart and stops the moment any real reply, bounce, or
+  unsubscribe arrives — so reaching you here means genuine silence). This is
+  `touchNumber` of a short sequence, not a months-later cold re-approach.
+- Keep it **short and low-friction** — a brief nudge that adds one new angle or
+  surfaces a fresh `recentSignals` item, not a re-pitch of the whole offer.
+  A new angle is welcome but **not required**: unlike `no_response`, do NOT
+  skip for lack of new material — a concise, polite bump is the point (much of
+  the reply volume comes from these follow-ups). Escalate brevity with
+  `touchNumber`.
+- **Subject must differ from `cycle.lastOutreach.subject`** — vary the angle,
+  never a bare "Re:" / "Following up". Threading is not handled server-side, so
+  treat each touch as a fresh email.
 
 When `cycle.kind === 'no_response'`:
 - This is a follow-up after silence. Acknowledge the silence lightly

@@ -158,6 +158,7 @@ Curl-only regressions (no Claude session, no Anthropic budget) — run all via
 - ✅ **`regression-build-list-dedup.sh`** — `check_prospect_dedup` + Phase 1.5 + normalize-domain.
 - ✅ **`regression-outbound.sh`** — `send-and-record`: compliance gate, draft mode, country guardrail, real-Gmail send (redirected to `E2E_RECIPIENT_OVERRIDE`).
 - ✅ **`regression-skip-reachable.sh`** — `skip_prospect` ('skipped' audit row, all reasons) + `listReachable` candidate-stage country filter (US/CA/JP/NULL admitted, GB excluded).
+- ✅ **`regression-followup-sequence.sh`** — P1 day-scale follow-up: seed/advance via `markProspectContacted`, the `listReachable` follow-up arm (`short_cycle_followup` / `touchNumber`), reply stop-wiring, the enabled=false kill-switch + effective-disabled (omitted-`enabled`) clear, and the disabled/no-backfill path.
 
 Onboarding chain is covered by `./e2e/smoke.sh` (drives the Claude CLI; needs a live MCP grant).
 

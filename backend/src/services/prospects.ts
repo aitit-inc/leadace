@@ -199,11 +199,15 @@ export type LinkInput = z.infer<typeof linkSchema>
 // "Substantive" = responseType ∈ {reply, rejection, bounce, meeting_request}.
 // Auto-replies excluded so the skill never disambiguates them from real prior
 // contact.
-export type CycleKind = 'first' | 'no_response' | 'rejection_followup'
+// 'short_cycle_followup' = a pending day-scale follow-up touch (P1), vs
+// 'no_response' = the months-scale recycle re-send.
+export type CycleKind = 'first' | 'no_response' | 'rejection_followup' | 'short_cycle_followup'
 
 export type ReachableCycle = {
   n: number
   kind: CycleKind
+  // Which touch the next send is (1 = first). For short_cycle_followup, followup_touches + 1.
+  touchNumber: number
   lastOutreach: { sentAt: string; subject: string | null } | null
   lastResponse: {
     receivedAt: string
@@ -377,9 +381,10 @@ export async function listReachable(
   //
   // Status branch:
   //   - 'new' / 'deferred': reachable when next_outreach_after is NULL or past.
-  //   - 'contacted': reachable only when next_outreach_after is past — the
-  //     no-response recycle path stamped at send time. Without the stamp a
-  //     contacted prospect stays out of the candidate pool.
+  //   - 'contacted': reachable when next_followup_after is past (day-scale
+  //     follow-up) OR, only while no sequence is in progress, next_outreach_after
+  //     is past (months-scale recycle). The IS NULL guard on the recycle arm keeps
+  //     the two windows mutually exclusive so they never collide.
   const reachableCondition = and(
     eq(projectProspects.projectId, projectId),
     eq(projectProspects.tenantId, tenantId),
@@ -391,8 +396,14 @@ export async function listReachable(
       ),
       and(
         eq(projectProspects.status, 'contacted'),
+        isNull(projectProspects.nextFollowupAfter),
         isNotNull(prospects.nextOutreachAfter),
         lte(prospects.nextOutreachAfter, sql`NOW()`),
+      ),
+      and(
+        eq(projectProspects.status, 'contacted'),
+        isNotNull(projectProspects.nextFollowupAfter),
+        lte(projectProspects.nextFollowupAfter, sql`NOW()`),
       ),
     ),
     channelFilter,
@@ -439,6 +450,8 @@ export async function listReachable(
         matchReason: projectProspects.matchReason,
         priority: projectProspects.priority,
         status: projectProspects.status,
+        nextFollowupAfter: projectProspects.nextFollowupAfter,
+        followupTouches: projectProspects.followupTouches,
         organizationId: prospects.organizationId,
         // SQL-side coalesce so the skill never merges two columns and
         // /outbound's pre-flight country gate works on a single field.
@@ -477,19 +490,30 @@ export async function listReachable(
   const prospectIds = rows.map((r) => r.prospectId)
   const cycleByProspect = await loadCycleContext(db, projectId, prospectIds)
 
-  const enriched: ReachableProspect[] = rows.map(({ signals, ...r }) => ({
-    ...r,
-    hypothesis: {
-      bestChannel: r.hypothesis?.bestChannel ?? null,
-      bestKeyperson: r.hypothesis?.bestKeyperson ?? null,
+  const enriched: ReachableProspect[] = rows.map(
+    ({ signals, nextFollowupAfter, followupTouches, ...r }) => {
+      const base = cycleByProspect.get(r.prospectId) ?? EMPTY_CYCLE
+      // A set next_followup_after means the day-scale arm picked this row — relabel
+      // so the skill writes a short nudge, not a months-scale re-approach.
+      const cycle: ReachableCycle =
+        nextFollowupAfter !== null
+          ? { ...base, kind: 'short_cycle_followup', touchNumber: followupTouches + 1 }
+          : base
+      return {
+        ...r,
+        hypothesis: {
+          bestChannel: r.hypothesis?.bestChannel ?? null,
+          bestKeyperson: r.hypothesis?.bestKeyperson ?? null,
+        },
+        channelAffinity: channelAffinityByBucket[coarseIndustry(r.industry)] ?? [],
+        cycle,
+        // `signals` is destructured out above so the raw column never leaks out.
+        ...(r.hasFreshSignal && signals?.highlights?.length
+          ? { recentSignals: signals.highlights.slice(0, RECENT_SIGNALS_MAX) }
+          : {}),
+      }
     },
-    channelAffinity: channelAffinityByBucket[coarseIndustry(r.industry)] ?? [],
-    cycle: cycleByProspect.get(r.prospectId) ?? EMPTY_CYCLE,
-    // `signals` is destructured out above so the raw column never leaks out.
-    ...(r.hasFreshSignal && signals?.highlights?.length
-      ? { recentSignals: signals.highlights.slice(0, RECENT_SIGNALS_MAX) }
-      : {}),
-  }))
+  )
 
   return ok({
     prospects: enriched,
@@ -507,6 +531,7 @@ export async function listReachable(
 const EMPTY_CYCLE: ReachableCycle = {
   n: 0,
   kind: 'first',
+  touchNumber: 1,
   lastOutreach: null,
   lastResponse: null,
 }
@@ -570,6 +595,7 @@ async function loadCycleContext(
     cycles.set(o.prospectId, {
       n: o.n,
       kind: resp ? 'rejection_followup' : 'no_response',
+      touchNumber: 1,
       lastOutreach: { sentAt: new Date(o.lastSentAt).toISOString(), subject: o.lastSubject },
       lastResponse: resp
         ? {

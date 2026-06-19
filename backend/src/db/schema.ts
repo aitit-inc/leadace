@@ -19,6 +19,7 @@ import {
 } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
 import type { LeverConfigPatch } from '../domain/lever-config'
+import type { FollowUpSequencePatch } from '../domain/follow-up-sequence'
 import type { ChannelAffinityMap, ChannelCoarseStat } from '../domain/channel-affinity'
 
 const bytea = customType<{ data: Uint8Array; driverData: Uint8Array }>({
@@ -419,6 +420,9 @@ export const projectSettings = pgTable('project_settings', {
   noResponseRecycleDays: smallint('no_response_recycle_days').notNull().default(90),
   // Overrides only ({} = none); loadLeverConfig fills the rest at read, so default changes need no backfill.
   leverConfig: jsonb('lever_config').$type<LeverConfigPatch>().notNull().default({}),
+  // Day-scale follow-up sequence (P1); overrides only, filled at read. Existing
+  // rows ({}) parse to enabled:false, so only new opted-in projects sequence.
+  followUpSequence: jsonb('follow_up_sequence').$type<FollowUpSequencePatch>().notNull().default({}),
   // Scoped to automated outbound (listReachable). Empty array pauses
   // automated outbound; manual UI Send / Mark-sent bypass.
   outboundChannels: text('outbound_channels').array().notNull()
@@ -550,6 +554,11 @@ export const projectProspects = pgTable('project_prospects', {
   matchReason: text('match_reason').notNull(),
   priority: smallint('priority').$type<Priority>().notNull().default(3),
   status: prospectStatusEnum('status').notNull().default('new'),
+  // Day-scale follow-up axis (P1), kept separate from prospects.next_outreach_after
+  // (months-scale) so the two re-eligibility windows never collide. NULL
+  // next_followup_after = no sequence in progress.
+  nextFollowupAfter: timestamp('next_followup_after', { withTimezone: true }),
+  followupTouches: smallint('followup_touches').notNull().default(0),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
@@ -596,6 +605,8 @@ export const outreachLogs = pgTable('outreach_logs', {
   // Whether the org had a fresh org_signals_global payload when this outreach
   // was composed (server-computed at insert; the plugin never supplies it).
   hadFreshSignal: boolean('had_fresh_signal').notNull().default(false),
+  // Position of this send in its follow-up sequence (1 = initial touch).
+  touchNumber: smallint('touch_number').notNull().default(1),
 }, (table) => [
   // Required so responses / inquiry_tokens / inquiry_sessions can declare a
   // composite (outreach_log_id, tenant_id) foreign key (defense-in-depth on

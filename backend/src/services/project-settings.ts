@@ -1,7 +1,8 @@
 import { z } from 'zod'
-import { eq } from 'drizzle-orm'
+import { and, eq, isNotNull } from 'drizzle-orm'
 import {
   projectSettings,
+  projectProspects,
   OUTBOUND_MODES,
   OUTBOUND_CHANNELS,
   INQUIRY_CTA_TYPES,
@@ -16,6 +17,11 @@ import { resolveProject } from './projects'
 import { isHttpsUrl, HTTPS_ONLY_MSG } from '../domain/url'
 import { ALLOWED_SEND_COUNTRIES } from '../domain/country'
 import { leverConfigSchema, leverConfigPatchSchema, type LeverConfig } from '../domain/lever-config'
+import {
+  followUpSequenceSchema,
+  followUpSequencePatchSchema,
+  type FollowUpSequence,
+} from '../domain/follow-up-sequence'
 
 // 6-digit hex only; 3-digit shorthand and named colors rejected so the
 // frontend swatch / preview is deterministic.
@@ -51,6 +57,9 @@ export const updateSettingsSchema = z
     // — a PUT must carry the full set of overrides it wants; an unset field then
     // tracks the live leverConfigSchema default.
     leverConfig: leverConfigPatchSchema.optional(),
+    // Overrides only, whole-cell replace (like leverConfig). enabled:false also
+    // clears in-progress sequences (kill-switch — see updateProjectSettings).
+    followUpSequence: followUpSequencePatchSchema.optional(),
   })
   .strict()
 export type UpdateSettingsPatch = z.infer<typeof updateSettingsSchema>
@@ -85,6 +94,7 @@ const settingsCols = {
   maxReapproachCycles: projectSettings.maxReapproachCycles,
   unspecifiedRecontactWindowMonths: projectSettings.unspecifiedRecontactWindowMonths,
   noResponseRecycleDays: projectSettings.noResponseRecycleDays,
+  followUpSequence: projectSettings.followUpSequence,
   outboundChannels: projectSettings.outboundChannels,
   targetCountries: projectSettings.targetCountries,
   updatedAt: projectSettings.updatedAt,
@@ -111,6 +121,7 @@ export type ProjectSettingsRow = {
   maxReapproachCycles: number
   unspecifiedRecontactWindowMonths: number
   noResponseRecycleDays: number
+  followUpSequence: FollowUpSequence
   outboundChannels: OutboundChannel[]
   targetCountries: string[]
   updatedAt: Date | null
@@ -210,6 +221,18 @@ export async function loadLeverConfig(db: Db, projectId: ProjectId): Promise<Lev
   return leverConfigSchema.parse(assertSettingsRow(row, projectId).leverConfig)
 }
 
+export async function loadProjectFollowUpConfig(
+  db: Db,
+  projectId: ProjectId,
+): Promise<FollowUpSequence> {
+  const [row] = await db
+    .select({ followUpSequence: projectSettings.followUpSequence })
+    .from(projectSettings)
+    .where(eq(projectSettings.projectId, projectId))
+    .limit(1)
+  return followUpSequenceSchema.parse(assertSettingsRow(row, projectId).followUpSequence)
+}
+
 export async function getProjectSettings(
   db: Db,
   tenantId: TenantId,
@@ -229,6 +252,7 @@ export async function getProjectSettings(
     ...r,
     projectId: r.projectId as ProjectId,
     outboundChannels: r.outboundChannels as OutboundChannel[],
+    followUpSequence: followUpSequenceSchema.parse(r.followUpSequence),
   })
 }
 
@@ -288,6 +312,7 @@ export async function updateProjectSettings(
     ...(patch.outboundChannels !== undefined ? { outboundChannels: patch.outboundChannels } : {}),
     ...(patch.targetCountries !== undefined ? { targetCountries: patch.targetCountries } : {}),
     ...(patch.leverConfig !== undefined ? { leverConfig: patch.leverConfig } : {}),
+    ...(patch.followUpSequence !== undefined ? { followUpSequence: patch.followUpSequence } : {}),
     updatedAt: now,
   }
 
@@ -297,10 +322,28 @@ export async function updateProjectSettings(
     .where(eq(projectSettings.projectId, projectId))
     .returning(settingsCols)
 
+  // Kill-switch: clear in-progress sequences so the follow-up arm stops re-picking
+  // them. Keyed on the EFFECTIVE enabled after the whole-cell replace (a cadence-
+  // only patch omitting `enabled` reads back disabled and must clear too), not an
+  // explicit false.
+  if (
+    patch.followUpSequence !== undefined &&
+    !followUpSequenceSchema.parse(patch.followUpSequence).enabled
+  ) {
+    await db
+      .update(projectProspects)
+      .set({ nextFollowupAfter: null, updatedAt: now })
+      .where(and(
+        eq(projectProspects.projectId, projectId),
+        isNotNull(projectProspects.nextFollowupAfter),
+      ))
+  }
+
   const r = assertSettingsRow(row, projectId)
   return ok({
     ...r,
     projectId: r.projectId as ProjectId,
     outboundChannels: r.outboundChannels as OutboundChannel[],
+    followUpSequence: followUpSequenceSchema.parse(r.followUpSequence),
   })
 }
