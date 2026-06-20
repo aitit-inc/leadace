@@ -60,6 +60,27 @@
       </div>
     {/if}
 
+    {#if stats.metrics.channelByIndustry.length > 0}
+      <div class="mb-6">
+        <p class="text-xs font-medium text-text-secondary mb-2">By industry × channel</p>
+        <div class="grid grid-cols-[1fr_64px_44px_44px_52px] md:grid-cols-[1fr_90px_70px_70px_80px] gap-2 text-xs">
+          <span class="text-text-muted">Industry</span>
+          <span class="text-text-muted">Channel</span>
+          <span class="text-text-muted text-right">Sent</span>
+          <span class="text-text-muted text-right">Resp.</span>
+          <span class="text-text-muted text-right">Rate</span>
+          {#each stats.metrics.channelByIndustry as ci}
+            <span class="text-text truncate">{ci.industry ?? 'Unclassified'}</span>
+            <span class="text-text-secondary font-mono truncate">{ci.channel}</span>
+            <span class="text-text-secondary text-right font-mono">{ci.total}</span>
+            <span class="text-text-secondary text-right font-mono">{ci.responses}</span>
+            <span class="text-text text-right font-mono">{pct(ci.responses, ci.total)}</span>
+          {/each}
+        </div>
+        <p class="text-[11px] text-text-muted mt-1.5">Rates on small Sent counts are noisy — weigh by Sent.</p>
+      </div>
+    {/if}
+
     {#if stats.metrics.variantResponseRate.length > 0}
       <div class="mb-6">
         <p class="text-xs font-medium text-text-secondary mb-2">By subject variant · reply-matured sends</p>

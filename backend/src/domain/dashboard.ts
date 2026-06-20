@@ -34,10 +34,33 @@ export type DashboardLearning = {
   log: LearningEntry[]
 }
 
+export type RejectionQuote = {
+  freeText: string
+  prospectName: string
+  organizationName: string
+}
+
+export type DecisionMakerReferral = {
+  prospectName: string
+  organizationName: string
+  name: string | null
+  email: string | null
+  role: string | null
+}
+
+export type NotRelevantNote = {
+  freeText: string
+  industry: string | null
+  prospectName: string
+  organizationName: string
+}
+
 export type DashboardRejections = {
   total: number
   topReasons: { reason: string; count: number; percentage: number }[]
-  productSignal: { count: number } | null
+  productSignal: { count: number; quotes: RejectionQuote[] } | null
+  decisionMakers: DecisionMakerReferral[]
+  notRelevant: NotRelevantNote[]
   recontactSoon: { window: RejectionRecontactWindow; count: number } | null
 }
 

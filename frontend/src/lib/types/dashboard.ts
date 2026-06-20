@@ -42,10 +42,33 @@ export interface DashboardLearning {
 
 export type RejectionRecontactWindow = 'never' | '3_months' | '6_months' | '12_months' | 'unspecified';
 
+export interface RejectionQuote {
+  freeText: string;
+  prospectName: string;
+  organizationName: string;
+}
+
+export interface DecisionMakerReferral {
+  prospectName: string;
+  organizationName: string;
+  name: string | null;
+  email: string | null;
+  role: string | null;
+}
+
+export interface NotRelevantNote {
+  freeText: string;
+  industry: string | null;
+  prospectName: string;
+  organizationName: string;
+}
+
 export interface DashboardRejections {
   total: number;
   topReasons: Array<{ reason: string; count: number; percentage: number }>;
-  productSignal: { count: number } | null;
+  productSignal: { count: number; quotes: RejectionQuote[] } | null;
+  decisionMakers: DecisionMakerReferral[];
+  notRelevant: NotRelevantNote[];
   recontactSoon: { window: RejectionRecontactWindow; count: number } | null;
 }
 

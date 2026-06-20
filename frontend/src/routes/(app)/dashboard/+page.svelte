@@ -15,6 +15,7 @@
     FlaskConical,
     MessageSquareX,
     Lightbulb,
+    UserPlus,
     Clock,
     Check,
     BellRing,
@@ -525,13 +526,57 @@
               {/each}
             </div>
             {#if summary.rejections.productSignal}
-              <div class="mt-3 flex gap-2 rounded-lg bg-warning/10 p-2.5">
-                <Lightbulb size={14} class="mt-0.5 shrink-0 text-warning" />
-                <p class="text-xs text-text-secondary">
-                  <span class="font-medium text-text">Product signal:</span>
-                  {summary.rejections.productSignal.count}
-                  {summary.rejections.productSignal.count === 1 ? 'prospect' : 'prospects'} cited a missing feature. Worth a roadmap look.
+              <div class="mt-3 rounded-lg bg-warning/10 p-2.5">
+                <div class="flex gap-2">
+                  <Lightbulb size={14} class="mt-0.5 shrink-0 text-warning" />
+                  <p class="text-xs text-text-secondary">
+                    <span class="font-medium text-text">Product signal:</span>
+                    {summary.rejections.productSignal.count}
+                    {summary.rejections.productSignal.count === 1 ? 'prospect' : 'prospects'} cited a missing feature. Worth a roadmap look.
+                  </p>
+                </div>
+                {#if summary.rejections.productSignal.quotes.length > 0}
+                  <ul class="mt-2 space-y-1 pl-6">
+                    {#each summary.rejections.productSignal.quotes as q}
+                      <li class="text-xs text-text-secondary">
+                        <span class="italic">"{q.freeText}"</span>
+                        <span class="text-text-muted">— {q.organizationName}</span>
+                      </li>
+                    {/each}
+                  </ul>
+                {/if}
+              </div>
+            {/if}
+            {#if summary.rejections.decisionMakers.length > 0}
+              <div class="mt-3">
+                <p class="flex items-center gap-1.5 text-xs uppercase tracking-wider text-text-muted">
+                  <UserPlus size={13} /> Who to reach instead
                 </p>
+                <ul class="mt-1.5 space-y-1.5">
+                  {#each summary.rejections.decisionMakers as dm}
+                    <li class="text-xs text-text-secondary">
+                      <span class="font-medium text-text">{dm.name ?? dm.role ?? dm.email}</span>
+                      {#if dm.name && dm.role}<span> · {dm.role}</span>{/if}
+                      {#if dm.email && (dm.name || dm.role)}<span class="text-text-muted"> · {dm.email}</span>{/if}
+                      <span class="text-text-muted"> — via {dm.organizationName}</span>
+                    </li>
+                  {/each}
+                </ul>
+              </div>
+            {/if}
+            {#if summary.rejections.notRelevant.length > 0}
+              <div class="mt-3">
+                <p class="flex items-center gap-1.5 text-xs uppercase tracking-wider text-text-muted">
+                  <Target size={13} /> Wrong-fit notes
+                </p>
+                <ul class="mt-1.5 space-y-1.5">
+                  {#each summary.rejections.notRelevant as n}
+                    <li class="text-xs text-text-secondary">
+                      <span class="italic">"{n.freeText}"</span>
+                      <span class="text-text-muted">— {n.organizationName}{n.industry ? ` · ${n.industry}` : ''}</span>
+                    </li>
+                  {/each}
+                </ul>
               </div>
             {/if}
             {#if summary.rejections.recontactSoon}

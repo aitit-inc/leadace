@@ -227,6 +227,7 @@ export async function getProjectStats(
     priorityResponseRateRows,
     statusCountsRows,
     channelResponseRateRows,
+    channelByIndustryRows,
     respondedMessagesRows,
     noResponseSampleRows,
     lastSentRows,
@@ -254,15 +255,21 @@ export async function getProjectStats(
                  WHERE pp.project_id = ${projectId}
                  GROUP BY pp.priority ORDER BY pp.priority`),
     rawQuery<{ status: ProspectStatus; count: string | number }>(sql`SELECT status, COUNT(*)::int AS count FROM project_prospects WHERE project_id = ${projectId} GROUP BY status`),
-    // Per-channel response rate uses confirmed activity for the denominator
-    // (matches channelCounts above) — in-flight rows have no chance of
-    // being responded to yet, so including them would dilute the rate.
-    rawQuery<{ channel: Channel; total: string | number; responses: string | number; rate: string | number | null }>(sql`SELECT ol.channel,
-                   COUNT(ol.id)::int AS total,
-                   COUNT(r.id)::int AS responses,
-                   ROUND(COUNT(r.id)::numeric / NULLIF(COUNT(ol.id), 0) * 100, 1)::float AS rate
+    // responses is 1:N to a send (no unique on outreach_log_id), so COUNT(DISTINCT ol.id) avoids double-counting.
+    rawQuery<{ channel: Channel; total: string | number; responses: string | number }>(sql`SELECT ol.channel,
+                   COUNT(DISTINCT ol.id)::int AS total,
+                   COUNT(DISTINCT ol.id) FILTER (WHERE r.id IS NOT NULL)::int AS responses
                  FROM outreach_logs ol LEFT JOIN responses r ON r.outreach_log_id = ol.id
-                 WHERE ol.project_id = ${projectId} AND ol.status IN (${SENT}, ${FAILED}) GROUP BY ol.channel`),
+                 WHERE ol.project_id = ${projectId} AND ol.status = ${SENT} GROUP BY ol.channel`),
+    // NULLIF(TRIM(industry)): some write paths (prospect-import) don't trim, so blank/whitespace would otherwise split into separate buckets.
+    rawQuery<{ channel: Channel; industry: string | null; total: string | number; responses: string | number }>(sql`SELECT ol.channel, NULLIF(TRIM(p.industry), '') AS industry,
+                   COUNT(DISTINCT ol.id)::int AS total,
+                   COUNT(DISTINCT ol.id) FILTER (WHERE r.id IS NOT NULL)::int AS responses
+                 FROM outreach_logs ol
+                   JOIN prospects p ON p.id = ol.prospect_id
+                   LEFT JOIN responses r ON r.outreach_log_id = ol.id
+                 WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}
+                 GROUP BY ol.channel, NULLIF(TRIM(p.industry), '')`),
     rawQuery<{ id: string | number; channel: Channel; subject: string | null; body: string; sentiment: Sentiment; responseType: ResponseType }>(sql`SELECT ol.id, ol.channel, ol.subject, ol.body, r.sentiment, r.response_type AS "responseType"
                  FROM responses r JOIN outreach_logs ol ON r.outreach_log_id = ol.id WHERE ol.project_id = ${projectId}`),
     rawQuery<{ id: string | number; channel: Channel; subject: string | null; body: string }>(sql`SELECT ol.id, ol.channel, ol.subject, ol.body
@@ -339,12 +346,29 @@ export async function getProjectStats(
       rate: Number(r.rate ?? 0),
     })),
     statusCounts: statusCountsRows.map((r) => ({ status: r.status, count: Number(r.count) })),
-    channelResponseRate: channelResponseRateRows.map((r) => ({
-      channel: r.channel,
-      total: Number(r.total),
-      responses: Number(r.responses),
-      rate: Number(r.rate ?? 0),
-    })),
+    channelResponseRate: channelResponseRateRows.map((r) => {
+      const total = Number(r.total)
+      const responses = Number(r.responses)
+      return {
+        channel: r.channel,
+        total,
+        responses,
+        rate: total === 0 ? 0 : Math.round((responses / total) * 1000) / 10,
+      }
+    }),
+    channelByIndustry: channelByIndustryRows
+      .map((r) => {
+        const total = Number(r.total)
+        const responses = Number(r.responses)
+        return {
+          channel: r.channel,
+          industry: r.industry,
+          total,
+          responses,
+          rate: total === 0 ? 0 : Math.round((responses / total) * 1000) / 10,
+        }
+      })
+      .sort((a, b) => b.total - a.total || b.rate - a.rate),
     variantResponseRate,
     inquiryOutcomeCounts,
   }

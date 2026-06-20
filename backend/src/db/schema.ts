@@ -262,6 +262,13 @@ export type EvaluationMetrics = {
     responses: number
     rate: number
   }>
+  channelByIndustry: Array<{
+    channel: string
+    industry: string | null
+    total: number
+    responses: number
+    rate: number
+  }>
   // Read-only foundation for the subject bandit (charter P0); nothing selects on it yet.
   variantResponseRate: Array<{
     variantId: string

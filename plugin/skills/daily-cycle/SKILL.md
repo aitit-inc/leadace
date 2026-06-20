@@ -296,6 +296,8 @@ Include the following in the prompt:
 - Project ID: `$0`
 - Execution date and time: the datetime obtained in step 1
 - Phase summaries collected from sub-agents during this cycle (check-responses, evaluate, outbound, build-list)
+- The lever / trajectory narration from evaluate and step 5b (current response rate, which subject variant / channel affinity is leading, sample progress)
+- Any autonomous execution-order decisions taken this cycle and why (email depletion → ran build-list first; outbound success rate < 30% → aborted; form submissions capped at 5 → N carried to next cycle; total reachable 0 → outbound skipped). "None" if the cycle ran straight through.
 
 **Completion Notification Email**
 
@@ -311,6 +313,9 @@ check-responses: (summary)
 evaluate: (summary)
 outbound: (summary)
 build-list: (summary)
+
+Trajectory: (response rate now and its direction vs the last cycle if known / what the levers are currently optimizing / the one focus for next cycle — say "still accumulating data" when it is too early to claim a trend; never imply progress the numbers do not show)
+Decisions: (the autonomous execution-order calls this cycle and their reason, or "none")
 ```
 
 Call `mcp__plugin_leadace_api__send_email` with the notification recipient as `to`, subject `"daily-cycle completed: $0"`, and the report body. (Use `send_email`, not `send_email_and_record` — this is an internal report, not prospect outreach.)

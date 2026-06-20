@@ -18,7 +18,10 @@ import {
   type DashboardLearning,
   type DashboardRejections,
   type DashboardSummary,
+  type DecisionMakerReferral,
   type LearningEntry,
+  type NotRelevantNote,
+  type RejectionQuote,
 } from '../domain/dashboard'
 import type { RejectionRecontactWindow } from '../db/schema'
 import { ok, type ServiceResult } from './result'
@@ -344,7 +347,9 @@ type RejectionSummaryLike = Awaited<ReturnType<typeof getRejectionFeedbackSummar
 
 const RECONTACT_PRIORITY: RejectionRecontactWindow[] = ['3_months', '6_months', '12_months']
 
-function buildRejections(rej: RejectionSummaryLike): DashboardRejections {
+const REJECTION_DETAIL_SHOWN = 3
+
+export function buildRejections(rej: RejectionSummaryLike): DashboardRejections {
   const featureGap = rej.primaryReasonDistribution.find((r) => r.reason === 'feature_gap')
   let recontactSoon: DashboardRejections['recontactSoon'] = null
   for (const w of RECONTACT_PRIORITY) {
@@ -354,10 +359,43 @@ function buildRejections(rej: RejectionSummaryLike): DashboardRejections {
       break
     }
   }
+
+  const quotes: RejectionQuote[] = rej.featureGapNotes
+    .map((n) => ({
+      freeText: n.freeText?.trim() ?? '',
+      prospectName: n.prospectName,
+      organizationName: n.organizationName,
+    }))
+    .filter((q) => q.freeText.length > 0)
+    .slice(0, REJECTION_DETAIL_SHOWN)
+
+  const decisionMakers: DecisionMakerReferral[] = rej.decisionMakerPointers
+    .map((p) => ({
+      prospectName: p.prospectName,
+      organizationName: p.organizationName,
+      name: p.pointer?.name?.trim() || null,
+      email: p.pointer?.email?.trim() || null,
+      role: p.pointer?.role?.trim() || null,
+    }))
+    .filter((r) => r.name !== null || r.email !== null || r.role !== null)
+    .slice(0, REJECTION_DETAIL_SHOWN)
+
+  const notRelevant: NotRelevantNote[] = rej.notRelevantNotes
+    .map((n) => ({
+      freeText: n.freeText?.trim() ?? '',
+      industry: n.industry?.trim() || null,
+      prospectName: n.prospectName,
+      organizationName: n.organizationName,
+    }))
+    .filter((n) => n.freeText.length > 0)
+    .slice(0, REJECTION_DETAIL_SHOWN)
+
   return {
     total: rej.total,
     topReasons: rej.primaryReasonDistribution.slice(0, 5),
-    productSignal: featureGap && featureGap.count > 0 ? { count: featureGap.count } : null,
+    productSignal: featureGap && featureGap.count > 0 ? { count: featureGap.count, quotes } : null,
+    decisionMakers,
+    notRelevant,
     recontactSoon,
   }
 }
