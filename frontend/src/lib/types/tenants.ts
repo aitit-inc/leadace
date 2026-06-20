@@ -5,4 +5,9 @@ export type TenantSettings = {
   physicalAddress: string | null;
   defaultSenderCountry: string | null;
   privacyPolicyUrl: string | null;
+  // Japanese footer variants, sent verbatim to JP recipients. Null = fall back
+  // to the default field above.
+  legalNameJa: string | null;
+  physicalAddressJa: string | null;
+  privacyPolicyUrlJa: string | null;
 };

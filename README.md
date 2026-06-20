@@ -13,7 +13,7 @@ Builds prospect lists, runs outbound outreach, and iterates on strategy — all 
 - A LeadAce account at https://app.leadace.ai (Free tier — no card)
 - A connected Gmail account — for sending email (granted when you sign in with Google, or via the "Connect Gmail" banner in the web app)
 - Gmail MCP (claude.ai built-in) — for checking email replies
-- claude-in-chrome MCP — for form filling and SNS DMs
+- claude-in-chrome MCP — for form submission and SNS DMs (forms can alternatively use any other browser-automation MCP you configure yourself, e.g. Playwright; SNS DMs require claude-in-chrome)
 
 ### Installation
 

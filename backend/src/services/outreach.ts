@@ -42,9 +42,14 @@ import { UNDELIVERABLE } from '../domain/email-deliverability'
 import { requireProspect, prospectHadFreshSignal } from './prospects'
 import { allocateInquiryUrl } from './inquiry-token'
 import { loadProjectReapproachSettings, loadProjectSendSettings, loadProjectFollowUpConfig } from './project-settings'
-import { assertTenantComplianceReady } from './tenants'
+import {
+  assertTenantComplianceReady,
+  localizeComplianceIdentity,
+  type TenantComplianceProjection,
+} from './tenants'
 import { addDays } from '../domain/prospect-status'
 import { isAllowedSendCountry } from '../domain/country'
+import { localeForCountry, type Locale } from '../domain/locale'
 import { buildSkipAuditBody } from '../domain/outreach-skip'
 import type { Edition } from '../domain/edition'
 
@@ -187,15 +192,14 @@ export type SendContext = {
   e2eRecipientOverride: string | null
 }
 
-// Compliance rules ship for US + CA + JP only; other jurisdictions blocked.
-// Reads prospect.country first (per-prospect override for distributed teams /
-// regional reps), falls back to organization.country. NULL is warn-only so the
-// send proceeds and the warn surfaces in observability for backfill.
-async function assertProspectCountryAllowed(
+// Effective recipient country: prospect override first (per-prospect override
+// for distributed teams / regional reps), falling back to the organization.
+// Null when the prospect is missing or neither row carries a country.
+async function loadEffectiveRecipientCountry(
   db: Db,
   tenantId: TenantId,
   prospectId: number,
-): Promise<ServiceResult<undefined>> {
+): Promise<string | null> {
   const [row] = await db
     .select({
       prospectCountry: prospects.country,
@@ -205,12 +209,67 @@ async function assertProspectCountryAllowed(
     .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
     .where(and(eq(prospects.id, prospectId), eq(prospects.tenantId, tenantId)))
     .limit(1)
+  if (!row) return null
+  return row.prospectCountry ?? row.organizationCountry
+}
 
-  // Missing prospect is the caller's bug, not a compliance refusal — let
-  // the surrounding flow surface NOT_FOUND from its own lookup.
-  if (!row) return ok(undefined)
+// Recipient language for the compliance footer, derived from the same
+// effective country the send guardrail uses. Defaults to English when country
+// is unknown.
+async function resolveRecipientLocale(
+  db: Db,
+  tenantId: TenantId,
+  prospectId: number,
+): Promise<Locale> {
+  return localeForCountry(await loadEffectiveRecipientCountry(db, tenantId, prospectId))
+}
 
-  const effective = row.prospectCountry ?? row.organizationCountry
+// Shared by every email send path and the draft preview so the preview can't
+// drift from the real send. Allocating the inquiry token is the only write.
+async function buildOutreachFooter(
+  db: Db,
+  tenantId: TenantId,
+  ctx: SendContext,
+  args: {
+    prospectId: number
+    outreachLogId: number
+    compliance: TenantComplianceProjection
+    inquiryLandingEnabled: boolean
+  },
+): Promise<{ footer: string; headers: Record<string, string>; inquiryUrl: string | null }> {
+  const inquiryUrl = await allocateInquiryUrl(
+    db,
+    tenantId,
+    ctx.appUrl,
+    args.outreachLogId,
+    args.inquiryLandingEnabled,
+  )
+  const recipientLocale = await resolveRecipientLocale(db, tenantId, args.prospectId)
+  const identity = localizeComplianceIdentity(args.compliance, recipientLocale)
+  const attachments = await buildComplianceAttachments({
+    prospectId: args.prospectId,
+    tenantId,
+    inquiryUrl,
+    appUrl: ctx.appUrl,
+    apiUrl: ctx.apiUrl,
+    secret: ctx.unsubscribeSecret,
+    tenantLegalName: identity.legalName,
+    tenantPhysicalAddress: identity.physicalAddress,
+    tenantPrivacyPolicyUrl: identity.privacyPolicyUrl,
+    locale: recipientLocale,
+  })
+  return { footer: attachments.footer, headers: attachments.headers, inquiryUrl }
+}
+
+// Compliance rules ship for US + CA + JP only; other jurisdictions blocked.
+// NULL is warn-only so the send proceeds and the warn surfaces in
+// observability for backfill.
+async function assertProspectCountryAllowed(
+  db: Db,
+  tenantId: TenantId,
+  prospectId: number,
+): Promise<ServiceResult<undefined>> {
+  const effective = await loadEffectiveRecipientCountry(db, tenantId, prospectId)
   const gate = isAllowedSendCountry(effective)
   if (!gate.allowed) {
     return err(
@@ -444,25 +503,11 @@ export async function recordOutreachWithInquiry(
 
   if (!log) return err('INTERNAL_ERROR', 'Failed to allocate outreach log row')
 
-  const inquiryUrl = await allocateInquiryUrl(
-    db,
-    tenantId,
-    ctx.appUrl,
-    log.id,
-    sendSettings.inquiryLandingEnabled,
-  )
-
-  const compliance = complianceResult.value
-  const attachments = await buildComplianceAttachments({
+  const attachments = await buildOutreachFooter(db, tenantId, ctx, {
     prospectId: input.prospectId,
-    tenantId,
-    inquiryUrl,
-    appUrl: ctx.appUrl,
-    apiUrl: ctx.apiUrl,
-    secret: ctx.unsubscribeSecret,
-    tenantLegalName: compliance.legalName,
-    tenantPhysicalAddress: compliance.physicalAddress,
-    tenantPrivacyPolicyUrl: compliance.privacyPolicyUrl,
+    outreachLogId: log.id,
+    compliance: complianceResult.value,
+    inquiryLandingEnabled: sendSettings.inquiryLandingEnabled,
   })
   const finalBody = `${input.body}${attachments.footer}`
 
@@ -477,7 +522,7 @@ export async function recordOutreachWithInquiry(
     outreachLogId: log.id,
     status,
     finalBody,
-    inquiryUrl,
+    inquiryUrl: attachments.inquiryUrl,
   })
 }
 
@@ -620,24 +665,11 @@ export async function sendAndRecord(
     return err('INTERNAL_ERROR', 'Failed to allocate outreach log row')
   }
 
-  const inquiryUrl = await allocateInquiryUrl(
-    db,
-    tenantId,
-    ctx.appUrl,
-    log.id,
-    sendSettings.inquiryLandingEnabled,
-  )
-
-  const attachments = await buildComplianceAttachments({
+  const attachments = await buildOutreachFooter(db, tenantId, ctx, {
     prospectId: input.prospectId,
-    tenantId,
-    inquiryUrl,
-    appUrl: ctx.appUrl,
-    apiUrl: ctx.apiUrl,
-    secret: ctx.unsubscribeSecret,
-    tenantLegalName: compliance.legalName,
-    tenantPhysicalAddress: compliance.physicalAddress,
-    tenantPrivacyPolicyUrl: compliance.privacyPolicyUrl,
+    outreachLogId: log.id,
+    compliance,
+    inquiryLandingEnabled: sendSettings.inquiryLandingEnabled,
   })
   const sendBody = `${input.body}${attachments.footer}`
 
@@ -898,6 +930,16 @@ export type DraftRow = {
   createdAt: Date
 }
 
+export type DraftPreview = {
+  footer:
+    // in_body: form/SNS drafts already carry the footer in the body.
+    // unavailable: email draft with no footer — compliance incomplete or
+    //   recipient country unsupported.
+    | { kind: 'rendered'; text: string }
+    | { kind: 'in_body' }
+    | { kind: 'unavailable' }
+}
+
 export async function listDrafts(
   db: Db,
   tenantId: TenantId,
@@ -1022,24 +1064,11 @@ export async function sendDraft(
   if (!countryResult.ok) return countryResult
   const compliance = complianceResult.value
 
-  const inquiryUrl = await allocateInquiryUrl(
-    db,
-    tenantId,
-    ctx.appUrl,
-    draft.id,
-    sendSettings.inquiryLandingEnabled,
-  )
-
-  const attachments = await buildComplianceAttachments({
+  const attachments = await buildOutreachFooter(db, tenantId, ctx, {
     prospectId: draft.prospectId,
-    tenantId,
-    inquiryUrl,
-    appUrl: ctx.appUrl,
-    apiUrl: ctx.apiUrl,
-    secret: ctx.unsubscribeSecret,
-    tenantLegalName: compliance.legalName,
-    tenantPhysicalAddress: compliance.physicalAddress,
-    tenantPrivacyPolicyUrl: compliance.privacyPolicyUrl,
+    outreachLogId: draft.id,
+    compliance,
+    inquiryLandingEnabled: sendSettings.inquiryLandingEnabled,
   })
   const sendBody = `${draft.body}${attachments.footer}`
 
@@ -1085,6 +1114,53 @@ export async function sendDraft(
     messageId: result.messageId,
     threadId: result.threadId,
   })
+}
+
+// Shares the send-time footer builder, so previewing allocates the inquiry
+// token like a real send (the route is POST, not GET).
+export async function previewDraft(
+  db: Db,
+  tenantId: TenantId,
+  ctx: SendContext,
+  id: number,
+): Promise<ServiceResult<DraftPreview>> {
+  const draft = await db
+    .select({
+      projectId: outreachLogs.projectId,
+      prospectId: outreachLogs.prospectId,
+      channel: outreachLogs.channel,
+      status: outreachLogs.status,
+    })
+    .from(outreachLogs)
+    .where(and(eq(outreachLogs.id, id), eq(outreachLogs.tenantId, tenantId)))
+    .limit(1)
+    .then((rows) => rows[0])
+
+  if (!draft) return err('NOT_FOUND', 'Draft not found')
+  if (draft.status !== 'pending_review') {
+    return err('CONFLICT', 'Draft already sent or not in review')
+  }
+  if (draft.channel !== 'email') {
+    return ok({ footer: { kind: 'in_body' } })
+  }
+
+  const [sendSettings, complianceResult, countryResult] = await Promise.all([
+    loadProjectSendSettings(db, draft.projectId as ProjectId),
+    assertTenantComplianceReady(db, tenantId),
+    assertProspectCountryAllowed(db, tenantId, draft.prospectId),
+  ])
+  // No footer or token for a send the compliance / country guards would refuse.
+  if (!complianceResult.ok || !countryResult.ok) {
+    return ok({ footer: { kind: 'unavailable' } })
+  }
+
+  const attachments = await buildOutreachFooter(db, tenantId, ctx, {
+    prospectId: draft.prospectId,
+    outreachLogId: id,
+    compliance: complianceResult.value,
+    inquiryLandingEnabled: sendSettings.inquiryLandingEnabled,
+  })
+  return ok({ footer: { kind: 'rendered', text: attachments.footer } })
 }
 
 // For form / SNS drafts delivered outside our system (user submits manually).

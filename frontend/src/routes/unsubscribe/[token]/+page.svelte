@@ -6,6 +6,12 @@
 
   let { data }: PageProps = $props();
 
+  // Recipient language for this legacy opt-out page. Available only once the
+  // token resolves to a prospect; the invalid branch (bad token, no prospect)
+  // has no country signal, so it stays English.
+  const locale = $derived(data.result.kind === 'ready' ? data.result.info.locale : 'en');
+  const ja = $derived(locale === 'ja');
+
   type View =
     | { kind: 'ready'; email: string; organizationName: string; alreadyUnsubscribed: boolean }
     | { kind: 'invalid'; message: string }
@@ -62,7 +68,7 @@
     <Logo size={14} class="text-accent" />
     ← LeadAce
   </a>
-  <h1 class="mt-4 text-2xl font-semibold text-text">Unsubscribe</h1>
+  <h1 class="mt-4 text-2xl font-semibold text-text">{ja ? '配信停止' : 'Unsubscribe'}</h1>
 
   <div class="mt-8 text-sm leading-relaxed text-text-secondary">
     {#if view.kind === 'invalid'}
@@ -72,19 +78,35 @@
         and we'll remove you manually.
       </p>
     {:else if view.kind === 'done'}
-      <p>You've been unsubscribed. We won't send you any more outreach emails.</p>
+      <p>
+        {ja
+          ? '配信を停止しました。今後、ご連絡メールをお送りすることはありません。'
+          : "You've been unsubscribed. We won't send you any more outreach emails."}
+      </p>
     {:else if view.kind === 'ready' && view.alreadyUnsubscribed}
-      <p>
-        <span class="font-mono">{view.email}</span> is already unsubscribed from
-        {view.organizationName ? view.organizationName : 'this sender'}. No further action
-        needed.
-      </p>
+      {@const sender = view.organizationName ? view.organizationName : ja ? 'この送信者' : 'this sender'}
+      {#if ja}
+        <p>
+          <span class="font-mono">{view.email}</span> は {sender} の配信からすでに停止されています。これ以上の操作は不要です。
+        </p>
+      {:else}
+        <p>
+          <span class="font-mono">{view.email}</span> is already unsubscribed from
+          {sender}. No further action needed.
+        </p>
+      {/if}
     {:else if view.kind === 'ready'}
-      <p>
-        Click below to unsubscribe <span class="font-mono">{view.email}</span> from
-        {view.organizationName ? view.organizationName : 'this sender'}. We won't send you any
-        more outreach emails.
-      </p>
+      {@const sender = view.organizationName ? view.organizationName : ja ? 'この送信者' : 'this sender'}
+      {#if ja}
+        <p>
+          下のボタンをクリックすると、<span class="font-mono">{view.email}</span> を {sender} の配信から停止します。今後、ご連絡メールをお送りすることはありません。
+        </p>
+      {:else}
+        <p>
+          Click below to unsubscribe <span class="font-mono">{view.email}</span> from
+          {sender}. We won't send you any more outreach emails.
+        </p>
+      {/if}
       <div class="mt-6 flex gap-2">
         <button
           type="button"
@@ -92,7 +114,7 @@
           onclick={confirm}
           class="rounded bg-text px-4 py-2 text-xs font-medium text-page hover:bg-text/90 transition-colors disabled:opacity-40"
         >
-          {submitting ? 'Unsubscribing…' : 'Unsubscribe'}
+          {submitting ? (ja ? '停止しています…' : 'Unsubscribing…') : ja ? '配信を停止' : 'Unsubscribe'}
         </button>
       </div>
     {/if}

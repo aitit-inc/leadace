@@ -292,6 +292,14 @@ export const tenants = pgTable('tenants', {
   // the recipient's country (that lives on prospects / organizations).
   defaultSenderCountry: text('default_sender_country'),
   privacyPolicyUrl: text('privacy_policy_url'),
+  // Japanese footer variants, used verbatim for JP recipients (effective
+  // country = JP) so a bilingual sender shows its Japanese legal identity to
+  // Japanese customers and the English one to everyone else. Null = no JA
+  // variant; the footer falls back to the columns above. Optional — never
+  // gates a send (the *_ja columns are not part of compliance readiness).
+  legalNameJa: text('legal_name_ja'),
+  physicalAddressJa: text('physical_address_ja'),
+  privacyPolicyUrlJa: text('privacy_policy_url_ja'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   // NULL = the plugin has never connected; gates the web onboarding flow.
   firstMcpConnectedAt: timestamp('first_mcp_connected_at', { withTimezone: true }),

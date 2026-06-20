@@ -16,6 +16,12 @@ describe('extractFaqQuestions', () => {
     expect(extractFaqQuestions(brief)).toEqual(['What does it cost?', 'Do you offer trials?'])
   })
 
+  it('stops at an inline A: so a single-line Q&A does not leak the answer', () => {
+    const brief =
+      'Q: Can I review messages before they send? A: Yes — draft mode holds every outreach for approval first.'
+    expect(extractFaqQuestions(brief)).toEqual(['Can I review messages before they send?'])
+  })
+
   it('is case-sensitive (lowercase q: is not a question)', () => {
     expect(extractFaqQuestions('q: ignored\nQ: kept')).toEqual(['kept'])
   })

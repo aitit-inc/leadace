@@ -1,6 +1,10 @@
 # Contact Form Submission Procedure
 
-Use the `mcp__claude-in-chrome__*` tools to fill in and submit forms. **This procedure assumes SKILL.md §4 has already allocated the pre_send outreach log row** via `record_outreach_with_inquiry` and confirmed `status === 'pre_send'` (draft mode never reaches this file). The flow below resolves that row via `update_outreach_status` on success or failure. See `claude-in-chrome-guide.md` for the full tool reference.
+Fill in and submit forms with whichever browser-automation backend is connected (see "Browser backend" below). **This procedure assumes SKILL.md §4 has already allocated the pre_send outreach log row** via `record_outreach_with_inquiry` and confirmed `status === 'pre_send'` (draft mode never reaches this file). The flow below resolves that row via `update_outreach_status` on success or failure. See `claude-in-chrome-guide.md` for the full Claude-in-Chrome tool reference.
+
+## Browser backend
+
+This procedure is written with Claude-in-Chrome tool names — the built-in default. If a different browser-automation MCP is connected instead (Playwright, a paid one, etc.), do the same operation with that backend's equivalent tools: the flow — navigate → inspect the page for the field and submit-button handles → fill the fields → submit once → verify via the network request + page state — is backend-independent. Prefer Claude in Chrome when it's available. SNS DMs (SKILL.md §5) are Claude-in-Chrome-only — they need the user's logged-in browser profile.
 
 **Important: Submit forms only once.** After clicking the submit button, do not retry for any reason. Verify outcome via `read_network_requests` and page state.
 

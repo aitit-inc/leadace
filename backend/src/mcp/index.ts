@@ -179,8 +179,7 @@ function buildToolRegistry(): ToolDef[] {
         const msg = err.detail ? `${err.error}: ${err.detail}` : err.error
         return { content: [{ type: 'text' as const, text: `Error: ${msg}` }], isError: true }
       }
-      const result = data as { id: number }
-      return { content: [{ type: 'text' as const, text: `Reported (id: ${result.id}). Thanks — the maintainer will review it.` }] }
+      return { content: [{ type: 'text' as const, text: `Reported. Thanks — the maintainer will review it.` }] }
     },
   )
 

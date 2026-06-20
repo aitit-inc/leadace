@@ -3,6 +3,7 @@
   import type { InquiryChatMessageResult, InquiryChatTurn, InquiryLandingPayload, InquiryPrimaryReason } from '$lib/api/inquiry';
   import { renderInquiryMarkdown } from '$lib/markdown';
   import { EDITION } from '$lib/config';
+  import { inquiryCopy } from './copy';
 
   type Props = {
     landing: InquiryLandingPayload;
@@ -35,6 +36,10 @@
     | { kind: 'unsubscribed'; chipChosen: boolean };
 
   const isPreview = $derived(mode === 'preview');
+
+  // Recipient-facing copy in the recipient's language (JP → Japanese). The
+  // preview banner stays English — it's for the operator, not the recipient.
+  const t = $derived(inquiryCopy(landing.locale));
 
   // Initial view derives from the server-reported session state so a
   // recipient who navigates back after closing the session (lead /
@@ -266,10 +271,10 @@
 
   // Preview with no prospect selected shows the {Recipient} placeholder.
   const greeting = $derived.by(() => {
-    if (landing.recipientName) return `Hi ${landing.recipientName},`;
-    if (landing.recipientOrganization) return `Hi ${landing.recipientOrganization} team,`;
-    if (isPreview) return 'Hi {Recipient},';
-    return 'Hi there,';
+    if (landing.recipientName) return t.greetingName(landing.recipientName);
+    if (landing.recipientOrganization) return t.greetingOrg(landing.recipientOrganization);
+    if (isPreview) return t.greetingPreviewPlaceholder;
+    return t.greetingFallback;
   });
 
   // Header subtitle: "From {sender}, {role} at {company}" when all three
@@ -292,13 +297,14 @@
   // Order: personal name → company → generic. Never the tenant label.
   const displayName = $derived(landing.senderName ?? landing.senderCompany ?? 'the team');
 
-  const chips: { label: string; reason: InquiryPrimaryReason }[] = [
-    { label: 'Not relevant', reason: 'not_relevant' },
-    { label: 'Wrong timing', reason: 'wrong_timing' },
-    { label: 'Already have it', reason: 'already_have_solution' },
-    { label: 'Too expensive', reason: 'budget' },
-    { label: 'Missing feature', reason: 'feature_gap' },
-    { label: 'Other', reason: 'other' },
+  // Labels come from the locale copy; order is fixed.
+  const chipReasons: InquiryPrimaryReason[] = [
+    'not_relevant',
+    'wrong_timing',
+    'already_have_solution',
+    'budget',
+    'feature_gap',
+    'other',
   ];
 </script>
 
@@ -328,7 +334,7 @@
       {/if}
       {#if fromLine}
         <div class="flex flex-wrap items-baseline gap-x-1 text-xs tracking-wide text-text-muted">
-          <span>From</span>
+          <span>{t.from}</span>
           {#if fromLine.who}
             <span class="font-medium text-text">{fromLine.who}{#if fromLine.role},{/if}</span>
           {/if}
@@ -336,7 +342,7 @@
             <span class="text-text">{fromLine.role}</span>
           {/if}
           {#if fromLine.who && fromLine.where}
-            <span>at</span>
+            <span>{t.at}</span>
           {/if}
           {#if fromLine.where}
             <span class="font-medium text-text">{fromLine.where}</span>
@@ -347,12 +353,10 @@
 
     {#if view.kind === 'meetingRequested'}
       <section class="mt-8">
-        <h1 class="text-2xl font-medium tracking-tight text-text">Thanks — we'll be in touch.</h1>
+        <h1 class="text-2xl font-medium tracking-tight text-text">{t.thanksTitle}</h1>
         {#if landing.cta.type === 'meeting' && landing.cta.schedulingUrl}
           <p class="mt-3 text-sm leading-relaxed text-text-secondary">
-            We opened {displayName}'s scheduling page in a new tab. Pick a time there to
-            lock in your slot — once booked, you'll get a confirmation email with the
-            calendar invite directly from the scheduling tool.
+            {t.schedulingIntro(displayName)}
           </p>
           <p class="mt-3 text-sm">
             <a
@@ -361,33 +365,27 @@
               rel="noopener noreferrer"
               class="brand-link text-accent underline decoration-text-muted/40 underline-offset-4 hover:text-text hover:decoration-text"
             >
-              Open scheduling page ↗
+              {t.openSchedulingPage}
             </a>
           </p>
           <p class="mt-4 text-xs text-text-muted">
-            If the scheduling tab didn't open (popup blocker, etc.), just tap the link
-            above — your interest is already recorded so {displayName} will follow up
-            even without a booking.
+            {t.schedulingPopupHint(displayName)}
           </p>
         {:else}
           <p class="mt-3 text-sm leading-relaxed text-text-secondary">
-            {displayName} has been notified that you'd like to talk and will reach out
-            directly — typically within 1–2 business days.
+            {t.notifyOnlyIntro(displayName)}
           </p>
           <p class="mt-3 text-sm leading-relaxed text-text-secondary">
-            If you'd like to speed things up, replying on the original thread with a few
-            times that work for you is the fastest path.
+            {t.notifyOnlySpeedUp}
           </p>
         {/if}
       </section>
     {:else if view.kind === 'signupClicked'}
       <section class="mt-8">
-        <h1 class="text-2xl font-medium tracking-tight text-text">You're all set — finish in the new tab.</h1>
+        <h1 class="text-2xl font-medium tracking-tight text-text">{t.signupTitle}</h1>
         {#if landing.cta.type === 'signup'}
           <p class="mt-3 text-sm leading-relaxed text-text-secondary">
-            We opened the signup page in a new tab. Complete your account there to
-            start using {displayName}'s product right away — no scheduling or
-            sales call needed.
+            {t.signupIntro(displayName)}
           </p>
           <p class="mt-3 text-sm">
             <a
@@ -396,37 +394,37 @@
               rel="noopener noreferrer"
               class="brand-link text-accent underline decoration-text-muted/40 underline-offset-4 hover:text-text hover:decoration-text"
             >
-              Open signup page ↗
+              {t.openSignupPage}
             </a>
           </p>
           <p class="mt-4 text-xs text-text-muted">
-            If the tab didn't open (popup blocker, etc.), just tap the link above.
+            {t.signupPopupHint}
           </p>
         {/if}
       </section>
     {:else if view.kind === 'unsubscribed'}
       <section class="mt-8">
-        <h1 class="text-2xl font-medium tracking-tight text-text">You've been unsubscribed.</h1>
+        <h1 class="text-2xl font-medium tracking-tight text-text">{t.unsubTitle}</h1>
         <p class="mt-3 text-sm leading-relaxed text-text-secondary">
-          We won't send you any more outreach.
+          {t.unsubBody}
         </p>
         {#if view.chipChosen}
           <p class="mt-3 text-sm leading-relaxed text-text-secondary">
-            Thanks for the feedback — it helps {displayName} target better.
+            {t.unsubThanks(displayName)}
           </p>
         {:else}
           <p class="mt-5 text-sm text-text-secondary">
-            Optional — pick the closest reason so {displayName} can do better next time.
+            {t.unsubReasonPrompt(displayName)}
           </p>
           <div class="mt-3 flex flex-wrap gap-2">
-            {#each chips as chip}
+            {#each chipReasons as reason}
               <button
                 type="button"
                 disabled={actionBusy}
-                onclick={() => pickChip(chip.reason)}
+                onclick={() => pickChip(reason)}
                 class="rounded-full border border-border bg-surface px-3 py-1.5 text-xs text-text hover:border-text/40 transition-colors disabled:opacity-40"
               >
-                {chip.label}
+                {t.chip[reason]}
               </button>
             {/each}
           </div>
@@ -446,7 +444,7 @@
         <div class="mt-8 aspect-video w-full overflow-hidden rounded bg-black">
           <iframe
             src={videoSrc}
-            title="Intro"
+            title={t.videoTitle}
             class="h-full w-full"
             loading="lazy"
             allow="autoplay; encrypted-media; picture-in-picture"
@@ -460,7 +458,7 @@
           rel="noopener noreferrer"
           class="brand-link mt-6 inline-flex items-center gap-1 text-sm text-text underline decoration-text-muted/40 underline-offset-4 hover:decoration-text"
         >
-          Watch the intro video <span aria-hidden="true">→</span>
+          {t.watchVideo} <span aria-hidden="true">→</span>
         </a>
       {/if}
 
@@ -472,7 +470,7 @@
             onclick={handleSignupClick}
             class="brand-cta rounded-full bg-text px-5 py-2 text-sm font-medium text-page transition-colors hover:bg-text/85 disabled:opacity-40"
           >
-            {actionBusy ? 'Opening…' : 'Sign up'}
+            {actionBusy ? t.ctaOpening : t.ctaSignup}
           </button>
         {:else}
           <button
@@ -482,10 +480,10 @@
             class="brand-cta rounded-full bg-text px-5 py-2 text-sm font-medium text-page transition-colors hover:bg-text/85 disabled:opacity-40"
           >
             {actionBusy
-              ? 'Sending…'
+              ? t.ctaSending
               : landing.cta.schedulingUrl
-                ? 'Book a meeting'
-                : 'Request a meeting'}
+                ? t.ctaBookMeeting
+                : t.ctaRequestMeeting}
           </button>
         {/if}
         {#if landing.pdfUrl}
@@ -496,7 +494,7 @@
             rel="noopener noreferrer"
             class="brand-link text-sm text-text-secondary underline decoration-text-muted/40 underline-offset-4 hover:text-text hover:decoration-text"
           >
-            Download the PDF
+            {t.downloadPdf}
           </a>
         {/if}
       </div>
@@ -505,7 +503,7 @@
         <section class="mt-12 border-t border-border pt-8">
           <div class="flex items-baseline justify-between">
             <h2 class="text-sm font-semibold uppercase tracking-[0.12em] text-text-secondary">
-              Ask a question
+              {t.chatHeading}
             </h2>
             <span class="text-xs tabular-nums text-text-muted">{chatTurnsUsed} / {chatTurnsMax}</span>
           </div>
@@ -542,7 +540,7 @@
               {/each}
               {#if chatBusy}
                 <div class="chat-enter flex justify-start" aria-live="polite">
-                  <div class="inline-flex items-center gap-1.5 rounded-2xl rounded-bl-md bg-surface px-3.5 py-3 text-text-muted" aria-label="Generating response">
+                  <div class="inline-flex items-center gap-1.5 rounded-2xl rounded-bl-md bg-surface px-3.5 py-3 text-text-muted" aria-label={t.generatingResponse}>
                     <span class="typing-dot"></span>
                     <span class="typing-dot"></span>
                     <span class="typing-dot"></span>
@@ -554,8 +552,7 @@
 
           {#if reachedTurnLimit}
             <p class="mt-5 text-xs text-text-muted">
-              That's the chat limit. Use <strong class="text-text">Request a meeting</strong>
-              above to talk to a person.
+              {t.chatLimitPre}<strong class="text-text">{t.chatLimitBtn}</strong>{t.chatLimitPost}
             </p>
           {:else}
             <form
@@ -569,8 +566,8 @@
                 type="text"
                 bind:value={chatInput}
                 placeholder={chatTurns.length === 0
-                  ? 'e.g. Pricing? Does it support X?'
-                  : 'Type your reply'}
+                  ? t.chatPlaceholderFirst
+                  : t.chatPlaceholderReply}
                 disabled={chatBusy || !onSendChat}
                 maxlength={2000}
                 class="flex-1 bg-transparent py-1 text-sm text-text placeholder:text-text-muted focus:outline-none disabled:opacity-40"
@@ -578,10 +575,10 @@
               <button
                 type="submit"
                 disabled={chatBusy || !chatInput.trim() || !onSendChat}
-                aria-label="Send"
+                aria-label={t.sendAria}
                 class="text-sm text-text-muted transition-colors hover:text-text disabled:opacity-30"
               >
-                {chatBusy ? '…' : 'Send'}
+                {chatBusy ? '…' : t.send}
               </button>
             </form>
           {/if}
@@ -600,7 +597,7 @@
           onclick={startUnsubscribe}
           class="rounded-full border border-border bg-surface px-4 py-1.5 text-xs text-text-secondary transition-colors hover:border-text/40 hover:text-text disabled:opacity-40"
         >
-          {actionBusy ? 'Unsubscribing…' : "Don't want these messages? Unsubscribe"}
+          {actionBusy ? t.unsubscribing : t.unsubscribeCta}
         </button>
       </div>
     {/if}
@@ -616,7 +613,7 @@
           rel="noopener"
           class="underline decoration-text-muted/30 underline-offset-4 hover:text-text hover:decoration-text"
         >
-          Privacy
+          {t.privacy}
         </a>
       {/if}
     </footer>

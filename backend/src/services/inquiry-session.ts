@@ -36,6 +36,7 @@ import type { InquiryTokenRow } from './inquiry-token'
 import { resolveProject } from './projects'
 import { recordResponse } from './responses'
 import { isHttpsUrl } from '../domain/url'
+import { localeForCountry, type Locale } from '../domain/locale'
 import { rejectionConsentSchema } from '../domain/rejection-feedback'
 import { extractFaqQuestions } from '../domain/faq-suggestions'
 
@@ -804,6 +805,11 @@ export type InquiryLandingPayload = {
   shortId: ShortId | null
   preview: boolean
 
+  // Recipient language. Derived from the effective recipient country (prospect
+  // override → organization), so the landing renders Japanese for JP prospects
+  // and English otherwise. Preview reflects the previewed prospect's locale.
+  locale: Locale
+
   // project_settings.sender_display_name verbatim. Null when unset — frontend
   // then omits the personal-name slot of the landing header (and falls back
   // to senderCompany / a generic phrasing in body copy). We deliberately do
@@ -914,7 +920,9 @@ export async function loadLandingContext(
       tokenRevokedAt: inquiryTokens.revokedAt,
       ...previewableSettingsCols,
       prospectContactName: prospects.contactName,
+      prospectCountry: prospects.country,
       organizationName: organizations.name,
+      organizationCountry: organizations.country,
     })
     .from(inquiryTokens)
     .innerJoin(outreachLogs, eq(outreachLogs.id, inquiryTokens.outreachLogId))
@@ -949,6 +957,7 @@ export async function loadLandingContext(
   return ok({
     shortId,
     preview: false,
+    locale: localeForCountry(row.prospectCountry ?? row.organizationCountry),
     senderName: row.senderDisplayName,
     senderCompany: row.senderCompanyName,
     senderJobTitle: row.senderJobTitle,
@@ -1004,11 +1013,16 @@ export async function loadPreviewContext(
   // can't be previewed; a miss falls back to the generic greeting.
   let recipientName: string | null = null
   let recipientOrganization: string | null = null
+  // No previewed prospect → English (the picker only offers in-project
+  // prospects, so a real selection always resolves a country).
+  let previewLocale: Locale = 'en'
   if (prospectId !== null) {
     const [p] = await db
       .select({
         contactName: prospects.contactName,
+        prospectCountry: prospects.country,
         organizationName: organizations.name,
+        organizationCountry: organizations.country,
       })
       .from(projectProspects)
       .innerJoin(prospects, eq(prospects.id, projectProspects.prospectId))
@@ -1023,12 +1037,14 @@ export async function loadPreviewContext(
     if (p) {
       recipientName = p.contactName
       recipientOrganization = p.organizationName
+      previewLocale = localeForCountry(p.prospectCountry ?? p.organizationCountry)
     }
   }
 
   return ok({
     shortId: null,
     preview: true,
+    locale: previewLocale,
     senderName: row.senderDisplayName,
     senderCompany: row.senderCompanyName,
     senderJobTitle: row.senderJobTitle,

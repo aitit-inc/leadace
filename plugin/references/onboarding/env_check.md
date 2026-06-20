@@ -76,9 +76,9 @@ If the user declines to provide a value (says "skip" / "later"), record that in 
 
 Mention the recipient-delivery scope once in the completion report (the supported countries are listed in the prompt above) so the operator's targeting matches the send-time guardrail.
 
-### 2-3. Claude in Chrome extension — ask
+### 2-3. Browser automation backend — ask
 
-Use `AskUserQuestion`: "Are you using the Claude in Chrome extension? (Required for contact-form submission and SNS DMs in `/outbound`, plus SNS reply checking in `/check-responses`.)" — options: `yes` / `no` / `unsure`. Record as `CHROME_EXT`.
+Use `AskUserQuestion`: "For `/outbound` browser automation, which do you have? Claude in Chrome handles **contact forms and SNS DMs** (plus SNS reply checking in `/check-responses`); any other browser-automation MCP you've configured (e.g. Playwright) handles **contact forms only**." — options: `Claude in Chrome` / `Other browser MCP` / `neither` / `unsure`. Record as `BROWSER_AUTOMATION` (`chrome` | `other` | `none` | `unsure`; pick `chrome` if the user has both). Capability: `chrome` → form + SNS; `other` → form only; `none`/`unsure` → email only.
 
 **Caller may relax these prompts**: when invoked from `/leadace`'s onboarding chain, the caller can default to `unsure` for 2-2 and 2-3 without asking, to keep the chain flowing. The user can ask `/leadace` to re-check the environment later for explicit confirmation. State this assumption in the hand-off summary (Step 4) when applied.
 
@@ -118,11 +118,12 @@ The script uses standard-library only (no `pip install`), so a working `python3`
 
 Return control to the caller with (held in memory — not saved as a document):
 - `PROJECT_NAME`
-- `GMAIL_STATUS`, `GMAIL_MCP`, `CHROME_EXT`, `LOCAL_FETCH` (for the completion report)
+- `GMAIL_STATUS`, `GMAIL_MCP`, `BROWSER_AUTOMATION`, `LOCAL_FETCH` (for the completion report)
 - A capability summary the caller can include in its completion report:
   - Project in use (`PROJECT_NAME`)
   - Email send: <available / unavailable>
-  - Form / SNS: <available / unavailable>
+  - Contact forms: <available / unavailable> — from `BROWSER_AUTOMATION` (`chrome` or `other` → available)
+  - SNS DMs: <available (Claude in Chrome) / unavailable> — `chrome` only
   - Local URL fetch: <local fetch tool / web-fetch fallback only>
   - Most prominent missing capability (if any), with the fix-it action
 

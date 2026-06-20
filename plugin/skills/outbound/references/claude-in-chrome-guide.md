@@ -2,6 +2,8 @@
 
 Used for browser operations such as form submission and SNS DMs. All executed via the `mcp__claude-in-chrome__*` MCP tools.
 
+For **contact forms** the user may instead have another browser-automation MCP connected; the operation is the same on any backend (see the "Browser backend" note in `form-filling.md`). **SNS DMs are Claude-in-Chrome-only** (they need the user's logged-in profile — see "SNS DMs" below).
+
 ## Quick start
 
 ```

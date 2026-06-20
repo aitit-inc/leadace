@@ -1,5 +1,9 @@
 import { request, type RequestFetch } from '../api';
 
+// Recipient language for the parts a prospect reads. Mirrors backend
+// domain/locale.ts `Locale`. JP recipients get 'ja', everyone else 'en'.
+export type InquiryLocale = 'ja' | 'en';
+
 export type InquiryOutcome = 'opened' | 'inquired' | 'lead' | 'signup_clicked' | 'unsubscribed';
 
 // Discriminated CTA payload — landing renders one variant, never both.
@@ -22,6 +26,7 @@ export type InquiryLandingSession = {
 export type InquiryLandingPayload = {
   shortId: string | null;
   preview: boolean;
+  locale: InquiryLocale;
 
   senderName: string | null;
   senderCompany: string | null;

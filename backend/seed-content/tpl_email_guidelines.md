@@ -43,7 +43,7 @@ Prioritize efficiency with template-based semi-personalization.
 4. **Proof (optional, 1 line)**: If you have a concrete, relevant proof point — a number or a comparable customer from the "Track Record / Social Proof" section of SALES_STRATEGY.md — include one short line; specifics build credibility. If none fits naturally, skip it. A short honest ask beats forced credentials
 5. **CTA** (1 line): Present exactly one next action
 6. **Legal required disclosures**: Opt-out notice (see below)
-7. **Sign-off** (1-2 lines): Close light — `Best,` (or similar) on one line, your name on the next; add your role only if it helps. Do **not** paste a full signature block (phone, postal address, multiple URLs): English-standard cold email closes light, and the backend appends the compliance footer (legal name, physical address, unsubscribe) automatically. Take the name/role from the "Sender Information" section of SALES_STRATEGY.md
+7. **Sign-off** (1-2 lines): Close light, in the email's language — a short sign-off (`Best,` for English; a natural Japanese close such as `よろしくお願いいたします` for Japanese) on one line, your name on the next; add your role only if it helps. Do **not** paste a full signature block (phone, postal address, multiple URLs): cold email closes light, and the backend appends the compliance footer (legal name, physical address, unsubscribe) automatically. Take the name/role from the "Sender Information" section of SALES_STRATEGY.md
 
 ## CTA (Call to Action)
 
@@ -108,5 +108,5 @@ Check each email against these patterns that significantly lower response rates 
 - Body text should be **75–150 words** (excluding sign-off and legal disclosures). Shorter emails have higher response rates
 - One CTA per email
 - No attachments (for first contact)
-- **Default voice is English-standard casual**: write the way a real person emails — warm, direct, conversational. No formal honorifics, no heavy signature block; close with a light sign-off (`Best,` + your name). Excessive formality creates distance. (The project's `email_template` document holds the body template; apply these voice rules when composing the outbound email from it.)
+- **Default voice is casual, in the recipient's language**: write the way a real person emails — warm, direct, conversational, matching that language's politeness norms (English-standard casual for English; appropriately-polite natural Japanese for Japanese). No heavy signature block; close with a light sign-off in the email's language (`Best,` + your name for English; a natural Japanese close such as `よろしくお願いいたします` for Japanese). (The project's `email_template` document holds the body template; apply these voice rules when composing the outbound email from it.)
 - Avoid spam trigger words: "free", "limited", "act now", etc.

@@ -28,7 +28,7 @@ export async function recordBugReport(
   tenantId: TenantId,
   userId: string,
   input: RecordBugReportInput,
-): Promise<ServiceResult<{ id: number }>> {
+): Promise<ServiceResult<undefined>> {
   const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000)
 
   const [count] = await db
@@ -56,5 +56,6 @@ export async function recordBugReport(
     .returning({ id: bugReports.id })
 
   if (!row) return err('INTERNAL_ERROR', 'Failed to record bug report')
-  return ok({ id: row.id })
+  // No id: it's a global identity sequence, so echoing it leaks the count.
+  return ok(undefined)
 }

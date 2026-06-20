@@ -20,6 +20,7 @@ import {
   editDraft,
   editDraftSchema,
   sendDraft,
+  previewDraft,
   markDraftSent,
   discardDraft,
   discardDrafts,
@@ -164,6 +165,22 @@ outreachRouter.post(
       c.get('db'),
       c.get('tenantId'),
       c.get('edition'),
+      sendContext(c),
+      c.req.valid('param').id,
+    )
+    if (!result.ok) return respondWithError(c, result)
+    return c.json(result.value, 200)
+  },
+)
+
+// POST, not GET: building the footer allocates the draft's inquiry token.
+outreachRouter.post(
+  '/outreach/drafts/:id/preview',
+  zValidator('param', outreachLogIdParamSchema),
+  async (c) => {
+    const result = await previewDraft(
+      c.get('db'),
+      c.get('tenantId'),
       sendContext(c),
       c.req.valid('param').id,
     )

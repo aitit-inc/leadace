@@ -1,5 +1,5 @@
 import { request, type RequestFetch } from '../api';
-import type { OutreachDraft } from '$lib/types/outreach';
+import type { OutreachDraft, DraftPreview } from '$lib/types/outreach';
 
 export type ListDraftsParams = {
   page: number;
@@ -39,6 +39,21 @@ export function updateDraft(
     method: 'PUT',
     path: `/outreach/drafts/${draftId}`,
     body: patch,
+    auth: 'required',
+    token,
+  });
+}
+
+// POST, not GET: the server allocates the inquiry token while rendering the footer.
+export function previewDraft(
+  draftId: number,
+  fetchFn: RequestFetch = fetch,
+  token?: string,
+): Promise<DraftPreview> {
+  return request<DraftPreview>(fetchFn, {
+    method: 'POST',
+    path: `/outreach/drafts/${draftId}/preview`,
+    body: {},
     auth: 'required',
     token,
   });

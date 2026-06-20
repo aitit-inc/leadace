@@ -1,7 +1,12 @@
 import { sql } from 'drizzle-orm'
 import type { Db } from '../db/connection'
 import { signUnsubscribeToken } from './unsubscribe-token'
-import { inquiryFooterLine } from '../domain/inquiry-footer'
+import {
+  inquiryFooterLine,
+  unsubscribeFooterLine,
+  privacyFooterLine,
+} from '../domain/inquiry-footer'
+import type { Locale } from '../domain/locale'
 import type { TenantId } from '../domain/ids'
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -194,6 +199,9 @@ export async function buildComplianceAttachments(args: {
   tenantLegalName: string
   tenantPhysicalAddress: string
   tenantPrivacyPolicyUrl: string | null
+  // Recipient language. Localizes the inquiry / unsubscribe / privacy lines;
+  // the legal name + address above stay verbatim.
+  locale: Locale
 }): Promise<{ footer: string; headers: Record<string, string> }> {
   const lines: string[] = []
   const headers: Record<string, string> = {}
@@ -202,11 +210,11 @@ export async function buildComplianceAttachments(args: {
   lines.push(args.tenantPhysicalAddress)
 
   if (args.inquiryUrl) {
-    lines.push(inquiryFooterLine(args.inquiryUrl))
+    lines.push(inquiryFooterLine(args.inquiryUrl, args.locale))
   }
 
   if (args.tenantPrivacyPolicyUrl) {
-    lines.push(`Privacy: ${args.tenantPrivacyPolicyUrl}`)
+    lines.push(privacyFooterLine(args.tenantPrivacyPolicyUrl, args.locale))
   }
 
   const token = await signUnsubscribeToken(
@@ -216,7 +224,7 @@ export async function buildComplianceAttachments(args: {
   const userUrl = `${args.appUrl}/unsubscribe/${token}`
   const oneClickUrl = `${args.apiUrl}/api/unsubscribe/${token}`
   if (!args.inquiryUrl) {
-    lines.push(`Unsubscribe: ${userUrl}`)
+    lines.push(unsubscribeFooterLine(userUrl, args.locale))
   }
   headers['List-Unsubscribe'] = `<${oneClickUrl}>, <${userUrl}>`
   headers['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'

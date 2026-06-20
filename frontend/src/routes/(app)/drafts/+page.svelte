@@ -5,12 +5,13 @@
     discardDraft,
     discardDrafts,
     markDraftSent,
+    previewDraft,
     sendDraft,
     updateDraft,
   } from '$lib/api/drafts';
   import { ApiError } from '$lib/api';
   import { safeHttpUrl } from '$lib/redirect';
-  import type { Channel, OutreachDraft } from '$lib/types/outreach';
+  import type { Channel, DraftFooter, OutreachDraft } from '$lib/types/outreach';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import Pagination from '$lib/components/Pagination.svelte';
@@ -18,6 +19,7 @@
   import { PAGE_SIZE } from '$lib/pagination';
 
   type EditState = { subject: string; body: string; saving: boolean };
+  type PreviewState = { loading: boolean; footer: DraftFooter | null; error: string | null };
   type DeliverKind = 'send-email' | 'mark-sent';
 
   let { data }: PageProps = $props();
@@ -27,6 +29,8 @@
   // invalidate('app:drafts') on successful mutations.
   let expandedId = $state<number | null>(null);
   let edits = $state<Record<number, EditState>>({});
+  // Footer is independent of the editable body, so fetch once per draft.
+  let previews = $state<Record<number, PreviewState>>({});
   let banner = $state<{ kind: 'info' | 'error'; text: string } | null>(null);
   let confirming = $state<
     | { kind: DeliverKind | 'discard'; draft: OutreachDraft }
@@ -53,6 +57,14 @@
       else edMutated = true;
     }
     if (edMutated) edits = nextEdits;
+
+    let pvMutated = false;
+    const nextPreviews: Record<number, PreviewState> = {};
+    for (const [k, v] of Object.entries(previews)) {
+      if (present.has(Number(k))) nextPreviews[Number(k)] = v;
+      else pvMutated = true;
+    }
+    if (pvMutated) previews = nextPreviews;
 
     let selMutated = false;
     const nextSel = new Set<number>();
@@ -107,6 +119,27 @@
     expandedId = d.id;
     if (!edits[d.id]) {
       edits[d.id] = { subject: d.subject ?? '', body: d.body, saving: false };
+    }
+    void loadPreview(d);
+  }
+
+  // Form / SNS drafts already carry the footer in the (editable) body.
+  async function loadPreview(d: OutreachDraft) {
+    if (d.channel !== 'email') return;
+    // Re-fetch only when there's no entry or the last attempt errored — a
+    // transient failure must not be cached for the rest of the session.
+    const existing = previews[d.id];
+    if (existing && (existing.loading || !existing.error)) return;
+    previews[d.id] = { loading: true, footer: null, error: null };
+    try {
+      const res = await previewDraft(d.id, fetch, token);
+      previews[d.id] = { loading: false, footer: res.footer, error: null };
+    } catch (err) {
+      previews[d.id] = {
+        loading: false,
+        footer: null,
+        error: err instanceof Error ? err.message : String(err),
+      };
     }
   }
 
@@ -571,6 +604,29 @@
                 class="w-full rounded border border-border bg-page px-2 py-1.5 text-sm text-text font-mono resize-y"
               ></textarea>
             </div>
+            {#if isEmail}
+              {@const pv = previews[draft.id]}
+              <div>
+                <span class="block text-[11px] font-medium text-text-muted mb-1">
+                  Signature &amp; footer — appended automatically at send (not editable)
+                </span>
+                {#if !pv || pv.loading}
+                  <p class="text-xs text-text-muted">Loading footer…</p>
+                {:else if pv.error}
+                  <p class="text-xs text-danger">Couldn’t load footer preview — {pv.error}</p>
+                {:else if pv.footer?.kind === 'rendered'}
+                  <div
+                    class="w-full rounded border border-border border-dashed bg-surface px-2 py-1.5 text-sm text-text-secondary font-mono whitespace-pre-wrap break-words"
+                  >{pv.footer.text.replace(/^\n+/, '')}</div>
+                {:else if pv.footer?.kind === 'unavailable'}
+                  <p class="text-xs text-text-muted">
+                    Footer preview unavailable — complete your
+                    <a href="/workspace-settings" class="text-accent hover:underline">Workspace settings</a>,
+                    or check that the recipient's country is supported.
+                  </p>
+                {/if}
+              </div>
+            {/if}
             <div class="flex flex-wrap items-center gap-2 pt-1">
               <button
                 type="button"

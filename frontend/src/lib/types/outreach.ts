@@ -34,3 +34,14 @@ export interface OutreachDraft {
   body: string;
   createdAt: string;
 }
+
+// Mirror of backend DraftPreview. 'in_body' = form/SNS footer already in the
+// body; 'unavailable' = no footer (compliance incomplete or country unsupported).
+export type DraftFooter =
+  | { kind: 'rendered'; text: string }
+  | { kind: 'in_body' }
+  | { kind: 'unavailable' };
+
+export interface DraftPreview {
+  footer: DraftFooter;
+}

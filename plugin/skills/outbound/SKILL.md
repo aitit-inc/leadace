@@ -5,7 +5,7 @@ argument-hint: "<project-id> [count]"
 allowed-tools:
   - Bash
   - Read
-  # claude-in-chrome handles both contact-form submission and SNS DMs
+  # claude-in-chrome handles contact-form submission and SNS DMs
   - mcp__claude-in-chrome__tabs_context_mcp
   - mcp__claude-in-chrome__tabs_create_mcp
   - mcp__claude-in-chrome__navigate
@@ -16,6 +16,8 @@ allowed-tools:
   - mcp__claude-in-chrome__computer
   - mcp__claude-in-chrome__javascript_tool
   - mcp__claude-in-chrome__read_network_requests
+  # Contact forms can also run on another browser-automation MCP the user has
+  # enabled in their own environment (e.g. Playwright); SNS DMs are Chrome-only.
   - mcp__plugin_leadace_api__get_outbound_targets
   - mcp__plugin_leadace_api__send_email_and_record
   - mcp__plugin_leadace_api__skip_prospect
@@ -367,7 +369,7 @@ When `cycle.kind === 'rejection_followup'`:
 
 ### 4. Contact Form Submission
 
-Read `${CLAUDE_PLUGIN_ROOT}/skills/outbound/references/claude-in-chrome-guide.md` and `${CLAUDE_PLUGIN_ROOT}/skills/outbound/references/form-filling.md` for the underlying procedures.
+Read `${CLAUDE_PLUGIN_ROOT}/skills/outbound/references/form-filling.md` for the procedure, and `${CLAUDE_PLUGIN_ROOT}/skills/outbound/references/claude-in-chrome-guide.md` for the Claude-in-Chrome tool reference. Submit forms with whatever browser-automation MCP is available in the environment — Claude in Chrome (built-in default) or any other the user has configured (e.g. Playwright). The procedure is the same on any backend. Prefer Claude in Chrome when it's available.
 
 Compose the message body per the form's fields and the email guidelines (adapted to be concise).
 
@@ -390,7 +392,7 @@ The server reads the project's `outboundMode` and either allocates the row as `s
 | formType | Processing |
 |---|---|
 | `google_forms` | Follow "Google Forms" section in `references/form-filling.md`. Extract entry IDs via `javascript_tool`, then submit via `formResponse` POST with curl |
-| `native_html` / `wordpress_cf7` / null | Use claude-in-chrome MCP tools (`navigate`, `read_page` / `find`, `form_input`, `computer`, `read_network_requests`). Follow basic flow in `references/form-filling.md` |
+| `native_html` / `wordpress_cf7` / null | Use the connected browser backend (navigate → inspect → fill → submit → verify network). Follow basic flow in `references/form-filling.md` |
 | `iframe_embed` | Skip. Call `update_outreach_status` with `status: "failed"`, `errorMessage: "iframe-embedded form -- skipped"` |
 | `with_captcha` | Skip. Call `update_outreach_status` with `status: "failed"`, `errorMessage: "captcha present"`. Follow "reCAPTCHA / hCaptcha etc." section in `references/form-filling.md` for the prospect-status handling |
 
@@ -424,7 +426,7 @@ The server returns `{ outreachLogId, status, finalBody, inquiryUrl }`. `finalBod
 
 **If `status === 'pending_review'` (draft mode):** stop here. The DM is stored as a draft (with `finalBody`) for the user to send manually from https://app.leadace.ai/drafts. Do not open the browser or pre-check DM settings — the user finds out at send time and can mark the prospect inactive then.
 
-**If `status === 'pre_send'` (send mode):** use claude-in-chrome to deliver the DM. See `references/claude-in-chrome-guide.md` for tool reference.
+**If `status === 'pre_send'` (send mode):** use claude-in-chrome to deliver the DM. See `references/claude-in-chrome-guide.md` for tool reference. SNS DMs require Claude in Chrome's logged-in browser profile — other browser MCPs start from a fresh, signed-out context, so SNS is Claude-in-Chrome-only even when the user runs a different backend for forms.
 
 **Common steps:**
 1. Navigate to the SNS profile page in the browser.

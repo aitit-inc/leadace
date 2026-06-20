@@ -4,9 +4,12 @@ import {
   inquiryTokens,
   outreachLogs,
   projectSettings,
+  prospects,
+  organizations,
 } from '../db/schema'
 import type { Db } from '../db/connection'
 import { asTenantId, type ShortId, type TenantId } from '../domain/ids'
+import { localeForCountry, type Locale } from '../domain/locale'
 import { ok, err, type ServiceResult } from './result'
 import {
   callOpenAIResponses,
@@ -68,6 +71,10 @@ export type InquiryChatRunResult = {
 // no-prospect preview / legacy sessions.
 export type ChatPromptContext = {
   brief: string
+  // Recipient language. 'ja' makes the assistant reply in polite business
+  // Japanese; 'en' keeps it English. Derived from the effective recipient
+  // country (prospect override → organization).
+  locale: Locale
   // project_settings.sender_display_name verbatim. Null when unset — the
   // system prompt then frames the AI as representing the company (or, if
   // both are null, the offering generically). Deliberately NOT falling back
@@ -235,11 +242,15 @@ async function loadChatContext(
       senderDisplayName: projectSettings.senderDisplayName,
       senderCompanyName: projectSettings.senderCompanyName,
       senderJobTitle: projectSettings.senderJobTitle,
+      prospectCountry: prospects.country,
+      organizationCountry: organizations.country,
     })
     .from(inquirySessions)
     .innerJoin(inquiryTokens, eq(inquiryTokens.shortId, inquirySessions.shortId))
     .innerJoin(outreachLogs, eq(outreachLogs.id, inquirySessions.outreachLogId))
     .innerJoin(projectSettings, eq(projectSettings.projectId, outreachLogs.projectId))
+    .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
+    .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
     .where(and(eq(inquirySessions.shortId, shortId), isNull(inquirySessions.closedAt)))
     .limit(1)
 
@@ -262,6 +273,7 @@ async function loadChatContext(
     chatTurnsUsed: row.sessionChatTurnsUsed,
     openedAt: row.sessionOpenedAt,
     brief: effectiveBrief,
+    locale: localeForCountry(row.prospectCountry ?? row.organizationCountry),
     senderName: row.senderDisplayName,
     senderCompany: row.senderCompanyName,
     senderJobTitle: row.senderJobTitle,
@@ -318,6 +330,17 @@ export function buildSystemPrompt(ctx: ChatPromptContext, currentTurn: number): 
           : 'You are an AI sales assistant for this offering.'
   const offerOwner = ctx.senderCompany ?? ctx.senderName ?? 'this offering'
   const visitorClause = visitorLine ? ` ${visitorLine}` : ''
+  // The recipient is a Japanese company — name the button as the JA landing
+  // labels it and steer the model to Japanese output. Instructions stay in
+  // English (the model follows the language directive reliably).
+  const meetingButton =
+    ctx.locale === 'ja'
+      ? 'the "打ち合わせを依頼" (request a meeting) button'
+      : 'the "Request a meeting" button'
+  const lengthRule =
+    ctx.locale === 'ja'
+      ? '- Keep replies under ~300 Japanese characters. The recipient values their time.'
+      : '- Keep replies under ~150 words. The recipient values their time.'
   return [
     senderIntro,
     `A potential customer${visitorClause} clicked an inquiry link from a cold-outreach message and is asking questions about the offering. Your job is to be genuinely helpful, concise, and honest.`,
@@ -326,13 +349,18 @@ export function buildSystemPrompt(ctx: ChatPromptContext, currentTurn: number): 
     ctx.brief,
     '',
     'Rules:',
+    ...(ctx.locale === 'ja'
+      ? [
+          '- Always reply in natural, polite Japanese business language (です・ます調 / 敬語). The recipient is a Japanese company, even though these instructions are written in English.',
+        ]
+      : []),
     `- Stay strictly on the topic of ${offerOwner}'s offering. Politely decline unrelated questions.`,
-    '- Keep replies under ~150 words. The recipient values their time.',
+    lengthRule,
     '- If you cannot answer with the information provided, say so honestly — never fabricate features, pricing, or guarantees.',
-    '- If the recipient seems ready for a real conversation with a human, suggest using the "Request meeting" button on this page.',
+    `- If the recipient seems ready for a real conversation with a human, suggest using ${meetingButton} on this page.`,
     '- Do not ask for personal data (name, phone, address, payment).',
     '- Formatting: plain text by default. You MAY use **bold**, *italic*, and bullet/numbered lists when they genuinely improve readability. Do NOT use any other Markdown (no headings, code blocks, blockquotes, links, images, tables, or HTML). Prefer prose over lists for short answers.',
-    `- This is turn ${currentTurn} of a maximum ${INQUIRY_CHAT_TURNS_MAX}. After turn ${INQUIRY_CHAT_TURNS_MAX}, the recipient must use the "Request meeting" button to continue the conversation.`,
+    `- This is turn ${currentTurn} of a maximum ${INQUIRY_CHAT_TURNS_MAX}. After turn ${INQUIRY_CHAT_TURNS_MAX}, the recipient must use ${meetingButton} to continue the conversation.`,
   ].join('\n')
 }
 

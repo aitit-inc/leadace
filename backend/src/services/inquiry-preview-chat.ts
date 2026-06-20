@@ -9,6 +9,7 @@ import {
 } from '../db/schema'
 import type { Db } from '../db/connection'
 import { projectRefSchema, prospectIdSchema, type ProjectId, type TenantId } from '../domain/ids'
+import { localeForCountry } from '../domain/locale'
 import { ok, err, type ServiceResult } from './result'
 import {
   callOpenAIResponses,
@@ -150,7 +151,7 @@ async function loadPreviewPromptContext(
   sender: SenderFields,
 ): Promise<ChatPromptContext> {
   if (prospectId === null) {
-    return { ...sender, recipientName: null, recipientOrganization: null }
+    return { ...sender, locale: 'en', recipientName: null, recipientOrganization: null }
   }
 
   const [row] = await db
@@ -162,6 +163,7 @@ async function loadPreviewPromptContext(
       prospectOverview: prospects.overview,
       prospectIndustry: prospects.industry,
       prospectCountry: prospects.country,
+      organizationCountry: organizations.country,
       signals: orgSignalsGlobal.signals,
       signalsUpdatedAt: orgSignalsGlobal.signalsUpdatedAt,
     })
@@ -178,7 +180,7 @@ async function loadPreviewPromptContext(
     .limit(1)
 
   if (!row) {
-    return { ...sender, recipientName: null, recipientOrganization: null }
+    return { ...sender, locale: 'en', recipientName: null, recipientOrganization: null }
   }
 
   const snapshot = composeContextSnapshot({
@@ -196,6 +198,7 @@ async function loadPreviewPromptContext(
 
   return {
     brief: snapshot.brief,
+    locale: localeForCountry(row.prospectCountry ?? row.organizationCountry),
     senderName: sender.senderName,
     senderCompany: sender.senderCompany,
     senderJobTitle: sender.senderJobTitle,

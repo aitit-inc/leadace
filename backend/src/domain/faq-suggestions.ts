@@ -13,10 +13,10 @@ export function extractFaqQuestions(
 ): string[] {
   if (!brief) return []
   const questions: string[] = []
-  // Multiline regex over the whole brief — `Q:` must start a line (after
-  // optional whitespace). Captures everything to end-of-line. Case-sensitive
-  // because the operator-facing convention is uppercase Q/A.
-  const re = /^[ \t]*Q:[ \t]*(.+?)[ \t]*$/gm
+  // `Q:` must start a line (after optional whitespace). The question runs to
+  // end-of-line but stops at the first inline `A:` so a single-line `Q: … A: …`
+  // entry doesn't leak the answer into the chip. Case-sensitive by convention (Q/A).
+  const re = /^[ \t]*Q:[ \t]*(.+?)[ \t]*(?:A:.*)?$/gm
   let match: RegExpExecArray | null
   while ((match = re.exec(brief)) !== null) {
     if (questions.length >= max) break

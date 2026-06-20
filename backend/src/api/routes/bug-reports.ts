@@ -19,6 +19,8 @@ bugReportsRouter.post(
       c.req.valid('json'),
     )
     if (!result.ok) return respondWithError(c, result)
-    return c.json(result.value, 201)
+    // {} omits the id (a global sequence that would leak the count) but stays
+    // valid JSON: the MCP callApi runs res.json() on every response.
+    return c.json({}, 201)
   },
 )
