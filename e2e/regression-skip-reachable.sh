@@ -20,7 +20,7 @@
 # Runs against the local stack (localhost:8787 API + 54322 Postgres). Mints its
 # own JWT via mint-jwt.sh, creates a throwaway project, and cleans up on exit.
 # Does NOT touch tenant settings (neither path depends on them) nor
-# gmail_credentials. Curl-only, no Claude session, no Anthropic budget.
+# sending_identities. Curl-only, no Claude session, no Anthropic budget.
 #
 # Usage:
 #   ./e2e/regression-skip-reachable.sh

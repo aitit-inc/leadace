@@ -28,6 +28,7 @@ allowed-tools:
   - mcp__plugin_leadace_api__get_master_document
   - mcp__plugin_leadace_api__get_project_settings
   - mcp__plugin_leadace_api__get_gmail_status
+  - mcp__plugin_leadace_api__get_mailbox_health
   - mcp__plugin_leadace_api__pick_subject_variant
   - mcp__plugin_leadace_api__get_compliance_status
 ---
@@ -113,6 +114,18 @@ connected, warn the user that email sends will be rejected at send time (HTTP 41
 should connect Gmail at https://app.leadace.ai — they can still proceed with form / SNS
 prospects. This is a courtesy check (status is live, never cached); the 412 at send time is the
 authoritative guard, and draft mode needs no Gmail connection.
+
+**Mailbox email cap (warmup).** When a Gmail mailbox is connected, the targets response carries
+`Mailbox email cap (warmup): N/cap sends remaining today` — a per-mailbox safe daily limit,
+separate from the billing quota, that protects the sending domain's reputation while a new
+mailbox warms up. Treat `N` as the ceiling on **email** sends this run: send at most N emails,
+and defer any further email-only prospects to a later day rather than burn the cap — reach
+multi-channel prospects by form / SNS instead. The backend rejects email sends past the cap
+(HTTP 403), so pace to `N` rather than discovering it at send time. A `⚠️` message about the
+mailbox cap means it is already reached — skip email entirely this run. To inspect the full
+warmup state on demand — ramp progress (week X of N), today's cap/used/remaining, and any pause —
+call `mcp__plugin_leadace_api__get_mailbox_health` (no project needed); use it to explain a 403
+"Mailbox daily send cap reached" to the user.
 
 Each prospect in the targets list also carries:
 - `cycle: { n, kind, touchNumber, lastOutreach, lastResponse }` — the prospect's

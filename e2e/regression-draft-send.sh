@@ -16,7 +16,7 @@
 # guard that flips the row anyway.
 #
 # Runs against the local stack. The ONLY Gmail-dependent leg is the sendDraft 200
-# happy path: gated on gmail_credentials + E2E_RECIPIENT_OVERRIDE exactly like
+# happy path: gated on sending_identities + E2E_RECIPIENT_OVERRIDE exactly like
 # regression-outbound.sh — when Gmail is absent it runs the 412 'Gmail not
 # connected' leg instead (row stays pending_review). markDraftSent's happy path
 # needs no Gmail and is the always-on row-sent+contacted assertion. Quota legs
@@ -216,18 +216,18 @@ assert_eq "  country in error" "$(echo "$BODY" | jq -r '.error // ""' | grep -qi
 assert_eq "  body.country=GB" "$(echo "$BODY" | jq -r '.country // ""')" "GB"
 assert_eq "  D_GB untouched, P_GB not contacted" "$(log_status "$D_GB")/$(pp_status "$P_GB")" "pending_review/new"
 
-step "sendDraft Gmail leg (gated on gmail_credentials + E2E_RECIPIENT_OVERRIDE)"
-GMAIL_COUNT="$(psql_local "SELECT count(*) FROM gmail_credentials WHERE tenant_id = '$TENANT_ID';")"
+step "sendDraft Gmail leg (gated on sending_identities + E2E_RECIPIENT_OVERRIDE)"
+GMAIL_COUNT="$(psql_local "SELECT count(*) FROM sending_identities WHERE tenant_id = '$TENANT_ID' AND provider='gmail_oauth';")"
 if [[ "$GMAIL_COUNT" == "0" ]]; then
   CODE="$(api_status POST "/api/outreach/drafts/$D_SEND/send")"
   assert_eq "sendDraft (no Gmail) → 412 'Gmail not connected'" "$CODE" "412"
   assert_eq "  error" "$(api_body | jq -r '.error // ""')" "Gmail not connected"
   assert_eq "  D_SEND stays pending_review (no row flip), P_USS still new" "$(log_status "$D_SEND")/$(pp_status "$P_USS")" "pending_review/new"
-  say "→ Skipped real-Gmail happy path (no gmail_credentials row for this tenant)."
+  say "→ Skipped real-Gmail happy path (no sending_identities row for this tenant)."
 else
   E2E_OVERRIDE="$(grep -E '^E2E_RECIPIENT_OVERRIDE=' "$REPO_ROOT/backend/.dev.vars" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"')"
   if [[ -z "$E2E_OVERRIDE" ]]; then
-    say "FAIL: gmail_credentials present but E2E_RECIPIENT_OVERRIDE not set in backend/.dev.vars"
+    say "FAIL: sending_identities present but E2E_RECIPIENT_OVERRIDE not set in backend/.dev.vars"
     FAIL=$((FAIL + 1))
   else
     CODE="$(api_status POST "/api/outreach/drafts/$D_SEND/send")"; BODY="$(api_body)"

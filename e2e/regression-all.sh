@@ -34,6 +34,7 @@ SUITES=(
   regression-draft-send
   regression-inflight-reachable
   regression-followup-sequence
+  regression-mailbox-warmup
   regression-prospect-update-channel
   regression-record-evaluation-priority
   regression-rejection-cycle

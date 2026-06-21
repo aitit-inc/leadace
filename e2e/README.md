@@ -88,7 +88,7 @@ on, need no Claude session, and run fast:
   keeps `body==input` verbatim) + send-mode DNC/country gates.
 - `regression-draft-send.sh` — `sendDraft`/`markDraftSent` preconditions +
   re-applied compliance/country at send time; `markDraftSent` happy path (no
-  Gmail); `sendDraft` Gmail leg gated on `gmail_credentials` + override.
+  Gmail); `sendDraft` Gmail leg gated on `sending_identities` + override.
 - `regression-inflight-reachable.sh` — `get_outbound_targets` in-flight exclusion
   (open `pending_review` / in-TTL `pre_send` dropped; aged-out `pre_send`
   re-included) — the daily-cycle double-send guard.
@@ -259,7 +259,7 @@ and exercises:
   prospect, asserts 422 `Recipient country GB is not supported` *before*
   any optimistic INSERT (no `outreach_logs` row allocated).
 - **Gmail-dependent branch (one of two, depending on local state):**
-  - When `gmail_credentials` has no row for the test tenant: posts a US
+  - When `sending_identities` has no Gmail row for the test tenant: posts a US
     prospect in send mode, asserts 412 `Gmail not connected` and that
     the rolled-back path leaves no `status='sent'` row behind.
   - When the tenant has Gmail connected AND `E2E_RECIPIENT_OVERRIDE` is
@@ -270,7 +270,7 @@ and exercises:
     override forces the wire-level `To:` to the test mailbox so this
     never reaches a real prospect.
 
-The script never deletes `gmail_credentials` — your Gmail connection
+The script never deletes `sending_identities` — your Gmail connection
 survives every run, and the no-Gmail branch only fires when the row was
 already absent. To cover both branches, run once before connecting
 Gmail and again after.
@@ -308,7 +308,7 @@ plus a country-less prospect, and exercises:
   `no_fresh_material`, `other`) are asserted.
 
 Cleans up the test project and its tenant-scoped rows on exit; never touches
-tenant settings or `gmail_credentials`.
+tenant settings or `sending_identities`.
 
 ### Run all curl regressions at once
 

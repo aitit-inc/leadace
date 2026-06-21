@@ -22,6 +22,8 @@ import { INQUIRY_SHORT_ID_PATTERN } from '../auth/inquiry-token'
 export type TenantId = string & { readonly __brand: 'TenantId' }
 export type ProjectId = string & { readonly __brand: 'ProjectId' }
 export type ShortId = string & { readonly __brand: 'ShortId' }
+// No shape regex: backfilled ids are 32-char hex, runtime ones 21-char base62 — both must parse.
+export type SendingIdentityId = string & { readonly __brand: 'SendingIdentityId' }
 
 // Project name or id, unresolved. The brand union admits ProjectId but not the
 // reverse — resolveProject() is the only path from ProjectRef to ProjectId.
@@ -64,3 +66,4 @@ export const shortIdParamSchema = z.object({ shortId: shortIdSchema })
 export const asTenantId = (v: string): TenantId => v as TenantId
 export const asProjectId = (v: string): ProjectId => v as ProjectId
 export const asShortId = (v: string): ShortId => v as ShortId
+export const asSendingIdentityId = (v: string): SendingIdentityId => v as SendingIdentityId

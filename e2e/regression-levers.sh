@@ -21,7 +21,7 @@
 #
 # Runs against the local stack (localhost:8787 API + 54322 Postgres). Mints its
 # own JWT, does all setup/teardown in a throwaway project, and never touches
-# tenant-level settings or gmail_credentials.
+# tenant-level settings or sending_identities.
 #
 # Usage:
 #   ./e2e/regression-levers.sh

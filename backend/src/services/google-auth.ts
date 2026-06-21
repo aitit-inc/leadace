@@ -5,12 +5,12 @@ import {
   GoogleAuthError,
   applyE2eRedirect,
   buildRfc822,
-  loadGmailRefreshToken,
+  loadSendingIdentitySecret,
   refreshGoogleAccessToken,
   saveGmailRefreshToken,
   sendGmailMessage,
 } from '../auth/google'
-import { gmailCredentials } from '../db/schema'
+import { sendingIdentities } from '../db/schema'
 import type { Db } from '../db/connection'
 import type { TenantId } from '../domain/ids'
 import { ok, err, type ServiceResult } from './result'
@@ -83,12 +83,18 @@ export async function getCredentialsStatus(
 ): Promise<ServiceResult<CredentialsStatus>> {
   const [row] = await db
     .select({
-      email: gmailCredentials.email,
-      grantedAt: gmailCredentials.grantedAt,
-      updatedAt: gmailCredentials.updatedAt,
+      email: sendingIdentities.fromEmail,
+      grantedAt: sendingIdentities.grantedAt,
+      updatedAt: sendingIdentities.updatedAt,
     })
-    .from(gmailCredentials)
-    .where(and(eq(gmailCredentials.tenantId, tenantId), eq(gmailCredentials.userId, userId)))
+    .from(sendingIdentities)
+    .where(
+      and(
+        eq(sendingIdentities.tenantId, tenantId),
+        eq(sendingIdentities.userId, userId),
+        eq(sendingIdentities.provider, 'gmail_oauth'),
+      ),
+    )
     .limit(1)
   if (!row) return ok({ connected: false })
   return ok({ connected: true, email: row.email, grantedAt: row.grantedAt, updatedAt: row.updatedAt })
@@ -103,12 +109,12 @@ export async function sendInternalEmail(
   ctx: GoogleCtx,
   input: SendEmailInput,
 ): Promise<ServiceResult<{ messageId: string; threadId: string }>> {
-  const creds = await loadGmailRefreshToken(db, {
+  const identity = await loadSendingIdentitySecret(db, {
     tenantId,
     userId,
     encryptionKey: ctx.encryptionKey,
   })
-  if (!creds) {
+  if (!identity) {
     return err(
       'PRECONDITION_FAILED',
       'Gmail not connected',
@@ -119,7 +125,7 @@ export async function sendInternalEmail(
   let accessToken: string
   try {
     accessToken = await refreshGoogleAccessToken(
-      creds.refreshToken,
+      identity.secret.refreshToken,
       ctx.clientId,
       ctx.clientSecret,
     )
@@ -140,7 +146,7 @@ export async function sendInternalEmail(
   )
 
   const rfc822 = buildRfc822({
-    from: creds.email,
+    from: identity.fromEmail,
     to: envelope.to,
     cc: envelope.cc,
     bcc: envelope.bcc,

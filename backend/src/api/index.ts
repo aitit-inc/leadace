@@ -19,6 +19,7 @@ import { evaluationsRouter } from './routes/evaluations'
 import { documentsRouter } from './routes/documents'
 import { masterDocumentsRouter } from './routes/master-documents'
 import { billingRouter } from './routes/billing'
+import { mailboxRouter } from './routes/mailbox'
 import { authRouter } from './routes/auth'
 import { accountRouter } from './routes/account'
 import { bugReportsRouter } from './routes/bug-reports'
@@ -73,6 +74,7 @@ app.route('/api', evaluationsRouter)
 app.route('/api', documentsRouter)
 app.route('/api', masterDocumentsRouter)
 app.route('/api', billingRouter)
+app.route('/api', mailboxRouter)
 app.route('/api', authRouter)
 app.route('/api', accountRouter)
 app.route('/api', bugReportsRouter)

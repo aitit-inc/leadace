@@ -376,6 +376,10 @@ function buildToolRegistry(): ToolDef[] {
         total: number
         byChannel: { email: number; formOnly: number; snsOnly: number }
         quota?: OutreachQuota
+        // Wire shape: Date fields arrive as ISO strings through res.json().
+        mailboxQuota?:
+          | { kind: 'no_mailbox' }
+          | { kind: 'capped'; cap: number; used: number; remaining: number; pausedUntil: string | null }
         outboundMode: 'send' | 'draft'
         message?: string
       }
@@ -393,15 +397,68 @@ function buildToolRegistry(): ToolDef[] {
         const summary = parts.length > 0 ? parts.join(', ') : `${q.remaining}/${q.limit} remaining (used ${q.used})`
         return `\nOutreach quota: ${summary} (plan: ${q.plan})`
       })()
+      const mbq = result.mailboxQuota
+      const mailboxLine =
+        mbq && mbq.kind === 'capped'
+          ? mbq.pausedUntil
+            ? `\nMailbox email sending paused until ${mbq.pausedUntil}`
+            : `\nMailbox email cap (warmup): ${mbq.remaining}/${mbq.cap} sends remaining today`
+          : ''
       const msgLine = result.message ? `\n⚠️ ${result.message}` : ''
       const modeLine = `\nOutbound mode: ${result.outboundMode}`
 
       return {
         content: [{
           type: 'text' as const,
-          text: `Total reachable: ${result.total} (email: ${result.byChannel.email}, formOnly: ${result.byChannel.formOnly}, snsOnly: ${result.byChannel.snsOnly})${modeLine}${quotaLine}${msgLine}\nReturned: ${result.prospects.length}\n${JSON.stringify(result.prospects, null, 2)}`,
+          text: `Total reachable: ${result.total} (email: ${result.byChannel.email}, formOnly: ${result.byChannel.formOnly}, snsOnly: ${result.byChannel.snsOnly})${modeLine}${quotaLine}${mailboxLine}${msgLine}\nReturned: ${result.prospects.length}\n${JSON.stringify(result.prospects, null, 2)}`,
         }],
       }
+    },
+  )
+
+  defineTool(
+    'get_mailbox_health',
+    'Read the warmup and safe-daily-cap state of the tenant\'s sending mailbox (the connected Gmail account). Read-only, no project needed. This per-mailbox EMAIL cap is a deliverability guardrail SEPARATE from the plan / billing outreach quota: it limits email sends only (form / SNS don\'t count) to protect the sending domain\'s reputation, applies on every plan and self-host, and resets at UTC midnight. Returns whether warmup is enabled, how far it has ramped (week X of N toward the steady-state cap), today\'s cap / used / remaining, and any pause. Use it in /outbound or /daily-cycle to see warmup progress and to explain a 403 "Mailbox daily send cap reached". Returns "no mailbox connected" when no Gmail account is linked.',
+    {},
+    async (_args, { apiUrl, authHeader }) => {
+      const { ok, data } = await callApi('GET', '/me/mailbox-health', null, apiUrl, authHeader)
+      if (!ok) {
+        const err = data as { error: string; detail?: string }
+        return { content: [{ type: 'text' as const, text: `Error: ${err.detail ? `${err.error}: ${err.detail}` : err.error}` }], isError: true }
+      }
+      // Wire shape: Date fields arrive as ISO strings through res.json().
+      const h = data as
+        | { kind: 'no_mailbox' }
+        | {
+            kind: 'active'
+            email: string
+            warmupEnabled: boolean
+            warmupStartedAt: string | null
+            dailyCapOverride: number | null
+            pausedUntil: string | null
+            rampWeek: number
+            rampWeeks: number
+            steadyStatePerDay: number
+            cap: number
+            used: number
+            remaining: number
+          }
+      if (h.kind === 'no_mailbox') {
+        return { content: [{ type: 'text' as const, text: 'No sending mailbox connected. Connect a Gmail account at https://app.leadace.ai to enable email sends and warmup.' }] }
+      }
+      const warmupLine = !h.warmupEnabled
+        ? 'warmup disabled'
+        : h.rampWeek >= h.rampWeeks
+          ? `warmup complete (steady ${h.steadyStatePerDay}/day)`
+          : `warming up — week ${h.rampWeek} of ${h.rampWeeks} toward steady ${h.steadyStatePerDay}/day`
+      const lines = [
+        `Mailbox: ${h.email}`,
+        `Warmup: ${warmupLine}${h.warmupStartedAt ? '' : ' (no email sent yet)'}`,
+        `Today (email only): ${h.used}/${h.cap} sent, ${h.remaining} remaining — resets at UTC midnight`,
+      ]
+      if (h.pausedUntil) lines.push(`⚠️ Sending PAUSED until ${h.pausedUntil}`)
+      if (h.dailyCapOverride !== null) lines.push(`Daily cap override in effect: ${h.dailyCapOverride}`)
+      return { content: [{ type: 'text' as const, text: lines.join('\n') }] }
     },
   )
 

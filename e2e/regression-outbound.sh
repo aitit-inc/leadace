@@ -12,7 +12,7 @@
 #   - rejection-feedback summary (default scope) → 200 (guards the reserved-
 #     keyword "window" SQL regression, which 500s on every call when present)
 #   - The Gmail-dependent branch is conditional on local state:
-#     - When `gmail_credentials` has no row for the test tenant, run the
+#     - When `sending_identities` has no row for the test tenant, run the
 #       412 'Gmail not connected' rollback test (verifies the optimistic
 #       INSERT is undone).
 #     - When the tenant has Gmail connected AND
@@ -26,7 +26,7 @@
 # its own JWT via mint-jwt.sh, snapshots the tenant's current compliance
 # settings, exercises each branch in a throwaway project, and restores the
 # original tenant settings on exit so the developer's local state is not
-# clobbered. Never touches `gmail_credentials` — your Gmail connection
+# clobbered. Never touches `sending_identities` — your Gmail connection
 # survives the run.
 #
 # What this does NOT cover:
@@ -361,10 +361,10 @@ assert_eq "dnc.no log row allocated" "$DNC_LOG_COUNT" "0"
 
 # ---------------------------------------------------------------------------
 # Gmail-dependent branch: no-credential rollback OR real-send happy path,
-# whichever the local state can cover. Never delete `gmail_credentials` —
+# whichever the local state can cover. Never delete `sending_identities` —
 # that wipes the user's connection and the next run can't recover without
 # a manual web-UI reconnect.
-GMAIL_COUNT="$(psql_local "SELECT count(*) FROM gmail_credentials WHERE tenant_id = '$TENANT_ID';")"
+GMAIL_COUNT="$(psql_local "SELECT count(*) FROM sending_identities WHERE tenant_id = '$TENANT_ID' AND provider='gmail_oauth';")"
 
 if [[ "$GMAIL_COUNT" == "0" ]]; then
   step "send mode + no Gmail credential: 412 'Gmail not connected', row rolled back"
@@ -387,15 +387,15 @@ if [[ "$GMAIL_COUNT" == "0" ]]; then
   assert_eq "no_gmail.outreach_logs rolled back" "$POSTCOUNT" "$PRECOUNT"
 
   echo "" >&2
-  echo "  → Skipped real-Gmail happy path (no gmail_credentials row for this tenant)." >&2
+  echo "  → Skipped real-Gmail happy path (no sending_identities row for this tenant)." >&2
   echo "    Connect Gmail at http://localhost:5173/account-settings and re-run to cover it." >&2
 else
   step "send mode + real Gmail: happy path against E2E_RECIPIENT_OVERRIDE"
-  GMAIL_EMAIL="$(psql_local "SELECT email FROM gmail_credentials WHERE tenant_id = '$TENANT_ID' LIMIT 1;")"
+  GMAIL_EMAIL="$(psql_local "SELECT from_email FROM sending_identities WHERE tenant_id = '$TENANT_ID' AND provider='gmail_oauth' LIMIT 1;")"
   E2E_OVERRIDE="$(grep -E '^E2E_RECIPIENT_OVERRIDE=' "$REPO_ROOT/backend/.dev.vars" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"')"
 
   if [[ -z "$E2E_OVERRIDE" ]]; then
-    say "FAIL: gmail_credentials present (email=$GMAIL_EMAIL) but E2E_RECIPIENT_OVERRIDE is not set in backend/.dev.vars"
+    say "FAIL: sending_identities present (email=$GMAIL_EMAIL) but E2E_RECIPIENT_OVERRIDE is not set in backend/.dev.vars"
     say "       Real Gmail sends would reach actual recipients. Add the override and restart wrangler dev to enable this test."
     FAIL=$((FAIL + 1))
   else

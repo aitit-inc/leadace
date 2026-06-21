@@ -3,7 +3,7 @@ import {
   inquirySessions,
   outreachLogs,
   prospects,
-  gmailCredentials,
+  sendingIdentities,
   tenantMembers,
 } from '../db/schema'
 import type { Db } from '../db/connection'
@@ -15,10 +15,10 @@ import {
   recordMeetingRequestForSession,
   type MeetingRequestTarget,
 } from './inquiry-session'
-import { sendGmailForUser } from '../auth/google'
+import { sendForIdentity } from '../auth/google'
 
 // Env subset for the lead-notification email path. Carries the bindings
-// sendGmailForUser + the dashboard URL need; intentionally narrower than
+// sendForIdentity + the dashboard URL need; intentionally narrower than
 // the chat path so notifyLeadByEmail's signature names exactly what it uses.
 export type LeadNotifyEnv = {
   APP_URL: string
@@ -133,7 +133,7 @@ export type ParsedSummary = {
 }
 
 // Sends a self-notification email via the project owner's own Gmail. Skips
-// silently when the tenant has no gmail_credentials row (form/SNS-only
+// silently when the tenant has no Gmail sending identity (form/SNS-only
 // projects). The recipient and the From: are the same address — operators
 // see the lead arriving in their own inbox, no separate transactional
 // transport (Resend etc.) needed.
@@ -145,9 +145,9 @@ async function notifyLeadByEmail(
 ): Promise<void> {
   const [row] = await db
     .select({
-      tenantId: gmailCredentials.tenantId,
-      userId: gmailCredentials.userId,
-      ownerEmail: gmailCredentials.email,
+      tenantId: sendingIdentities.tenantId,
+      userId: sendingIdentities.userId,
+      ownerEmail: sendingIdentities.fromEmail,
       prospectName: prospects.name,
       prospectEmail: prospects.email,
     })
@@ -155,10 +155,11 @@ async function notifyLeadByEmail(
     .innerJoin(prospects, eq(prospects.id, inquirySessions.prospectId))
     .innerJoin(tenantMembers, eq(tenantMembers.tenantId, inquirySessions.tenantId))
     .innerJoin(
-      gmailCredentials,
+      sendingIdentities,
       and(
-        eq(gmailCredentials.tenantId, tenantMembers.tenantId),
-        eq(gmailCredentials.userId, tenantMembers.userId),
+        eq(sendingIdentities.tenantId, tenantMembers.tenantId),
+        eq(sendingIdentities.userId, tenantMembers.userId),
+        eq(sendingIdentities.provider, 'gmail_oauth'),
       ),
     )
     .where(eq(inquirySessions.id, sessionId))
@@ -182,7 +183,7 @@ async function notifyLeadByEmail(
     `Open dashboard: ${dashboardUrl}`,
   ].join('\n')
 
-  await sendGmailForUser(db, {
+  await sendForIdentity(db, {
     tenantId: asTenantId(row.tenantId),
     userId: row.userId,
     encryptionKey: env.GMAIL_TOKEN_ENCRYPTION_KEY,

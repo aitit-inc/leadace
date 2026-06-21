@@ -31,10 +31,13 @@ export { outreachLogIdParamSchema } from '../domain/ids'
 import {
   getRemainingOutreachQuota,
   outreachQuotaErrorIfExhausted,
+  getMailboxDailyQuota,
+  mailboxQuotaErrorIfExhausted,
 } from './plan-limits'
 import {
-  sendGmailForUser,
+  sendForIdentity,
   buildComplianceAttachments,
+  stampMailboxFirstSendIfNeeded,
 } from '../auth/google'
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
@@ -188,7 +191,7 @@ export type SendContext = {
   appUrl: string
   apiUrl: string
   unsubscribeSecret: string
-  // E2E redirect; see `sendGmailForUser`. Null in production.
+  // E2E redirect; see `sendForIdentity`. Null in production.
   e2eRecipientOverride: string | null
 }
 
@@ -350,6 +353,11 @@ export async function recordOutreach(
   if (quotaErr) return quotaErr
 
   if (sending) {
+    // Backstop: record_outreach('sent') logs an already-completed send.
+    if (input.channel === 'email') {
+      const mailboxErr = mailboxQuotaErrorIfExhausted(await getMailboxDailyQuota(db, tenantId))
+      if (mailboxErr) return mailboxErr
+    }
     const contactable = await assertProspectContactable(db, tenantId, input.prospectId)
     if (!contactable.ok) return contactable
     const country = await assertProspectCountryAllowed(db, tenantId, input.prospectId)
@@ -381,6 +389,9 @@ export async function recordOutreach(
   // keeps its real-world meaning.
   if (input.status === 'sent' && log) {
     await markProspectContacted(db, projectId, input.prospectId, sentAt, log.id)
+    if (input.channel === 'email') {
+      await stampMailboxFirstSendIfNeeded(db, tenantId, sentAt)
+    }
   } else if (input.status === 'failed' && log) {
     await deferProspectReeligibility(db, projectId, input.prospectId, sentAt)
   }
@@ -637,6 +648,10 @@ export async function sendAndRecord(
   const quotaErr = outreachQuotaErrorIfExhausted(quota)
   if (quotaErr) return quotaErr
 
+  const mailboxQuota = await getMailboxDailyQuota(db, tenantId)
+  const mailboxErr = mailboxQuotaErrorIfExhausted(mailboxQuota)
+  if (mailboxErr) return mailboxErr
+
   const country = await assertProspectCountryAllowed(db, tenantId, input.prospectId)
   if (!country.ok) return country
 
@@ -673,7 +688,7 @@ export async function sendAndRecord(
   })
   const sendBody = `${input.body}${attachments.footer}`
 
-  const result = await sendGmailForUser(db, {
+  const result = await sendForIdentity(db, {
     tenantId,
     userId: ctx.userId,
     encryptionKey: ctx.encryptionKey,
@@ -711,9 +726,10 @@ export async function sendAndRecord(
   // sentAt stays at pre_send allocation time — see updateOutreachStatus.
   await db
     .update(outreachLogs)
-    .set({ status: 'sent' })
+    .set({ status: 'sent', fromEmail: result.from, sendingIdentityId: result.identityId })
     .where(eq(outreachLogs.id, log.id))
   await markProspectContacted(db, projectId, input.prospectId, sentAt, log.id)
+  await stampMailboxFirstSendIfNeeded(db, tenantId, sentAt)
 
   return ok({
     mode: 'sent',
@@ -1055,6 +1071,9 @@ export async function sendDraft(
   const quotaErr = outreachQuotaErrorIfExhausted(quota)
   if (quotaErr) return quotaErr
 
+  const mailboxErr = mailboxQuotaErrorIfExhausted(await getMailboxDailyQuota(db, tenantId))
+  if (mailboxErr) return mailboxErr
+
   const [sendSettings, complianceResult, countryResult] = await Promise.all([
     loadProjectSendSettings(db, draft.projectId as ProjectId),
     assertTenantComplianceReady(db, tenantId),
@@ -1072,7 +1091,7 @@ export async function sendDraft(
   })
   const sendBody = `${draft.body}${attachments.footer}`
 
-  const result = await sendGmailForUser(db, {
+  const result = await sendForIdentity(db, {
     tenantId,
     userId: ctx.userId,
     encryptionKey: ctx.encryptionKey,
@@ -1098,6 +1117,7 @@ export async function sendDraft(
       status: result.ok ? 'sent' : 'failed',
       sentAt,
       errorMessage: result.ok ? null : result.detail,
+      ...(result.ok ? { fromEmail: result.from, sendingIdentityId: result.identityId } : {}),
     })
     .where(eq(outreachLogs.id, draft.id))
 
@@ -1107,6 +1127,7 @@ export async function sendDraft(
   }
 
   await markProspectContacted(db, draft.projectId as ProjectId, draft.prospectId, sentAt, draft.id)
+  await stampMailboxFirstSendIfNeeded(db, tenantId, sentAt)
 
   return ok({
     mode: 'sent',

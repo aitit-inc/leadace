@@ -1,13 +1,16 @@
 import { sql } from 'drizzle-orm'
 import type { Db } from '../db/connection'
+import type { SendingIdentityProvider } from '../db/schema'
 import { signUnsubscribeToken } from './unsubscribe-token'
+import { randomFromAlphabet } from './random-id'
 import {
   inquiryFooterLine,
   unsubscribeFooterLine,
   privacyFooterLine,
 } from '../domain/inquiry-footer'
+import { parseSendingIdentitySecret, type SendingIdentitySecret } from '../domain/sending-identity'
 import type { Locale } from '../domain/locale'
-import type { TenantId } from '../domain/ids'
+import { asSendingIdentityId, type SendingIdentityId, type TenantId } from '../domain/ids'
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const GMAIL_SEND_URL = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send'
@@ -248,6 +251,14 @@ function encodeMimeHeader(s: string): string {
   return `=?UTF-8?B?${btoa(binary)}?=`
 }
 
+const SENDING_IDENTITY_ID_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+
+export function generateSendingIdentityId(): string {
+  return randomFromAlphabet(SENDING_IDENTITY_ID_ALPHABET, 21)
+}
+
+// On reconnect (ON CONFLICT) the warmup state and identity_id are left untouched
+// so the ramp clock survives.
 export async function saveGmailRefreshToken(
   db: Db,
   args: {
@@ -260,44 +271,76 @@ export async function saveGmailRefreshToken(
   },
 ): Promise<void> {
   await db.execute(sql`
-    INSERT INTO gmail_credentials (tenant_id, user_id, refresh_token, scope, email, granted_at, updated_at)
+    INSERT INTO sending_identities
+      (tenant_id, identity_id, user_id, provider, from_email, scope, secret, granted_at, updated_at)
     VALUES (
       ${args.tenantId},
+      ${generateSendingIdentityId()},
       ${args.userId},
-      pgp_sym_encrypt(${args.refreshToken}::text, ${args.encryptionKey}),
-      ${args.scope},
+      'gmail_oauth',
       ${args.email},
+      ${args.scope},
+      pgp_sym_encrypt(${args.refreshToken}::text, ${args.encryptionKey}),
       now(),
       now()
     )
-    ON CONFLICT (tenant_id, user_id) DO UPDATE SET
-      refresh_token = pgp_sym_encrypt(${args.refreshToken}::text, ${args.encryptionKey}),
+    ON CONFLICT (tenant_id, user_id, provider) DO UPDATE SET
+      secret = pgp_sym_encrypt(${args.refreshToken}::text, ${args.encryptionKey}),
       scope = ${args.scope},
-      email = ${args.email},
+      from_email = ${args.email},
       updated_at = now()
   `)
 }
 
-export async function loadGmailRefreshToken(
+export async function loadSendingIdentitySecret(
   db: Db,
   args: {
     tenantId: TenantId
     userId: string
     encryptionKey: string
   },
-): Promise<{ refreshToken: string; email: string } | null> {
-  const rows = await db.execute<{ refresh_token: string; email: string }>(sql`
+): Promise<{ identityId: SendingIdentityId; fromEmail: string; secret: SendingIdentitySecret } | null> {
+  const rows = await db.execute<{
+    identity_id: string
+    provider: SendingIdentityProvider
+    from_email: string
+    secret: string
+  }>(sql`
     SELECT
-      pgp_sym_decrypt(refresh_token, ${args.encryptionKey})::text AS refresh_token,
-      email
-    FROM gmail_credentials
+      identity_id,
+      provider,
+      from_email,
+      pgp_sym_decrypt(secret, ${args.encryptionKey})::text AS secret
+    FROM sending_identities
     WHERE tenant_id = ${args.tenantId}
       AND user_id = ${args.userId}
+      AND provider = 'gmail_oauth'
     LIMIT 1
   `)
   const row = rows[0]
   if (!row) return null
-  return { refreshToken: row.refresh_token, email: row.email }
+  return {
+    identityId: asSendingIdentityId(row.identity_id),
+    fromEmail: row.from_email,
+    secret: parseSendingIdentitySecret(row.provider, row.secret),
+  }
+}
+
+// Stamps the ramp clock on first send, not at connect, so an idle mailbox
+// doesn't ramp while dormant; one mailbox per tenant today, so tenant_id keys it.
+// ISO + ::timestamptz: postgres.js (prepare:false) can't serialize a Date through raw sql``.
+export async function stampMailboxFirstSendIfNeeded(
+  db: Db,
+  tenantId: TenantId,
+  sentAt: Date,
+): Promise<void> {
+  await db.execute(sql`
+    UPDATE sending_identities
+    SET warmup_started_at = ${sentAt.toISOString()}::timestamptz
+    WHERE tenant_id = ${tenantId}
+      AND provider = 'gmail_oauth'
+      AND warmup_started_at IS NULL
+  `)
 }
 
 export async function deleteGmailRefreshToken(
@@ -305,16 +348,17 @@ export async function deleteGmailRefreshToken(
   args: { tenantId: TenantId; userId: string },
 ): Promise<void> {
   await db.execute(sql`
-    DELETE FROM gmail_credentials
+    DELETE FROM sending_identities
     WHERE tenant_id = ${args.tenantId}
       AND user_id = ${args.userId}
+      AND provider = 'gmail_oauth'
   `)
 }
 
 // Discriminated union so callers can map to HTTP status without re-implementing
 // the same error mapping in every route handler.
-export type GmailSendForUserResult =
-  | { ok: true; messageId: string; threadId: string; from: string }
+export type MailSendResult =
+  | { ok: true; messageId: string; threadId: string; from: string; identityId: SendingIdentityId }
   | { ok: false; httpStatus: 412; error: 'Gmail not connected' | 'Gmail token revoked'; detail: string }
   | { ok: false; httpStatus: 502; error: 'Send failed'; detail: string; from: string }
 
@@ -331,7 +375,7 @@ export function formatFromHeader(email: string, displayName: string | null): str
   return `${encodeMimeHeader(displayName)} <${email}>`
 }
 
-export async function sendGmailForUser(
+export async function sendForIdentity(
   db: Db,
   args: {
     tenantId: TenantId
@@ -358,9 +402,9 @@ export async function sendGmailForUser(
     // in production deploys — a no-op there.
     e2eRecipientOverride?: string | null
   },
-): Promise<GmailSendForUserResult> {
-  const creds = await loadGmailRefreshToken(db, args)
-  if (!creds) {
+): Promise<MailSendResult> {
+  const identity = await loadSendingIdentitySecret(db, args)
+  if (!identity) {
     return {
       ok: false,
       httpStatus: 412,
@@ -369,55 +413,69 @@ export async function sendGmailForUser(
     }
   }
 
-  let accessToken: string
-  try {
-    accessToken = await refreshGoogleAccessToken(creds.refreshToken, args.clientId, args.clientSecret)
-  } catch (e) {
-    if (e instanceof GoogleAuthError && (e.status === 400 || e.status === 401)) {
-      // Google rejected the refresh token (revoked / expired / scope dropped).
-      // Drop the stored credential so /auth/google-credentials/status flips to
-      // `disconnected` and the UI surfaces the reconnect affordance instead of
-      // showing a stale "connected" status.
-      await deleteGmailRefreshToken(db, args)
-      return {
-        ok: false,
-        httpStatus: 412,
-        error: 'Gmail token revoked',
-        detail: 'Reconnect your Google account in Account settings.',
+  switch (identity.secret.provider) {
+    case 'gmail_oauth': {
+      let accessToken: string
+      try {
+        accessToken = await refreshGoogleAccessToken(
+          identity.secret.refreshToken,
+          args.clientId,
+          args.clientSecret,
+        )
+      } catch (e) {
+        if (e instanceof GoogleAuthError && (e.status === 400 || e.status === 401)) {
+          // Google rejected the refresh token (revoked / expired / scope dropped).
+          // Drop the stored credential so /auth/google-credentials/status flips to
+          // `disconnected` and the UI surfaces the reconnect affordance instead of
+          // showing a stale "connected" status.
+          await deleteGmailRefreshToken(db, args)
+          return {
+            ok: false,
+            httpStatus: 412,
+            error: 'Gmail token revoked',
+            detail: 'Reconnect your Google account in Account settings.',
+          }
+        }
+        throw e
       }
-    }
-    throw e
-  }
 
-  const sendAsEmail = args.senderEmailAlias?.trim() || creds.email
-  const fromHeader = formatFromHeader(sendAsEmail, args.senderDisplayName ?? null)
+      const sendAsEmail = args.senderEmailAlias?.trim() || identity.fromEmail
+      const fromHeader = formatFromHeader(sendAsEmail, args.senderDisplayName ?? null)
 
-  const envelope = applyE2eRedirect(
-    { to: args.to, cc: args.cc, bcc: args.bcc, extraHeaders: args.extraHeaders },
-    args.e2eRecipientOverride,
-  )
+      const envelope = applyE2eRedirect(
+        { to: args.to, cc: args.cc, bcc: args.bcc, extraHeaders: args.extraHeaders },
+        args.e2eRecipientOverride,
+      )
 
-  const rfc822 = buildRfc822({
-    from: fromHeader,
-    to: envelope.to,
-    cc: envelope.cc,
-    bcc: envelope.bcc,
-    subject: args.subject,
-    body: args.body,
-    inReplyTo: args.inReplyTo,
-    extraHeaders: envelope.extraHeaders,
-  })
+      const rfc822 = buildRfc822({
+        from: fromHeader,
+        to: envelope.to,
+        cc: envelope.cc,
+        bcc: envelope.bcc,
+        subject: args.subject,
+        body: args.body,
+        inReplyTo: args.inReplyTo,
+        extraHeaders: envelope.extraHeaders,
+      })
 
-  try {
-    const result = await sendGmailMessage({ accessToken, rfc822 })
-    return { ok: true, messageId: result.id, threadId: result.threadId, from: sendAsEmail }
-  } catch (e) {
-    return {
-      ok: false,
-      httpStatus: 502,
-      error: 'Send failed',
-      detail: e instanceof Error ? e.message : String(e),
-      from: sendAsEmail,
+      try {
+        const result = await sendGmailMessage({ accessToken, rfc822 })
+        return {
+          ok: true,
+          messageId: result.id,
+          threadId: result.threadId,
+          from: sendAsEmail,
+          identityId: identity.identityId,
+        }
+      } catch (e) {
+        return {
+          ok: false,
+          httpStatus: 502,
+          error: 'Send failed',
+          detail: e instanceof Error ? e.message : String(e),
+          from: sendAsEmail,
+        }
+      }
     }
   }
 }

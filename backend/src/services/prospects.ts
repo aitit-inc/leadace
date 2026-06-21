@@ -30,6 +30,10 @@ import {
   getRemainingOutreachQuota,
   formatOutreachQuotaError,
   isOutreachQuotaExhausted,
+  getMailboxDailyQuota,
+  isMailboxQuotaExhausted,
+  formatMailboxQuotaError,
+  type MailboxDailyQuota,
 } from './plan-limits'
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
@@ -305,6 +309,7 @@ export async function listReachable(
   total: number
   byChannel: { email: number; formOnly: number; snsOnly: number }
   quota: Awaited<ReturnType<typeof getRemainingOutreachQuota>>
+  mailboxQuota: MailboxDailyQuota
   outboundMode: OutboundMode
   message?: string
 }>> {
@@ -314,8 +319,9 @@ export async function listReachable(
 
   const { limit } = query
 
-  const [quota, outboundMode, allowlist] = await Promise.all([
+  const [quota, mailboxQuota, outboundMode, allowlist] = await Promise.all([
     getRemainingOutreachQuota(db, tenantId, edition),
+    getMailboxDailyQuota(db, tenantId),
     getOutboundMode(db, projectId),
     loadProjectOutboundAllowlist(db, projectId),
   ])
@@ -326,6 +332,7 @@ export async function listReachable(
       total: 0,
       byChannel: { email: 0, formOnly: 0, snsOnly: 0 },
       quota,
+      mailboxQuota,
       outboundMode,
       message: formatOutreachQuotaError(quota),
     })
@@ -340,10 +347,18 @@ export async function listReachable(
       total: 0,
       byChannel: { email: 0, formOnly: 0, snsOnly: 0 },
       quota,
+      mailboxQuota,
       outboundMode,
       message: 'Automated outbound is paused for this project (no channels enabled in project settings).',
     })
   }
+
+  // Email-only cap: targets are still returned (form/SNS unaffected); the note
+  // tells the skill to use other channels or wait. The send path is the hard guard.
+  const mailboxCappedNote =
+    enabledChannels.includes('email') && isMailboxQuotaExhausted(mailboxQuota)
+      ? formatMailboxQuotaError(mailboxQuota)
+      : undefined
 
   const effectiveLimit = quota.kind === 'capped' ? Math.min(limit, quota.remaining) : limit
 
@@ -524,7 +539,9 @@ export async function listReachable(
       snsOnly: summary.snsOnly,
     },
     quota,
+    mailboxQuota,
     outboundMode,
+    ...(mailboxCappedNote ? { message: mailboxCappedNote } : {}),
   })
 }
 

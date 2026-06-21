@@ -327,23 +327,31 @@ export const tenantMembers = pgTable('tenant_members', {
   index('idx_tenant_members_user').on(table.userId),
 ])
 
-// Gmail OAuth refresh tokens for `gmail.send` SaaS sending.
-// Per (tenant, user) pair. refresh_token is pgp_sym_encrypt'd at write time
-// using the GMAIL_TOKEN_ENCRYPTION_KEY worker secret; the DB only ever sees
-// the encrypted bytea blob.
-export const gmailCredentials = pgTable('gmail_credentials', {
+export const sendingIdentityProviderEnum = pgEnum('sending_identity_provider', ['gmail_oauth', 'smtp_imap'])
+export type SendingIdentityProvider = (typeof sendingIdentityProviderEnum.enumValues)[number]
+
+// `secret` is pgp_sym_encrypt'd at write; the DB only ever sees the encrypted bytea.
+export const sendingIdentities = pgTable('sending_identities', {
   tenantId: text('tenant_id')
     .notNull()
     .references(() => tenants.id, { onDelete: 'cascade' }),
+  identityId: text('identity_id').notNull(),
   userId: text('user_id').notNull(),
-  refreshToken: bytea('refresh_token').notNull(),
+  provider: sendingIdentityProviderEnum('provider').notNull(),
+  fromEmail: text('from_email').notNull(),
   scope: text('scope').notNull(),
-  email: text('email').notNull(),
+  secret: bytea('secret').notNull(),
+  warmupStartedAt: timestamp('warmup_started_at', { withTimezone: true }),
+  warmupEnabled: boolean('warmup_enabled').notNull().default(true),
+  dailyCapOverride: integer('daily_cap_override'),
+  pausedUntil: timestamp('paused_until', { withTimezone: true }),
   grantedAt: timestamp('granted_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
-  primaryKey({ columns: [table.tenantId, table.userId] }),
-  index('idx_gmail_credentials_tenant').on(table.tenantId),
+  primaryKey({ columns: [table.tenantId, table.identityId] }),
+  // Backs the reconnect upsert: one identity per (tenant, user, provider).
+  unique('uq_sending_identities_tenant_user_provider').on(table.tenantId, table.userId, table.provider),
+  index('idx_sending_identities_tenant_provider').on(table.tenantId, table.provider),
 ])
 
 export const tenantPlans = pgTable('tenant_plans', {
@@ -622,6 +630,8 @@ export const outreachLogs = pgTable('outreach_logs', {
   hadFreshSignal: boolean('had_fresh_signal').notNull().default(false),
   // Position of this send in its follow-up sequence (1 = initial touch).
   touchNumber: smallint('touch_number').notNull().default(1),
+  sendingIdentityId: text('sending_identity_id'),
+  fromEmail: text('from_email'),
 }, (table) => [
   // Required so responses / inquiry_tokens / inquiry_sessions can declare a
   // composite (outreach_log_id, tenant_id) foreign key (defense-in-depth on

@@ -2,6 +2,7 @@
   import { invalidate } from '$app/navigation';
   import { revokeMcpSession } from '$lib/api/mcp';
   import { connectGmail } from '$lib/gmail-oauth';
+  import MailboxWarmupForm from '$lib/components/mailbox/MailboxWarmupForm.svelte';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
@@ -134,6 +135,21 @@
     {/if}
   </div>
 </section>
+
+{#if data.mailboxHealth?.kind === 'active'}
+  <section class="mb-10">
+    <h3 class="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">
+      Sending warmup
+    </h3>
+    <div class="rounded-md border border-border p-5">
+      <MailboxWarmupForm
+        health={data.mailboxHealth}
+        {token}
+        onSaved={() => invalidate('app:mailbox-health')}
+      />
+    </div>
+  </section>
+{/if}
 
 <section class="mb-10">
   <h3 class="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">

@@ -1,15 +1,18 @@
+import { z } from 'zod'
 import { eq, and, or, sql, gte } from 'drizzle-orm'
 import {
   tenantPlans,
   outreachLogs,
+  sendingIdentities,
   prospects,
   inquirySessions,
   PRE_SEND_TTL_MINUTES,
 } from '../db/schema'
 import type { createDb } from '../db/connection'
-import type { ServiceError } from '../services/result'
+import { ok, err, type ServiceError, type ServiceResult } from '../services/result'
 import type { Edition } from '../domain/edition'
 import type { TenantId } from '../domain/ids'
+import { DEFAULT_WARMUP, mailboxDailyCap, warmupWeeksElapsed } from '../domain/warmup'
 
 // 'unlimited' is internal-only (no Stripe price), set manually in the DB for
 // staff / complimentary accounts. The Stripe webhook must never overwrite it.
@@ -77,8 +80,7 @@ export async function getTenantPlan(
   }
 }
 
-function startOfTodayUtc(): Date {
-  const now = new Date()
+function startOfTodayUtc(now: Date = new Date()): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
 }
 
@@ -254,6 +256,204 @@ export function formatOutreachQuotaError(quota: OutreachQuota): string {
     case 'monthly':
       return `Your ${quota.plan} plan allows ${quota.limit} outreach this month. Upgrade your plan to continue.`
   }
+}
+
+// Per-mailbox safe daily send cap. Orthogonal to the billing quota AND the
+// edition gate (every plan and self-host is protected) because the failure mode
+// is reputational, not commercial.
+export type MailboxDailyQuota =
+  | { kind: 'no_mailbox' }
+  | {
+      kind: 'capped'
+      cap: number
+      used: number
+      remaining: number
+      pausedUntil: Date | null
+    }
+
+export async function getMailboxDailyQuota(
+  db: Db,
+  tenantId: TenantId,
+  now: Date = new Date(),
+): Promise<MailboxDailyQuota> {
+  // One mailbox per tenant today (1 user = 1 tenant), so tenant_id keys it.
+  const [mailbox] = await db
+    .select({
+      warmupStartedAt: sendingIdentities.warmupStartedAt,
+      warmupEnabled: sendingIdentities.warmupEnabled,
+      dailyCapOverride: sendingIdentities.dailyCapOverride,
+      pausedUntil: sendingIdentities.pausedUntil,
+    })
+    .from(sendingIdentities)
+    .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.provider, 'gmail_oauth')))
+    .limit(1)
+
+  if (!mailbox) return { kind: 'no_mailbox' }
+
+  const cap = mailboxDailyCap(mailbox, DEFAULT_WARMUP, now)
+  const used = await countMailboxEmailSendsToday(db, tenantId, now)
+  return {
+    kind: 'capped',
+    cap,
+    used,
+    remaining: Math.max(0, cap - used),
+    // Only a future pause; a past one means the day's sends are spent, not paused.
+    pausedUntil: mailbox.pausedUntil && mailbox.pausedUntil > now ? mailbox.pausedUntil : null,
+  }
+}
+
+// Today's mailbox-reputation-consuming sends: EMAIL channel only (form/SNS
+// don't touch the sending domain), sent + in-flight (pre_send within TTL).
+async function countMailboxEmailSendsToday(db: Db, tenantId: TenantId, now: Date): Promise<number> {
+  const sinceIso = startOfTodayUtc(now).toISOString()
+  const [row] = await db
+    .select({ used: sql<number>`COUNT(*)::int` })
+    .from(outreachLogs)
+    .where(and(
+      eq(outreachLogs.tenantId, tenantId),
+      eq(outreachLogs.channel, 'email'),
+      sql`${outreachLogs.sentAt} >= ${sinceIso}::timestamptz`,
+      or(
+        eq(outreachLogs.status, 'sent'),
+        and(
+          eq(outreachLogs.status, 'pre_send'),
+          sql`${outreachLogs.sentAt} > NOW() - (${PRE_SEND_TTL_MINUTES} * INTERVAL '1 minute')`,
+        ),
+      ),
+    ))
+  return row?.used ?? 0
+}
+
+export function isMailboxQuotaExhausted(quota: MailboxDailyQuota): boolean {
+  return quota.kind === 'capped' && quota.remaining <= 0
+}
+
+export function mailboxQuotaErrorIfExhausted(quota: MailboxDailyQuota): ServiceError | null {
+  if (!isMailboxQuotaExhausted(quota)) return null
+  return {
+    ok: false,
+    code: 'FORBIDDEN',
+    error: 'Mailbox daily send cap reached',
+    detail: formatMailboxQuotaError(quota),
+  }
+}
+
+export function formatMailboxQuotaError(quota: MailboxDailyQuota): string {
+  if (quota.kind !== 'capped') return 'Mailbox daily send cap reached.'
+  if (quota.pausedUntil) {
+    return `Sending from this mailbox is paused until ${quota.pausedUntil.toISOString()}.`
+  }
+  return `This mailbox's safe daily send limit (${quota.cap}/day during warmup) is reached. This protects your sending domain's reputation; it resets at UTC midnight. Reach remaining prospects by form/SNS, or continue tomorrow.`
+}
+
+// Read-only warmup / cap health for the tenant's sending mailbox. Exposes the
+// warmup state behind the per-mailbox daily cap — getMailboxDailyQuota only
+// returns the resulting cap/used/remaining, so operators can't see ramp
+// progress from it.
+export type MailboxHealth =
+  | { kind: 'no_mailbox' }
+  | {
+      kind: 'active'
+      email: string
+      warmupEnabled: boolean
+      warmupStartedAt: Date | null
+      dailyCapOverride: number | null
+      pausedUntil: Date | null
+      rampWeek: number
+      rampWeeks: number
+      steadyStatePerDay: number
+      cap: number
+      used: number
+      remaining: number
+    }
+
+export async function getMailboxHealth(
+  db: Db,
+  tenantId: TenantId,
+  now: Date = new Date(),
+): Promise<MailboxHealth> {
+  const [mailbox] = await db
+    .select({
+      email: sendingIdentities.fromEmail,
+      warmupStartedAt: sendingIdentities.warmupStartedAt,
+      warmupEnabled: sendingIdentities.warmupEnabled,
+      dailyCapOverride: sendingIdentities.dailyCapOverride,
+      pausedUntil: sendingIdentities.pausedUntil,
+    })
+    .from(sendingIdentities)
+    .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.provider, 'gmail_oauth')))
+    .limit(1)
+
+  if (!mailbox) return { kind: 'no_mailbox' }
+
+  const cap = mailboxDailyCap(mailbox, DEFAULT_WARMUP, now)
+  const used = await countMailboxEmailSendsToday(db, tenantId, now)
+  return {
+    kind: 'active',
+    email: mailbox.email,
+    warmupEnabled: mailbox.warmupEnabled,
+    warmupStartedAt: mailbox.warmupStartedAt,
+    dailyCapOverride: mailbox.dailyCapOverride,
+    // Future pause only; a past one means the day is spent, not paused.
+    pausedUntil: mailbox.pausedUntil && mailbox.pausedUntil > now ? mailbox.pausedUntil : null,
+    rampWeek: warmupWeeksElapsed(mailbox, DEFAULT_WARMUP, now),
+    rampWeeks: DEFAULT_WARMUP.rampWeeks,
+    steadyStatePerDay: DEFAULT_WARMUP.steadyStatePerDay,
+    cap,
+    used,
+    remaining: Math.max(0, cap - used),
+  }
+}
+
+const MAX_DAILY_CAP_OVERRIDE = 100_000
+
+export const updateMailboxWarmupSchema = z
+  .object({
+    warmupEnabled: z.boolean().optional(),
+    dailyCapOverride: z.number().int().min(0).max(MAX_DAILY_CAP_OVERRIDE).nullable().optional(),
+    pausedUntil: z.iso.datetime().nullable().optional(),
+  })
+  .strict()
+  .refine(
+    (p) =>
+      p.warmupEnabled !== undefined ||
+      p.dailyCapOverride !== undefined ||
+      p.pausedUntil !== undefined,
+    { message: 'Provide at least one warmup field to update.' },
+  )
+
+export type UpdateMailboxWarmupPatch = z.infer<typeof updateMailboxWarmupSchema>
+
+export async function updateMailboxWarmup(
+  db: Db,
+  tenantId: TenantId,
+  patch: UpdateMailboxWarmupPatch,
+  now: Date = new Date(),
+): Promise<ServiceResult<MailboxHealth>> {
+  const updateSet = {
+    ...(patch.warmupEnabled !== undefined ? { warmupEnabled: patch.warmupEnabled } : {}),
+    ...(patch.dailyCapOverride !== undefined ? { dailyCapOverride: patch.dailyCapOverride } : {}),
+    ...(patch.pausedUntil !== undefined
+      ? { pausedUntil: patch.pausedUntil === null ? null : new Date(patch.pausedUntil) }
+      : {}),
+    updatedAt: now,
+  }
+
+  const updated = await db
+    .update(sendingIdentities)
+    .set(updateSet)
+    .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.provider, 'gmail_oauth')))
+    .returning({ tenantId: sendingIdentities.tenantId })
+
+  if (updated.length === 0) {
+    return err(
+      'NOT_FOUND',
+      'No sending mailbox connected',
+      'Connect Gmail before configuring warmup.',
+    )
+  }
+
+  return ok(await getMailboxHealth(db, tenantId, now))
 }
 
 // 1 turn = 1 user message + 1 AI reply (counted on the AI reply via
