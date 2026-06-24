@@ -1,9 +1,41 @@
+import { z } from 'zod'
 import type { SendingIdentityProvider } from '../db/schema'
 
-// Parsed once at the decryption boundary so callers consume a typed variant, not
-// a bare string. For gmail_oauth the secret IS the OAuth refresh token.
-export type SendingIdentitySecret = { provider: 'gmail_oauth'; refreshToken: string }
+// smtp_imap connection params, stored as an encrypted JSON payload in `secret`.
+export const smtpImapSecretPayloadSchema = z.object({
+  smtpHost: z.string().min(1),
+  // 465 only — implicit TLS is the sole supported submission mode (STARTTLS/587
+  // is rejected up front rather than failing later at connect/verify).
+  smtpPort: z.literal(465),
+  imapHost: z.string().min(1),
+  imapPort: z.number().int().min(1).max(65535),
+  username: z.string().min(1),
+  appPassword: z.string().min(1),
+})
+export type SmtpImapSecretPayload = z.infer<typeof smtpImapSecretPayloadSchema>
 
+// Decrypted secret, parsed once at the boundary: gmail_oauth = the refresh token
+// verbatim; smtp_imap = a JSON connection payload.
+export type SendingIdentitySecret =
+  | { provider: 'gmail_oauth'; refreshToken: string }
+  | ({ provider: 'smtp_imap' } & SmtpImapSecretPayload)
+
+export type GmailOAuthSecret = Extract<SendingIdentitySecret, { provider: 'gmail_oauth' }>
+
+// From by provider: an SMTP mailbox can only send as its own address, so a Gmail
+// Send-As alias is ignored there (using it would break SPF/DKIM alignment).
+export function senderAddressFor(
+  provider: SendingIdentityProvider,
+  fromEmail: string,
+  alias: string | null | undefined,
+): string {
+  if (provider === 'gmail_oauth') return alias?.trim() || fromEmail
+  return fromEmail
+}
+
+// Overload so a caller that statically knows the provider keeps the narrowed arm.
+export function parseSendingIdentitySecret(provider: 'gmail_oauth', decryptedSecret: string): GmailOAuthSecret
+export function parseSendingIdentitySecret(provider: SendingIdentityProvider, decryptedSecret: string): SendingIdentitySecret
 export function parseSendingIdentitySecret(
   provider: SendingIdentityProvider,
   decryptedSecret: string,
@@ -12,6 +44,6 @@ export function parseSendingIdentitySecret(
     case 'gmail_oauth':
       return { provider, refreshToken: decryptedSecret }
     case 'smtp_imap':
-      throw new Error('smtp_imap sending identities are not supported yet')
+      return { provider, ...smtpImapSecretPayloadSchema.parse(JSON.parse(decryptedSecret)) }
   }
 }

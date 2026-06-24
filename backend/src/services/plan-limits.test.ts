@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   getPlanLimits,
+  canRegisterSmtpIdentity,
   selectOutreachQuota,
   isOutreachQuotaExhausted,
   outreachQuotaErrorIfExhausted,
@@ -24,7 +25,7 @@ const cappedOutreach = (over: Partial<Extract<OutreachQuota, { kind: 'capped' }>
 describe('getPlanLimits', () => {
   it('encodes the Free dual cap (daily + lifetime) and prospect cap', () => {
     expect(getPlanLimits('free')).toEqual({
-      maxProjects: 1, maxOutreachPerDay: 5, maxOutreachLifetime: 50, maxOutreachPerMonth: null, maxProspects: 500,
+      maxProjects: 1, maxOutreachPerDay: 5, maxOutreachLifetime: 50, maxOutreachPerMonth: null, maxProspects: 500, maxSendingIdentities: 1,
     })
   })
 
@@ -32,8 +33,29 @@ describe('getPlanLimits', () => {
     expect(getPlanLimits('pro').maxOutreachPerMonth).toBe(10000)
     expect(getPlanLimits('pro').maxProjects).toBe(5)
     expect(getPlanLimits('scale')).toEqual({
-      maxProjects: null, maxOutreachPerDay: null, maxOutreachLifetime: null, maxOutreachPerMonth: null, maxProspects: null,
+      maxProjects: null, maxOutreachPerDay: null, maxOutreachLifetime: null, maxOutreachPerMonth: null, maxProspects: null, maxSendingIdentities: null,
     })
+  })
+})
+
+describe('canRegisterSmtpIdentity', () => {
+  it('blocks free regardless of count (paid feature)', () => {
+    expect(canRegisterSmtpIdentity('free', 0)?.code).toBe('FORBIDDEN')
+  })
+
+  it('allows a paid plan below its cap (gmail counts toward the total)', () => {
+    // starter cap = 2; with 1 existing (the connected gmail) a first smtp is allowed.
+    expect(canRegisterSmtpIdentity('starter', 1)).toBeNull()
+  })
+
+  it('blocks a paid plan at its cap', () => {
+    expect(canRegisterSmtpIdentity('starter', 2)?.code).toBe('FORBIDDEN')
+    expect(canRegisterSmtpIdentity('pro', 5)?.code).toBe('FORBIDDEN')
+  })
+
+  it('never caps unlimited tiers (scale / self-host)', () => {
+    expect(canRegisterSmtpIdentity('scale', 99)).toBeNull()
+    expect(canRegisterSmtpIdentity('unlimited', 99)).toBeNull()
   })
 })
 

@@ -307,9 +307,9 @@ Having composed the body (reached only when the `email_template` exists), call `
   backend appends it)
 - `variantId`: from `pick_subject_variant`; omit when no variants exist
 
-The server reads the project's `outboundMode` and decides what happens:
-- `send` mode → email is sent via the user's connected Gmail. Response: `{ mode: "sent", outreachId, messageId, threadId }`.
-- `draft` mode → no send; the composed email is stored as a `pending_review` draft for the user to review and send from https://app.leadace.ai/drafts. Response: `{ mode: "drafted", outreachId }`. Drafts do not count against the outreach quota.
+The server reads the project's `outboundMode` and which mailbox the project uses, then returns one of two outcomes. The email is sent server-side whichever mailbox the project uses — a connected Gmail or a custom SMTP mailbox — so **never branch on `outboundMode` or sending-identity type in your own logic:**
+- `{ mode: "sent", outreachId, messageId, threadId }` → the email was sent. Nothing more to do.
+- `{ mode: "drafted", outreachId }` → no send; stored as a `pending_review` draft for the user to review and send from https://app.leadace.ai/drafts. Drafts do not count against the outreach quota.
 
 Track the response `mode` per call for the step 8 report (sent vs. drafted counts).
 

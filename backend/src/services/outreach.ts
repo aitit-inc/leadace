@@ -25,6 +25,7 @@ import {
   variantIdSchema,
   type ProjectId,
   type ProjectRef,
+  type SendingIdentityId,
   type TenantId,
 } from '../domain/ids'
 export { outreachLogIdParamSchema } from '../domain/ids'
@@ -37,6 +38,7 @@ import {
 import {
   sendForIdentity,
   buildComplianceAttachments,
+  resolveSendingIdentityId,
   stampMailboxFirstSendIfNeeded,
 } from '../auth/google'
 import { ok, err, type ServiceResult } from './result'
@@ -184,7 +186,6 @@ export const updateOutreachStatusSchema = z.discriminatedUnion('status', [
 export type UpdateOutreachStatusInput = z.infer<typeof updateOutreachStatusSchema>
 
 export type SendContext = {
-  userId: string
   encryptionKey: string
   clientId: string
   clientSecret: string
@@ -352,10 +353,16 @@ export async function recordOutreach(
   const quotaErr = quota ? outreachQuotaErrorIfExhausted(quota) : null
   if (quotaErr) return quotaErr
 
+  // Resolved once per email send: the cap check, the row's sending_identity_id,
+  // and the first-send ramp stamp. Null for non-email or no configured identity.
+  let sendingIdentityId: SendingIdentityId | null = null
   if (sending) {
     // Backstop: record_outreach('sent') logs an already-completed send.
     if (input.channel === 'email') {
-      const mailboxErr = mailboxQuotaErrorIfExhausted(await getMailboxDailyQuota(db, tenantId))
+      sendingIdentityId = await resolveSendingIdentityId(db, { tenantId, projectId })
+      const mailboxErr = mailboxQuotaErrorIfExhausted(
+        await getMailboxDailyQuota(db, tenantId, sendingIdentityId),
+      )
       if (mailboxErr) return mailboxErr
     }
     const contactable = await assertProspectContactable(db, tenantId, input.prospectId)
@@ -381,6 +388,7 @@ export async function recordOutreach(
       sentAt,
       errorMessage: input.status === 'failed' ? input.errorMessage : null,
       hadFreshSignal,
+      sendingIdentityId,
     })
     .returning({ id: outreachLogs.id })
 
@@ -390,7 +398,7 @@ export async function recordOutreach(
   if (input.status === 'sent' && log) {
     await markProspectContacted(db, projectId, input.prospectId, sentAt, log.id)
     if (input.channel === 'email') {
-      await stampMailboxFirstSendIfNeeded(db, tenantId, sentAt)
+      await stampMailboxFirstSendIfNeeded(db, tenantId, sendingIdentityId, sentAt)
     }
   } else if (input.status === 'failed' && log) {
     await deferProspectReeligibility(db, projectId, input.prospectId, sentAt)
@@ -574,6 +582,8 @@ export async function updateOutreachStatus(
   }
 
   if (input.status === 'sent') {
+    // Only form/SNS pre_send rows reach here; email sends complete inline in
+    // sendAndRecord / sendDraft (where the warmup clock is stamped).
     await markProspectContacted(db, updated.projectId as ProjectId, updated.prospectId, updated.sentAt, updated.id)
   } else if (input.status === 'failed') {
     await deferProspectReeligibility(db, updated.projectId as ProjectId, updated.prospectId, updated.sentAt)
@@ -648,7 +658,8 @@ export async function sendAndRecord(
   const quotaErr = outreachQuotaErrorIfExhausted(quota)
   if (quotaErr) return quotaErr
 
-  const mailboxQuota = await getMailboxDailyQuota(db, tenantId)
+  const sendingIdentityId = await resolveSendingIdentityId(db, { tenantId, projectId })
+  const mailboxQuota = await getMailboxDailyQuota(db, tenantId, sendingIdentityId)
   const mailboxErr = mailboxQuotaErrorIfExhausted(mailboxQuota)
   if (mailboxErr) return mailboxErr
 
@@ -673,6 +684,8 @@ export async function sendAndRecord(
       sentAt,
       variantId: input.variantId ?? null,
       hadFreshSignal,
+      // Stamped at allocation so the in-flight reservation counts toward the cap.
+      sendingIdentityId,
     })
     .returning({ id: outreachLogs.id })
 
@@ -690,7 +703,7 @@ export async function sendAndRecord(
 
   const result = await sendForIdentity(db, {
     tenantId,
-    userId: ctx.userId,
+    identityId: sendingIdentityId,
     encryptionKey: ctx.encryptionKey,
     clientId: ctx.clientId,
     clientSecret: ctx.clientSecret,
@@ -726,10 +739,10 @@ export async function sendAndRecord(
   // sentAt stays at pre_send allocation time — see updateOutreachStatus.
   await db
     .update(outreachLogs)
-    .set({ status: 'sent', fromEmail: result.from, sendingIdentityId: result.identityId })
+    .set({ status: 'sent', fromEmail: result.from })
     .where(eq(outreachLogs.id, log.id))
   await markProspectContacted(db, projectId, input.prospectId, sentAt, log.id)
-  await stampMailboxFirstSendIfNeeded(db, tenantId, sentAt)
+  await stampMailboxFirstSendIfNeeded(db, tenantId, sendingIdentityId, sentAt)
 
   return ok({
     mode: 'sent',
@@ -1071,7 +1084,13 @@ export async function sendDraft(
   const quotaErr = outreachQuotaErrorIfExhausted(quota)
   if (quotaErr) return quotaErr
 
-  const mailboxErr = mailboxQuotaErrorIfExhausted(await getMailboxDailyQuota(db, tenantId))
+  const sendingIdentityId = await resolveSendingIdentityId(db, {
+    tenantId,
+    projectId: draft.projectId as ProjectId,
+  })
+  const mailboxErr = mailboxQuotaErrorIfExhausted(
+    await getMailboxDailyQuota(db, tenantId, sendingIdentityId),
+  )
   if (mailboxErr) return mailboxErr
 
   const [sendSettings, complianceResult, countryResult] = await Promise.all([
@@ -1093,7 +1112,7 @@ export async function sendDraft(
 
   const result = await sendForIdentity(db, {
     tenantId,
-    userId: ctx.userId,
+    identityId: sendingIdentityId,
     encryptionKey: ctx.encryptionKey,
     clientId: ctx.clientId,
     clientSecret: ctx.clientSecret,
@@ -1127,7 +1146,7 @@ export async function sendDraft(
   }
 
   await markProspectContacted(db, draft.projectId as ProjectId, draft.prospectId, sentAt, draft.id)
-  await stampMailboxFirstSendIfNeeded(db, tenantId, sentAt)
+  await stampMailboxFirstSendIfNeeded(db, tenantId, sendingIdentityId, sentAt)
 
   return ok({
     mode: 'sent',

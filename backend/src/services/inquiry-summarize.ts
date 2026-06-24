@@ -7,7 +7,7 @@ import {
   tenantMembers,
 } from '../db/schema'
 import type { Db } from '../db/connection'
-import { asTenantId } from '../domain/ids'
+import { asSendingIdentityId, asTenantId } from '../domain/ids'
 import { callOpenAIResponses, type OpenAIEnv } from './openai'
 import {
   closeSessionWithSummary,
@@ -146,7 +146,7 @@ async function notifyLeadByEmail(
   const [row] = await db
     .select({
       tenantId: sendingIdentities.tenantId,
-      userId: sendingIdentities.userId,
+      identityId: sendingIdentities.identityId,
       ownerEmail: sendingIdentities.fromEmail,
       prospectName: prospects.name,
       prospectEmail: prospects.email,
@@ -185,7 +185,7 @@ async function notifyLeadByEmail(
 
   await sendForIdentity(db, {
     tenantId: asTenantId(row.tenantId),
-    userId: row.userId,
+    identityId: asSendingIdentityId(row.identityId),
     encryptionKey: env.GMAIL_TOKEN_ENCRYPTION_KEY,
     clientId: env.GOOGLE_CLIENT_ID,
     clientSecret: env.GOOGLE_CLIENT_SECRET,

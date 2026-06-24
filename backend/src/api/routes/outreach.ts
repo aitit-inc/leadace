@@ -226,7 +226,6 @@ outreachRouter.post(
 
 function sendContext(c: Context<{ Bindings: Env; Variables: Variables }>): SendContext {
   return {
-    userId: c.get('userId'),
     encryptionKey: c.env.GMAIL_TOKEN_ENCRYPTION_KEY,
     clientId: c.env.GOOGLE_CLIENT_ID,
     clientSecret: c.env.GOOGLE_CLIENT_SECRET,

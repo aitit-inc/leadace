@@ -11,7 +11,7 @@ import {
 import type { createDb } from '../db/connection'
 import { ok, err, type ServiceError, type ServiceResult } from '../services/result'
 import type { Edition } from '../domain/edition'
-import type { TenantId } from '../domain/ids'
+import { asSendingIdentityId, type SendingIdentityId, type TenantId } from '../domain/ids'
 import { DEFAULT_WARMUP, mailboxDailyCap, warmupWeeksElapsed } from '../domain/warmup'
 
 // 'unlimited' is internal-only (no Stripe price), set manually in the DB for
@@ -28,18 +28,47 @@ export interface PlanLimits {
   maxOutreachLifetime: number | null
   maxOutreachPerMonth: number | null
   maxProspects: number | null
+  // Total identities (gmail + smtp); the connected Gmail occupies 1, so free (1)
+  // cannot add an smtp identity.
+  maxSendingIdentities: number | null
 }
 
 const PLAN_LIMITS: Record<PlanTier, PlanLimits> = {
-  free:      { maxProjects: 1,    maxOutreachPerDay: 5,    maxOutreachLifetime: 50,   maxOutreachPerMonth: null,  maxProspects: 500 },
-  starter:   { maxProjects: 1,    maxOutreachPerDay: null, maxOutreachLifetime: null, maxOutreachPerMonth: 1500,  maxProspects: null },
-  pro:       { maxProjects: 5,    maxOutreachPerDay: null, maxOutreachLifetime: null, maxOutreachPerMonth: 10000, maxProspects: null },
-  scale:     { maxProjects: null, maxOutreachPerDay: null, maxOutreachLifetime: null, maxOutreachPerMonth: null,  maxProspects: null },
-  unlimited: { maxProjects: null, maxOutreachPerDay: null, maxOutreachLifetime: null, maxOutreachPerMonth: null,  maxProspects: null },
+  free:      { maxProjects: 1,    maxOutreachPerDay: 5,    maxOutreachLifetime: 50,   maxOutreachPerMonth: null,  maxProspects: 500,  maxSendingIdentities: 1 },
+  starter:   { maxProjects: 1,    maxOutreachPerDay: null, maxOutreachLifetime: null, maxOutreachPerMonth: 1500,  maxProspects: null, maxSendingIdentities: 2 },
+  pro:       { maxProjects: 5,    maxOutreachPerDay: null, maxOutreachLifetime: null, maxOutreachPerMonth: 10000, maxProspects: null, maxSendingIdentities: 5 },
+  scale:     { maxProjects: null, maxOutreachPerDay: null, maxOutreachLifetime: null, maxOutreachPerMonth: null,  maxProspects: null, maxSendingIdentities: null },
+  unlimited: { maxProjects: null, maxOutreachPerDay: null, maxOutreachLifetime: null, maxOutreachPerMonth: null,  maxProspects: null, maxSendingIdentities: null },
 }
 
 export function getPlanLimits(plan: PlanTier): PlanLimits {
   return PLAN_LIMITS[plan]
+}
+
+// Free has no paid seat for a custom mailbox; paid plans cap the total identity
+// count (the connected Gmail counts toward it).
+export function canRegisterSmtpIdentity(
+  plan: PlanTier,
+  currentIdentityCount: number,
+): ServiceError | null {
+  if (plan === 'free') {
+    return {
+      ok: false,
+      code: 'FORBIDDEN',
+      error: 'Custom sending mailboxes require a paid plan',
+      detail: 'Upgrade to Starter or higher to add an SMTP sending identity.',
+    }
+  }
+  const cap = getPlanLimits(plan).maxSendingIdentities
+  if (cap !== null && currentIdentityCount >= cap) {
+    return {
+      ok: false,
+      code: 'FORBIDDEN',
+      error: 'Sending identity limit reached',
+      detail: `Your ${plan} plan allows up to ${cap} sending ${cap === 1 ? 'identity' : 'identities'}. Remove one or upgrade to add more.`,
+    }
+  }
+  return null
 }
 
 type Db = ReturnType<typeof createDb>
@@ -274,9 +303,11 @@ export type MailboxDailyQuota =
 export async function getMailboxDailyQuota(
   db: Db,
   tenantId: TenantId,
+  // Resolved sending identity (resolveSendingIdentityId); null = no mailbox to cap.
+  identityId: SendingIdentityId | null,
   now: Date = new Date(),
 ): Promise<MailboxDailyQuota> {
-  // One mailbox per tenant today (1 user = 1 tenant), so tenant_id keys it.
+  if (!identityId) return { kind: 'no_mailbox' }
   const [mailbox] = await db
     .select({
       warmupStartedAt: sendingIdentities.warmupStartedAt,
@@ -285,13 +316,13 @@ export async function getMailboxDailyQuota(
       pausedUntil: sendingIdentities.pausedUntil,
     })
     .from(sendingIdentities)
-    .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.provider, 'gmail_oauth')))
+    .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.identityId, identityId)))
     .limit(1)
 
   if (!mailbox) return { kind: 'no_mailbox' }
 
   const cap = mailboxDailyCap(mailbox, DEFAULT_WARMUP, now)
-  const used = await countMailboxEmailSendsToday(db, tenantId, now)
+  const used = await countMailboxEmailSendsToday(db, tenantId, identityId, now)
   return {
     kind: 'capped',
     cap,
@@ -302,15 +333,22 @@ export async function getMailboxDailyQuota(
   }
 }
 
-// Today's mailbox-reputation-consuming sends: EMAIL channel only (form/SNS
-// don't touch the sending domain), sent + in-flight (pre_send within TTL).
-async function countMailboxEmailSendsToday(db: Db, tenantId: TenantId, now: Date): Promise<number> {
+// Today's reputation-consuming sends for one identity: EMAIL only, sent +
+// in-flight pre_send. Counted by sending_identity_id, not from_email (a Send-As
+// alias drifts from_email while the mailbox/reputation stays the same identity).
+async function countMailboxEmailSendsToday(
+  db: Db,
+  tenantId: TenantId,
+  identityId: SendingIdentityId,
+  now: Date,
+): Promise<number> {
   const sinceIso = startOfTodayUtc(now).toISOString()
   const [row] = await db
     .select({ used: sql<number>`COUNT(*)::int` })
     .from(outreachLogs)
     .where(and(
       eq(outreachLogs.tenantId, tenantId),
+      eq(outreachLogs.sendingIdentityId, identityId),
       eq(outreachLogs.channel, 'email'),
       sql`${outreachLogs.sentAt} >= ${sinceIso}::timestamptz`,
       or(
@@ -374,6 +412,7 @@ export async function getMailboxHealth(
 ): Promise<MailboxHealth> {
   const [mailbox] = await db
     .select({
+      identityId: sendingIdentities.identityId,
       email: sendingIdentities.fromEmail,
       warmupStartedAt: sendingIdentities.warmupStartedAt,
       warmupEnabled: sendingIdentities.warmupEnabled,
@@ -387,7 +426,7 @@ export async function getMailboxHealth(
   if (!mailbox) return { kind: 'no_mailbox' }
 
   const cap = mailboxDailyCap(mailbox, DEFAULT_WARMUP, now)
-  const used = await countMailboxEmailSendsToday(db, tenantId, now)
+  const used = await countMailboxEmailSendsToday(db, tenantId, asSendingIdentityId(mailbox.identityId), now)
   return {
     kind: 'active',
     email: mailbox.email,

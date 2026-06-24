@@ -3,6 +3,7 @@
   import { revokeMcpSession } from '$lib/api/mcp';
   import { connectGmail } from '$lib/gmail-oauth';
   import MailboxWarmupForm from '$lib/components/mailbox/MailboxWarmupForm.svelte';
+  import SendingIdentitiesForm from '$lib/components/sending-identity/SendingIdentitiesForm.svelte';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
@@ -150,6 +151,25 @@
     </div>
   </section>
 {/if}
+
+<section class="mb-10">
+  <h3 class="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">
+    Custom sending mailboxes
+  </h3>
+  <div class="rounded-md border border-border p-5">
+    {#if data.sendingIdentitiesError}
+      <p class="mb-3 text-xs text-danger">
+        Couldn't load your custom mailboxes — the list below may be incomplete. Reload to retry.
+      </p>
+    {/if}
+    <SendingIdentitiesForm
+      identities={data.sendingIdentities}
+      planTier={data.plan?.plan}
+      {token}
+      onChanged={() => invalidate('app:sending-identities')}
+    />
+  </div>
+</section>
 
 <section class="mb-10">
   <h3 class="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">

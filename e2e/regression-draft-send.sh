@@ -94,6 +94,7 @@ mkseed() {
       name:$n, overview:"seed", websiteUrl:("https://"+$d+"/about"), email:$e, matchReason:"seed"}'
 }
 
+
 # email draft via send-and-record (draft mode → pending_review channel=email)
 mk_email_draft() { api POST /api/outreach/send-and-record \
   "$(jq -nc --arg pid "$PROJECT_ID" --argjson prid "$1" --arg to "$2" '{projectId:$pid, prospectId:$prid, to:[$to], subject:"e2e draft", body:"e2e email draft body"}')" \

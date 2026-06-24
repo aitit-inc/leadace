@@ -860,7 +860,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'send_email_and_record',
-    'Compose and submit a prospect email + outreach log in one call. The server reads the project\'s outboundMode setting and either sends via the user\'s Gmail (mode "send") or stores a pending_review draft for the user to send from the LeadAce web app (mode "draft"). Skills should call this regardless of mode — do not branch on outboundMode in skill logic.',
+    'Compose and submit a prospect email + outreach log in one call. The server reads the project\'s outboundMode setting and either sends the email (mode "send") or stores a pending_review draft for the user to send from the LeadAce web app (mode "draft"). The send happens server-side whether the project\'s mailbox is a connected Gmail or a custom SMTP mailbox — call this regardless of mode / which mailbox the project uses, and do not branch on outboundMode or sending-identity type in skill logic. The send is complete when this returns.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       prospectId: z.number().int(),
@@ -889,7 +889,7 @@ function buildToolRegistry(): ToolDef[] {
         | { mode: 'sent'; outreachId: number; messageId: string; threadId: string }
         | { mode: 'drafted'; outreachId: number }
       const text = result.mode === 'sent'
-        ? `Email sent (Gmail messageId: ${result.messageId}, threadId: ${result.threadId}). Outreach logged (id: ${result.outreachId}).`
+        ? `Email sent. Outreach logged (id: ${result.outreachId}).`
         : `Draft created (outreach id: ${result.outreachId}). User reviews and sends from https://app.leadace.ai/drafts.`
       return { content: [{ type: 'text' as const, text }] }
     },

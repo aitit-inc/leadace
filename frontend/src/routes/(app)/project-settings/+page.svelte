@@ -13,6 +13,7 @@
   } from '$lib/types/project-settings';
   import type { PageProps } from './$types';
   import type { ProjectSettingsData } from './types';
+  import type { SendingIdentity } from '$lib/types/sending-identity';
 
   const CHANNEL_LABELS: Record<OutboundChannel, string> = {
     email: 'Email',
@@ -36,10 +37,28 @@
   let token = $derived(data.session?.access_token);
   let activeProjectId = $derived(data.activeProjectId);
 
+  // Only custom SMTP mailboxes are selectable (default null = the connected Gmail);
+  // with none, the selector stays hidden.
+  let smtpIdentities = $derived(
+    data.sendingIdentities.filter((i: SendingIdentity) => i.provider === 'smtp_imap'),
+  );
+  let sendingIdentitiesError = $derived(data.sendingIdentitiesError);
+
   let projectSettings = $state<ProjectSettingsData | null>(null);
   // Sent back only when actually edited — an unrelated save must not materialize
   // the resolved defaults into the overrides-only follow_up_sequence cell.
   let followUpLoaded = $state<FollowUpSequence | null>(null);
+
+  // When sending from a custom SMTP mailbox, the Gmail Send-As alias doesn't apply.
+  // A non-null sendingIdentityId is always a custom SMTP mailbox (the selector only
+  // sets smtp ids; null = default Gmail). Kept independent of the identities list so
+  // a failed list load can't wrongly re-enable the Gmail alias control.
+  let usingSmtpMailbox = $derived(!!projectSettings?.sendingIdentityId);
+
+  function onSendingMailboxChange() {
+    if (!projectSettings) return;
+    if (projectSettings.sendingIdentityId) projectSettings.senderEmailAlias = null;
+  }
   $effect(() => {
     const loaded = data.projectSettings;
     if (!loaded) {
@@ -82,6 +101,7 @@
     try {
       const body = {
         outboundMode: projectSettings.outboundMode,
+        sendingIdentityId: projectSettings.sendingIdentityId,
         senderEmailAlias: projectSettings.senderEmailAlias?.trim() || null,
         senderDisplayName: projectSettings.senderDisplayName?.trim() || null,
         unsubscribeEnabled: projectSettings.unsubscribeEnabled,
@@ -220,6 +240,54 @@
         </p>
       </div>
 
+      {#if smtpIdentities.length > 0}
+        <div>
+          <label for="sending-identity" class="block text-xs font-medium text-text-secondary mb-1">
+            Sending mailbox
+          </label>
+          <select
+            id="sending-identity"
+            bind:value={s.sendingIdentityId}
+            onchange={onSendingMailboxChange}
+            class="w-full max-w-xs rounded border border-border bg-page px-2 py-1.5 text-sm text-text"
+          >
+            <option value={null}>Default — connected Gmail</option>
+            {#each smtpIdentities as id (id.identityId)}
+              <option value={id.identityId}>{id.fromEmail}</option>
+            {/each}
+          </select>
+          <p class="mt-1 text-xs text-text-muted">
+            Which mailbox this project sends from. Custom SMTP mailboxes are added in
+            <a href="/account-settings" class="underline hover:text-text">Account settings</a> and
+            send server-side, just like Gmail.
+          </p>
+        </div>
+      {:else if sendingIdentitiesError}
+        <div>
+          <label for="sending-identity" class="block text-xs font-medium text-text-secondary mb-1">
+            Sending mailbox
+          </label>
+          {#if s.sendingIdentityId}
+            <!-- The list failed to load but this project uses a custom mailbox; offer
+                 a reset to default so a transient error doesn't strand the user on it. -->
+            <select
+              id="sending-identity"
+              bind:value={s.sendingIdentityId}
+              onchange={onSendingMailboxChange}
+              class="w-full max-w-xs rounded border border-border bg-page px-2 py-1.5 text-sm text-text"
+            >
+              <option value={null}>Default — connected Gmail</option>
+              <option value={s.sendingIdentityId}>Current custom mailbox</option>
+            </select>
+          {/if}
+          <p class="mt-1 text-xs text-text-muted">
+            Couldn't load your custom mailboxes. Reload to {s.sendingIdentityId
+              ? 'switch between mailboxes'
+              : 'select one'}.
+          </p>
+        </div>
+      {/if}
+
       <div>
         <label for="sender-alias" class="block text-xs font-medium text-text-secondary mb-1">
           Sender email alias
@@ -229,18 +297,24 @@
           type="email"
           placeholder="primary Gmail (default)"
           bind:value={s.senderEmailAlias}
-          class="w-full max-w-xs rounded border border-border bg-page px-2 py-1.5 text-sm text-text font-mono"
+          disabled={usingSmtpMailbox}
+          class="w-full max-w-xs rounded border border-border bg-page px-2 py-1.5 text-sm text-text font-mono disabled:opacity-50"
         />
         <p class="mt-1 text-xs text-text-muted">
-          A Gmail Send-As alias (e.g. <span class="font-mono">sales@yourdomain.com</span>) to use
-          as the From: address. The alias must already be set up and verified in
-          <a
-            href="https://mail.google.com/mail/u/0/#settings/accounts"
-            target="_blank"
-            rel="noopener"
-            class="underline hover:text-text"
-          >Gmail → Settings → Accounts and Import</a>. If it isn't verified there, sending will
-          fail with a Gmail error.
+          {#if usingSmtpMailbox}
+            Not used while a custom SMTP mailbox is selected — that mailbox's own address is the
+            From:.
+          {:else}
+            A Gmail Send-As alias (e.g. <span class="font-mono">sales@yourdomain.com</span>) to use
+            as the From: address. The alias must already be set up and verified in
+            <a
+              href="https://mail.google.com/mail/u/0/#settings/accounts"
+              target="_blank"
+              rel="noopener"
+              class="underline hover:text-text"
+            >Gmail → Settings → Accounts and Import</a>. If it isn't verified there, sending will
+            fail with a Gmail error.
+          {/if}
         </p>
       </div>
 

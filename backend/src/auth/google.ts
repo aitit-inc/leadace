@@ -1,6 +1,5 @@
 import { sql } from 'drizzle-orm'
 import type { Db } from '../db/connection'
-import type { SendingIdentityProvider } from '../db/schema'
 import { signUnsubscribeToken } from './unsubscribe-token'
 import { randomFromAlphabet } from './random-id'
 import {
@@ -8,9 +7,21 @@ import {
   unsubscribeFooterLine,
   privacyFooterLine,
 } from '../domain/inquiry-footer'
-import { parseSendingIdentitySecret, type SendingIdentitySecret } from '../domain/sending-identity'
+import {
+  parseSendingIdentitySecret,
+  senderAddressFor,
+  type GmailOAuthSecret,
+  type SendingIdentitySecret,
+} from '../domain/sending-identity'
+import { sendViaSmtp } from '../services/smtp-send'
+import { quotedPrintableEncode } from '../domain/smtp'
 import type { Locale } from '../domain/locale'
-import { asSendingIdentityId, type SendingIdentityId, type TenantId } from '../domain/ids'
+import {
+  asSendingIdentityId,
+  type ProjectId,
+  type SendingIdentityId,
+  type TenantId,
+} from '../domain/ids'
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const GMAIL_SEND_URL = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send'
@@ -114,7 +125,12 @@ export function buildRfc822(args: {
   body: string
   inReplyTo?: string
   extraHeaders?: Record<string, string>
+  // SMTP passes 'quoted-printable' (7-bit-clean, no 8BITMIME); Gmail API takes 8bit.
+  bodyEncoding?: '8bit' | 'quoted-printable'
 }): string {
+  const cte = args.bodyEncoding === 'quoted-printable' ? 'quoted-printable' : '8bit'
+  const encodeBody =
+    args.bodyEncoding === 'quoted-printable' ? quotedPrintableEncode : (b: string) => b
   const lines: string[] = []
   lines.push(`From: ${args.from}`)
   lines.push(`To: ${args.to.join(', ')}`)
@@ -139,14 +155,14 @@ export function buildRfc822(args: {
   lines.push('')
   lines.push(`--${boundary}`)
   lines.push('Content-Type: text/plain; charset=UTF-8')
-  lines.push('Content-Transfer-Encoding: 8bit')
+  lines.push(`Content-Transfer-Encoding: ${cte}`)
   lines.push('')
-  lines.push(args.body)
+  lines.push(encodeBody(args.body))
   lines.push(`--${boundary}`)
   lines.push('Content-Type: text/html; charset=UTF-8')
-  lines.push('Content-Transfer-Encoding: 8bit')
+  lines.push(`Content-Transfer-Encoding: ${cte}`)
   lines.push('')
-  lines.push(plainTextToHtmlBody(args.body))
+  lines.push(encodeBody(plainTextToHtmlBody(args.body)))
   lines.push(`--${boundary}--`)
   return lines.join('\r\n')
 }
@@ -284,7 +300,7 @@ export async function saveGmailRefreshToken(
       now(),
       now()
     )
-    ON CONFLICT (tenant_id, user_id, provider) DO UPDATE SET
+    ON CONFLICT (tenant_id, user_id) WHERE provider = 'gmail_oauth' DO UPDATE SET
       secret = pgp_sym_encrypt(${args.refreshToken}::text, ${args.encryptionKey}),
       scope = ${args.scope},
       from_email = ${args.email},
@@ -299,10 +315,10 @@ export async function loadSendingIdentitySecret(
     userId: string
     encryptionKey: string
   },
-): Promise<{ identityId: SendingIdentityId; fromEmail: string; secret: SendingIdentitySecret } | null> {
+): Promise<{ identityId: SendingIdentityId; fromEmail: string; secret: GmailOAuthSecret } | null> {
   const rows = await db.execute<{
     identity_id: string
-    provider: SendingIdentityProvider
+    provider: 'gmail_oauth'
     from_email: string
     secret: string
   }>(sql`
@@ -326,39 +342,96 @@ export async function loadSendingIdentitySecret(
   }
 }
 
-// Stamps the ramp clock on first send, not at connect, so an idle mailbox
-// doesn't ramp while dormant; one mailbox per tenant today, so tenant_id keys it.
-// ISO + ::timestamptz: postgres.js (prepare:false) can't serialize a Date through raw sql``.
+// The project's explicit sending_identity_id, else the tenant's connected Gmail.
+// null = neither exists (caller maps to "not connected").
+export async function resolveSendingIdentityId(
+  db: Db,
+  args: { tenantId: TenantId; projectId: ProjectId },
+): Promise<SendingIdentityId | null> {
+  const rows = await db.execute<{ identity_id: string | null }>(sql`
+    SELECT COALESCE(
+      (SELECT sending_identity_id FROM project_settings
+         WHERE tenant_id = ${args.tenantId} AND project_id = ${args.projectId}),
+      (SELECT identity_id FROM sending_identities
+         WHERE tenant_id = ${args.tenantId} AND provider = 'gmail_oauth' LIMIT 1)
+    ) AS identity_id
+  `)
+  const id = rows[0]?.identity_id
+  return id ? asSendingIdentityId(id) : null
+}
+
+// Per-id load + decrypt, returning the provider-tagged secret union; the project
+// send dispatch handles either provider.
+export async function loadSendingIdentitySecretById(
+  db: Db,
+  args: {
+    tenantId: TenantId
+    identityId: SendingIdentityId
+    encryptionKey: string
+  },
+): Promise<{ identityId: SendingIdentityId; fromEmail: string; secret: SendingIdentitySecret } | null> {
+  const rows = await db.execute<{
+    identity_id: string
+    provider: 'gmail_oauth' | 'smtp_imap'
+    from_email: string
+    secret: string
+  }>(sql`
+    SELECT
+      identity_id,
+      provider,
+      from_email,
+      pgp_sym_decrypt(secret, ${args.encryptionKey})::text AS secret
+    FROM sending_identities
+    WHERE tenant_id = ${args.tenantId}
+      AND identity_id = ${args.identityId}
+    LIMIT 1
+  `)
+  const row = rows[0]
+  if (!row) return null
+  return {
+    identityId: asSendingIdentityId(row.identity_id),
+    fromEmail: row.from_email,
+    secret: parseSendingIdentitySecret(row.provider, row.secret),
+  }
+}
+
+// Stamp the ramp clock on first send (not connect), so an idle mailbox doesn't
+// ramp while dormant. ISO + ::timestamptz: postgres.js (prepare:false) can't
+// serialize a Date through raw sql``.
 export async function stampMailboxFirstSendIfNeeded(
   db: Db,
   tenantId: TenantId,
+  identityId: SendingIdentityId | null,
   sentAt: Date,
 ): Promise<void> {
+  if (!identityId) return
   await db.execute(sql`
     UPDATE sending_identities
     SET warmup_started_at = ${sentAt.toISOString()}::timestamptz
     WHERE tenant_id = ${tenantId}
-      AND provider = 'gmail_oauth'
+      AND identity_id = ${identityId}
       AND warmup_started_at IS NULL
   `)
 }
 
+// Drop a revoked gmail_oauth credential so its status flips to disconnected.
 export async function deleteGmailRefreshToken(
   db: Db,
-  args: { tenantId: TenantId; userId: string },
+  args: { tenantId: TenantId; identityId: SendingIdentityId },
 ): Promise<void> {
   await db.execute(sql`
     DELETE FROM sending_identities
     WHERE tenant_id = ${args.tenantId}
-      AND user_id = ${args.userId}
+      AND identity_id = ${args.identityId}
       AND provider = 'gmail_oauth'
   `)
 }
 
-// Discriminated union so callers can map to HTTP status without re-implementing
-// the same error mapping in every route handler.
+// Discriminated union so callers map to HTTP status uniformly. Both providers
+// deliver from the Worker (kind 'sent'); messageId/threadId are Gmail-only (empty
+// for SMTP, which lets the provider stamp its own Message-ID).
 export type MailSendResult =
-  | { ok: true; messageId: string; threadId: string; from: string; identityId: SendingIdentityId }
+  | { ok: true; kind: 'sent'; messageId: string; threadId: string; from: string; identityId: SendingIdentityId }
   | { ok: false; httpStatus: 412; error: 'Gmail not connected' | 'Gmail token revoked'; detail: string }
   | { ok: false; httpStatus: 502; error: 'Send failed'; detail: string; from: string }
 
@@ -379,7 +452,9 @@ export async function sendForIdentity(
   db: Db,
   args: {
     tenantId: TenantId
-    userId: string
+    // Pre-resolved by the caller (resolveSendingIdentityId for project sends,
+    // the tenant's gmail id for owner notifications). Null → 412 not connected.
+    identityId: SendingIdentityId | null
     encryptionKey: string
     clientId: string
     clientSecret: string
@@ -403,7 +478,19 @@ export async function sendForIdentity(
     e2eRecipientOverride?: string | null
   },
 ): Promise<MailSendResult> {
-  const identity = await loadSendingIdentitySecret(db, args)
+  if (!args.identityId) {
+    return {
+      ok: false,
+      httpStatus: 412,
+      error: 'Gmail not connected',
+      detail: 'Connect your Google account in Account settings to enable email sending.',
+    }
+  }
+  const identity = await loadSendingIdentitySecretById(db, {
+    tenantId: args.tenantId,
+    identityId: args.identityId,
+    encryptionKey: args.encryptionKey,
+  })
   if (!identity) {
     return {
       ok: false,
@@ -411,6 +498,26 @@ export async function sendForIdentity(
       error: 'Gmail not connected',
       detail: 'Connect your Google account in Account settings to enable email sending.',
     }
+  }
+
+  // From is provider-determined (senderAddressFor): an SMTP mailbox can only send
+  // as its own address — a Gmail alias would break SPF/DKIM alignment. RFC822 is
+  // built per arm for Bcc: Gmail consumes the Bcc header as its envelope; the smtp
+  // arm omits it (bcc rides the explicit RCPT TO) so raw DATA never discloses bcc.
+  const sendAsEmail = senderAddressFor(identity.secret.provider, identity.fromEmail, args.senderEmailAlias)
+  const fromHeader = formatFromHeader(sendAsEmail, args.senderDisplayName ?? null)
+  const envelope = applyE2eRedirect(
+    { to: args.to, cc: args.cc, bcc: args.bcc, extraHeaders: args.extraHeaders },
+    args.e2eRecipientOverride,
+  )
+  const baseRfc822 = {
+    from: fromHeader,
+    to: envelope.to,
+    cc: envelope.cc,
+    subject: args.subject,
+    body: args.body,
+    inReplyTo: args.inReplyTo,
+    extraHeaders: envelope.extraHeaders,
   }
 
   switch (identity.secret.provider) {
@@ -428,7 +535,7 @@ export async function sendForIdentity(
           // Drop the stored credential so /auth/google-credentials/status flips to
           // `disconnected` and the UI surfaces the reconnect affordance instead of
           // showing a stale "connected" status.
-          await deleteGmailRefreshToken(db, args)
+          await deleteGmailRefreshToken(db, { tenantId: args.tenantId, identityId: identity.identityId })
           return {
             ok: false,
             httpStatus: 412,
@@ -439,29 +546,12 @@ export async function sendForIdentity(
         throw e
       }
 
-      const sendAsEmail = args.senderEmailAlias?.trim() || identity.fromEmail
-      const fromHeader = formatFromHeader(sendAsEmail, args.senderDisplayName ?? null)
-
-      const envelope = applyE2eRedirect(
-        { to: args.to, cc: args.cc, bcc: args.bcc, extraHeaders: args.extraHeaders },
-        args.e2eRecipientOverride,
-      )
-
-      const rfc822 = buildRfc822({
-        from: fromHeader,
-        to: envelope.to,
-        cc: envelope.cc,
-        bcc: envelope.bcc,
-        subject: args.subject,
-        body: args.body,
-        inReplyTo: args.inReplyTo,
-        extraHeaders: envelope.extraHeaders,
-      })
-
       try {
+        const rfc822 = buildRfc822({ ...baseRfc822, bcc: envelope.bcc })
         const result = await sendGmailMessage({ accessToken, rfc822 })
         return {
           ok: true,
+          kind: 'sent',
           messageId: result.id,
           threadId: result.threadId,
           from: sendAsEmail,
@@ -476,6 +566,27 @@ export async function sendForIdentity(
           from: sendAsEmail,
         }
       }
+    }
+    case 'smtp_imap': {
+      const recipients = [...envelope.to, ...(envelope.cc ?? []), ...(envelope.bcc ?? [])]
+      const result = await sendViaSmtp(
+        {
+          host: identity.secret.smtpHost,
+          port: identity.secret.smtpPort,
+          username: identity.secret.username,
+          appPassword: identity.secret.appPassword,
+        },
+        {
+          from: sendAsEmail,
+          recipients,
+          rfc822: buildRfc822({ ...baseRfc822, bodyEncoding: 'quoted-printable' }),
+        },
+      )
+      if (!result.ok) {
+        return { ok: false, httpStatus: 502, error: 'Send failed', detail: result.detail, from: sendAsEmail }
+      }
+      // No Gmail-style ids; the submission server stamps its own Message-ID.
+      return { ok: true, kind: 'sent', messageId: '', threadId: '', from: sendAsEmail, identityId: identity.identityId }
     }
   }
 }

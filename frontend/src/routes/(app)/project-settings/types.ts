@@ -8,6 +8,7 @@ import type {
 export type ProjectSettingsData = {
   projectId: string;
   outboundMode: OutboundMode;
+  sendingIdentityId: string | null;
   senderEmailAlias: string | null;
   senderDisplayName: string | null;
   unsubscribeEnabled: boolean;

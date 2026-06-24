@@ -88,6 +88,19 @@ describe('buildRfc822', () => {
     expect(rfc).toContain('To: b@y.com')
     expect(rfc).toContain('Content-Type: multipart/alternative; boundary="leadace-')
   })
+
+  // The smtp_imap send handoff (sendForIdentity) relies on this contract: it omits
+  // bcc from the args so the egressed message carries NO Bcc header — a raw SMTP
+  // send transmits DATA verbatim and would otherwise disclose hidden recipients.
+  // The Gmail arm passes bcc through, because the Gmail API uses the Bcc header as
+  // its send envelope and strips it from delivered copies.
+  it('emits a Bcc header only when bcc recipients are provided', () => {
+    const withBcc = buildRfc822({ ...base, bcc: ['hidden@z.com'] }).split('\r\n')
+    expect(withBcc).toContain('Bcc: hidden@z.com')
+
+    const noBcc = buildRfc822(base).split('\r\n')
+    expect(noBcc.some((l) => l.startsWith('Bcc:'))).toBe(false)
+  })
 })
 
 describe('plainTextToHtmlBody', () => {

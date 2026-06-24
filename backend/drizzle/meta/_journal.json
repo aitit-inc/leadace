@@ -330,6 +330,13 @@
       "when": 1782036403137,
       "tag": "0046_productive_prowler",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1782103492415,
+      "tag": "0047_left_blindfold",
+      "breakpoints": true
     }
   ]
 }

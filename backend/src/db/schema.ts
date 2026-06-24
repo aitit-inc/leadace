@@ -339,7 +339,8 @@ export const sendingIdentities = pgTable('sending_identities', {
   userId: text('user_id').notNull(),
   provider: sendingIdentityProviderEnum('provider').notNull(),
   fromEmail: text('from_email').notNull(),
-  scope: text('scope').notNull(),
+  // Granted OAuth scopes — gmail_oauth only; NULL for smtp_imap (no OAuth concept).
+  scope: text('scope'),
   secret: bytea('secret').notNull(),
   warmupStartedAt: timestamp('warmup_started_at', { withTimezone: true }),
   warmupEnabled: boolean('warmup_enabled').notNull().default(true),
@@ -349,8 +350,13 @@ export const sendingIdentities = pgTable('sending_identities', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   primaryKey({ columns: [table.tenantId, table.identityId] }),
-  // Backs the reconnect upsert: one identity per (tenant, user, provider).
-  unique('uq_sending_identities_tenant_user_provider').on(table.tenantId, table.userId, table.provider),
+  // One gmail_oauth per user (backs the reconnect upsert); partial so a tenant can
+  // hold several smtp_imap identities.
+  uniqueIndex('uq_sending_identities_gmail_per_user')
+    .on(table.tenantId, table.userId)
+    .where(sql`${table.provider} = 'gmail_oauth'`),
+  // No two identities share a From address within a tenant.
+  unique('uq_sending_identities_tenant_from_email').on(table.tenantId, table.fromEmail),
   index('idx_sending_identities_tenant_provider').on(table.tenantId, table.provider),
 ])
 
@@ -392,6 +398,8 @@ export const projectSettings = pgTable('project_settings', {
   outboundMode: outboundModeEnum('outbound_mode').notNull().default('send'),
   senderEmailAlias: text('sender_email_alias'),
   senderDisplayName: text('sender_display_name'),
+  // Per-project sending identity; NULL falls back to the tenant's connected Gmail.
+  sendingIdentityId: text('sending_identity_id'),
   // Recipient-facing company / brand name (e.g. "Acme Inc."). Paired with
   // senderDisplayName: the inquiry landing renders "From {senderDisplayName}
   // at {senderCompanyName}". NULL omits the "at ..." suffix. Distinct from
@@ -465,6 +473,13 @@ export const projectSettings = pgTable('project_settings', {
     foreignColumns: [projects.id, projects.tenantId],
     name: 'fk_project_settings_project_tenant',
   }).onDelete('cascade'),
+  // Same-tenant FK; NO ACTION blocks deleting an identity a project still points
+  // at (deleteSendingIdentity pre-checks for a friendly conflict).
+  foreignKey({
+    columns: [table.tenantId, table.sendingIdentityId],
+    foreignColumns: [sendingIdentities.tenantId, sendingIdentities.identityId],
+    name: 'fk_project_settings_sending_identity',
+  }),
   // signup mode is meaningless without a destination. The application-level
   // pre-check in updateProjectSettings races under concurrent partial PUTs
   // (one PUT flips type → 'signup', another nulls the URL — both pass their
