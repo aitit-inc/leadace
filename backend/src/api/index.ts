@@ -30,6 +30,7 @@ import { inquiryRouter } from './routes/inquiry'
 import { createDb } from '../db/connection'
 import { runDailySignalRefresh } from '../services/org-signals'
 import { runDailyBetaStats } from '../services/beta-stats'
+import { runReplyIngest } from '../services/reply-ingest'
 import type { Env, Variables } from './types'
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>()
@@ -94,16 +95,15 @@ app.onError((err, c) => {
 // 0 4 beta digest, or a temporary test cron) falls through to the digest, so
 // its schedule can change in wrangler without touching this dispatch.
 const ORG_SIGNALS_CRON = '0 3 * * *'
+// Hourly server-side reply poll; keep in sync with the wrangler.api.jsonc crons.
+const REPLY_INGEST_CRON = '0 * * * *'
 
 const handler = {
   fetch: app.fetch,
 
-  // Cloudflare cron handler. Runs as the system (no auth, no RLS): reads
-  // organizations cross-tenant to pick stale domains, and writes only the
-  // global org_signals_global table — no tenant-scoped writes, keeping the
-  // surface narrow so we don't accidentally bypass tenant isolation here.
-  // ctx.waitUntil keeps the worker alive past the cron tick's quick return
-  // until the refresh batch settles.
+  // Cron runs on a raw createDb connection that BYPASSES RLS, and reply-ingest
+  // performs tenant-scoped writes here — so every query on this path MUST filter
+  // by tenant_id explicitly; there is no RLS backstop.
   async scheduled(
     controller: ScheduledController,
     env: Env,
@@ -123,6 +123,22 @@ const handler = {
           .catch((e: unknown) => {
             console.error('[scheduled] org-signals refresh failed', e)
             // Scheduled failures never hit Hono onError — report them directly.
+            Sentry.captureException(e)
+          }),
+      )
+      return
+    }
+
+    if (controller.cron === REPLY_INGEST_CRON) {
+      ctx.waitUntil(
+        runReplyIngest(db, env)
+          .then((s) => {
+            console.log(
+              `[scheduled] reply-ingest polled=${s.identitiesPolled} skipped=${s.identitiesSkipped} errors=${s.pollErrors} recorded=${s.recorded} deduped=${s.deduped} unattributed=${s.unattributed} recordErrors=${s.recordErrors}`,
+            )
+          })
+          .catch((e: unknown) => {
+            console.error('[scheduled] reply-ingest failed', e)
             Sentry.captureException(e)
           }),
       )

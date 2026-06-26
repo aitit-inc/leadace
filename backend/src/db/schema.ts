@@ -346,6 +346,8 @@ export const sendingIdentities = pgTable('sending_identities', {
   warmupEnabled: boolean('warmup_enabled').notNull().default(true),
   dailyCapOverride: integer('daily_cap_override'),
   pausedUntil: timestamp('paused_until', { withTimezone: true }),
+  // Observability only — NOT a poll cursor (the poll re-searches a fixed window).
+  lastPolledAt: timestamp('last_polled_at', { withTimezone: true }),
   grantedAt: timestamp('granted_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
@@ -771,10 +773,17 @@ export const responses = pgTable('responses', {
   responseType: responseTypeEnum('response_type').notNull(),
   receivedAt: timestamp('received_at', { withTimezone: true }).defaultNow().notNull(),
   rejectionFeedback: jsonb('rejection_feedback').$type<RejectionFeedbackV1>(),
+  // Captured reply's Message-ID — idempotency key for server-side ingest re-polls.
+  // NULL for plugin / form / SNS responses.
+  sourceMessageId: text('source_message_id'),
 }, (table) => [
   // Required so inquiry_sessions can declare a composite (response_id,
   // tenant_id) foreign key (defense-in-depth on top of RLS).
   unique('uq_response_id_tenant').on(table.id, table.tenantId),
+  // Partial so the many NULL source_message_ids (plugin / form / SNS) never collide.
+  uniqueIndex('uq_responses_source_message')
+    .on(table.tenantId, table.sourceMessageId)
+    .where(sql`${table.sourceMessageId} IS NOT NULL`),
   // Composite FK ties outreach_log_id + tenant_id (defense-in-depth on top
   // of RLS). Folds in the former single-column .references().
   foreignKey({

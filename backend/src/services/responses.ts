@@ -67,6 +67,10 @@ export const recordResponseSchema = z.object({
     .optional(),
   markDoNotContact: z.boolean().default(false),
   rejectionFeedback: rejectionFeedbackSchema.optional(),
+  // Idempotency key for server-side reply ingest (the captured reply's own
+  // Message-ID). Plugin / form / SNS callers omit it; persisted to
+  // responses.source_message_id (partial-unique per tenant).
+  sourceMessageId: z.string().min(1).max(998).optional(),
 })
 export type RecordResponseInput = z.infer<typeof recordResponseSchema>
 
@@ -153,6 +157,7 @@ export async function recordResponse(
         responseType: input.responseType,
         receivedAt,
         rejectionFeedback: input.rejectionFeedback,
+        sourceMessageId: input.sourceMessageId ?? null,
       })
       .returning({ id: responses.id }),
   ])

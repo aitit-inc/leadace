@@ -53,6 +53,44 @@ export async function callGeminiGrounded(args: GeminiGroundedArgs): Promise<stri
   return text
 }
 
+type GeminiStructuredArgs = {
+  apiKey: string
+  model: string
+  prompt: string
+  responseSchema: Schema
+  temperature: number
+  maxOutputTokens: number
+}
+
+// Structured JSON output without web grounding — for classification/extraction.
+export async function callGeminiStructured(args: GeminiStructuredArgs): Promise<string> {
+  const ai = new GoogleGenAI({ apiKey: args.apiKey })
+  let text: string | undefined
+  try {
+    const response = await ai.models.generateContent({
+      model: args.model,
+      contents: args.prompt,
+      config: {
+        temperature: args.temperature,
+        maxOutputTokens: args.maxOutputTokens,
+        responseMimeType: 'application/json',
+        responseSchema: args.responseSchema,
+      },
+    })
+    text = response.text?.trim()
+  } catch (e) {
+    if (e instanceof ApiError) {
+      console.error('Gemini generateContent non-2xx', { status: e.status, detail: e.message })
+      throw new GeminiError('upstream LLM request failed', e.status)
+    }
+    throw e
+  }
+  if (!text) {
+    throw new GeminiError('upstream LLM returned empty output', 502)
+  }
+  return text
+}
+
 type GeminiTextArgs = {
   apiKey: string
   model: string

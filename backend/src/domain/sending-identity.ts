@@ -43,7 +43,16 @@ export function parseSendingIdentitySecret(
   switch (provider) {
     case 'gmail_oauth':
       return { provider, refreshToken: decryptedSecret }
-    case 'smtp_imap':
-      return { provider, ...smtpImapSecretPayloadSchema.parse(JSON.parse(decryptedSecret)) }
+    case 'smtp_imap': {
+      let payload: unknown
+      try {
+        payload = JSON.parse(decryptedSecret)
+      } catch {
+        // Never surface decryptedSecret: V8's JSON.parse message embeds an input
+        // snippet, which here would leak the app password into logs / Sentry.
+        throw new Error('malformed smtp_imap secret payload')
+      }
+      return { provider, ...smtpImapSecretPayloadSchema.parse(payload) }
+    }
   }
 }
