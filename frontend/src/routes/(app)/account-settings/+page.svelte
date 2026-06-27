@@ -102,7 +102,7 @@
 
 <section class="mb-10">
   <h3 class="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">
-    Gmail send permission
+    Gmail permissions
   </h3>
   <div class="rounded-md border border-border p-5">
     {#if data.gmailStatus.state === 'connected'}
@@ -110,8 +110,8 @@
         Connected as <span class="font-mono">{data.gmailStatus.email}</span>
       </p>
       <p class="text-text-muted text-xs mt-1">
-        LeadAce can send email on your behalf via Gmail (gmail.send scope only). Reply checking
-        runs locally through claude.ai's Gmail MCP.
+        LeadAce can send email on your behalf and read your Gmail inbox (read-only) to detect and
+        classify replies to your outreach. It never modifies or deletes your messages.
       </p>
     {:else if data.gmailStatus.state === 'disconnected'}
       <p class="text-danger text-sm mb-3">Gmail is not connected.</p>

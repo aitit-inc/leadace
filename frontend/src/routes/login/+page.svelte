@@ -4,6 +4,7 @@
   import { isSafeRelativePath } from '$lib/redirect';
   import Logo from '$lib/components/Logo.svelte';
   import { EDITION } from '$lib/config';
+  import { GOOGLE_OAUTH_SCOPES } from '$lib/gmail-oauth';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
@@ -29,19 +30,6 @@
   let deletedNotice = $state(page.url.searchParams.get('deleted') === '1');
   let loading = $state(false);
 
-  // gmail.send is the only Gmail scope LeadAce needs. It's Sensitive (not Restricted),
-  // so verification doesn't require CASA. With this scope alone we can send from any
-  // Send-As alias the user has already verified in their Gmail web UI — Gmail honors
-  // the From: header for accepted aliases. Listing aliases programmatically would
-  // require gmail.settings.basic / .sharing, both Restricted (CASA-gated), so we
-  // intentionally let users type their alias address by hand instead.
-  const GOOGLE_SCOPES = [
-    'openid',
-    'profile',
-    'email',
-    'https://www.googleapis.com/auth/gmail.send',
-  ].join(' ');
-
   async function handleGoogle() {
     error = '';
     loading = true;
@@ -65,7 +53,7 @@
       provider: 'google',
       options: {
         redirectTo: `${window.location.origin}/auth/callback`,
-        scopes: GOOGLE_SCOPES,
+        scopes: GOOGLE_OAUTH_SCOPES,
         queryParams: {
           // access_type=offline + prompt=consent forces Google to issue a
           // refresh_token that the backend can use to mint short-lived access
@@ -128,8 +116,10 @@
     {/if}
 
     <p class="mt-6 text-[11px] text-text-muted">
-      LeadAce will request permission to send email on your behalf via Gmail (gmail.send). We never
-      read or modify your inbox; reply checking is done locally via the Gmail MCP in claude.ai.
+      LeadAce will request permission to send email on your behalf and to read your Gmail inbox
+      (read-only) to detect and classify replies to your outreach. We never modify or delete your
+      messages. See our <a href="/privacy" class="underline hover:text-text">Privacy Policy</a> for
+      how this data is used.
     </p>
 
     {#if EDITION === 'cloud'}

@@ -1,18 +1,27 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-const GMAIL_SEND_SCOPES = 'openid profile email https://www.googleapis.com/auth/gmail.send';
+// Single source of truth for the Google OAuth scopes we request and for the
+// callback's persisted-scope fallback.
+//
+// gmail.send (Sensitive) sends outbound mail, incl. from a verified Send-As
+// alias, so we avoid the Restricted gmail.settings.* scopes. gmail.readonly
+// powers server-side reply collection (the reply-ingest cron); it's Restricted,
+// so the consent screen shows an "unverified app" warning until Google's CASA
+// verification of this OAuth app completes.
+export const GOOGLE_OAUTH_SCOPES =
+  'openid profile email https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly';
 
-// Initiate the Google OAuth flow that grants the gmail.send scope. The OAuth
-// redirect lands at /auth/callback, where the server persists the refresh
-// token and bounces the user back into the app. On successful initiation the
-// browser is navigated away to Google, so this never resolves to `null` on
-// the success path — only error returns mean the redirect did not start.
+// Initiate the Google OAuth flow. The redirect lands at /auth/callback, where the
+// server persists the refresh token and bounces the user back into the app. On
+// successful initiation the browser navigates away to Google, so this never
+// resolves to `null` on the success path — only error returns mean the redirect
+// did not start.
 export async function connectGmail(supabase: SupabaseClient): Promise<string | null> {
   const { error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
       redirectTo: `${window.location.origin}/auth/callback`,
-      scopes: GMAIL_SEND_SCOPES,
+      scopes: GOOGLE_OAUTH_SCOPES,
       queryParams: { access_type: 'offline', prompt: 'consent' },
     },
   });

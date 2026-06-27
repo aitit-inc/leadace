@@ -2,6 +2,7 @@ import { isHttpError, redirect, type Cookies } from '@sveltejs/kit';
 import { ApiError } from '$lib/api';
 import { saveGoogleCredentials } from '$lib/api/auth-google';
 import { getOnboardingStatus } from '$lib/api/onboarding';
+import { GOOGLE_OAUTH_SCOPES } from '$lib/gmail-oauth';
 import { isSafeRelativePath } from '$lib/redirect';
 import type { RequestHandler } from './$types';
 
@@ -71,9 +72,7 @@ export const GET: RequestHandler = async ({ url, cookies, fetch, locals }) => {
 			await saveGoogleCredentials(
 				{
 					refreshToken,
-					scope:
-						providerScope ??
-						'openid profile email https://www.googleapis.com/auth/gmail.send',
+					scope: providerScope ?? GOOGLE_OAUTH_SCOPES,
 					email,
 				},
 				fetch,
