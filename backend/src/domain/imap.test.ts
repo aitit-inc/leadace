@@ -68,6 +68,12 @@ describe('parseFetchMessages', () => {
     ])
   })
 
+  it('reads a partial-fetch BODY[]<0> literal the same as a full BODY[]', () => {
+    const m = 'From: a@b.com\r\n\r\nhi'
+    const buf = `* 1 FETCH (UID 5 BODY[]<0> {${m.length}}\r\n${m})\r\na1 OK\r\n`
+    expect(parseFetchMessages(buf)).toEqual([{ uid: 5, raw: m }])
+  })
+
   it('captures a raw message that itself contains parentheses', () => {
     const m = 'Subject: re (urgent) :)\r\n\r\nbody )('
     const buf = `* 1 FETCH (UID 3 BODY[] {${m.length}}\r\n${m})\r\na1 OK\r\n`

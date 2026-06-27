@@ -5,6 +5,7 @@ import { asTenantId, type TenantId } from '../domain/ids'
 import { parseSendingIdentitySecret } from '../domain/sending-identity'
 import {
   attributeReply,
+  bounceMatchesFinalRecipient,
   toInboundReply,
   type CapturedReply,
   type OutreachCandidate,
@@ -48,6 +49,14 @@ export type ReplyIngestSummary = {
   deduped: number
   unattributed: number
   recordErrors: number
+  // Bounce attribution instrumentation (option A recall measurement). Both span
+  // every bounce in the poll's lookback window — per-poll SNAPSHOTS, comparable to
+  // each other within one run, not unique counts to sum across runs. threaded =
+  // bound to our Message-ID (recorded + DNC); unthreaded = a DSN whose
+  // Final-Recipient matched a real recent send but carried no Message-ID we
+  // generated, so it is dropped (the recall A trades for spoof-safety).
+  bouncesThreaded: number
+  bouncesUnthreaded: number
 }
 
 type IdentityRow = {
@@ -88,6 +97,7 @@ async function loadCandidates(
       outreachLogId: outreachLogs.id,
       prospectEmail: prospects.email,
       sentAt: outreachLogs.sentAt,
+      messageId: outreachLogs.messageId,
     })
     .from(outreachLogs)
     .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
@@ -102,7 +112,9 @@ async function loadCandidates(
       ),
     )
   return rows.flatMap((r) =>
-    r.prospectEmail ? [{ outreachLogId: r.outreachLogId, prospectEmail: r.prospectEmail, sentAt: r.sentAt }] : [],
+    r.prospectEmail
+      ? [{ outreachLogId: r.outreachLogId, prospectEmail: r.prospectEmail, sentAt: r.sentAt, messageId: r.messageId }]
+      : [],
   )
 }
 
@@ -196,17 +208,45 @@ async function ingestIdentity(
   const now = new Date()
 
   for (const { captured, reply } of inbound) {
+    const det = detectDeterministicType(captured.email)
+    const attribution = attributeReply(reply, candidates, ATTRIBUTION_WINDOW_DAYS, now)
+
+    // Bounce-recall instrumentation, ORTHOGONAL to the recorded/deduped/
+    // unattributed partition below. Classify EVERY bounce this poll re-fetches
+    // over the lookback window — before the dedup short-circuit — so both counters
+    // span the same population and are directly comparable as option A's recall:
+    // threaded (recorded + DNC) vs Final-Recipient-only (dropped — the recall A
+    // trades for spoof-safety). These are per-poll snapshots of the trailing
+    // window, NOT unique counts; read one cron line's ratio, don't sum across runs.
+    if (det === 'bounce') {
+      if (attribution?.binding === 'threaded') {
+        summary.bouncesThreaded++
+      } else if (
+        reply.dsn &&
+        bounceMatchesFinalRecipient(reply.dsn.finalRecipients, candidates, ATTRIBUTION_WINDOW_DAYS, now)
+      ) {
+        summary.bouncesUnthreaded++
+      }
+    }
+
     if (seen.has(reply.messageId)) {
       summary.deduped++
       continue
     }
-    const outreachLogId = attributeReply(reply, candidates, ATTRIBUTION_WINDOW_DAYS, now)
-    if (outreachLogId === null) {
+
+    // Trust gate: a bounce records (forces DNC) only when bound to a Message-ID we
+    // generated. A bounce attributed only by sender / Final-Recipient is forgeable,
+    // so it is dropped — closing the spoofed-DNC vector (option A).
+    if (det === 'bounce' && attribution?.binding !== 'threaded') {
       summary.unattributed++
       continue
     }
+    if (attribution === null) {
+      summary.unattributed++
+      continue
+    }
+    const outreachLogId = attribution.outreachLogId
 
-    const det = detectDeterministicType(captured.email)
     const classified = det
       ? { responseType: det, sentiment: 'neutral' as const }
       : (await classifyReply(env, { subject: reply.subject, bodyText: reply.bodyText })) ??
@@ -260,6 +300,8 @@ export async function runReplyIngest(db: Db, env: ReplyIngestEnv): Promise<Reply
     deduped: 0,
     unattributed: 0,
     recordErrors: 0,
+    bouncesThreaded: 0,
+    bouncesUnthreaded: 0,
   }
 
   const identities = await db.execute<IdentityRow>(sql`

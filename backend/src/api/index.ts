@@ -134,7 +134,7 @@ const handler = {
         runReplyIngest(db, env)
           .then((s) => {
             console.log(
-              `[scheduled] reply-ingest polled=${s.identitiesPolled} skipped=${s.identitiesSkipped} errors=${s.pollErrors} recorded=${s.recorded} deduped=${s.deduped} unattributed=${s.unattributed} recordErrors=${s.recordErrors}`,
+              `[scheduled] reply-ingest polled=${s.identitiesPolled} skipped=${s.identitiesSkipped} errors=${s.pollErrors} recorded=${s.recorded} deduped=${s.deduped} unattributed=${s.unattributed} recordErrors=${s.recordErrors} bouncesThreaded=${s.bouncesThreaded} bouncesUnthreaded=${s.bouncesUnthreaded}`,
             )
           })
           .catch((e: unknown) => {

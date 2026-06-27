@@ -8,7 +8,8 @@ import {
   binaryToUtf8,
 } from '../domain/imap'
 import { encodeAuthPlain } from '../domain/smtp'
-import { parseEmailMessage, getHeader } from '../domain/email-message'
+import { parseEmailMessage, getHeader, flattenMessageParts } from '../domain/email-message'
+import { parseDsn } from '../domain/dsn'
 import type { CapturedReply } from '../domain/reply'
 
 // Poll-only IMAP over 993 implicit TLS (cloudflare:sockets connect()); smtp_imap
@@ -26,17 +27,23 @@ export type ImapPollResult =
   | { ok: false; detail: string }
 
 function toCaptured(rawBinary: string): CapturedReply {
-  const email = parseEmailMessage(binaryToUtf8(rawBinary))
+  const raw = binaryToUtf8(rawBinary)
+  const email = parseEmailMessage(raw)
   const dateHeader = getHeader(email.headers, 'date')
   const parsed = dateHeader ? new Date(dateHeader) : null
   const receivedAt = parsed && !Number.isNaN(parsed.getTime()) ? parsed : new Date()
-  return { email, receivedAt }
+  // The partial fetch (BODY.PEEK[]<0.128K>) keeps a DSN's delivery-status and
+  // returned-original headers, which sit near the top — enough for parseDsn.
+  return { email, receivedAt, dsn: parseDsn(flattenMessageParts(raw)) }
 }
 
 const POLL_TIMEOUT_MS = 30_000
 // Cap the buffer so one oversized mailbox can't OOM-kill the shared cron isolate
 // and starve every other identity; an over-cap poll fails for that identity only.
 const MAX_RESPONSE_BYTES = 25 * 1024 * 1024
+// Partial-fetch each message's start, not the whole RFC822: a reply's text is
+// top-posted, so this skips attachment bloat that otherwise trips MAX_RESPONSE_BYTES.
+const MAX_FETCH_OCTETS = 128 * 1024
 const enc = new TextEncoder()
 
 class ImapError extends Error {}
@@ -141,7 +148,7 @@ async function runPoll(
       return []
     }
 
-    const fetch = await command(`UID FETCH ${uids.join(',')} (UID BODY.PEEK[])`)
+    const fetch = await command(`UID FETCH ${uids.join(',')} (UID BODY.PEEK[]<0.${MAX_FETCH_OCTETS}>)`)
     expectOk(fetch.tag, fetch.response, 'FETCH')
     const messages = parseFetchMessages(fetch.response)
 

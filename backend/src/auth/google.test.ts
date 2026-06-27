@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildComplianceAttachments,
   buildRfc822,
+  generateRfc822MessageId,
   plainTextToHtmlBody,
   formatFromHeader,
   applyE2eRedirect,
@@ -100,6 +101,32 @@ describe('buildRfc822', () => {
 
     const noBcc = buildRfc822(base).split('\r\n')
     expect(noBcc.some((l) => l.startsWith('Bcc:'))).toBe(false)
+  })
+
+  it('emits a Message-ID header only when provided, CR/LF-stripped', () => {
+    const withId = buildRfc822({ ...base, messageId: '<tok@x.com>' }).split('\r\n')
+    expect(withId).toContain('Message-ID: <tok@x.com>')
+
+    const noId = buildRfc822(base).split('\r\n')
+    expect(noId.some((l) => l.startsWith('Message-ID:'))).toBe(false)
+
+    const injected = buildRfc822({ ...base, messageId: '<tok@x.com>\r\nBcc: evil@z.com' }).split('\r\n')
+    expect(injected).not.toContain('Bcc: evil@z.com')
+    expect(injected).toContain('Message-ID: <tok@x.com>Bcc: evil@z.com')
+  })
+})
+
+describe('generateRfc822MessageId', () => {
+  it('produces a bracketed <token@from-domain> id', () => {
+    expect(generateRfc822MessageId('sales@surpassone.com')).toMatch(/^<[a-z0-9]{32}@surpassone\.com>$/)
+  })
+
+  it('falls back to a constant domain when From lacks one', () => {
+    expect(generateRfc822MessageId('not-an-email')).toMatch(/^<[a-z0-9]{32}@leadace\.ai>$/)
+  })
+
+  it('is unguessably unique across calls', () => {
+    expect(generateRfc822MessageId('a@x.com')).not.toBe(generateRfc822MessageId('a@x.com'))
   })
 })
 

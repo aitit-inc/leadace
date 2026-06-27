@@ -739,7 +739,7 @@ export async function sendAndRecord(
   // sentAt stays at pre_send allocation time — see updateOutreachStatus.
   await db
     .update(outreachLogs)
-    .set({ status: 'sent', fromEmail: result.from })
+    .set({ status: 'sent', fromEmail: result.from, messageId: result.rfc822MessageId })
     .where(eq(outreachLogs.id, log.id))
   await markProspectContacted(db, projectId, input.prospectId, sentAt, log.id)
   await stampMailboxFirstSendIfNeeded(db, tenantId, sendingIdentityId, sentAt)
@@ -1136,7 +1136,7 @@ export async function sendDraft(
       status: result.ok ? 'sent' : 'failed',
       sentAt,
       errorMessage: result.ok ? null : result.detail,
-      ...(result.ok ? { fromEmail: result.from, sendingIdentityId: result.identityId } : {}),
+      ...(result.ok ? { fromEmail: result.from, sendingIdentityId: result.identityId, messageId: result.rfc822MessageId } : {}),
     })
     .where(eq(outreachLogs.id, draft.id))
 

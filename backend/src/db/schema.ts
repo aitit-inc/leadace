@@ -649,6 +649,14 @@ export const outreachLogs = pgTable('outreach_logs', {
   touchNumber: smallint('touch_number').notNull().default(1),
   sendingIdentityId: text('sending_identity_id'),
   fromEmail: text('from_email'),
+  // Self-generated RFC822 Message-ID set on the outgoing message (both gmail and
+  // smtp arms). The anchor for reply/bounce threading: a reply's In-Reply-To /
+  // References or a DSN's returned original Message-ID matching this value is an
+  // unforgeable attribution, so it (not sender-recency) gates bounce DNC. Set
+  // only when an email send completes (sendAndRecord / sendDraft), so NULL for
+  // unsent (pending_review) drafts, form / SNS rows, and sends made before this
+  // column existed.
+  messageId: text('message_id'),
 }, (table) => [
   // Required so responses / inquiry_tokens / inquiry_sessions can declare a
   // composite (outreach_log_id, tenant_id) foreign key (defense-in-depth on

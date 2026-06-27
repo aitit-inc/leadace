@@ -123,6 +123,10 @@ export function buildRfc822(args: {
   bcc?: string[]
   subject: string
   body: string
+  // Self-generated RFC822 Message-ID (with angle brackets). Set on every send so
+  // replies/bounces thread back to it. Gmail preserves a provided Message-ID; most
+  // MSAs preserve it too (a rewriting MSA degrades that identity to sender-recency).
+  messageId?: string
   inReplyTo?: string
   extraHeaders?: Record<string, string>
   // SMTP passes 'quoted-printable' (7-bit-clean, no 8BITMIME); Gmail API takes 8bit.
@@ -137,6 +141,11 @@ export function buildRfc822(args: {
   if (args.cc && args.cc.length > 0) lines.push(`Cc: ${args.cc.join(', ')}`)
   if (args.bcc && args.bcc.length > 0) lines.push(`Bcc: ${args.bcc.join(', ')}`)
   lines.push(`Subject: ${encodeMimeHeader(args.subject)}`)
+  if (args.messageId) {
+    // CR/LF strip is defense-in-depth: the value is server-generated, but a
+    // header line must never carry an embedded newline (header injection).
+    lines.push(`Message-ID: ${args.messageId.replace(/[\r\n]/g, '')}`)
+  }
   if (args.inReplyTo) {
     // Defense-in-depth against header injection: schema is the primary guard,
     // but a CR/LF leak here would let a caller inject arbitrary headers (Bcc).
@@ -271,6 +280,18 @@ const SENDING_IDENTITY_ID_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnop
 
 export function generateSendingIdentityId(): string {
   return randomFromAlphabet(SENDING_IDENTITY_ID_ALPHABET, 21)
+}
+
+// RFC822 Message-ID anchor for reply/bounce threading: `<{32 random}@{from-domain}>`.
+// The 32-char random local-part is the unforgeable token — a spoofer can't guess
+// it, so a reply/DSN echoing it is trusted attribution. Right-hand side mirrors the
+// From domain for plausibility; it falls back to a constant when From lacks a domain.
+const MESSAGE_ID_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789'
+export function generateRfc822MessageId(fromEmail: string): string {
+  const at = fromEmail.lastIndexOf('@')
+  const rawDomain = at >= 0 && at < fromEmail.length - 1 ? fromEmail.slice(at + 1) : 'leadace.ai'
+  const domain = rawDomain.replace(/[^A-Za-z0-9.-]/g, '') || 'leadace.ai'
+  return `<${randomFromAlphabet(MESSAGE_ID_ALPHABET, 32)}@${domain}>`
 }
 
 // On reconnect (ON CONFLICT) the warmup state and identity_id are left untouched
@@ -428,10 +449,12 @@ export async function deleteGmailRefreshToken(
 }
 
 // Discriminated union so callers map to HTTP status uniformly. Both providers
-// deliver from the Worker (kind 'sent'); messageId/threadId are Gmail-only (empty
-// for SMTP, which lets the provider stamp its own Message-ID).
+// deliver from the Worker (kind 'sent'). messageId/threadId are the Gmail
+// resource ids (empty for SMTP). rfc822MessageId is the self-generated RFC822
+// Message-ID header we set on BOTH arms — the threading anchor persisted to
+// outreach_logs.message_id (distinct from Gmail's resource id).
 export type MailSendResult =
-  | { ok: true; kind: 'sent'; messageId: string; threadId: string; from: string; identityId: SendingIdentityId }
+  | { ok: true; kind: 'sent'; messageId: string; threadId: string; rfc822MessageId: string; from: string; identityId: SendingIdentityId }
   | { ok: false; httpStatus: 412; error: 'Gmail not connected' | 'Gmail token revoked'; detail: string }
   | { ok: false; httpStatus: 502; error: 'Send failed'; detail: string; from: string }
 
@@ -510,12 +533,16 @@ export async function sendForIdentity(
     { to: args.to, cc: args.cc, bcc: args.bcc, extraHeaders: args.extraHeaders },
     args.e2eRecipientOverride,
   )
+  // Generate once and reuse across the arm switch so the value set on the wire is
+  // exactly what we return for persistence to outreach_logs.message_id.
+  const rfc822MessageId = generateRfc822MessageId(sendAsEmail)
   const baseRfc822 = {
     from: fromHeader,
     to: envelope.to,
     cc: envelope.cc,
     subject: args.subject,
     body: args.body,
+    messageId: rfc822MessageId,
     inReplyTo: args.inReplyTo,
     extraHeaders: envelope.extraHeaders,
   }
@@ -554,6 +581,7 @@ export async function sendForIdentity(
           kind: 'sent',
           messageId: result.id,
           threadId: result.threadId,
+          rfc822MessageId,
           from: sendAsEmail,
           identityId: identity.identityId,
         }
@@ -585,8 +613,9 @@ export async function sendForIdentity(
       if (!result.ok) {
         return { ok: false, httpStatus: 502, error: 'Send failed', detail: result.detail, from: sendAsEmail }
       }
-      // No Gmail-style ids; the submission server stamps its own Message-ID.
-      return { ok: true, kind: 'sent', messageId: '', threadId: '', from: sendAsEmail, identityId: identity.identityId }
+      // No Gmail resource ids for SMTP; rfc822MessageId is the Message-ID we set
+      // in the DATA payload (preserved by the MSA for threading).
+      return { ok: true, kind: 'sent', messageId: '', threadId: '', rfc822MessageId, from: sendAsEmail, identityId: identity.identityId }
     }
   }
 }
