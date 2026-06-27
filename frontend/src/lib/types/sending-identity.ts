@@ -15,7 +15,6 @@ export type SendingIdentity = {
   identityId: string;
   provider: SendingIdentityProvider;
   fromEmail: string;
-  warmupEnabled: boolean;
   warmupStartedAt: string | null;
   dailyCapOverride: number | null;
   // Derived per-mailbox daily-cap health (mirrors backend mailboxDailyStatus):
@@ -45,7 +44,6 @@ export type RegisterSmtpIdentityInput = {
 
 // Partial warmup patch for PUT /me/sending-identities/:id/warmup.
 export type MailboxWarmupPatch = {
-  warmupEnabled?: boolean;
   dailyCapOverride?: number | null;
   pausedUntil?: string | null;
 };
@@ -55,7 +53,6 @@ export type MailboxWarmupPatch = {
 export type MailboxHealth = {
   kind: 'active';
   email: string;
-  warmupEnabled: boolean;
   warmupStartedAt: string | null;
   dailyCapOverride: number | null;
   pausedUntil: string | null;

@@ -32,7 +32,7 @@
 # non-empty day doesn't skew the assertions.
 #
 # Does NOT delete the tenant's real Gmail sending_identities row: it snapshots and
-# restores the four warmup columns (or removes a dummy row it inserted itself).
+# restores the three warmup columns (or removes a dummy row it inserted itself).
 # Relies on the tenant being compliance-ready (legalName / physicalAddress /
 # defaultSenderCountry set) and on US sends being allowed — same baseline as
 # regression-followup-sequence.sh. If the first send is not 2xx, that is the
@@ -98,10 +98,10 @@ started_null() { psql_local "SELECT (warmup_started_at IS NULL) FROM sending_ide
 put_warmup()        { api PUT "/api/me/sending-identities/$GMAIL_IDENTITY_ID/warmup" "$1"; }
 put_warmup_status() { curl -sS -o /dev/null -w '%{http_code}' -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d "$1" "$API_URL/api/me/sending-identities/$GMAIL_IDENTITY_ID/warmup"; }
 
-# Set the four warmup columns. Args are raw SQL fragments (NULL / number /
+# Set the three warmup columns. Args are raw SQL fragments (NULL / number /
 # NOW()-expr) so callers control nullability precisely.
-set_warmup() { # enabled started_at override paused
-  psql_local "UPDATE sending_identities SET warmup_enabled=$1, warmup_started_at=$2, daily_cap_override=$3, paused_until=$4 WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth';" >/dev/null
+set_warmup() { # started_at override paused
+  psql_local "UPDATE sending_identities SET warmup_started_at=$1, daily_cap_override=$2, paused_until=$3 WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth';" >/dev/null
 }
 
 # POST a 'sent' outreach; echoes only the HTTP status code.
@@ -136,14 +136,11 @@ TENANT_ID="$(psql_local "SELECT tenant_id FROM tenant_members WHERE user_id = '$
 say "tenant_id=$TENANT_ID"
 
 # Snapshot the mailbox so we never destroy a real connected Gmail row. If a row
-# exists, capture the four warmup columns (empty string = SQL NULL) and restore
+# exists, capture the three warmup columns (empty string = SQL NULL) and restore
 # them on teardown; if not, insert a dummy and delete it on teardown.
 HAD_GMAIL="$(psql_local "SELECT EXISTS(SELECT 1 FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth');")"
-SNAP_ENABLED=""; SNAP_STARTED=""; SNAP_OVERRIDE=""; SNAP_PAUSED=""
+SNAP_STARTED=""; SNAP_OVERRIDE=""; SNAP_PAUSED=""
 if [[ "$HAD_GMAIL" == "t" ]]; then
-  # plain boolean → 't'/'f' (NOT ::text, which renders 'true'/'false' and would
-  # never match the == 't' check in restore_and_exit, silently forcing false).
-  SNAP_ENABLED="$(psql_local "SELECT warmup_enabled FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth';")"
   SNAP_STARTED="$(psql_local "SELECT COALESCE(warmup_started_at::text,'') FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth';")"
   SNAP_OVERRIDE="$(psql_local "SELECT COALESCE(daily_cap_override::text,'') FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth';")"
   SNAP_PAUSED="$(psql_local "SELECT COALESCE(paused_until::text,'') FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth';")"
@@ -168,12 +165,11 @@ restore_and_exit() {
   fi
   echo "" >&2; echo "=== teardown ===" >&2
   if [[ "$HAD_GMAIL" == "t" ]]; then
-    local enabled_sql started_sql override_sql paused_sql
-    enabled_sql="$([[ "$SNAP_ENABLED" == "t" ]] && echo true || echo false)"
+    local started_sql override_sql paused_sql
     started_sql="$([[ -z "$SNAP_STARTED" ]] && echo NULL || echo "'$SNAP_STARTED'")"
     override_sql="$([[ -z "$SNAP_OVERRIDE" ]] && echo NULL || echo "$SNAP_OVERRIDE")"
     paused_sql="$([[ -z "$SNAP_PAUSED" ]] && echo NULL || echo "'$SNAP_PAUSED'")"
-    set_warmup "$enabled_sql" "$started_sql" "$override_sql" "$paused_sql"
+    set_warmup "$started_sql" "$override_sql" "$paused_sql"
     say "restored mailbox warmup state"
   else
     psql_local "DELETE FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth' AND user_id='$USER_ID';" >/dev/null || true
@@ -210,7 +206,7 @@ BASELINE="$(mq used)"
 say "baseline email used today=$BASELINE"
 
 step "1. ramp wiring: 15d-old mailbox (week 2) surfaces the week-2 ramp cap (17)"
-set_warmup true "NOW() - INTERVAL '15 days'" NULL NULL
+set_warmup "NOW() - INTERVAL '15 days'" NULL NULL
 assert_eq "mailboxQuota.kind=capped" "$(mq kind)" "capped"
 assert_eq "ramp cap = week-2 step (17)" "$(mq cap)" "17"
 
@@ -220,24 +216,23 @@ assert_eq "health cap = week-2 step (17)" "$(mh cap)" "17"
 assert_eq "health rampWeek=2" "$(mh rampWeek)" "2"
 assert_eq "health rampWeeks=4" "$(mh rampWeeks)" "4"
 assert_eq "health steadyStatePerDay=25" "$(mh steadyStatePerDay)" "25"
-assert_eq "health warmupEnabled=true" "$(mh warmupEnabled)" "true"
 
 step "1c. paused mailbox: health caps at 0 and reports the pause"
-set_warmup true "NOW() - INTERVAL '15 days'" NULL "NOW() + INTERVAL '1 day'"
+set_warmup "NOW() - INTERVAL '15 days'" NULL "NOW() + INTERVAL '1 day'"
 assert_eq "health still active" "$(mh kind)" "active"
 assert_eq "health cap=0 while paused" "$(mh cap)" "0"
 assert_eq "health pausedUntil present" "$([[ "$(mh pausedUntil)" == null || -z "$(mh pausedUntil)" ]] && echo absent || echo present)" "present"
 
 step "2. first EMAIL send stamps warmup_started_at (ramp clock starts at first use)"
-# Disable ramp + high override so the send itself can't be blocked; isolate the stamp.
-set_warmup false NULL "$((BASELINE + 10))" NULL
+# High override so the send itself can't be blocked; isolate the stamp.
+set_warmup NULL "$((BASELINE + 10))" NULL
 assert_eq "pre: warmup_started_at IS NULL" "$(started_null)" "t"
 assert_eq "email send e1 → 2xx" "$(send_status "$P_E1" email | cut -c1)" "2"
 assert_eq "post: warmup_started_at stamped" "$(started_null)" "f"
 assert_eq "email send counted (used = baseline+1)" "$(mq used)" "$((BASELINE + 1))"
 
 step "3+4. threshold block + email-only counting (cap = baseline+2)"
-set_warmup false NULL "$((BASELINE + 2))" NULL
+set_warmup NULL "$((BASELINE + 2))" NULL
 assert_eq "remaining = 1 (cap baseline+2, used baseline+1)" "$(mq remaining)" "1"
 assert_eq "email send e2 → 2xx (reaches cap)" "$(send_status "$P_E2" email | cut -c1)" "2"
 assert_eq "remaining = 0 at cap" "$(mq remaining)" "0"
@@ -249,18 +244,17 @@ assert_eq "email used unchanged by form send (baseline+2)" "$(mq used)" "$((BASE
 
 step "6. operator write path: PUT /me/sending-identities/:id/warmup"
 # Known state: week-2 ramp (cap 17), no override, not paused.
-set_warmup true "NOW() - INTERVAL '15 days'" NULL NULL
+set_warmup "NOW() - INTERVAL '15 days'" NULL NULL
 
 W6A="$(put_warmup '{"dailyCapOverride":5}')"
 assert_eq "6a put kind=active" "$(echo "$W6A" | jq -r .kind)" "active"
-assert_eq "6a override applied (cap=min(17,5)=5)" "$(echo "$W6A" | jq -r .cap)" "5"
+assert_eq "6a override is the cap, below the ramp (cap=5)" "$(echo "$W6A" | jq -r .cap)" "5"
 assert_eq "6a dailyCapOverride=5" "$(echo "$W6A" | jq -r .dailyCapOverride)" "5"
 assert_eq "6a write hit DB (daily_cap_override=5)" "$(psql_local "SELECT daily_cap_override FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth';")" "5"
 
-W6B="$(put_warmup '{"warmupEnabled":false}')"
-assert_eq "6b warmupEnabled=false" "$(echo "$W6B" | jq -r .warmupEnabled)" "false"
-assert_eq "6b dailyCapOverride untouched (5)" "$(echo "$W6B" | jq -r .dailyCapOverride)" "5"
-assert_eq "6b cap = override (warmup off → 5)" "$(echo "$W6B" | jq -r .cap)" "5"
+W6B="$(put_warmup '{"dailyCapOverride":50}')"
+assert_eq "6b override raises cap above the week-2 ramp (17 → 50)" "$(echo "$W6B" | jq -r .cap)" "50"
+assert_eq "6b dailyCapOverride=50" "$(echo "$W6B" | jq -r .dailyCapOverride)" "50"
 
 W6C="$(put_warmup '{"pausedUntil":"2030-01-01T00:00:00Z"}')"
 assert_eq "6c cap=0 while paused" "$(echo "$W6C" | jq -r .cap)" "0"
@@ -268,12 +262,17 @@ assert_eq "6c pausedUntil present" "$([[ "$(echo "$W6C" | jq -r .pausedUntil)" =
 
 W6D="$(put_warmup '{"pausedUntil":null}')"
 assert_eq "6d pausedUntil cleared" "$(echo "$W6D" | jq -r .pausedUntil)" "null"
-assert_eq "6d cap restored (override 5, warmup off)" "$(echo "$W6D" | jq -r .cap)" "5"
+assert_eq "6d cap restored to the override (50)" "$(echo "$W6D" | jq -r .cap)" "50"
 
-assert_eq "6e warmup_started_at untouched by writes" "$(started_null)" "f"
+W6E="$(put_warmup '{"dailyCapOverride":null}')"
+assert_eq "6e clearing override resumes the ramp (cap=week-2 step 17)" "$(echo "$W6E" | jq -r .cap)" "17"
+assert_eq "6e dailyCapOverride=null" "$(echo "$W6E" | jq -r .dailyCapOverride)" "null"
 
-assert_eq "6f empty patch → 400" "$(put_warmup_status '{}')" "400"
-assert_eq "6f negative override → 400" "$(put_warmup_status '{"dailyCapOverride":-1}')" "400"
+assert_eq "6f warmup_started_at untouched by writes" "$(started_null)" "f"
+
+assert_eq "6g empty patch → 400" "$(put_warmup_status '{}')" "400"
+assert_eq "6g negative override → 400" "$(put_warmup_status '{"dailyCapOverride":-1}')" "400"
+assert_eq "6g removed warmupEnabled field → 400" "$(put_warmup_status '{"warmupEnabled":false}')" "400"
 
 step "summary"
 echo "  PASS=$PASS  FAIL=$FAIL" >&2

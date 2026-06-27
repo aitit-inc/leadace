@@ -418,7 +418,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_mailbox_health',
-    'Read the warmup and safe-daily-cap state of the mailbox THIS PROJECT sends from. Resolves the project\'s sending identity (its assigned custom mailbox, else the connected Gmail), so the numbers match what the send path enforces — use it to explain a 403 "Mailbox daily send cap reached" for this project. Read-only. This per-mailbox EMAIL cap is a deliverability guardrail SEPARATE from the plan / billing outreach quota: it limits email sends only (form / SNS don\'t count) to protect the sending domain\'s reputation, applies on every plan and self-host, and resets at UTC midnight. Returns whether warmup is enabled, how far it has ramped (week X of N toward the steady-state cap), today\'s cap / used / remaining, and any pause. Returns "no mailbox connected" when the project has no assigned mailbox and no Gmail is linked.',
+    'Read the warmup and safe-daily-cap state of the mailbox THIS PROJECT sends from. Resolves the project\'s sending identity (its assigned custom mailbox, else the connected Gmail), so the numbers match what the send path enforces — use it to explain a 403 "Mailbox daily send cap reached" for this project. Read-only. This per-mailbox EMAIL cap is a deliverability guardrail SEPARATE from the plan / billing outreach quota: it limits email sends only (form / SNS don\'t count) to protect the sending domain\'s reputation, applies on every plan and self-host, and resets at UTC midnight. Returns how far warmup has ramped (week X of N toward the steady-state cap) or the fixed daily cap override when one is set, today\'s cap / used / remaining, and any pause. Returns "no mailbox connected" when the project has no assigned mailbox and no Gmail is linked.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
     },
@@ -434,7 +434,6 @@ function buildToolRegistry(): ToolDef[] {
         | {
             kind: 'active'
             email: string
-            warmupEnabled: boolean
             warmupStartedAt: string | null
             dailyCapOverride: number | null
             pausedUntil: string | null
@@ -448,18 +447,17 @@ function buildToolRegistry(): ToolDef[] {
       if (h.kind === 'no_mailbox') {
         return { content: [{ type: 'text' as const, text: 'No sending mailbox connected. Connect a Gmail account at https://app.leadace.ai to enable email sends and warmup.' }] }
       }
-      const warmupLine = !h.warmupEnabled
-        ? 'warmup disabled'
+      const warmupLine = h.dailyCapOverride !== null
+        ? `fixed daily cap ${h.dailyCapOverride}/day (warmup ramp bypassed)`
         : h.rampWeek >= h.rampWeeks
           ? `warmup complete (steady ${h.steadyStatePerDay}/day)`
-          : `warming up — week ${h.rampWeek} of ${h.rampWeeks} toward steady ${h.steadyStatePerDay}/day`
+          : `warming up — week ${h.rampWeek} of ${h.rampWeeks} toward steady ${h.steadyStatePerDay}/day${h.warmupStartedAt ? '' : ' (no email sent yet)'}`
       const lines = [
         `Mailbox: ${h.email}`,
-        `Warmup: ${warmupLine}${h.warmupStartedAt ? '' : ' (no email sent yet)'}`,
+        `Cap: ${warmupLine}`,
         `Today (email only): ${h.used}/${h.cap} sent, ${h.remaining} remaining — resets at UTC midnight`,
       ]
       if (h.pausedUntil) lines.push(`⚠️ Sending PAUSED until ${h.pausedUntil}`)
-      if (h.dailyCapOverride !== null) lines.push(`Daily cap override in effect: ${h.dailyCapOverride}`)
       return { content: [{ type: 'text' as const, text: lines.join('\n') }] }
     },
   )

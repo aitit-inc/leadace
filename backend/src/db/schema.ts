@@ -343,7 +343,6 @@ export const sendingIdentities = pgTable('sending_identities', {
   scope: text('scope'),
   secret: bytea('secret').notNull(),
   warmupStartedAt: timestamp('warmup_started_at', { withTimezone: true }),
-  warmupEnabled: boolean('warmup_enabled').notNull().default(true),
   dailyCapOverride: integer('daily_cap_override'),
   pausedUntil: timestamp('paused_until', { withTimezone: true }),
   // Observability only — NOT a poll cursor (the poll re-searches a fixed window).

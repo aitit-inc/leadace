@@ -14,7 +14,6 @@ const weeksAgo = (n: number) => new Date(NOW.getTime() - n * 7 * 24 * 60 * 60 * 
 
 const base: MailboxWarmupState = {
   warmupStartedAt: null,
-  warmupEnabled: true,
   dailyCapOverride: null,
   pausedUntil: null,
 }
@@ -24,21 +23,22 @@ describe('mailboxDailyCap', () => {
     expect(mailboxDailyCap(base, DEFAULT_WARMUP, NOW)).toBe(10)
   })
 
-  it('applies the override ceiling to a never-sent mailbox (week 0 of ramp)', () => {
-    expect(mailboxDailyCap({ ...base, dailyCapOverride: 3 }, DEFAULT_WARMUP, NOW)).toBe(3) // min(10, 3)
-    expect(mailboxDailyCap({ ...base, dailyCapOverride: 50 }, DEFAULT_WARMUP, NOW)).toBe(10) // min(10, 50)
+  it('an explicit override is the cap and replaces the ramp — above or below it', () => {
+    expect(mailboxDailyCap({ ...base, dailyCapOverride: 3 }, DEFAULT_WARMUP, NOW)).toBe(3)
+    expect(mailboxDailyCap({ ...base, dailyCapOverride: 50 }, DEFAULT_WARMUP, NOW)).toBe(50)
+    const wk3 = { ...base, warmupStartedAt: weeksAgo(3) }
+    expect(mailboxDailyCap({ ...wk3, dailyCapOverride: 12 }, DEFAULT_WARMUP, NOW)).toBe(12)
+    expect(mailboxDailyCap({ ...wk3, dailyCapOverride: 200 }, DEFAULT_WARMUP, NOW)).toBe(200)
   })
 
   it('treats dailyCapOverride=0 as a hard block, not "no override"', () => {
-    expect(
-      mailboxDailyCap({ ...base, warmupEnabled: false, dailyCapOverride: 0 }, DEFAULT_WARMUP, NOW),
-    ).toBe(0)
+    expect(mailboxDailyCap({ ...base, dailyCapOverride: 0 }, DEFAULT_WARMUP, NOW)).toBe(0)
     expect(
       mailboxDailyCap({ ...base, warmupStartedAt: weeksAgo(3), dailyCapOverride: 0 }, DEFAULT_WARMUP, NOW),
     ).toBe(0)
   })
 
-  it('ramps linearly (floored) from start to steady over rampWeeks', () => {
+  it('ramps linearly (floored) from start to steady over rampWeeks when no override', () => {
     const at = (n: number) =>
       mailboxDailyCap({ ...base, warmupStartedAt: weeksAgo(n) }, DEFAULT_WARMUP, NOW)
     expect(at(0)).toBe(10)
@@ -47,24 +47,6 @@ describe('mailboxDailyCap', () => {
     expect(at(3)).toBe(21)
     expect(at(4)).toBe(25) // ramp complete → steady
     expect(at(10)).toBe(25) // stays at steady
-  })
-
-  it('disabled warmup goes straight to steady (or the override)', () => {
-    expect(mailboxDailyCap({ ...base, warmupEnabled: false }, DEFAULT_WARMUP, NOW)).toBe(25)
-    expect(
-      mailboxDailyCap(
-        { ...base, warmupEnabled: false, dailyCapOverride: 200 },
-        DEFAULT_WARMUP,
-        NOW,
-      ),
-    ).toBe(200)
-  })
-
-  it('override is a ceiling during ramp (cannot raise above the ramp step)', () => {
-    const state = { ...base, warmupStartedAt: weeksAgo(3), dailyCapOverride: 12 }
-    expect(mailboxDailyCap(state, DEFAULT_WARMUP, NOW)).toBe(12) // min(21, 12)
-    const high = { ...base, warmupStartedAt: weeksAgo(3), dailyCapOverride: 50 }
-    expect(mailboxDailyCap(high, DEFAULT_WARMUP, NOW)).toBe(21) // min(21, 50)
   })
 
   it('paused mailbox is hard-stopped at 0 until pausedUntil passes', () => {

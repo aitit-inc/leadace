@@ -351,6 +351,13 @@
       "when": 1782543571636,
       "tag": "0049_fearless_puff_adder",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1782568560514,
+      "tag": "0050_right_micromax",
+      "breakpoints": true
     }
   ]
 }

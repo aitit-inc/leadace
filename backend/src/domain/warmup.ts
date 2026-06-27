@@ -14,8 +14,6 @@ export interface MailboxWarmupState {
   // null = never sent. Stamped on first send, not at connect, so an idle
   // mailbox doesn't ramp to full cap while dormant.
   warmupStartedAt: Date | null
-  warmupEnabled: boolean
-  // Ceiling during ramp; replaces the steady-state cap when warmup is disabled.
   dailyCapOverride: number | null
   pausedUntil: Date | null
 }
@@ -47,9 +45,8 @@ export function mailboxDailyCap(
   now: Date,
 ): number {
   if (state.pausedUntil && now < state.pausedUntil) return 0
-  if (!state.warmupEnabled) return state.dailyCapOverride ?? config.steadyStatePerDay
-  const ceiling = state.dailyCapOverride ?? config.steadyStatePerDay
-  return Math.min(rampCap(config, warmupWeeksElapsed(state, config, now)), ceiling)
+  if (state.dailyCapOverride !== null) return state.dailyCapOverride
+  return rampCap(config, warmupWeeksElapsed(state, config, now))
 }
 
 export interface MailboxDailyStatus {

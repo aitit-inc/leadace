@@ -311,7 +311,6 @@ export async function getMailboxDailyQuota(
   const [mailbox] = await db
     .select({
       warmupStartedAt: sendingIdentities.warmupStartedAt,
-      warmupEnabled: sendingIdentities.warmupEnabled,
       dailyCapOverride: sendingIdentities.dailyCapOverride,
       pausedUntil: sendingIdentities.pausedUntil,
     })
@@ -416,7 +415,7 @@ export function formatMailboxQuotaError(quota: MailboxDailyQuota): string {
   if (quota.pausedUntil) {
     return `Sending from this mailbox is paused until ${quota.pausedUntil.toISOString()}.`
   }
-  return `This mailbox's safe daily send limit (${quota.cap}/day during warmup) is reached. This protects your sending domain's reputation; it resets at UTC midnight. Reach remaining prospects by form/SNS, or continue tomorrow.`
+  return `This mailbox's safe daily send limit (${quota.cap}/day) is reached. This protects your sending domain's reputation; it resets at UTC midnight. Reach remaining prospects by form/SNS, or continue tomorrow.`
 }
 
 // Read-only warmup / cap health for the tenant's sending mailbox. Exposes the
@@ -428,7 +427,6 @@ export type MailboxHealth =
   | {
       kind: 'active'
       email: string
-      warmupEnabled: boolean
       warmupStartedAt: Date | null
       dailyCapOverride: number | null
       pausedUntil: Date | null
@@ -454,7 +452,6 @@ export async function getMailboxHealth(
     .select({
       email: sendingIdentities.fromEmail,
       warmupStartedAt: sendingIdentities.warmupStartedAt,
-      warmupEnabled: sendingIdentities.warmupEnabled,
       dailyCapOverride: sendingIdentities.dailyCapOverride,
       pausedUntil: sendingIdentities.pausedUntil,
     })
@@ -469,7 +466,6 @@ export async function getMailboxHealth(
   return {
     kind: 'active',
     email: mailbox.email,
-    warmupEnabled: mailbox.warmupEnabled,
     warmupStartedAt: mailbox.warmupStartedAt,
     dailyCapOverride: mailbox.dailyCapOverride,
     ...status,
@@ -480,17 +476,13 @@ const MAX_DAILY_CAP_OVERRIDE = 100_000
 
 export const updateMailboxWarmupSchema = z
   .object({
-    warmupEnabled: z.boolean().optional(),
     dailyCapOverride: z.number().int().min(0).max(MAX_DAILY_CAP_OVERRIDE).nullable().optional(),
     pausedUntil: z.iso.datetime().nullable().optional(),
   })
   .strict()
   .refine(
-    (p) =>
-      p.warmupEnabled !== undefined ||
-      p.dailyCapOverride !== undefined ||
-      p.pausedUntil !== undefined,
-    { message: 'Provide at least one warmup field to update.' },
+    (p) => p.dailyCapOverride !== undefined || p.pausedUntil !== undefined,
+    { message: 'Provide dailyCapOverride or pausedUntil to update.' },
   )
 
 export type UpdateMailboxWarmupPatch = z.infer<typeof updateMailboxWarmupSchema>
@@ -503,7 +495,6 @@ export async function updateMailboxWarmup(
   now: Date = new Date(),
 ): Promise<ServiceResult<MailboxHealth>> {
   const updateSet = {
-    ...(patch.warmupEnabled !== undefined ? { warmupEnabled: patch.warmupEnabled } : {}),
     ...(patch.dailyCapOverride !== undefined ? { dailyCapOverride: patch.dailyCapOverride } : {}),
     ...(patch.pausedUntil !== undefined
       ? { pausedUntil: patch.pausedUntil === null ? null : new Date(patch.pausedUntil) }

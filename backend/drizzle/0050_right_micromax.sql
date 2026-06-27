@@ -1,0 +1,1 @@
+ALTER TABLE "sending_identities" DROP COLUMN IF EXISTS "warmup_enabled";

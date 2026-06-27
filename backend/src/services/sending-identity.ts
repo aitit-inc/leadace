@@ -30,7 +30,6 @@ export type SendingIdentitySummary = {
   identityId: SendingIdentityId
   provider: SendingIdentityProvider
   fromEmail: string
-  warmupEnabled: boolean
   warmupStartedAt: Date | null
   dailyCapOverride: number | null
   // Derived per-mailbox daily-cap health (domain/warmup.ts mailboxDailyStatus):
@@ -50,7 +49,6 @@ const summaryColumns = {
   identityId: sendingIdentities.identityId,
   provider: sendingIdentities.provider,
   fromEmail: sendingIdentities.fromEmail,
-  warmupEnabled: sendingIdentities.warmupEnabled,
   warmupStartedAt: sendingIdentities.warmupStartedAt,
   pausedUntil: sendingIdentities.pausedUntil,
   dailyCapOverride: sendingIdentities.dailyCapOverride,
@@ -61,7 +59,6 @@ type SummaryRow = {
   identityId: string
   provider: SendingIdentityProvider
   fromEmail: string
-  warmupEnabled: boolean
   warmupStartedAt: Date | null
   pausedUntil: Date | null
   dailyCapOverride: number | null
@@ -77,7 +74,6 @@ function toSummary(
     identityId: asSendingIdentityId(row.identityId),
     provider: row.provider,
     fromEmail: row.fromEmail,
-    warmupEnabled: row.warmupEnabled,
     warmupStartedAt: row.warmupStartedAt,
     dailyCapOverride: row.dailyCapOverride,
     pausedUntil: status.pausedUntil,
