@@ -1,13 +1,13 @@
 <script lang="ts">
-  import { updateMailboxWarmup } from '$lib/api/mailbox';
-  import type { MailboxHealthActive, MailboxWarmupPatch } from '$lib/types/mailbox';
+  import { updateIdentityWarmup } from '$lib/api/sending-identities';
+  import type { SendingIdentity, MailboxWarmupPatch } from '$lib/types/sending-identity';
 
   let {
-    health,
+    identity,
     token,
     onSaved,
   }: {
-    health: MailboxHealthActive;
+    identity: SendingIdentity;
     token: string | undefined;
     onSaved: () => void | Promise<void>;
   } = $props();
@@ -26,13 +26,13 @@
   let seededKey = $state('');
 
   $effect(() => {
-    const key = JSON.stringify([health.warmupEnabled, health.dailyCapOverride, health.pausedUntil]);
+    const key = JSON.stringify([identity.warmupEnabled, identity.dailyCapOverride, identity.pausedUntil]);
     if (key === seededKey) return;
     seededKey = key;
     draft = {
-      warmupEnabled: health.warmupEnabled,
-      capOverrideInput: health.dailyCapOverride === null ? '' : String(health.dailyCapOverride),
-      pausedUntil: health.pausedUntil,
+      warmupEnabled: identity.warmupEnabled,
+      capOverrideInput: identity.dailyCapOverride === null ? '' : String(identity.dailyCapOverride),
+      pausedUntil: identity.pausedUntil,
     };
   });
 
@@ -58,9 +58,9 @@
 
   function changed(d: Draft): boolean {
     return (
-      d.warmupEnabled !== health.warmupEnabled ||
-      parsedCapOverride(d) !== health.dailyCapOverride ||
-      d.pausedUntil !== health.pausedUntil
+      d.warmupEnabled !== identity.warmupEnabled ||
+      parsedCapOverride(d) !== identity.dailyCapOverride ||
+      d.pausedUntil !== identity.pausedUntil
     );
   }
 
@@ -80,10 +80,10 @@
     saving = true;
     try {
       const patch: MailboxWarmupPatch = {};
-      if (draft.warmupEnabled !== health.warmupEnabled) patch.warmupEnabled = draft.warmupEnabled;
-      if (cap !== health.dailyCapOverride) patch.dailyCapOverride = cap;
-      if (draft.pausedUntil !== health.pausedUntil) patch.pausedUntil = draft.pausedUntil;
-      await updateMailboxWarmup(patch, fetch, token);
+      if (draft.warmupEnabled !== identity.warmupEnabled) patch.warmupEnabled = draft.warmupEnabled;
+      if (cap !== identity.dailyCapOverride) patch.dailyCapOverride = cap;
+      if (draft.pausedUntil !== identity.pausedUntil) patch.pausedUntil = draft.pausedUntil;
+      await updateIdentityWarmup(identity.identityId, patch, fetch, token);
       // Awaited so `saving` keeps the inputs disabled through the reload.
       await onSaved();
       message = 'Saved.';
@@ -96,28 +96,28 @@
 </script>
 
 <p class="text-sm text-text">
-  Per-mailbox safe daily send cap for <span class="font-mono">{health.email}</span>. This protects
+  Per-mailbox safe daily send cap for <span class="font-mono">{identity.fromEmail}</span>. This protects
   your sending domain's reputation — it's separate from your plan's outreach quota.
 </p>
 
 <dl class="mt-4 grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
   <dt class="text-text-muted">Today's email sends</dt>
-  <dd class="text-text">{health.used} / {health.cap} ({health.remaining} left)</dd>
+  <dd class="text-text">{identity.used} / {identity.cap} ({identity.remaining} left)</dd>
   <dt class="text-text-muted">Warmup ramp</dt>
   <dd class="text-text">
-    {#if !health.warmupEnabled}
-      Off — cap fixed at {health.dailyCapOverride ?? health.steadyStatePerDay}/day
-    {:else if health.warmupStartedAt}
-      Week {health.rampWeek} of {health.rampWeeks} (toward {health.steadyStatePerDay}/day)
+    {#if !identity.warmupEnabled}
+      Off — cap fixed at {identity.dailyCapOverride ?? identity.steadyStatePerDay}/day
+    {:else if identity.warmupStartedAt}
+      Week {identity.rampWeek} of {identity.rampWeeks} (toward {identity.steadyStatePerDay}/day)
     {:else}
       Not started — ramps once you send the first email
     {/if}
   </dd>
 </dl>
 
-{#if health.pausedUntil}
+{#if identity.pausedUntil}
   <p class="mt-4 rounded border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
-    Sending is paused until {formatDateTime(health.pausedUntil)}.
+    Sending is paused until {formatDateTime(identity.pausedUntil)}.
   </p>
 {/if}
 
@@ -129,7 +129,7 @@
         <span class="text-sm text-text">Gradually ramp up sending (warmup)</span>
       </label>
       <p class="mt-1 text-xs text-text-muted">
-        Starts low and increases the daily cap over {health.rampWeeks} weeks. Turn off only once the
+        Starts low and increases the daily cap over {identity.rampWeeks} weeks. Turn off only once the
         domain is established — the cap then jumps straight to the override or steady-state rate.
       </p>
     </div>
@@ -190,7 +190,7 @@
           </button>
         {/if}
       </div>
-      {#if draft.pausedUntil !== health.pausedUntil}
+      {#if draft.pausedUntil !== identity.pausedUntil}
         <p class="mt-2 text-xs text-text-muted">
           {#if draft.pausedUntil}
             Will pause until {formatDateTime(draft.pausedUntil)} once saved.

@@ -7,7 +7,8 @@ import { parseSendingIdentitySecret, smtpImapSecretPayloadSchema } from '../doma
 import { verifySmtpCredentials } from './smtp-send'
 import { asSendingIdentityId, type SendingIdentityId, type TenantId } from '../domain/ids'
 import type { Edition } from '../domain/edition'
-import { canRegisterSmtpIdentity, getTenantPlan } from './plan-limits'
+import { DEFAULT_WARMUP, mailboxDailyStatus, type MailboxDailyStatus } from '../domain/warmup'
+import { canRegisterSmtpIdentity, countMailboxEmailSendsTodayByIdentity, getTenantPlan } from './plan-limits'
 import { ok, err, type ServiceResult } from './result'
 
 export const registerSmtpIdentitySchema = z.object({
@@ -31,8 +32,16 @@ export type SendingIdentitySummary = {
   fromEmail: string
   warmupEnabled: boolean
   warmupStartedAt: Date | null
-  pausedUntil: Date | null
   dailyCapOverride: number | null
+  // Derived per-mailbox daily-cap health (domain/warmup.ts mailboxDailyStatus):
+  // future-only pause + today's cap/used/remaining + ramp progress.
+  pausedUntil: Date | null
+  cap: number
+  used: number
+  remaining: number
+  rampWeek: number
+  rampWeeks: number
+  steadyStatePerDay: number
   grantedAt: Date
   smtp: SmtpConnectionView | null
 }
@@ -59,8 +68,28 @@ type SummaryRow = {
   grantedAt: Date
 }
 
-function toSummary(row: SummaryRow, smtp: SmtpConnectionView | null): SendingIdentitySummary {
-  return { ...row, identityId: asSendingIdentityId(row.identityId), smtp }
+function toSummary(
+  row: SummaryRow,
+  smtp: SmtpConnectionView | null,
+  status: MailboxDailyStatus,
+): SendingIdentitySummary {
+  return {
+    identityId: asSendingIdentityId(row.identityId),
+    provider: row.provider,
+    fromEmail: row.fromEmail,
+    warmupEnabled: row.warmupEnabled,
+    warmupStartedAt: row.warmupStartedAt,
+    dailyCapOverride: row.dailyCapOverride,
+    pausedUntil: status.pausedUntil,
+    cap: status.cap,
+    used: status.used,
+    remaining: status.remaining,
+    rampWeek: status.rampWeek,
+    rampWeeks: status.rampWeeks,
+    steadyStatePerDay: status.steadyStatePerDay,
+    grantedAt: row.grantedAt,
+    smtp,
+  }
 }
 
 function smtpView(provider: SendingIdentityProvider, decryptedSecret: string | null): SmtpConnectionView | null {
@@ -75,6 +104,7 @@ export async function listSendingIdentities(
   db: Db,
   tenantId: TenantId,
   encryptionKey: string,
+  now: Date = new Date(),
 ): Promise<SendingIdentitySummary[]> {
   const rows = await db
     .select({
@@ -86,7 +116,11 @@ export async function listSendingIdentities(
     .from(sendingIdentities)
     .where(eq(sendingIdentities.tenantId, tenantId))
     .orderBy(asc(sendingIdentities.grantedAt))
-  return rows.map(({ secret, ...row }) => toSummary(row, smtpView(row.provider, secret)))
+  const usedByIdentity = await countMailboxEmailSendsTodayByIdentity(db, tenantId, now)
+  return rows.map(({ secret, ...row }) => {
+    const status = mailboxDailyStatus(row, usedByIdentity.get(row.identityId) ?? 0, DEFAULT_WARMUP, now)
+    return toSummary(row, smtpView(row.provider, secret), status)
+  })
 }
 
 export async function registerSmtpIdentity(
@@ -160,14 +194,21 @@ export async function registerSmtpIdentity(
     .from(sendingIdentities)
     .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.identityId, identityId)))
   if (!created) return err('INTERNAL_ERROR', 'Failed to load created sending identity')
+  // A just-registered mailbox has no sends today; its status is the warmup
+  // default (week 0, no override) computed from the freshly-inserted columns.
+  const status = mailboxDailyStatus(created, 0, DEFAULT_WARMUP, new Date())
   return ok(
-    toSummary(created, {
-      smtpHost: input.smtpHost,
-      smtpPort: input.smtpPort,
-      imapHost: input.imapHost,
-      imapPort: input.imapPort,
-      username: input.username,
-    }),
+    toSummary(
+      created,
+      {
+        smtpHost: input.smtpHost,
+        smtpPort: input.smtpPort,
+        imapHost: input.imapHost,
+        imapPort: input.imapPort,
+        username: input.username,
+      },
+      status,
+    ),
   )
 }
 

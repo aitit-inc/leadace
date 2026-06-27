@@ -124,8 +124,8 @@ multi-channel prospects by form / SNS instead. The backend rejects email sends p
 (HTTP 403), so pace to `N` rather than discovering it at send time. A `⚠️` message about the
 mailbox cap means it is already reached — skip email entirely this run. To inspect the full
 warmup state on demand — ramp progress (week X of N), today's cap/used/remaining, and any pause —
-call `mcp__plugin_leadace_api__get_mailbox_health` (no project needed); use it to explain a 403
-"Mailbox daily send cap reached" to the user.
+call `mcp__plugin_leadace_api__get_mailbox_health` with `projectId: "$0"` (it reports the mailbox
+the project actually sends from); use it to explain a 403 "Mailbox daily send cap reached" to the user.
 
 Each prospect in the targets list also carries:
 - `cycle: { n, kind, touchNumber, lastOutreach, lastResponse }` — the prospect's

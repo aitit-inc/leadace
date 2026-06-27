@@ -16,13 +16,15 @@
 #   4. Threshold block: the send past the cap is rejected (HTTP 403).
 #   5. Channel isolation: a FORM send is NOT blocked by the (email-only) cap.
 #
-# Also covers the read-only GET /me/mailbox-health endpoint (services/
-# plan-limits.ts getMailboxHealth): that it mirrors the surfaced cap, exposes
-# ramp progress (rampWeek/rampWeeks/steadyStatePerDay), and reports a pause
-# (cap 0 + pausedUntil) — see steps 1b/1c.
+# Also covers the project-scoped read endpoint GET /projects/:id/mailbox-health
+# (services/mailbox.ts getProjectMailboxHealth → plan-limits.ts getMailboxHealth):
+# it resolves the project's sending identity (here the gmail fallback), mirrors the
+# surfaced cap, exposes ramp progress (rampWeek/rampWeeks/steadyStatePerDay), and
+# reports a pause (cap 0 + pausedUntil) — see steps 1b/1c.
 #
-# And the operator write path PUT /me/mailbox-warmup (updateMailboxWarmup) —
-# step 6: override / partial patch / pause / resume / no started_at write / 400s.
+# And the per-identity operator write path PUT /me/sending-identities/:id/warmup
+# (updateMailboxWarmup) — step 6: override / partial patch / pause / resume / no
+# started_at write / 400s.
 #
 # Baseline-robust: the tenant may already have EMAIL sends today (the cap is
 # per-tenant, not per-project). Tests that need an exact threshold disable the
@@ -86,12 +88,15 @@ psql_local() { PGPASSWORD=postgres psql -h 127.0.0.1 -p 54322 -U postgres -d pos
 
 reach()    { api GET "/api/projects/$PROJECT_ID/prospects/reachable?limit=200"; }
 mq()       { reach | jq -r ".mailboxQuota.$1"; }
-mh()       { api GET "/api/me/mailbox-health" | jq -r ".$1"; }
+# Project-scoped health: the test project has no assigned sending identity, so it
+# resolves the gmail fallback — the same row the warmup columns are set on below.
+mh()       { api GET "/api/projects/$PROJECT_ID/mailbox-health" | jq -r ".$1"; }
 started_null() { psql_local "SELECT (warmup_started_at IS NULL) FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth';"; }
 
-# PUT a partial warmup patch; first echoes the health body, second the status code.
-put_warmup()        { api PUT "/api/me/mailbox-warmup" "$1"; }
-put_warmup_status() { curl -sS -o /dev/null -w '%{http_code}' -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d "$1" "$API_URL/api/me/mailbox-warmup"; }
+# PUT a partial warmup patch to the gmail identity; first echoes the health body,
+# second the status code.
+put_warmup()        { api PUT "/api/me/sending-identities/$GMAIL_IDENTITY_ID/warmup" "$1"; }
+put_warmup_status() { curl -sS -o /dev/null -w '%{http_code}' -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d "$1" "$API_URL/api/me/sending-identities/$GMAIL_IDENTITY_ID/warmup"; }
 
 # Set the four warmup columns. Args are raw SQL fragments (NULL / number /
 # NOW()-expr) so callers control nullability precisely.
@@ -149,6 +154,12 @@ else
   say "inserted dummy mailbox row"
 fi
 
+# Resolve the gmail identity_id now the row is guaranteed to exist — the
+# per-identity warmup write path (step 6) addresses the mailbox by id.
+GMAIL_IDENTITY_ID="$(api GET /api/me/sending-identities | jq -r '.identities[] | select(.provider=="gmail_oauth") | .identityId' | head -1)"
+[[ -n "$GMAIL_IDENTITY_ID" ]] || { echo "could not resolve gmail identity_id" >&2; exit 1; }
+say "gmail_identity_id=$GMAIL_IDENTITY_ID"
+
 restore_and_exit() {
   local rc=$?
   if [[ "$SKIP_CLEANUP" == "1" ]]; then
@@ -203,7 +214,7 @@ set_warmup true "NOW() - INTERVAL '15 days'" NULL NULL
 assert_eq "mailboxQuota.kind=capped" "$(mq kind)" "capped"
 assert_eq "ramp cap = week-2 step (17)" "$(mq cap)" "17"
 
-step "1b. /me/mailbox-health mirrors the cap and surfaces ramp progress"
+step "1b. /projects/:id/mailbox-health mirrors the cap and surfaces ramp progress"
 assert_eq "health kind=active" "$(mh kind)" "active"
 assert_eq "health cap = week-2 step (17)" "$(mh cap)" "17"
 assert_eq "health rampWeek=2" "$(mh rampWeek)" "2"
@@ -236,7 +247,7 @@ step "5. channel isolation: FORM send is NOT blocked by the email-only cap"
 assert_eq "form send → 2xx despite email cap exhausted" "$(send_status "$P_FORM" form | cut -c1)" "2"
 assert_eq "email used unchanged by form send (baseline+2)" "$(mq used)" "$((BASELINE + 2))"
 
-step "6. operator write path: PUT /me/mailbox-warmup"
+step "6. operator write path: PUT /me/sending-identities/:id/warmup"
 # Known state: week-2 ramp (cap 17), no override, not paused.
 set_warmup true "NOW() - INTERVAL '15 days'" NULL NULL
 

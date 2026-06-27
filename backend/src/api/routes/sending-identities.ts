@@ -5,6 +5,7 @@ import {
   listSendingIdentities,
   deleteSendingIdentity,
 } from '../../services/sending-identity'
+import { updateMailboxWarmup, updateMailboxWarmupSchema } from '../../services/plan-limits'
 import { sendingIdentityIdParamSchema } from '../../domain/ids'
 import { zValidator } from '../zvalidator'
 import { respondWithError } from '../respond'
@@ -34,6 +35,21 @@ sendingIdentitiesRouter.post(
       c.req.valid('json'),
     )
     return result.ok ? c.json(result.value, 201) : respondWithError(c, result)
+  },
+)
+
+sendingIdentitiesRouter.put(
+  '/me/sending-identities/:id/warmup',
+  zValidator('param', sendingIdentityIdParamSchema),
+  zValidator('json', updateMailboxWarmupSchema),
+  async (c) => {
+    const result = await updateMailboxWarmup(
+      c.get('db'),
+      c.get('tenantId'),
+      c.req.valid('param').id,
+      c.req.valid('json'),
+    )
+    return result.ok ? c.json(result.value) : respondWithError(c, result)
   },
 )
 

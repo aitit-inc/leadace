@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   DEFAULT_WARMUP,
   mailboxDailyCap,
+  mailboxDailyStatus,
   warmupWeeksElapsed,
   type MailboxWarmupState,
 } from './warmup'
@@ -76,6 +77,33 @@ describe('mailboxDailyCap', () => {
   it('clamps a future warmupStartedAt to week 0 (clock-skew safety)', () => {
     const future = { ...base, warmupStartedAt: new Date(NOW.getTime() + WEEK) }
     expect(mailboxDailyCap(future, DEFAULT_WARMUP, NOW)).toBe(10)
+  })
+})
+
+describe('mailboxDailyStatus', () => {
+  it('projects cap/remaining and ramp progress for a never-sent mailbox', () => {
+    expect(mailboxDailyStatus(base, 0, DEFAULT_WARMUP, NOW)).toEqual({
+      cap: 10, used: 0, remaining: 10, pausedUntil: null, rampWeek: 0, rampWeeks: 4, steadyStatePerDay: 25,
+    })
+  })
+
+  it('clamps remaining at 0 when used exceeds the cap', () => {
+    const s = mailboxDailyStatus({ ...base, warmupStartedAt: weeksAgo(2) }, 100, DEFAULT_WARMUP, NOW)
+    expect(s.cap).toBe(17) // week-2 ramp step
+    expect(s.remaining).toBe(0)
+    expect(s.rampWeek).toBe(2)
+  })
+
+  it('reports a future pause (cap 0); an elapsed pause reads as not paused', () => {
+    const future = new Date(NOW.getTime() + 1000)
+    const paused = mailboxDailyStatus({ ...base, pausedUntil: future }, 0, DEFAULT_WARMUP, NOW)
+    expect(paused.cap).toBe(0)
+    expect(paused.remaining).toBe(0)
+    expect(paused.pausedUntil).toEqual(future)
+
+    const elapsed = mailboxDailyStatus({ ...base, pausedUntil: new Date(NOW.getTime() - 1000) }, 0, DEFAULT_WARMUP, NOW)
+    expect(elapsed.pausedUntil).toBeNull()
+    expect(elapsed.cap).toBe(10)
   })
 })
 

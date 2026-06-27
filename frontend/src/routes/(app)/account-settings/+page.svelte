@@ -137,17 +137,24 @@
   </div>
 </section>
 
-{#if data.mailboxHealth?.kind === 'active'}
+{#if data.sendingIdentities.length > 0}
   <section class="mb-10">
     <h3 class="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">
       Sending warmup
     </h3>
-    <div class="rounded-md border border-border p-5">
-      <MailboxWarmupForm
-        health={data.mailboxHealth}
-        {token}
-        onSaved={() => invalidate('app:mailbox-health')}
-      />
+    <div class="space-y-4">
+      {#each data.sendingIdentities as identity (identity.identityId)}
+        <div class="rounded-md border border-border p-5">
+          <p class="mb-3 text-xs font-medium text-text-secondary">
+            {identity.provider === 'gmail_oauth' ? 'Connected Gmail' : 'Custom SMTP mailbox'}
+          </p>
+          <MailboxWarmupForm
+            {identity}
+            {token}
+            onSaved={() => invalidate('app:sending-identities')}
+          />
+        </div>
+      {/each}
     </div>
   </section>
 {/if}

@@ -1,5 +1,10 @@
 import { request, type RequestFetch } from '../api';
-import type { SendingIdentity, RegisterSmtpIdentityInput } from '$lib/types/sending-identity';
+import type {
+  SendingIdentity,
+  RegisterSmtpIdentityInput,
+  MailboxWarmupPatch,
+  MailboxHealth,
+} from '$lib/types/sending-identity';
 
 export function listSendingIdentities(
   fetchFn: RequestFetch = fetch,
@@ -22,6 +27,21 @@ export function registerSmtpIdentity(
     method: 'POST',
     path: '/me/sending-identities',
     body: input,
+    auth: 'required',
+    token,
+  });
+}
+
+export function updateIdentityWarmup(
+  identityId: string,
+  patch: MailboxWarmupPatch,
+  fetchFn: RequestFetch = fetch,
+  token?: string,
+): Promise<MailboxHealth> {
+  return request<MailboxHealth>(fetchFn, {
+    method: 'PUT',
+    path: `/me/sending-identities/${identityId}/warmup`,
+    body: patch,
     auth: 'required',
     token,
   });

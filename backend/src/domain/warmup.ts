@@ -51,3 +51,38 @@ export function mailboxDailyCap(
   const ceiling = state.dailyCapOverride ?? config.steadyStatePerDay
   return Math.min(rampCap(config, warmupWeeksElapsed(state, config, now)), ceiling)
 }
+
+export interface MailboxDailyStatus {
+  cap: number
+  used: number
+  remaining: number
+  // Future pause only; an elapsed pausedUntil means the day's sends are spent,
+  // not paused, so it reads as null (matching mailboxDailyCap's restored cap).
+  pausedUntil: Date | null
+  rampWeek: number
+  rampWeeks: number
+  steadyStatePerDay: number
+}
+
+// The per-mailbox daily-cap projection: warmup state + today's used count → the
+// numbers every cap surface needs. The send guard (getMailboxDailyQuota), the
+// health read (getMailboxHealth), and the per-identity list (listSendingIdentities)
+// all derive from this one pure function — they differ only in how they wrap it
+// (no_mailbox vs identity metadata), never in how they compute cap/remaining.
+export function mailboxDailyStatus(
+  state: MailboxWarmupState,
+  used: number,
+  config: WarmupConfig,
+  now: Date,
+): MailboxDailyStatus {
+  const cap = mailboxDailyCap(state, config, now)
+  return {
+    cap,
+    used,
+    remaining: Math.max(0, cap - used),
+    pausedUntil: state.pausedUntil && state.pausedUntil > now ? state.pausedUntil : null,
+    rampWeek: warmupWeeksElapsed(state, config, now),
+    rampWeeks: config.rampWeeks,
+    steadyStatePerDay: config.steadyStatePerDay,
+  }
+}

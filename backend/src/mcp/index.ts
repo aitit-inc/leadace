@@ -418,10 +418,12 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_mailbox_health',
-    'Read the warmup and safe-daily-cap state of the tenant\'s sending mailbox (the connected Gmail account). Read-only, no project needed. This per-mailbox EMAIL cap is a deliverability guardrail SEPARATE from the plan / billing outreach quota: it limits email sends only (form / SNS don\'t count) to protect the sending domain\'s reputation, applies on every plan and self-host, and resets at UTC midnight. Returns whether warmup is enabled, how far it has ramped (week X of N toward the steady-state cap), today\'s cap / used / remaining, and any pause. Use it in /outbound or /daily-cycle to see warmup progress and to explain a 403 "Mailbox daily send cap reached". Returns "no mailbox connected" when no Gmail account is linked.',
-    {},
-    async (_args, { apiUrl, authHeader }) => {
-      const { ok, data } = await callApi('GET', '/me/mailbox-health', null, apiUrl, authHeader)
+    'Read the warmup and safe-daily-cap state of the mailbox THIS PROJECT sends from. Resolves the project\'s sending identity (its assigned custom mailbox, else the connected Gmail), so the numbers match what the send path enforces — use it to explain a 403 "Mailbox daily send cap reached" for this project. Read-only. This per-mailbox EMAIL cap is a deliverability guardrail SEPARATE from the plan / billing outreach quota: it limits email sends only (form / SNS don\'t count) to protect the sending domain\'s reputation, applies on every plan and self-host, and resets at UTC midnight. Returns whether warmup is enabled, how far it has ramped (week X of N toward the steady-state cap), today\'s cap / used / remaining, and any pause. Returns "no mailbox connected" when the project has no assigned mailbox and no Gmail is linked.',
+    {
+      projectId: z.string().min(1).describe('Project name or ID'),
+    },
+    async ({ projectId }, { apiUrl, authHeader }) => {
+      const { ok, data } = await callApi('GET', `/projects/${encodeURIComponent(projectId)}/mailbox-health`, null, apiUrl, authHeader)
       if (!ok) {
         const err = data as { error: string; detail?: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.detail ? `${err.error}: ${err.detail}` : err.error}` }], isError: true }

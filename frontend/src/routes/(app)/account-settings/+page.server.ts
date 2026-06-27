@@ -1,12 +1,10 @@
 import { isHttpError } from '@sveltejs/kit';
 import { listMcpSessions } from '$lib/api/mcp';
-import { getMailboxHealth } from '$lib/api/mailbox';
 import { listSendingIdentities } from '$lib/api/sending-identities';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ fetch, depends, locals }) => {
   depends('app:mcp-sessions');
-  depends('app:mailbox-health');
   depends('app:sending-identities');
   const token = locals.session?.access_token;
 
@@ -18,16 +16,9 @@ export const load: PageServerLoad = async ({ fetch, depends, locals }) => {
     }),
   );
 
-  // Best-effort, but let an auth failure (kitError(401)) reach +error.svelte
-  // rather than silently hide the section.
-  const mailboxHealth = await getMailboxHealth(fetch, token).then(
-    (health) => health,
-    (e: unknown) => {
-      if (isHttpError(e)) throw e;
-      return null;
-    },
-  );
-
+  // Each identity carries its own warmup health (cap/used/ramp); the warmup UI
+  // and the custom-mailbox list both read from this one list. Let an auth
+  // failure (kitError(401)) reach +error.svelte rather than hide the section.
   const sendingIdentities = await listSendingIdentities(fetch, token).then(
     (list) => ({ list, error: false }),
     (e: unknown) => {
@@ -38,7 +29,6 @@ export const load: PageServerLoad = async ({ fetch, depends, locals }) => {
 
   return {
     mcpSessions,
-    mailboxHealth,
     sendingIdentities: sendingIdentities.list,
     sendingIdentitiesError: sendingIdentities.error,
   };

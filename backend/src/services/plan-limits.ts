@@ -11,8 +11,8 @@ import {
 import type { createDb } from '../db/connection'
 import { ok, err, type ServiceError, type ServiceResult } from '../services/result'
 import type { Edition } from '../domain/edition'
-import { asSendingIdentityId, type SendingIdentityId, type TenantId } from '../domain/ids'
-import { DEFAULT_WARMUP, mailboxDailyCap, warmupWeeksElapsed } from '../domain/warmup'
+import { type SendingIdentityId, type TenantId } from '../domain/ids'
+import { DEFAULT_WARMUP, mailboxDailyStatus } from '../domain/warmup'
 
 // 'unlimited' is internal-only (no Stripe price), set manually in the DB for
 // staff / complimentary accounts. The Stripe webhook must never overwrite it.
@@ -321,15 +321,14 @@ export async function getMailboxDailyQuota(
 
   if (!mailbox) return { kind: 'no_mailbox' }
 
-  const cap = mailboxDailyCap(mailbox, DEFAULT_WARMUP, now)
   const used = await countMailboxEmailSendsToday(db, tenantId, identityId, now)
+  const status = mailboxDailyStatus(mailbox, used, DEFAULT_WARMUP, now)
   return {
     kind: 'capped',
-    cap,
-    used,
-    remaining: Math.max(0, cap - used),
-    // Only a future pause; a past one means the day's sends are spent, not paused.
-    pausedUntil: mailbox.pausedUntil && mailbox.pausedUntil > now ? mailbox.pausedUntil : null,
+    cap: status.cap,
+    used: status.used,
+    remaining: status.remaining,
+    pausedUntil: status.pausedUntil,
   }
 }
 
@@ -360,6 +359,42 @@ async function countMailboxEmailSendsToday(
       ),
     ))
   return row?.used ?? 0
+}
+
+// Today's reputation-consuming EMAIL sends grouped by sending identity, for the
+// per-identity health list (avoids one count query per identity). Same predicate
+// as countMailboxEmailSendsToday; a NULL sending_identity_id (legacy rows) is
+// dropped since it maps to no identity.
+export async function countMailboxEmailSendsTodayByIdentity(
+  db: Db,
+  tenantId: TenantId,
+  now: Date = new Date(),
+): Promise<Map<string, number>> {
+  const sinceIso = startOfTodayUtc(now).toISOString()
+  const rows = await db
+    .select({
+      identityId: outreachLogs.sendingIdentityId,
+      used: sql<number>`COUNT(*)::int`,
+    })
+    .from(outreachLogs)
+    .where(and(
+      eq(outreachLogs.tenantId, tenantId),
+      eq(outreachLogs.channel, 'email'),
+      sql`${outreachLogs.sentAt} >= ${sinceIso}::timestamptz`,
+      or(
+        eq(outreachLogs.status, 'sent'),
+        and(
+          eq(outreachLogs.status, 'pre_send'),
+          sql`${outreachLogs.sentAt} > NOW() - (${PRE_SEND_TTL_MINUTES} * INTERVAL '1 minute')`,
+        ),
+      ),
+    ))
+    .groupBy(outreachLogs.sendingIdentityId)
+  const byIdentity = new Map<string, number>()
+  for (const r of rows) {
+    if (r.identityId) byIdentity.set(r.identityId, r.used)
+  }
+  return byIdentity
 }
 
 export function isMailboxQuotaExhausted(quota: MailboxDailyQuota): boolean {
@@ -405,14 +440,18 @@ export type MailboxHealth =
       remaining: number
     }
 
+// Health of a specific sending identity (resolved by the caller — the project's
+// identity for the agent, or each identity in turn for the settings list).
+// null identity → no_mailbox.
 export async function getMailboxHealth(
   db: Db,
   tenantId: TenantId,
+  identityId: SendingIdentityId | null,
   now: Date = new Date(),
 ): Promise<MailboxHealth> {
+  if (!identityId) return { kind: 'no_mailbox' }
   const [mailbox] = await db
     .select({
-      identityId: sendingIdentities.identityId,
       email: sendingIdentities.fromEmail,
       warmupStartedAt: sendingIdentities.warmupStartedAt,
       warmupEnabled: sendingIdentities.warmupEnabled,
@@ -420,27 +459,20 @@ export async function getMailboxHealth(
       pausedUntil: sendingIdentities.pausedUntil,
     })
     .from(sendingIdentities)
-    .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.provider, 'gmail_oauth')))
+    .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.identityId, identityId)))
     .limit(1)
 
   if (!mailbox) return { kind: 'no_mailbox' }
 
-  const cap = mailboxDailyCap(mailbox, DEFAULT_WARMUP, now)
-  const used = await countMailboxEmailSendsToday(db, tenantId, asSendingIdentityId(mailbox.identityId), now)
+  const used = await countMailboxEmailSendsToday(db, tenantId, identityId, now)
+  const status = mailboxDailyStatus(mailbox, used, DEFAULT_WARMUP, now)
   return {
     kind: 'active',
     email: mailbox.email,
     warmupEnabled: mailbox.warmupEnabled,
     warmupStartedAt: mailbox.warmupStartedAt,
     dailyCapOverride: mailbox.dailyCapOverride,
-    // Future pause only; a past one means the day is spent, not paused.
-    pausedUntil: mailbox.pausedUntil && mailbox.pausedUntil > now ? mailbox.pausedUntil : null,
-    rampWeek: warmupWeeksElapsed(mailbox, DEFAULT_WARMUP, now),
-    rampWeeks: DEFAULT_WARMUP.rampWeeks,
-    steadyStatePerDay: DEFAULT_WARMUP.steadyStatePerDay,
-    cap,
-    used,
-    remaining: Math.max(0, cap - used),
+    ...status,
   }
 }
 
@@ -466,6 +498,7 @@ export type UpdateMailboxWarmupPatch = z.infer<typeof updateMailboxWarmupSchema>
 export async function updateMailboxWarmup(
   db: Db,
   tenantId: TenantId,
+  identityId: SendingIdentityId,
   patch: UpdateMailboxWarmupPatch,
   now: Date = new Date(),
 ): Promise<ServiceResult<MailboxHealth>> {
@@ -481,18 +514,18 @@ export async function updateMailboxWarmup(
   const updated = await db
     .update(sendingIdentities)
     .set(updateSet)
-    .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.provider, 'gmail_oauth')))
-    .returning({ tenantId: sendingIdentities.tenantId })
+    .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.identityId, identityId)))
+    .returning({ identityId: sendingIdentities.identityId })
 
   if (updated.length === 0) {
     return err(
       'NOT_FOUND',
-      'No sending mailbox connected',
-      'Connect Gmail before configuring warmup.',
+      'Sending identity not found',
+      'No sending identity with that id for this account.',
     )
   }
 
-  return ok(await getMailboxHealth(db, tenantId, now))
+  return ok(await getMailboxHealth(db, tenantId, identityId, now))
 }
 
 // 1 turn = 1 user message + 1 AI reply (counted on the AI reply via

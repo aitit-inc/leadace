@@ -17,8 +17,16 @@ export type SendingIdentity = {
   fromEmail: string;
   warmupEnabled: boolean;
   warmupStartedAt: string | null;
-  pausedUntil: string | null;
   dailyCapOverride: number | null;
+  // Derived per-mailbox daily-cap health (mirrors backend mailboxDailyStatus):
+  // future-only pause + today's cap/used/remaining + ramp progress.
+  pausedUntil: string | null;
+  cap: number;
+  used: number;
+  remaining: number;
+  rampWeek: number;
+  rampWeeks: number;
+  steadyStatePerDay: number;
   grantedAt: string;
   smtp: SmtpConnectionView | null;
 };
@@ -33,4 +41,28 @@ export type RegisterSmtpIdentityInput = {
   imapPort: number;
   username: string;
   appPassword: string;
+};
+
+// Partial warmup patch for PUT /me/sending-identities/:id/warmup.
+export type MailboxWarmupPatch = {
+  warmupEnabled?: boolean;
+  dailyCapOverride?: number | null;
+  pausedUntil?: string | null;
+};
+
+// Returned by PUT /me/sending-identities/:id/warmup — the resulting health of
+// the just-configured mailbox (mirrors backend getMailboxHealth's active shape).
+export type MailboxHealth = {
+  kind: 'active';
+  email: string;
+  warmupEnabled: boolean;
+  warmupStartedAt: string | null;
+  dailyCapOverride: number | null;
+  pausedUntil: string | null;
+  cap: number;
+  used: number;
+  remaining: number;
+  rampWeek: number;
+  rampWeeks: number;
+  steadyStatePerDay: number;
 };
