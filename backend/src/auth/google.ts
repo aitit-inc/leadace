@@ -237,12 +237,14 @@ export async function buildComplianceAttachments(args: {
   lines.push(args.tenantLegalName)
   lines.push(args.tenantPhysicalAddress)
 
+  const footerSeed = args.prospectId
+
   if (args.inquiryUrl) {
-    lines.push(inquiryFooterLine(args.inquiryUrl, args.locale))
+    lines.push(inquiryFooterLine(args.inquiryUrl, args.locale, footerSeed))
   }
 
   if (args.tenantPrivacyPolicyUrl) {
-    lines.push(privacyFooterLine(args.tenantPrivacyPolicyUrl, args.locale))
+    lines.push(privacyFooterLine(args.tenantPrivacyPolicyUrl, args.locale, footerSeed))
   }
 
   const token = await signUnsubscribeToken(
@@ -252,7 +254,7 @@ export async function buildComplianceAttachments(args: {
   const userUrl = `${args.appUrl}/unsubscribe/${token}`
   const oneClickUrl = `${args.apiUrl}/api/unsubscribe/${token}`
   if (!args.inquiryUrl) {
-    lines.push(unsubscribeFooterLine(userUrl, args.locale))
+    lines.push(unsubscribeFooterLine(userUrl, args.locale, footerSeed))
   }
   headers['List-Unsubscribe'] = `<${oneClickUrl}>, <${userUrl}>`
   headers['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'

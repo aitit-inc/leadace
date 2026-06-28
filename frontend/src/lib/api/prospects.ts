@@ -29,3 +29,17 @@ export function listProspects(
     token,
   });
 }
+
+export function getProspect(
+  projectId: string,
+  prospectId: number,
+  fetchFn: RequestFetch = fetch,
+  token?: string,
+): Promise<{ prospect: Prospect }> {
+  return request<{ prospect: Prospect }>(fetchFn, {
+    method: 'GET',
+    path: `/projects/${projectId}/prospects/${prospectId}`,
+    auth: 'required',
+    token,
+  });
+}

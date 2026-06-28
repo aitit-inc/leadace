@@ -22,23 +22,22 @@ describe('buildComplianceAttachments', () => {
     locale: 'en' as const,
   }
 
-  it('collapses to the inquiry link and drops the standalone Unsubscribe line when inquiry is enabled', async () => {
+  it('collapses to the inquiry link and drops the standalone unsubscribe line when inquiry is enabled', async () => {
     const { footer, headers } = await buildComplianceAttachments({
       ...base,
       inquiryUrl: 'https://app.example/q/abc123',
     })
-    expect(footer).toContain(
-      'Learn more, ask anything, or unsubscribe: https://app.example/q/abc123',
-    )
-    expect(footer).not.toMatch(/^Unsubscribe: /m)
+    expect(footer).toContain('https://app.example/q/abc123')
+    expect(footer).toMatch(/unsubscribe|opt out/i)
+    expect(footer).not.toContain('/unsubscribe/')
     expect(headers['List-Unsubscribe']).toContain('https://api.example/api/unsubscribe/')
     expect(headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click')
   })
 
-  it('keeps the standalone Unsubscribe line when inquiry is disabled', async () => {
+  it('keeps the standalone unsubscribe line when inquiry is disabled', async () => {
     const { footer, headers } = await buildComplianceAttachments({ ...base, inquiryUrl: null })
-    expect(footer).toMatch(/^Unsubscribe: https:\/\/app\.example\/unsubscribe\//m)
-    expect(footer).not.toContain('Learn more')
+    expect(footer).toMatch(/(unsubscribe|opt out|stop receiving)[^\n]*https:\/\/app\.example\/unsubscribe\//i)
+    expect(footer).not.toContain('/q/')
     expect(headers['List-Unsubscribe']).toContain('https://api.example/api/unsubscribe/')
     expect(headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click')
   })
@@ -50,15 +49,14 @@ describe('buildComplianceAttachments', () => {
       inquiryUrl: 'https://app.example/q/abc123',
       tenantPrivacyPolicyUrl: 'https://acme.example/privacy',
     })
-    expect(inquiry.footer).toContain('詳細・ご質問・配信停止はこちら: https://app.example/q/abc123')
-    expect(inquiry.footer).toContain('プライバシーポリシー: https://acme.example/privacy')
-    expect(inquiry.footer).not.toContain('Learn more')
-    // Legal identity stays verbatim — proper nouns are never translated.
+    expect(inquiry.footer).toContain('https://app.example/q/abc123')
+    expect(inquiry.footer).toMatch(/停止/)
+    expect(inquiry.footer).toContain('https://acme.example/privacy')
+    expect(inquiry.footer).not.toMatch(/unsubscribe|opt out/i)
     expect(inquiry.footer).toContain('Acme Inc.')
 
     const legacy = await buildComplianceAttachments({ ...base, locale: 'ja', inquiryUrl: null })
-    expect(legacy.footer).toMatch(/^配信停止: https:\/\/app\.example\/unsubscribe\//m)
-    expect(legacy.footer).not.toContain('Unsubscribe:')
+    expect(legacy.footer).toMatch(/停止[^\n]*https:\/\/app\.example\/unsubscribe\//)
   })
 
   it('always emits the List-Unsubscribe header regardless of inquiry mode', async () => {

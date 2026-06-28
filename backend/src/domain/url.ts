@@ -24,3 +24,24 @@ export const HTTPS_ONLY_MSG = { message: 'must use https://' } as const
 export const HTTP_OR_HTTPS_ONLY_MSG = {
   message: 'must use http:// or https://',
 } as const
+
+const PRIVATE_IPV4_RE =
+  /^(?:127\.|10\.|0\.|169\.254\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)/
+
+// A mail footer / List-Unsubscribe link on a non-public host is both a spam
+// signal and a broken (RFC 8058 / CAN-SPAM) opt-out, so the send path refuses one.
+export const isPublicHttpsUrl = (u: string): boolean => {
+  let url: URL
+  try {
+    url = new URL(u)
+  } catch {
+    return false
+  }
+  if (url.protocol !== 'https:') return false
+  const host = url.hostname.toLowerCase()
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) {
+    return false
+  }
+  if (PRIVATE_IPV4_RE.test(host)) return false
+  return host.includes('.')
+}

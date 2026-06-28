@@ -196,7 +196,8 @@ DBBODY="$(last_log_body "$LID")"
 assert_contains "persisted body carries the input core text" "$DBBODY" "$CORE_BODY"
 assert_contains "persisted body carries the footer separator" "$DBBODY" $'\n\n---\n'
 assert_contains "persisted body carries the tenant legalName line" "$DBBODY" "E2E Inq Corp"
-assert_contains "persisted body carries the inquiry footer line" "$DBBODY" "Learn more, ask anything, or unsubscribe:"
+assert_eq "persisted body carries an opt-out inquiry footer label" \
+  "$(echo "$DBBODY" | grep -Eqi '(unsubscribe|opt out): https?://[^ ]*/q/' && echo y || echo n)" "y"
 assert_contains "persisted body carries the /q/<shortId> inquiry URL" "$DBBODY" "/q/$SID"
 assert_eq "returned finalBody == persisted body" "$(echo "$BODY" | jq -r '.finalBody')" "$DBBODY"
 assert_eq "draft does NOT flip prospect to contacted" "$(pp_status "$P_US")" "new"

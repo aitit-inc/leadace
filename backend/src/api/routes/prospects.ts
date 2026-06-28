@@ -5,6 +5,7 @@ import {
   reachableQuerySchema,
   listProjectProspectsQuerySchema,
   listTenantProspectsQuerySchema,
+  projectProspectParamSchema,
   updateProspectStatusBodySchema,
   updateDoNotContactBodySchema,
   updateProspectBodySchema,
@@ -13,6 +14,7 @@ import {
   updateProspectStatus,
   updateProspect,
   listProjectProspects,
+  getProjectProspect,
   listTenantProspects,
   linkProspects,
   updateDoNotContact,
@@ -114,6 +116,23 @@ prospectsRouter.get(
     )
     if (!result.ok) return respondWithError(c, result)
     return c.json(result.value)
+  },
+)
+
+// Static /reachable (above) outranks this param route in Hono — no collision.
+prospectsRouter.get(
+  '/projects/:id/prospects/:prospectId',
+  zValidator('param', projectProspectParamSchema),
+  async (c) => {
+    const param = c.req.valid('param')
+    const result = await getProjectProspect(
+      c.get('db'),
+      c.get('tenantId'),
+      param.id,
+      param.prospectId,
+    )
+    if (!result.ok) return respondWithError(c, result)
+    return c.json({ prospect: result.value })
   },
 )
 

@@ -56,6 +56,7 @@ import { addDays } from '../domain/prospect-status'
 import { isAllowedSendCountry } from '../domain/country'
 import { localeForCountry, type Locale } from '../domain/locale'
 import { buildSkipAuditBody } from '../domain/outreach-skip'
+import { isPublicHttpsUrl } from '../domain/url'
 import type { Edition } from '../domain/edition'
 
 export const recentOutreachQuerySchema = z.object({
@@ -226,6 +227,25 @@ async function resolveRecipientLocale(
   prospectId: number,
 ): Promise<Locale> {
   return localeForCountry(await loadEffectiveRecipientCountry(db, tenantId, prospectId))
+}
+
+// Bypassed under E2E: sendForIdentity redirects every recipient to a test sink,
+// so the localhost links a dev stack produces never reach a real inbox.
+function assertPublicHttpsSendHosts(ctx: SendContext): ServiceResult<undefined> {
+  if (ctx.e2eRecipientOverride) return ok(undefined)
+  for (const [name, value] of [
+    ['APP_URL', ctx.appUrl],
+    ['API_URL', ctx.apiUrl],
+  ] as const) {
+    if (!isPublicHttpsUrl(value)) {
+      return err(
+        'PRECONDITION_FAILED',
+        `${name} must be a public https origin to send outbound mail`,
+        `Refusing to send: the unsubscribe / inquiry link host derived from ${name} ("${value}") is not a public https URL. A non-public or non-https opt-out link is a spam signal and a broken opt-out. Point ${name} at the deployment's public https origin.`,
+      )
+    }
+  }
+  return ok(undefined)
 }
 
 // Shared by every email send path and the draft preview so the preview can't
@@ -488,6 +508,9 @@ export async function recordOutreachWithInquiry(
   if (!prospectGuard.ok) return prospectGuard
   if (!complianceResult.ok) return complianceResult
 
+  const hostGuard = assertPublicHttpsSendHosts(ctx)
+  if (!hostGuard.ok) return hostGuard
+
   const willSend = sendSettings.outboundMode === 'send'
 
   if (willSend) {
@@ -647,6 +670,9 @@ export async function sendAndRecord(
   }
 
   const compliance = complianceResult.value
+
+  const hostGuard = assertPublicHttpsSendHosts(ctx)
+  if (!hostGuard.ok) return hostGuard
 
   const contactable = await assertProspectContactable(db, tenantId, input.prospectId)
   if (!contactable.ok) return contactable
@@ -1081,6 +1107,8 @@ export async function sendDraft(
   if (draft.doNotContact) {
     return err('UNPROCESSABLE', 'Prospect is on do-not-contact list')
   }
+  const hostGuard = assertPublicHttpsSendHosts(ctx)
+  if (!hostGuard.ok) return hostGuard
   const quotaErr = outreachQuotaErrorIfExhausted(quota)
   if (quotaErr) return quotaErr
 

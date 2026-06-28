@@ -96,17 +96,17 @@
   <EmptyState message="No outreach logs yet" />
 {:else}
   <div class="space-y-0">
-    <div class="hidden md:grid grid-cols-[120px_70px_60px_1fr_60px] gap-4 px-3 py-2 text-xs font-medium text-text-muted">
+    <div class="hidden md:grid grid-cols-[110px_68px_60px_190px_minmax(0,1fr)] gap-4 px-3 py-2 text-xs font-medium text-text-muted">
       <span>Date</span>
       <span>Channel</span>
       <span>Status</span>
+      <span>Recipient</span>
       <span>Subject / Body</span>
-      <span class="text-right">ID</span>
     </div>
 
     {#each data.logs as log}
       <button
-        class="hidden md:grid w-full grid-cols-[120px_70px_60px_1fr_60px] gap-4 px-3 py-2.5 text-left text-sm hover:bg-surface transition-colors rounded"
+        class="hidden md:grid w-full grid-cols-[110px_68px_60px_190px_minmax(0,1fr)] items-center gap-4 px-3 py-2.5 text-left text-sm hover:bg-surface transition-colors rounded"
         onclick={() => toggleExpand(log.id)}
       >
         <span class="text-text-secondary text-xs font-mono">{formatDate(log.sentAt)}</span>
@@ -114,6 +114,12 @@
         <span>
           <span class="inline-block h-1.5 w-1.5 rounded-full {statusDot(log.status)}"></span>
           <span class="text-xs text-text-secondary ml-1">{log.status}</span>
+        </span>
+        <span class="min-w-0">
+          <span class="block truncate text-text">{log.prospectName}</span>
+          {#if log.prospectEmail}
+            <span class="block truncate text-xs text-text-muted font-mono">{log.prospectEmail}</span>
+          {/if}
         </span>
         <span class="text-text truncate">
           {#if log.subject}
@@ -124,7 +130,6 @@
             <span class="ml-2 text-[11px] text-success font-medium">↳ {replyLabel(log.responseCount)}</span>
           {/if}
         </span>
-        <span class="text-right text-xs text-text-muted font-mono">#{log.prospectId}</span>
       </button>
 
       <button
@@ -141,20 +146,28 @@
             <span class="text-[11px] text-text-secondary">{log.status}</span>
           </div>
         </div>
+        <div class="min-w-0">
+          <p class="text-sm text-text truncate">{log.prospectName}</p>
+          {#if log.prospectEmail}
+            <p class="text-[11px] text-text-muted font-mono truncate">{log.prospectEmail}</p>
+          {/if}
+        </div>
         {#if log.subject}
           <p class="text-sm font-medium text-text truncate">{log.subject}</p>
         {/if}
         <p class="text-xs text-text-secondary line-clamp-2">{truncate(log.body, 120)}</p>
-        <div class="flex items-center justify-between gap-2">
-          <span class="text-[11px] text-text-muted font-mono">#{log.prospectId}</span>
-          {#if log.responseCount > 0 && log.latestResponseAt}
-            <span class="text-[11px] text-success font-medium">↳ {replyLabel(log.responseCount)} · {formatDate(log.latestResponseAt)}</span>
-          {/if}
-        </div>
+        {#if log.responseCount > 0 && log.latestResponseAt}
+          <p class="text-[11px] text-success font-medium">↳ {replyLabel(log.responseCount)} · {formatDate(log.latestResponseAt)}</p>
+        {/if}
       </button>
 
       {#if expandedId === log.id}
         <div class="mx-3 mb-2 rounded bg-surface px-4 py-3">
+          <p class="text-xs mb-2 break-all">
+            <span class="text-text-muted">To:</span>
+            <a href="/prospects/{log.prospectId}" class="text-accent hover:underline">{log.prospectName}</a>
+            {#if log.prospectEmail}<span class="font-mono text-text-muted ml-1">{log.prospectEmail}</span>{/if}
+          </p>
           {#if log.subject}
             <p class="text-xs font-medium text-text mb-1 break-words">{log.subject}</p>
           {/if}

@@ -12,6 +12,8 @@ export type OutreachStatus = 'sent' | 'failed' | 'pending_review' | 'skipped';
 export interface OutreachLog {
   id: number;
   prospectId: number;
+  prospectName: string;
+  prospectEmail: string | null;
   channel: Channel;
   subject: string | null;
   body: string;

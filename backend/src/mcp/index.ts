@@ -555,7 +555,7 @@ function buildToolRegistry(): ToolDef[] {
       legalName: z.string().min(1).max(200).nullable().optional().describe('Registered business name shown in the email compliance footer (CAN-SPAM § 5(a)(5)).'),
       physicalAddress: z.string().min(5).max(500).nullable().optional().describe('Postal address shown in the email compliance footer (CAN-SPAM physical address requirement).'),
       defaultSenderCountry: z.string().regex(/^[A-Z]{2}$/, 'must be ISO 3166-1 alpha-2 (e.g. US, CA, JP)').nullable().optional(),
-      privacyPolicyUrl: z.url().max(500).nullable().optional().describe('The sender\'s own privacy policy URL. Optional; appended to the footer as "Privacy: <url>" when set. Only legally meaningful as the sender\'s GDPR Art.14 notice to UK/EU individual recipients — not required for the current US/CA/JP send targets.'),
+      privacyPolicyUrl: z.url().max(500).nullable().optional().describe('The sender\'s own privacy policy URL. Optional; appended to the footer as a privacy-policy link when set. Only legally meaningful as the sender\'s GDPR Art.14 notice to UK/EU individual recipients — not required for the current US/CA/JP send targets.'),
     },
     async (patch, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('PUT', '/tenant-settings', patch, apiUrl, authHeader)

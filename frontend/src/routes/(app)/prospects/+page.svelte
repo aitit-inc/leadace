@@ -2,10 +2,10 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { channelLabel } from '$lib/contact-channels';
-  import { safeHttpUrl } from '$lib/redirect';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import Pagination from '$lib/components/Pagination.svelte';
+  import ProspectDetail from '$lib/components/prospects/ProspectDetail.svelte';
   import type { PageProps } from './$types';
   import { PAGE_SIZE } from '$lib/pagination';
   import { STATUSES } from './constants';
@@ -138,17 +138,11 @@
       </button>
 
       {#if expandedId === p.ppId}
-        {@const safeWebsite = safeHttpUrl(p.websiteUrl)}
-        {@const safeForm = safeHttpUrl(p.contactFormUrl)}
-        <div class="mx-3 mb-2 rounded bg-surface px-4 py-3 text-xs space-y-1.5">
-          <p><span class="text-text-muted">Organization:</span> <a href="/organizations/{p.organizationId}" class="text-accent hover:underline">{p.organizationName}</a></p>
-          <p class="break-words"><span class="text-text-muted">Website:</span> {#if safeWebsite}<a href={safeWebsite} target="_blank" rel="noopener noreferrer" class="text-accent hover:underline">{p.websiteUrl}</a>{:else}<span class="font-mono text-text-muted">{p.websiteUrl}</span>{/if}</p>
-          {#if p.email}<p class="break-all"><span class="text-text-muted">Email:</span> <span class="font-mono">{p.email}</span></p>{/if}
-          {#if p.contactFormUrl}<p class="break-all"><span class="text-text-muted">Form:</span> {#if safeForm}<a href={safeForm} target="_blank" rel="noopener noreferrer" class="text-accent hover:underline">{p.contactFormUrl}</a>{:else}<span class="font-mono text-text-muted">{p.contactFormUrl}</span>{/if}</p>{/if}
-          {#if p.contactName}<p><span class="text-text-muted">Contact:</span> {p.contactName}{#if p.overview} &mdash; {p.overview}{/if}</p>{/if}
-          <p><span class="text-text-muted">Match reason:</span> {p.matchReason}</p>
-          {#if p.notes}<p><span class="text-text-muted">Notes:</span> {p.notes}</p>{/if}
-          {#if p.doNotContact}<p class="text-danger font-medium">Do not contact</p>{/if}
+        <div class="mx-3 mb-2 rounded bg-surface px-4 py-3">
+          <ProspectDetail {p} />
+          <p class="mt-2 text-xs">
+            <a href="/prospects/{p.prospectId}" class="text-accent hover:underline">Open prospect →</a>
+          </p>
         </div>
       {/if}
     {/each}

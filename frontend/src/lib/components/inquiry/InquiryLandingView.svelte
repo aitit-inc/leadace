@@ -96,6 +96,15 @@
     landing.brandColor && HEX_COLOR.test(landing.brandColor) ? landing.brandColor : null,
   );
 
+  // Hardcoded white text vanishes on a pale brand; pick black/white by YIQ brightness.
+  function brandForeground(hex: string): string {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return (r * 299 + g * 587 + b * 114) / 1000 >= 128 ? '#1a1a1a' : '#ffffff';
+  }
+  let safeBrandForeground = $derived(safeBrandColor ? brandForeground(safeBrandColor) : null);
+
   // Convert YouTube watch / youtu.be / Vimeo URLs to their embed form so a
   // raw share URL pasted into AI Inquiry settings still renders as an
   // embedded player. Falls back to null when the URL doesn't match a
@@ -313,6 +322,7 @@
   class:dark={landing.backgroundDark}
   class:themed={safeBrandColor}
   style:--brand={safeBrandColor ?? undefined}
+  style:--brand-fg={safeBrandForeground ?? undefined}
 >
   {#if isPreview}
     <div class="border-b border-border bg-surface px-4 py-2 text-center text-xs text-text-muted">
@@ -626,12 +636,10 @@
      the rules below so an unthemed page keeps its neutral defaults. We
      keep brand color out of body copy and opt-out controls — only
      interactive accents (CTA fill, link decorations on hover, FAQ chip
-     focus, chat input focus) pick it up. No contrast switching: the
-     brand-color → white-text choice on the CTA assumes saturated brand
-     colors (the only realistic input from a settings hex picker). */
+     focus, chat input focus) pick it up. */
   .themed .brand-cta {
     background-color: var(--brand);
-    color: #fff;
+    color: var(--brand-fg);
     transition: filter 0.15s ease;
   }
   .themed .brand-cta:hover:not(:disabled) {
@@ -654,7 +662,7 @@
      keeps the neutral bg-text / text-page fill set in the class list. */
   .themed .brand-bubble {
     background-color: var(--brand);
-    color: #fff;
+    color: var(--brand-fg);
   }
 
   /* Markdown subset emitted by renderInquiryMarkdown — bold, italic, lists.

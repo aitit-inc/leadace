@@ -26,6 +26,17 @@ Prioritize efficiency with template-based semi-personalization.
 - **Problem framing → solution**: Use the project's `email_template` document structure as-is. Adjust only to swap in industry-relevant challenges
 - **Overall body**: Maintain the template skeleton while varying the opening and problem framing per prospect
 
+## Deliverability: avoid content fingerprints
+
+Repeated, near-identical bodies are a concrete spam-deliverability failure, not just a "feels templated" problem. Gmail clusters messages by content similarity: once a recurring body / structure / boilerplate accumulates spam reports anywhere, Gmail flags *similar* future messages as "similar to mail previously identified as spam" — even from a brand-new sending domain and even to a first-time recipient. Repeated identical content at volume is exactly what that classifier feeds on, and it is sender-independent (switching the From address does not reset it).
+
+Treat near-duplicate cold sends as a deliverability risk to actively minimize:
+
+- **Every cold send should be genuinely distinct.** Vary the opener, sentence structure, paragraph order, problem framing, and CTA phrasing across prospects. Two emails to two different prospects must not be near-duplicates.
+- **Never ship the same non-personalized sentences verbatim across a batch.** Boilerplate that is byte-identical send-to-send is the fingerprint.
+- **volume mode caveat**: the `email_template` skeleton is a *starting structure to reword*, not text to send as-is. Re-express the connective and solution sentences each time; do not keep an identical block across the batch just because it is not the personalized part.
+- **Fewer, more distinct, well-targeted sends beat high-volume near-duplicates** — for response rate and to avoid burning the sending domain. When in doubt, prefer precision mode (see SALES_STRATEGY.md "Outreach Mode").
+
 ## Subject Line
 
 - **40–60 characters (6–8 words)** is optimal. Keep it scannable on mobile
@@ -100,6 +111,7 @@ Check each email against these patterns that significantly lower response rates 
 | CTA is just a URL | Unclear what action is expected; clicking a URL is a high-friction action | Use question format to prompt a reply (URL is supplementary) |
 | Forced, irrelevant, or fabricated proof | A bolted-on stat reads as filler and can erode trust | Use a proof point only when one genuinely fits the recipient; otherwise lean on specific personalization |
 | Only opening is changed; rest is template | Recipient can tell it's not meant for them | Weave overview / match_reason throughout the body (in precision mode) |
+| Near-identical body reused across prospects | Forms a content fingerprint Gmail spam-clusters → future sends get spam-foldered (even from a new domain) | Genuinely vary opener / structure / CTA per send; never ship identical boilerplate across a batch |
 | Bare URL spam | Prone to spam filters | Embed naturally in text, or include just one URL in the CTA |
 | Self-promotion comes first | Without empathy for the recipient's challenges, they won't read on | Structure as: their situation → challenge → solution |
 

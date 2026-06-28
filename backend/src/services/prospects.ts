@@ -667,6 +667,61 @@ export async function updateProspectStatus(
   return ok({ updated: true, prospectId, status })
 }
 
+// Shared so the list and single-prospect detail can never drift.
+const projectProspectSelection = {
+  ppId: projectProspects.id,
+  prospectId: prospects.id,
+  name: prospects.name,
+  contactName: prospects.contactName,
+  overview: prospects.overview,
+  industry: prospects.industry,
+  websiteUrl: prospects.websiteUrl,
+  email: prospects.email,
+  contactFormUrl: prospects.contactFormUrl,
+  formType: prospects.formType,
+  snsAccounts: prospects.snsAccounts,
+  doNotContact: prospects.doNotContact,
+  notes: prospects.notes,
+  matchReason: projectProspects.matchReason,
+  priority: projectProspects.priority,
+  status: projectProspects.status,
+  organizationId: prospects.organizationId,
+  organizationName: organizations.name,
+  createdAt: projectProspects.createdAt,
+}
+
+export const projectProspectParamSchema = z.object({
+  id: projectRefSchema,
+  prospectId: z.coerce.number().int().positive(),
+})
+export type ProjectProspectParam = z.infer<typeof projectProspectParamSchema>
+
+export async function getProjectProspect(
+  db: Db,
+  tenantId: TenantId,
+  projectRef: ProjectRef,
+  prospectId: number,
+): Promise<ServiceResult<ProjectProspectRow>> {
+  const resolved = await resolveProject(db, tenantId, projectRef)
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
+
+  const [row] = await db
+    .select(projectProspectSelection)
+    .from(projectProspects)
+    .innerJoin(prospects, eq(prospects.id, projectProspects.prospectId))
+    .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
+    .where(and(
+      eq(projectProspects.projectId, projectId),
+      eq(projectProspects.tenantId, tenantId),
+      eq(projectProspects.prospectId, prospectId),
+    ))
+    .limit(1)
+
+  if (!row) return err('NOT_FOUND', 'Prospect not found')
+  return ok(row)
+}
+
 export async function listProjectProspects(
   db: Db,
   tenantId: TenantId,
@@ -705,27 +760,7 @@ export async function listProjectProspects(
 
   const [rows, countRows] = await Promise.all([
     db
-      .select({
-        ppId: projectProspects.id,
-        prospectId: prospects.id,
-        name: prospects.name,
-        contactName: prospects.contactName,
-        overview: prospects.overview,
-        industry: prospects.industry,
-        websiteUrl: prospects.websiteUrl,
-        email: prospects.email,
-        contactFormUrl: prospects.contactFormUrl,
-        formType: prospects.formType,
-        snsAccounts: prospects.snsAccounts,
-        doNotContact: prospects.doNotContact,
-        notes: prospects.notes,
-        matchReason: projectProspects.matchReason,
-        priority: projectProspects.priority,
-        status: projectProspects.status,
-        organizationId: prospects.organizationId,
-        organizationName: organizations.name,
-        createdAt: projectProspects.createdAt,
-      })
+      .select(projectProspectSelection)
       .from(projectProspects)
       .innerJoin(prospects, eq(prospects.id, projectProspects.prospectId))
       .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
