@@ -1,6 +1,6 @@
 # Email Template
 
-First-contact outreach template. Casual, in the recipient's language (English-standard casual for English; natural, appropriately-polite Japanese for Japanese recipients): write the way a real person emails — warm, direct, conversational. 75–150 words, one CTA, a light sign-off in that language (never a heavy signature block). The backend appends the compliance footer (legal name, physical address, unsubscribe) and any inquiry / scheduling link automatically — never put those in the body.
+First-contact outreach template. Casual, in the recipient's language (English-standard casual for English; natural, appropriately-polite Japanese for Japanese recipients): write the way a real person emails — warm, direct, conversational. Short — roughly 50–110 words, one CTA, a light sign-off in that language (never a heavy signature block). The backend appends the compliance footer (legal name, physical address, unsubscribe) and any inquiry / scheduling link automatically — never put those in the body.
 
 This is the default starting point. `/leadace` onboarding generates each project's `email_template` document from this, and the operator can customize it afterward (in the plugin via `save_document`, or in the web app under Documents → Email Template).
 

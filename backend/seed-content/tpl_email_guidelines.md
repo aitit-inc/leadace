@@ -39,11 +39,11 @@ Treat near-duplicate cold sends as a deliverability risk to actively minimize:
 
 ## Links: the dominant spam trigger — keep cold mail link-free
 
-A link to a low-reputation or shared platform domain is the single strongest spam signal we have measured: identical mail inboxes when the link is removed and lands in spam when it is present, regardless of the sending domain. So:
+A link to a low-reputation domain — above all the shared app domain that every tenant's mail carries — is the single strongest spam signal we have measured: identical mail inboxes when the link is removed and lands in spam when it is present, regardless of the sending domain. So:
 
 - **Put NO links in a cold first-touch body.** No landing page, no signup URL, no "book a demo" link, no tracking/redirect link. The backend appends a link-free, reply-based opt-out automatically — never add an unsubscribe URL yourself either.
 - **Make the CTA a reply, not a click.** "Worth a quick reply?" / "Open to a 15-min chat — just reply and I'll send times." A reply is also a stronger engagement signal than a click.
-- **If a scheduling link is genuinely needed**, use a recipient-trusted, well-aged domain (e.g. `calendly.com`), never our own new/shared domain — and only one.
+- **If a link is genuinely needed**, use a recipient-trusted, well-aged domain (e.g. `calendly.com`, `github.com`), never our own new/shared domain — and only one. A high-reputation link like `github.com` has been observed to reach the primary inbox — but only from a dedicated, well-warmed sending domain. From a new, shared, or reputation-burned sending domain, assume any link still costs deliverability.
 - The inquiry-landing conversation link is **opt-in per project and off by default**; when it is off, do not reference or invent a landing URL.
 
 ## Subject Line
@@ -56,6 +56,8 @@ A link to a low-reputation or shared platform domain is the single strongest spa
 - Examples: "Your school's career support × AI interviews", "Case study: 30% reduction in hiring costs"
 
 ## Body Structure
+
+This numbered list is the maximal checklist, not a length mandate. For a cold first-touch, the link-free peer-note shape (good example under Customization Sources) is the default target: compress steps 2–4 into one or two sentences rather than expanding each to its full line count.
 
 1. **Opening greeting** (1-2 lines): Use "{full name}" if the prospect's `contact_name` is in the DB, otherwise use "{organization name} Team" — using "Team" alone reads as mass outreach and is prohibited. Briefly explain why you're reaching out
 2. **Problem framing** (2-3 lines): Specifically address the challenge the recipient likely faces
@@ -100,6 +102,13 @@ When the project's `inquiryCtaType` is `signup`, the recipient reaches the self-
 > I'm reaching out after seeing your robust career support program — including a joint job fair with roughly 700 companies and mock interviews.
 > With a career support program at this scale, I imagine ensuring sufficient individual mock interview practice time for each student is a real challenge.
 
+**Good example (link-free peer note — the shape that lands in the primary inbox; vary the wording every send, never copy this verbatim):**
+> Hi {first name},
+> Saw {a specific, real thing they shipped or did} — {one genuine, specific reaction}. Since you're {their current context}, thought {your offer} might be relevant: it {one concrete thing it does for them}.
+> Worth a quick reply to compare notes?
+
+The strength is a *specific, real* observation (not "I noticed your industry faces…"), one plain sentence on the offer (not a feature list), and a reply-only CTA. Keep it ~50–70 words; the backend appends the compliance footer, so close with just a light sign-off. The connective phrasing and the CTA line are must-vary parts — never reuse this example's wording (including "Worth a quick reply?") verbatim in a real send.
+
 ## Required Legal Disclosures
 
 Outbound email is regulated by the recipient's jurisdiction (CAN-SPAM in the US, CASL in Canada, Japan's Act on Regulation of Transmission of Specified Electronic Mail, and others). The required disclosures — **sender identity (legal name), a valid physical/postal address, and an opt-out mechanism** — are appended automatically by the backend as a compliance footer on every send. **Do not add them to the body, and do not duplicate them in the sign-off** (a second address block yields a confused-looking footer). If `send_email_and_record` returns `412 Tenant compliance settings incomplete`, the footer can't be built — surface the message and have the user complete Workspace settings before retrying.
@@ -123,11 +132,16 @@ Check each email against these patterns that significantly lower response rates 
 | Near-identical body reused across prospects | Forms a content fingerprint Gmail spam-clusters → future sends get spam-foldered (even from a new domain) | Genuinely vary opener / structure / CTA per send; never ship identical boilerplate across a batch |
 | Bare URL spam | Prone to spam filters | Embed naturally in text, or include just one URL in the CTA |
 | Self-promotion comes first | Without empathy for the recipient's challenges, they won't read on | Structure as: their situation → challenge → solution |
+| Product described as a feature list / paragraph-long blurb | Reads as an ad → fires the human spam-report reflex and Gmail's promotional clustering | One concrete sentence on what it does for *them*; lead with their situation, not the product |
+| Names the outreach channel/machinery in the body ("cold email", "sender reputation", calling the reader a "prospect") | Talking about the spammy channel inside it trips content filters and reads as tool-generated | Describe the recipient's world and your offer in plain words; never reference outreach mechanics |
+| A placeholder / merge token or leftover QA/"Test" string ships | The clearest "automated blast" tell → instant distrust or a spam report | Rewrite without the missing datum; never emit a raw token |
 
 ## Notes
 
-- Body text should be **75–150 words** (excluding sign-off and legal disclosures). Shorter emails have higher response rates
+- Body text should be **short — roughly 50–110 words** (excluding sign-off and legal disclosures); a genuine peer note is often ~50–70. Shorter, specific emails have higher response rates and a smaller content-fingerprint surface — cut anything that isn't about the recipient or one concrete point about your offer
 - One CTA per email
 - No attachments (for first contact)
 - **Default voice is casual, in the recipient's language**: write the way a real person emails — warm, direct, conversational, matching that language's politeness norms (English-standard casual for English; appropriately-polite natural Japanese for Japanese). No heavy signature block; close with a light sign-off in the email's language (`Best,` + your name for English; a natural Japanese close such as `よろしくお願いいたします` for Japanese). (The project's `email_template` document holds the body template; apply these voice rules when composing the outbound email from it.)
-- Avoid spam trigger words: "free", "limited", "act now", etc.
+- Avoid classic spam-trigger words ("free", "limited", "act now")
+- **Don't name the outreach channel or its machinery inside the email.** Words like "cold email", "outreach", "sequence", "sender reputation", "deliverability", "sender infrastructure", or calling the reader a "prospect"/"lead" trip content filters (rare n-grams learned from bulk-mail tools) *and* expose the mass-send mechanics — write as if this is the one email you personally sent today. Exception: when these words are the *product's* own domain vocabulary (e.g. the offer is sales or outreach tooling), use them to describe the product — never to describe this email itself or the process that produced it
+- **Never let a placeholder or merge token ship** ("{Company}", "{First name}", a leftover "Test"/QA artifact, an unrendered field). If a personalization datum is missing, rewrite the sentence without it — a visible token is the clearest "automated blast" tell. ({Curly braces} in this document are authoring-time slots to fill with real data, never literal text to emit)
