@@ -26,20 +26,6 @@
     { code: 'JP', label: 'Japan (JP)' },
   ];
 
-  function validateUrl(value: string | null, label: string): string | null {
-    if (!value) return null;
-    try {
-      const u = new URL(value);
-      if (u.protocol !== 'http:' && u.protocol !== 'https:') {
-        return `${label} must use http(s)://`;
-      }
-      if (value.length > 500) return `${label} is too long (500 chars max)`;
-      return null;
-    } catch {
-      return `${label} is not a valid URL`;
-    }
-  }
-
   function validate(s: TenantSettings): boolean {
     const errors: Partial<Record<keyof TenantSettings, string>> = {};
     if (s.name && s.name.length > 120) errors.name = 'Workspace name is too long (120 chars max)';
@@ -55,8 +41,6 @@
     if (s.defaultSenderCountry && !/^[A-Z]{2}$/.test(s.defaultSenderCountry)) {
       errors.defaultSenderCountry = 'Country must be a 2-letter ISO code (e.g. US, CA, JP)';
     }
-    const privacyErr = validateUrl(s.privacyPolicyUrl, 'Privacy policy URL');
-    if (privacyErr) errors.privacyPolicyUrl = privacyErr;
     if (s.legalNameJa && s.legalNameJa.length > 200) {
       errors.legalNameJa = 'Legal name (Japanese) is too long (200 chars max)';
     }
@@ -66,8 +50,6 @@
     if (s.physicalAddressJa && s.physicalAddressJa.length < 5) {
       errors.physicalAddressJa = 'Address (Japanese) looks too short';
     }
-    const privacyJaErr = validateUrl(s.privacyPolicyUrlJa, 'Privacy policy URL (Japanese)');
-    if (privacyJaErr) errors.privacyPolicyUrlJa = privacyJaErr;
     validationErrors = errors;
     return Object.keys(errors).length === 0;
   }
@@ -85,10 +67,8 @@
       legalName: emptyToNull(formData.legalName),
       physicalAddress: emptyToNull(formData.physicalAddress),
       defaultSenderCountry: emptyToNull(formData.defaultSenderCountry?.toUpperCase() ?? null),
-      privacyPolicyUrl: emptyToNull(formData.privacyPolicyUrl),
       legalNameJa: emptyToNull(formData.legalNameJa),
       physicalAddressJa: emptyToNull(formData.physicalAddressJa),
-      privacyPolicyUrlJa: emptyToNull(formData.privacyPolicyUrlJa),
     };
     if (!validate(normalized)) {
       saveMessage = 'Fix the highlighted fields above before saving.';
@@ -231,26 +211,6 @@
         {/if}
       </section>
 
-      <section class="space-y-1">
-        <label for="privacyPolicyUrl" class="block text-sm font-medium text-text">Privacy policy URL</label>
-        <p class="text-xs text-text-muted">
-          Optional. When set, appended as <code>Privacy: …</code> in every email footer. This is
-          <strong>your own</strong> privacy notice as the sender — the current send targets (US / CA / JP)
-          don't require it; it only carries legal weight as your GDPR Art.14 notice when emailing
-          named individuals in the UK / EU. LeadAce's own privacy policy can't substitute for it.
-        </p>
-        <input
-          id="privacyPolicyUrl"
-          type="url"
-          bind:value={formData.privacyPolicyUrl}
-          placeholder="https://example.com/privacy"
-          class="block w-full rounded border border-border bg-page px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-text/40 focus:outline-none"
-        />
-        {#if validationErrors.privacyPolicyUrl}
-          <p class="text-xs text-danger">{validationErrors.privacyPolicyUrl}</p>
-        {/if}
-      </section>
-
       <section class="space-y-4 border-t border-border pt-6">
         <div>
           <h2 class="text-sm font-semibold text-text">Japanese footer (for recipients in Japan)</h2>
@@ -292,22 +252,6 @@
           ></textarea>
           {#if validationErrors.physicalAddressJa}
             <p class="text-xs text-danger">{validationErrors.physicalAddressJa}</p>
-          {/if}
-        </div>
-
-        <div class="space-y-1">
-          <label for="privacyPolicyUrlJa" class="block text-sm font-medium text-text">
-            Privacy policy URL (Japanese)
-          </label>
-          <input
-            id="privacyPolicyUrlJa"
-            type="url"
-            bind:value={formData.privacyPolicyUrlJa}
-            placeholder="https://example.com/ja/privacy"
-            class="block w-full rounded border border-border bg-page px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-text/40 focus:outline-none"
-          />
-          {#if validationErrors.privacyPolicyUrlJa}
-            <p class="text-xs text-danger">{validationErrors.privacyPolicyUrlJa}</p>
           {/if}
         </div>
       </section>

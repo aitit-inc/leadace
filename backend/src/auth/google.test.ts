@@ -18,7 +18,6 @@ describe('buildComplianceAttachments', () => {
     secret: 'test-secret',
     tenantLegalName: 'Acme Inc.',
     tenantPhysicalAddress: '1 Main St',
-    tenantPrivacyPolicyUrl: null as string | null,
     locale: 'en' as const,
   }
 
@@ -34,29 +33,31 @@ describe('buildComplianceAttachments', () => {
     expect(headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click')
   })
 
-  it('keeps the standalone unsubscribe line when inquiry is disabled', async () => {
-    const { footer, headers } = await buildComplianceAttachments({ ...base, inquiryUrl: null })
-    expect(footer).toMatch(/(unsubscribe|opt out|stop receiving)[^\n]*https:\/\/app\.example\/unsubscribe\//i)
-    expect(footer).not.toContain('/q/')
+  it('is link-free with a reply-based opt-out when inquiry is disabled, header still present', async () => {
+    const { footer, headers } = await buildComplianceAttachments({
+      ...base,
+      inquiryUrl: null,
+    })
+    expect(footer).toMatch(/unsubscribe|opt out/i)
+    expect(footer).not.toMatch(/https?:\/\//) // no body link at all
     expect(headers['List-Unsubscribe']).toContain('https://api.example/api/unsubscribe/')
     expect(headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click')
   })
 
-  it('localizes the inquiry, privacy, and unsubscribe lines for JP recipients', async () => {
+  it('localizes the inquiry and unsubscribe lines for JP recipients', async () => {
     const inquiry = await buildComplianceAttachments({
       ...base,
       locale: 'ja',
       inquiryUrl: 'https://app.example/q/abc123',
-      tenantPrivacyPolicyUrl: 'https://acme.example/privacy',
     })
     expect(inquiry.footer).toContain('https://app.example/q/abc123')
     expect(inquiry.footer).toMatch(/停止/)
-    expect(inquiry.footer).toContain('https://acme.example/privacy')
     expect(inquiry.footer).not.toMatch(/unsubscribe|opt out/i)
     expect(inquiry.footer).toContain('Acme Inc.')
 
-    const legacy = await buildComplianceAttachments({ ...base, locale: 'ja', inquiryUrl: null })
-    expect(legacy.footer).toMatch(/停止[^\n]*https:\/\/app\.example\/unsubscribe\//)
+    const linkFree = await buildComplianceAttachments({ ...base, locale: 'ja', inquiryUrl: null })
+    expect(linkFree.footer).toMatch(/配信停止|返信/)
+    expect(linkFree.footer).not.toMatch(/https?:\/\//)
   })
 
   it('always emits the List-Unsubscribe header regardless of inquiry mode', async () => {

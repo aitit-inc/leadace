@@ -19,14 +19,17 @@ const INQUIRY_VARIANTS: Record<Locale, readonly string[]> = {
   ],
 }
 
-const UNSUBSCRIBE_VARIANTS: Record<Locale, readonly string[]> = {
-  en: ['Unsubscribe', 'Opt out here', 'To unsubscribe', 'Stop receiving these'],
-  ja: ['配信停止', '配信停止はこちら', '今後の配信を停止', 'メール配信の停止'],
-}
-
-const PRIVACY_VARIANTS: Record<Locale, readonly string[]> = {
-  en: ['Privacy', 'Privacy policy', 'Our privacy policy'],
-  ja: ['プライバシーポリシー', '個人情報の取り扱い', 'プライバシー'],
+const REPLY_UNSUBSCRIBE_VARIANTS: Record<Locale, readonly string[]> = {
+  en: [
+    'To unsubscribe, just reply to this email with “unsubscribe”.',
+    'Don’t want these emails? Reply with “unsubscribe” and I’ll remove you.',
+    'Reply “unsubscribe” to this email to opt out.',
+  ],
+  ja: [
+    '配信停止をご希望の場合は、このメールに「配信停止」とご返信ください。',
+    '今後の配信が不要な場合は「配信停止」とご返信ください。',
+    '配信を停止するには、このメールに「配信停止」と返信してください。',
+  ],
 }
 
 function pickVariant(variants: readonly string[], seed: number): string {
@@ -38,18 +41,6 @@ export function inquiryFooterLine(inquiryUrl: string, locale: Locale, seed: numb
   return `${pickVariant(INQUIRY_VARIANTS[locale], seed)}: ${inquiryUrl}`
 }
 
-export function unsubscribeFooterLine(
-  unsubscribeUrl: string,
-  locale: Locale,
-  seed: number,
-): string {
-  return `${pickVariant(UNSUBSCRIBE_VARIANTS[locale], seed)}: ${unsubscribeUrl}`
-}
-
-export function privacyFooterLine(
-  privacyPolicyUrl: string,
-  locale: Locale,
-  seed: number,
-): string {
-  return `${pickVariant(PRIVACY_VARIANTS[locale], seed)}: ${privacyPolicyUrl}`
+export function replyUnsubscribeFooterLine(locale: Locale, seed: number): string {
+  return pickVariant(REPLY_UNSUBSCRIBE_VARIANTS[locale], seed)
 }

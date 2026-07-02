@@ -169,6 +169,9 @@ CREATE_RESP="$(api POST /api/projects "$(jq -nc --arg n "$PROJECT_NAME" '{name:$
 PROJECT_ID="$(echo "$CREATE_RESP" | jq -r '.id // ""')"
 [[ -n "$PROJECT_ID" ]] || { echo "create-project failed: $CREATE_RESP" >&2; exit 1; }
 say "project_id=$PROJECT_ID"
+# Inquiry landing now defaults off (link-free cold mail); this suite asserts the
+# inquiry-link footer, so opt in explicitly.
+api PUT "/api/projects/$PROJECT_ID/settings" '{"inquiryLandingEnabled":true}' > /dev/null
 
 SEED_BODY="$(jq -nc --arg pid "$PROJECT_ID" \
   --argjson us "$(mkseed us US)" --argjson us2 "$(mkseed us2 US)" \

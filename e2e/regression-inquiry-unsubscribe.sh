@@ -137,11 +137,14 @@ restore_and_exit() {
 }
 trap restore_and_exit EXIT
 
-step "create project + seed prospects (inquiry_landing_enabled defaults true)"
+step "create project + enable inquiry landing + seed prospects"
 CREATE_RESP="$(api POST /api/projects "$(jq -nc --arg n "$PROJECT_NAME" '{name:$n}')")"
 PROJECT_ID="$(echo "$CREATE_RESP" | jq -r '.id // ""')"
 [[ -n "$PROJECT_ID" ]] || { echo "create-project failed: $CREATE_RESP" >&2; exit 1; }
 say "project_id=$PROJECT_ID"
+# Inquiry landing now defaults off (link-free cold mail); this suite exercises
+# the inquiry flow, so opt in explicitly.
+api PUT "/api/projects/$PROJECT_ID/settings" '{"inquiryLandingEnabled":true}' > /dev/null
 
 SEED_BODY="$(jq -nc --arg pid "$PROJECT_ID" \
   --argjson cl "$(mkseed chipless)" --argjson wc "$(mkseed withchip)" --argjson ld "$(mkseed lead)" \

@@ -322,7 +322,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'import_prospects_from_csv',
-    'Import prospects from a canonical CSV string. Required headers: organizationDomain, organizationName, organizationWebsiteUrl, name, overview, websiteUrl. matchReason is required only when projectId is provided. Optional headers: contactName, department, industry, email, contactFormUrl, formType, snsAccounts.x, snsAccounts.linkedin, snsAccounts.instagram, snsAccounts.facebook, notes, priority, doNotContact. At least one of email / contactFormUrl / snsAccounts.* per row. doNotContact accepts 1/true/yes/on (DNC) or 0/false/no/off (not DNC); empty cells are treated as not provided. Set it on rows the source marks as unsubscribed/opted-out so /build-list will not re-discover and contact them. On overwrite, doNotContact=true sets the flag on existing prospects; false (or column absent) never clears an existing flag (one-way ratchet). projectId is optional: omit it to save prospects as tenant-only assets (no project_prospects link is created — pair with /match-prospects to link them into a project later). dedupPolicy "skip" leaves existing prospects alone; "overwrite" updates prospect fields (matched by email or contactFormUrl) and re-links to the project. Rows that match only by organization domain are skipped as "already_in_project" even with "overwrite" — the prospect identity within that organization is ambiguous and cannot be safely updated. Existing prospects already flagged do_not_contact are always skipped (their record is preserved). Skipped rows are returned in skippedDetails as {row, name, reason} where reason ∈ "email_duplicate" | "form_url_duplicate" | "already_in_project" | "do_not_contact" | "duplicate_in_batch" | "plan_limit". Max 1000 data rows.',
+    'Import prospects from a canonical CSV string. Required headers: organizationDomain, organizationName, organizationWebsiteUrl, name, overview, websiteUrl. matchReason is required only when projectId is provided. Optional headers: contactName, department, industry, email, contactFormUrl, formType, snsAccounts.x, snsAccounts.linkedin, snsAccounts.instagram, snsAccounts.facebook, notes, priority, doNotContact, country (ISO 3166-1 alpha-2; see list_country_codes), countrySource (manual | ai_inferred). At least one of email / contactFormUrl / snsAccounts.* per row. doNotContact accepts 1/true/yes/on (DNC) or 0/false/no/off (not DNC); empty cells are treated as not provided. Set it on rows the source marks as unsubscribed/opted-out so /build-list will not re-discover and contact them. On overwrite, doNotContact=true sets the flag on existing prospects; false (or column absent) never clears an existing flag (one-way ratchet). projectId is optional: omit it to save prospects as tenant-only assets (no project_prospects link is created — pair with /match-prospects to link them into a project later). dedupPolicy "skip" leaves existing prospects alone; "overwrite" updates prospect fields (matched by email or contactFormUrl) and re-links to the project. Rows that match only by organization domain are skipped as "already_in_project" even with "overwrite" — the prospect identity within that organization is ambiguous and cannot be safely updated. Existing prospects already flagged do_not_contact are always skipped (their record is preserved). Skipped rows are returned in skippedDetails as {row, name, reason} where reason ∈ "email_duplicate" | "form_url_duplicate" | "already_in_project" | "do_not_contact" | "duplicate_in_batch" | "plan_limit". Max 1000 data rows.',
     {
       projectId: z.string().min(1).optional().describe('Project name or ID. Omit to save prospects as tenant-only assets without linking to any project.'),
       csvText: z.string().describe('Full CSV text including header row'),
@@ -355,6 +355,20 @@ function buildToolRegistry(): ToolDef[] {
           text: `Imported (${formatTarget(projectId)}): ${result.inserted} new, ${result.overwritten} overwritten, ${result.skipped} skipped, ${result.errors} errors.\nSkipped: ${JSON.stringify(result.skippedDetails)}\nErrors: ${JSON.stringify(result.errorDetails)}`,
         }],
       }
+    },
+  )
+
+  defineTool(
+    'list_country_codes',
+    'List the country codes LeadAce recognizes for a prospect / organization `country` field (ISO 3166-1 alpha-2). Returns { countries: [{ code, name, sendAllowed }], sendAllowed, note }; sendAllowed marks the codes outreach can currently deliver to. Any other two-letter code still stores fine but is blocked at send time. Use it to present country choices in import / registration flows instead of inventing a list.',
+    {},
+    async (_args, { apiUrl, authHeader }) => {
+      const { ok, data } = await callApi('GET', '/country-codes', null, apiUrl, authHeader)
+      if (!ok) {
+        const err = data as { error: string }
+        return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
+      }
+      return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] }
     },
   )
 
@@ -515,7 +529,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_tenant_settings',
-    'Get the workspace-level identity / compliance fields the user has configured. Returns a readiness status line plus legalName, physicalAddress, defaultSenderCountry, and privacyPolicyUrl. legalName / physicalAddress / defaultSenderCountry are MANDATORY for outbound sends — when any of those is null, send_email_and_record / record_outreach_with_inquiry refuse with 412. /leadace uses this to direct the user to the Workspace settings page when fields are missing.',
+    'Get the workspace-level identity / compliance fields the user has configured. Returns a readiness status line plus legalName, physicalAddress, and defaultSenderCountry. legalName / physicalAddress / defaultSenderCountry are MANDATORY for outbound sends — when any of those is null, send_email_and_record / record_outreach_with_inquiry refuse with 412. /leadace uses this to direct the user to the Workspace settings page when fields are missing.',
     {},
     async (_args, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('GET', '/tenant-settings', null, apiUrl, authHeader)
@@ -528,7 +542,6 @@ function buildToolRegistry(): ToolDef[] {
         legalName: string | null
         physicalAddress: string | null
         defaultSenderCountry: string | null
-        privacyPolicyUrl: string | null
       }
       const missing: string[] = []
       if (!r.legalName) missing.push('legalName')
@@ -541,7 +554,7 @@ function buildToolRegistry(): ToolDef[] {
       return {
         content: [{
           type: 'text' as const,
-          text: `${status}\n\nlegalName: ${r.legalName ?? '(not set)'}\nphysicalAddress: ${r.physicalAddress ?? '(not set)'}\ndefaultSenderCountry: ${r.defaultSenderCountry ?? '(not set)'}\nprivacyPolicyUrl: ${r.privacyPolicyUrl ?? '(not set)'}`,
+          text: `${status}\n\nlegalName: ${r.legalName ?? '(not set)'}\nphysicalAddress: ${r.physicalAddress ?? '(not set)'}\ndefaultSenderCountry: ${r.defaultSenderCountry ?? '(not set)'}`,
         }],
       }
     },
@@ -555,7 +568,6 @@ function buildToolRegistry(): ToolDef[] {
       legalName: z.string().min(1).max(200).nullable().optional().describe('Registered business name shown in the email compliance footer (CAN-SPAM § 5(a)(5)).'),
       physicalAddress: z.string().min(5).max(500).nullable().optional().describe('Postal address shown in the email compliance footer (CAN-SPAM physical address requirement).'),
       defaultSenderCountry: z.string().regex(/^[A-Z]{2}$/, 'must be ISO 3166-1 alpha-2 (e.g. US, CA, JP)').nullable().optional(),
-      privacyPolicyUrl: z.url().max(500).nullable().optional().describe('The sender\'s own privacy policy URL. Optional; appended to the footer as a privacy-policy link when set. Only legally meaningful as the sender\'s GDPR Art.14 notice to UK/EU individual recipients — not required for the current US/CA/JP send targets.'),
     },
     async (patch, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('PUT', '/tenant-settings', patch, apiUrl, authHeader)

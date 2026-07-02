@@ -298,7 +298,6 @@ export const tenants = pgTable('tenants', {
   // future jurisdiction-specific footer rendering and per-country audit. Not
   // the recipient's country (that lives on prospects / organizations).
   defaultSenderCountry: text('default_sender_country'),
-  privacyPolicyUrl: text('privacy_policy_url'),
   // Japanese footer variants, used verbatim for JP recipients (effective
   // country = JP) so a bilingual sender shows its Japanese legal identity to
   // Japanese customers and the English one to everyone else. Null = no JA
@@ -306,7 +305,6 @@ export const tenants = pgTable('tenants', {
   // gates a send (the *_ja columns are not part of compliance readiness).
   legalNameJa: text('legal_name_ja'),
   physicalAddressJa: text('physical_address_ja'),
-  privacyPolicyUrlJa: text('privacy_policy_url_ja'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   // NULL = the plugin has never connected; gates the web onboarding flow.
   firstMcpConnectedAt: timestamp('first_mcp_connected_at', { withTimezone: true }),
@@ -414,7 +412,9 @@ export const projectSettings = pgTable('project_settings', {
   unsubscribeEnabled: boolean('unsubscribe_enabled').notNull().default(true),
   // Format checks (URL shape, hex color) live in zod, not DB CHECK
   // constraints — those would be brittle for URL/hex evolution.
-  inquiryLandingEnabled: boolean('inquiry_landing_enabled').notNull().default(true),
+  // Default off: cold mail is link-free by default (a shared app-domain link is
+  // the dominant spam trigger). Opt in per project to surface the inquiry link.
+  inquiryLandingEnabled: boolean('inquiry_landing_enabled').notNull().default(false),
   // NULL disables the chat input but leaves the rest of the landing page
   // (video, PDF, meeting button, unsubscribe) rendering.
   inquiryChatBrief: text('inquiry_chat_brief'),

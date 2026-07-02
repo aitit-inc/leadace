@@ -8,6 +8,7 @@ allowed-tools:
   - Write
   - AskUserQuestion
   - mcp__plugin_leadace_api__list_projects
+  - mcp__plugin_leadace_api__list_country_codes
   - mcp__plugin_leadace_api__import_prospects_from_csv
 ---
 
@@ -52,6 +53,8 @@ A skill that imports existing prospect / contact lists (CSV, Excel, SQLite, plai
 | `notes` | no | |
 | `priority` | no | Integer 1-5, default 3 |
 | `doNotContact` | no | Boolean. `1` / `true` / `yes` / `on` (case-insensitive) → DNC; `0` / `false` / `no` / `off` → not DNC; empty cell omitted. |
+| `country` | recommended | ISO 3166-1 alpha-2 (e.g. `US`, `JP`). `list_country_codes` returns the recognized set and which are send-allowed. |
+| `countrySource` | no | `manual` or `ai_inferred`. Only meaningful with `country`. |
 
 \* At least **one** of `email`, `contactFormUrl`, or any `snsAccounts.*` is required per row.
 \*\* Tenant-only imports may omit the `matchReason` column entirely. Linking happens later via `/match-prospects`, which writes a fresh `matchReason` per project.
@@ -100,6 +103,7 @@ For each source column, decide what canonical column it corresponds to. Do not i
 - `matchReason` handling depends on the mode chosen in step 1:
   - **Tenant-only mode**: omit the `matchReason` column entirely from the canonical CSV. Don't ask the user — `/match-prospects` will write fresh per-project reasons later.
   - **Project-linked mode**: if the source has no usable `matchReason`, ask the user once for a default ("Why is this list a fit for this project?") and apply it to every row.
+- **`country`** (recommended): map it when the source carries it, with `countrySource` `manual` (source/user-given) or `ai_inferred` (you derived it). If the source has no country at all, don't leave it blank silently — fetch `list_country_codes` (recognized codes + send-allowed flags) and ask the user once whether to apply one default country to all rows or leave them blank. Present that fetched list; don't invent one.
 - **`doNotContact` mapping (important)**: if the source has any do-not-contact-like column — common names: `do_not_contact`, `dnc`, `opted_out`, `opt_out`, `unsubscribed`, `unsubscribe`, `is_unsubscribed`, `subscribed=false` — map it to canonical `doNotContact`. Emit `1` for truthy values and leave the cell blank for falsy ones. **Do not silently drop these rows.** They must be imported with the flag set; otherwise `/build-list` may rediscover the same organisation later and the user will outreach to someone who already opted out. Truthy: `1`, `true`, `yes`, `on`, `unsubscribed`, `opted out`. Falsy: `0`, `false`, `no`, `off`, `subscribed`, `active`, blank. If the semantics are ambiguous, ask the user once before mapping.
 - If a row has none of email / contactFormUrl / snsAccounts.* — drop it and report it in the per-row error summary.
 

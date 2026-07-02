@@ -279,7 +279,6 @@ async function buildOutreachFooter(
     secret: ctx.unsubscribeSecret,
     tenantLegalName: identity.legalName,
     tenantPhysicalAddress: identity.physicalAddress,
-    tenantPrivacyPolicyUrl: identity.privacyPolicyUrl,
     locale: recipientLocale,
   })
   return { footer: attachments.footer, headers: attachments.headers, inquiryUrl }

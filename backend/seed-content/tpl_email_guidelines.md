@@ -37,6 +37,15 @@ Treat near-duplicate cold sends as a deliverability risk to actively minimize:
 - **volume mode caveat**: the `email_template` skeleton is a *starting structure to reword*, not text to send as-is. Re-express the connective and solution sentences each time; do not keep an identical block across the batch just because it is not the personalized part.
 - **Fewer, more distinct, well-targeted sends beat high-volume near-duplicates** — for response rate and to avoid burning the sending domain. When in doubt, prefer precision mode (see SALES_STRATEGY.md "Outreach Mode").
 
+## Links: the dominant spam trigger — keep cold mail link-free
+
+A link to a low-reputation or shared platform domain is the single strongest spam signal we have measured: identical mail inboxes when the link is removed and lands in spam when it is present, regardless of the sending domain. So:
+
+- **Put NO links in a cold first-touch body.** No landing page, no signup URL, no "book a demo" link, no tracking/redirect link. The backend appends a link-free, reply-based opt-out automatically — never add an unsubscribe URL yourself either.
+- **Make the CTA a reply, not a click.** "Worth a quick reply?" / "Open to a 15-min chat — just reply and I'll send times." A reply is also a stronger engagement signal than a click.
+- **If a scheduling link is genuinely needed**, use a recipient-trusted, well-aged domain (e.g. `calendly.com`), never our own new/shared domain — and only one.
+- The inquiry-landing conversation link is **opt-in per project and off by default**; when it is off, do not reference or invent a landing URL.
+
 ## Subject Line
 
 - **40–60 characters (6–8 words)** is optimal. Keep it scannable on mobile

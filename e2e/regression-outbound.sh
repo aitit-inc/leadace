@@ -147,8 +147,7 @@ ORIGINAL_TENANT="$(api GET /api/tenant-settings)"
 ORIG_LEGAL="$(echo "$ORIGINAL_TENANT" | jq -r '.legalName // ""')"
 ORIG_ADDR="$(echo "$ORIGINAL_TENANT" | jq -r '.physicalAddress // ""')"
 ORIG_COUNTRY="$(echo "$ORIGINAL_TENANT" | jq -r '.defaultSenderCountry // ""')"
-ORIG_PRIVACY="$(echo "$ORIGINAL_TENANT" | jq -r '.privacyPolicyUrl // ""')"
-say "snapshot: legal='$ORIG_LEGAL' addr='$ORIG_ADDR' country='$ORIG_COUNTRY' privacy='$ORIG_PRIVACY'"
+say "snapshot: legal='$ORIG_LEGAL' addr='$ORIG_ADDR' country='$ORIG_COUNTRY'"
 
 # Always restore + cleanup, even if an assertion failure exits early.
 restore_and_exit() {
@@ -157,7 +156,7 @@ restore_and_exit() {
     echo "" >&2
     echo "SKIP_CLEANUP=1 — leaving project_id=${PROJECT_ID:-<none>} and run-tagged rows in place." >&2
     echo "Tenant settings were NOT restored. Original snapshot:" >&2
-    echo "  legalName='$ORIG_LEGAL' physicalAddress='$ORIG_ADDR' defaultSenderCountry='$ORIG_COUNTRY' privacyPolicyUrl='$ORIG_PRIVACY'" >&2
+    echo "  legalName='$ORIG_LEGAL' physicalAddress='$ORIG_ADDR' defaultSenderCountry='$ORIG_COUNTRY'" >&2
     exit "$rc"
   fi
 
@@ -186,12 +185,10 @@ restore_and_exit() {
     --arg legal "$ORIG_LEGAL" \
     --arg addr "$ORIG_ADDR" \
     --arg country "$ORIG_COUNTRY" \
-    --arg privacy "$ORIG_PRIVACY" \
     '{
       legalName:            (if $legal   == "" then null else $legal   end),
       physicalAddress:      (if $addr    == "" then null else $addr    end),
-      defaultSenderCountry: (if $country == "" then null else $country end),
-      privacyPolicyUrl:     (if $privacy == "" then null else $privacy end)
+      defaultSenderCountry: (if $country == "" then null else $country end)
     }')"
   api PUT /api/tenant-settings "$restore_body" > /dev/null || true
   say "restored tenant settings"

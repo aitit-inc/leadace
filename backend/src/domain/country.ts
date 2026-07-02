@@ -87,3 +87,57 @@ export function isAllowedSendCountry(country: string | null | undefined): SendCo
   if ((ALLOWED_SEND_COUNTRIES as readonly string[]).includes(upper)) return { allowed: true, reason: 'allowed' }
   return { allowed: false, reason: 'unsupported_country', country: upper }
 }
+
+const COUNTRY_CATALOG: { code: string; name: string }[] = [
+  { code: 'US', name: 'United States' },
+  { code: 'CA', name: 'Canada' },
+  { code: 'JP', name: 'Japan' },
+  { code: 'AE', name: 'United Arab Emirates' },
+  { code: 'AR', name: 'Argentina' },
+  { code: 'AT', name: 'Austria' },
+  { code: 'AU', name: 'Australia' },
+  { code: 'BE', name: 'Belgium' },
+  { code: 'BR', name: 'Brazil' },
+  { code: 'CH', name: 'Switzerland' },
+  { code: 'CL', name: 'Chile' },
+  { code: 'CN', name: 'China' },
+  { code: 'DE', name: 'Germany' },
+  { code: 'DK', name: 'Denmark' },
+  { code: 'ES', name: 'Spain' },
+  { code: 'FI', name: 'Finland' },
+  { code: 'FR', name: 'France' },
+  { code: 'GB', name: 'United Kingdom' },
+  { code: 'HK', name: 'Hong Kong' },
+  { code: 'IE', name: 'Ireland' },
+  { code: 'IL', name: 'Israel' },
+  { code: 'IN', name: 'India' },
+  { code: 'IT', name: 'Italy' },
+  { code: 'KR', name: 'South Korea' },
+  { code: 'MX', name: 'Mexico' },
+  { code: 'NL', name: 'Netherlands' },
+  { code: 'NO', name: 'Norway' },
+  { code: 'NZ', name: 'New Zealand' },
+  { code: 'PL', name: 'Poland' },
+  { code: 'PT', name: 'Portugal' },
+  { code: 'SE', name: 'Sweden' },
+  { code: 'SG', name: 'Singapore' },
+  { code: 'TW', name: 'Taiwan' },
+  { code: 'ZA', name: 'South Africa' },
+]
+
+export type CountryCodeEntry = { code: string; name: string; sendAllowed: boolean }
+
+export type CountryCodeReference = {
+  countries: CountryCodeEntry[]
+  sendAllowed: string[]
+  note: string
+}
+
+export function buildCountryCodeReference(): CountryCodeReference {
+  const allowed = new Set<string>(ALLOWED_SEND_COUNTRIES)
+  return {
+    countries: COUNTRY_CATALOG.map((c) => ({ ...c, sendAllowed: allowed.has(c.code) })),
+    sendAllowed: [...ALLOWED_SEND_COUNTRIES],
+    note: 'Any two-letter code can be stored on a prospect or organization country field (validated by format, not catalog membership). Outreach currently delivers only to the sendAllowed countries; codes outside that set register fine but are blocked at outreach send time.',
+  }
+}

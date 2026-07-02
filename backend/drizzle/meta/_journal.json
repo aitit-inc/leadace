@@ -358,6 +358,20 @@
       "when": 1782568560514,
       "tag": "0050_right_micromax",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1782829262387,
+      "tag": "0051_absurd_puma",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1782878981270,
+      "tag": "0052_lumpy_purifiers",
+      "breakpoints": true
     }
   ]
 }

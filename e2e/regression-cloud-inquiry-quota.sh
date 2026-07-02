@@ -53,9 +53,9 @@ post_msg() {
 step "seed the inquiry FK chain (project → prospect → outreach_log → token → sessions)"
 PROJ="$(api POST /api/projects "$(jq -nc '{name:"cloud-chat proj"}')" | jq -r '.id // ""')"
 [[ -n "$PROJ" ]] || { echo "project create failed" >&2; exit 1; }
-# loadChatContext requires inquiry_landing_enabled (default true) AND a non-empty
-# chat brief (inquiry_chat_brief is NULL by default).
-psql_local "UPDATE project_settings SET inquiry_chat_brief = 'E2E chat brief' WHERE project_id = '$PROJ' AND tenant_id = '$T';" > /dev/null
+# loadChatContext requires inquiry_landing_enabled (now defaults OFF — link-free
+# cold mail) AND a non-empty chat brief (inquiry_chat_brief is NULL by default).
+psql_local "UPDATE project_settings SET inquiry_landing_enabled = true, inquiry_chat_brief = 'E2E chat brief' WHERE project_id = '$PROJ' AND tenant_id = '$T';" > /dev/null
 
 P0="$(api POST /api/prospects/batch "$(jq -nc --arg pid "$PROJ" --arg d "e2e-chat-$TS.example" \
   '{projectId:$pid, prospects:[{organizationDomain:$d, organizationName:"Chat Org", organizationWebsiteUrl:("https://"+$d),

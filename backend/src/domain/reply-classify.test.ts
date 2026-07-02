@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { parseEmailMessage } from './email-message'
-import { detectDeterministicType } from './reply-classify'
+import { detectDeterministicType, leadingUnquotedText } from './reply-classify'
 
 const classify = (raw: string) => detectDeterministicType(parseEmailMessage(raw))
 
@@ -44,5 +44,43 @@ describe('detectDeterministicType', () => {
 
   it('returns null for a genuine human reply (hand to the LLM)', () => {
     expect(classify('From: lead@acme.com\r\nSubject: Re: your email\r\n\r\nYes interested')).toBeNull()
+  })
+
+  it('flags a top-line "Unsubscribe" reply as unsubscribe', () => {
+    expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\nUnsubscribe')).toBe('unsubscribe')
+  })
+
+  it('flags a top-line "配信停止" reply (with quoted history below) as unsubscribe', () => {
+    expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\n「配信停止」\r\n\r\nOn Mon someone wrote:\r\n> hello')).toBe('unsubscribe')
+  })
+
+  it('does NOT flag a positive reply that merely quotes our unsubscribe footer', () => {
+    expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\nYes, sounds good!\r\n\r\n> To unsubscribe, just reply with "unsubscribe".')).toBeNull()
+  })
+
+  it('leaves a free-form opt-out to the LLM', () => {
+    expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\nplease remove me from your list')).toBeNull()
+  })
+})
+
+describe('leadingUnquotedText', () => {
+  it('drops the quoted footer so the LLM never sees our own "unsubscribe" token', () => {
+    expect(
+      leadingUnquotedText('Yes, sounds good — let\'s talk.\r\n\r\n> To unsubscribe, just reply with "unsubscribe".'),
+    ).toBe('Yes, sounds good — let\'s talk.')
+  })
+
+  it('keeps the whole body when nothing is quoted', () => {
+    expect(leadingUnquotedText('please remove me from your list')).toBe('please remove me from your list')
+  })
+
+  it('returns empty when the reply is entirely quoted (nothing new above the quote)', () => {
+    expect(leadingUnquotedText('> On Mon someone wrote:\r\n> unsubscribe')).toBe('')
+  })
+
+  it('preserves multi-line lead-in before the quote', () => {
+    expect(leadingUnquotedText('Thanks!\r\nCan we meet next week?\r\n\r\n> quoted history')).toBe(
+      'Thanks!\nCan we meet next week?',
+    )
   })
 })

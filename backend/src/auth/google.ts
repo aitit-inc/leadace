@@ -4,8 +4,7 @@ import { signUnsubscribeToken } from './unsubscribe-token'
 import { randomFromAlphabet } from './random-id'
 import {
   inquiryFooterLine,
-  unsubscribeFooterLine,
-  privacyFooterLine,
+  replyUnsubscribeFooterLine,
 } from '../domain/inquiry-footer'
 import {
   parseSendingIdentitySecret,
@@ -199,24 +198,13 @@ export function plainTextToHtmlBody(plain: string): string {
   return `<!DOCTYPE html><html><body><div>${withBreaks}</div></body></html>`
 }
 
-// Build the body footer + RFC 8058 List-Unsubscribe headers attached to every
-// outbound message. An opt-out is always present: the List-Unsubscribe header
-// is emitted unconditionally, and the body carries either the inquiry link
-// (whose label routes to the landing opt-out) or, when inquiry is disabled, a
-// standalone Unsubscribe line. CAN-SPAM §5(a)(3) and CASL §6 require an opt-out
-// in every commercial message, so the project_settings.unsubscribe_enabled flag
-// (kept for legacy reasons) is intentionally ignored here. The footer also
-// carries the tenant's legal identity + physical address and the privacy policy
-// URL when configured.
-//
-// The caller MUST resolve `tenantLegalName` / `tenantPhysicalAddress` via
-// `assertTenantComplianceReady` before invoking this — those columns are
-// nullable in the DB to allow tenant auto-provisioning, but mandatory at
-// send time. The unsubscribe token is bound to (prospectId, tenantId), not
-// the recipient email, so it stays valid even when the caller routes the
-// message to a non-prospect address. Caller supplies the inquiry URL so we
-// don't re-allocate a token during a request that has often loaded the same
-// row already.
+// Legal opt-out is mandatory (CAN-SPAM §5(a)(3), CASL §6), so
+// project_settings.unsubscribe_enabled is intentionally ignored — the
+// List-Unsubscribe header ships on every message. The token is bound to
+// (prospectId, tenantId), not the recipient email, so it stays valid even when
+// the message is routed to a non-prospect address. Caller resolves
+// tenantLegalName / tenantPhysicalAddress via assertTenantComplianceReady first
+// (nullable in the DB for auto-provisioning, mandatory at send).
 export async function buildComplianceAttachments(args: {
   prospectId: number
   tenantId: TenantId
@@ -226,9 +214,6 @@ export async function buildComplianceAttachments(args: {
   secret: string
   tenantLegalName: string
   tenantPhysicalAddress: string
-  tenantPrivacyPolicyUrl: string | null
-  // Recipient language. Localizes the inquiry / unsubscribe / privacy lines;
-  // the legal name + address above stay verbatim.
   locale: Locale
 }): Promise<{ footer: string; headers: Record<string, string> }> {
   const lines: string[] = []
@@ -241,10 +226,8 @@ export async function buildComplianceAttachments(args: {
 
   if (args.inquiryUrl) {
     lines.push(inquiryFooterLine(args.inquiryUrl, args.locale, footerSeed))
-  }
-
-  if (args.tenantPrivacyPolicyUrl) {
-    lines.push(privacyFooterLine(args.tenantPrivacyPolicyUrl, args.locale, footerSeed))
+  } else {
+    lines.push(replyUnsubscribeFooterLine(args.locale, footerSeed))
   }
 
   const token = await signUnsubscribeToken(
@@ -253,9 +236,6 @@ export async function buildComplianceAttachments(args: {
   )
   const userUrl = `${args.appUrl}/unsubscribe/${token}`
   const oneClickUrl = `${args.apiUrl}/api/unsubscribe/${token}`
-  if (!args.inquiryUrl) {
-    lines.push(unsubscribeFooterLine(userUrl, args.locale, footerSeed))
-  }
   headers['List-Unsubscribe'] = `<${oneClickUrl}>, <${userUrl}>`
   headers['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
 

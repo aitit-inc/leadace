@@ -10,11 +10,11 @@ import {
   type CapturedReply,
   type OutreachCandidate,
 } from '../domain/reply'
-import { detectDeterministicType } from '../domain/reply-classify'
+import { detectDeterministicType, leadingUnquotedText, type DeterministicType } from '../domain/reply-classify'
 import { refreshGoogleAccessToken } from '../auth/google'
 import { pollGmailInbox } from './gmail-poll'
 import { pollImapInbox } from './imap-poll'
-import { classifyReply } from './reply-classify'
+import { classifyReply, type ReplyClassification } from './reply-classify'
 import { recordResponse, type RecordResponseInput } from './responses'
 
 // Server-side, provider-agnostic reply collection, run by an hourly cron: poll
@@ -73,6 +73,28 @@ export function clampReceivedAt(d: Date, now: number): string {
   const ms = d.getTime()
   const t = Number.isNaN(ms) ? now : Math.min(now, Math.max(now - 7 * DAY_MS, ms))
   return new Date(t).toISOString()
+}
+
+export function recordFieldsForReply(
+  responseType: ReplyClassification['responseType'] | DeterministicType,
+  submittedAtIso: string,
+  trusted: boolean,
+): Pick<RecordResponseInput, 'responseType' | 'markDoNotContact' | 'rejectionFeedback'> {
+  if (responseType === 'unsubscribe') {
+    // Only a threaded reply (echoes our Message-ID, unforgeable) may ratchet
+    // cross-project do_not_contact — same spoof gate as the bounce path.
+    if (!trusted) return { responseType: 'rejection', markDoNotContact: false }
+    return {
+      responseType: 'rejection',
+      markDoNotContact: true,
+      rejectionFeedback: {
+        version: 1,
+        primary_reason: 'unsubscribe_request',
+        submitted_at: submittedAtIso,
+      },
+    }
+  }
+  return { responseType, markDoNotContact: false }
 }
 
 // 23505 (postgres unique_violation) on the responses insert means a concurrent
@@ -249,20 +271,20 @@ async function ingestIdentity(
 
     const classified = det
       ? { responseType: det, sentiment: 'neutral' as const }
-      : (await classifyReply(env, { subject: reply.subject, bodyText: reply.bodyText })) ??
+      : (await classifyReply(env, { subject: reply.subject, bodyText: leadingUnquotedText(reply.bodyText) })) ??
         { responseType: 'reply' as const, sentiment: 'neutral' as const }
 
     const rawContent = reply.bodyText.trim() || reply.subject || '(no text)'
     const content =
       rawContent.length > MAX_CONTENT_CHARS ? rawContent.slice(0, MAX_CONTENT_CHARS) + ' …[truncated]' : rawContent
+    const receivedAtIso = clampReceivedAt(reply.receivedAt, now.getTime())
     const input: RecordResponseInput = {
       outreachLogId,
       channel: 'email',
       content,
       sentiment: classified.sentiment,
-      responseType: classified.responseType,
-      receivedAt: clampReceivedAt(reply.receivedAt, now.getTime()),
-      markDoNotContact: false,
+      ...recordFieldsForReply(classified.responseType, receivedAtIso, attribution.binding === 'threaded'),
+      receivedAt: receivedAtIso,
       sourceMessageId: reply.messageId,
     }
 

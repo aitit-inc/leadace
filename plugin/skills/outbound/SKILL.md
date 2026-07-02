@@ -39,6 +39,8 @@ A skill that sequentially reaches out to prospects on the sales list via email, 
 
 For each prospect, sends a message via an available channel and records the result in the DB. After all processing, generates a summary report.
 
+**Pace sends serially — don't parallelize.** Process prospects one at a time. Using sub-agents for sub-tasks (drafting, page / form inspection) is encouraged where it helps, but don't fan the actual sends out concurrently: parallel sends trip provider rate limits (email send APIs especially, but SNS / form automation too). A strong default, not a hard rule.
+
 **Before starting:** `Read` `${CLAUDE_PLUGIN_ROOT}/references/workspace-conventions.md` and follow the cross-cutting conventions there (data storage, MCP error handling, document writes, output discipline).
 
 ## Steps
@@ -94,7 +96,7 @@ From the settings response, surface for body composition:
   the landing page. Avoid contradicting it in the email subject / opener.
 - `outboundMode`, `senderEmailAlias`, `senderDisplayName` — read but do
   not surface in body; the backend uses them. The `compliance` block
-  (legal_name / physical_address / privacy_url) is also tenant-level and
+  (legal_name / physical_address) is also tenant-level and
   is appended by the backend at send time — never inline these in the body.
 
 And surface for channel selection (apply when picking a channel in step 2):
@@ -283,7 +285,7 @@ When `inquiryLandingEnabled === false`:
   it via SALES_STRATEGY.md edits if the project's go-to-market is PLG.
 
 In both branches the inquiry / unsubscribe URLs **and the compliance
-footer** (legal name, physical address, privacy URL) are appended by
+footer** (legal name, physical address) are appended by
 the backend — do **not** insert any of them in the body, and do **not**
 include a closing address block from SALES_STRATEGY.md's "Sender
 Information" beyond the human signature (name + role + sign-off).

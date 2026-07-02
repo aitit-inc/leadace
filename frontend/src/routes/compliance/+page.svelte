@@ -103,8 +103,7 @@
         </li>
       </ul>
       <p class="mt-2">
-        Privacy policy URL and contact email are optional but strongly recommended; when set,
-        the privacy URL is appended to every footer and the contact email is the route surfaced
+        The contact email is optional but strongly recommended; it is the route surfaced
         on this page for inbound requests.
       </p>
       <p class="mt-2">
@@ -150,11 +149,18 @@
           >---
 &lt;Legal name&gt;
 &lt;Physical address&gt;
-[Learn more or ask anything: &lt;inquiry-link&gt;]
-[Privacy: &lt;privacy-policy-url&gt;]
-Unsubscribe: &lt;unsubscribe-link&gt;</code></pre>
+To unsubscribe, reply to this email with "unsubscribe".</code></pre>
       <p class="mt-2">
-        The unsubscribe link is also exposed via the RFC 8058
+        Cold email is link-free by default: the opt-out is a reply instruction, honored
+        server-side — a genuine reply asking to unsubscribe suppresses further contact.
+        The <code class="font-mono text-xs">List-Unsubscribe</code> header (below) is the
+        guaranteed one-click path that ratchets the prospect's
+        <code class="font-mono text-xs">do_not_contact</code> flag. When a workspace opts
+        into the inquiry landing page, that reply line is replaced by a link to the page,
+        which carries its own opt-out.
+      </p>
+      <p class="mt-2">
+        In both modes the unsubscribe path is also exposed via the RFC 8058
         <code class="font-mono text-xs">List-Unsubscribe</code> /
         <code class="font-mono text-xs">List-Unsubscribe-Post: List-Unsubscribe=One-Click</code>
         headers, so Gmail and Yahoo's bulk-sender requirements are met.
