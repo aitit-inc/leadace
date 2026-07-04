@@ -409,7 +409,10 @@ export const projectSettings = pgTable('project_settings', {
   // senderDisplayName / senderCompanyName: "From {name}, {role} at {company}".
   // NULL falls back to "From {name} at {company}".
   senderJobTitle: text('sender_job_title'),
-  unsubscribeEnabled: boolean('unsubscribe_enabled').notNull().default(true),
+  // Gates the RFC 8058 List-Unsubscribe(-Post) headers only. Off by default: the
+  // header lands cold mail in Gmail's Promotions tab; the footer line carries the
+  // legal opt-out on its own.
+  unsubscribeEnabled: boolean('unsubscribe_enabled').notNull().default(false),
   // Format checks (URL shape, hex color) live in zod, not DB CHECK
   // constraints — those would be brittle for URL/hex evolution.
   // Default off: cold mail is link-free by default (a shared app-domain link is

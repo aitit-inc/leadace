@@ -19,6 +19,7 @@ describe('buildComplianceAttachments', () => {
     tenantLegalName: 'Acme Inc.',
     tenantPhysicalAddress: '1 Main St',
     locale: 'en' as const,
+    unsubscribeEnabled: false,
   }
 
   it('collapses to the inquiry link and drops the standalone unsubscribe line when inquiry is enabled', async () => {
@@ -29,19 +30,17 @@ describe('buildComplianceAttachments', () => {
     expect(footer).toContain('https://app.example/q/abc123')
     expect(footer).toMatch(/unsubscribe|opt out/i)
     expect(footer).not.toContain('/unsubscribe/')
-    expect(headers['List-Unsubscribe']).toContain('https://api.example/api/unsubscribe/')
-    expect(headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click')
+    expect(headers).toEqual({})
   })
 
-  it('is link-free with a reply-based opt-out when inquiry is disabled, header still present', async () => {
+  it('is link-free with a reply-based opt-out when inquiry is disabled, no headers by default', async () => {
     const { footer, headers } = await buildComplianceAttachments({
       ...base,
       inquiryUrl: null,
     })
     expect(footer).toMatch(/unsubscribe|opt out/i)
     expect(footer).not.toMatch(/https?:\/\//) // no body link at all
-    expect(headers['List-Unsubscribe']).toContain('https://api.example/api/unsubscribe/')
-    expect(headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click')
+    expect(headers).toEqual({})
   })
 
   it('localizes the inquiry and unsubscribe lines for JP recipients', async () => {
@@ -60,14 +59,25 @@ describe('buildComplianceAttachments', () => {
     expect(linkFree.footer).not.toMatch(/https?:\/\//)
   })
 
-  it('always emits the List-Unsubscribe header regardless of inquiry mode', async () => {
-    const enabled = await buildComplianceAttachments({
+  it('emits the RFC 8058 headers only when unsubscribeEnabled, in both inquiry modes', async () => {
+    const on = await buildComplianceAttachments({
       ...base,
+      unsubscribeEnabled: true,
+      inquiryUrl: null,
+    })
+    expect(on.headers['List-Unsubscribe']).toContain('https://api.example/api/unsubscribe/')
+    expect(on.headers['List-Unsubscribe']).toContain('https://app.example/unsubscribe/')
+    expect(on.headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click')
+
+    const onInquiry = await buildComplianceAttachments({
+      ...base,
+      unsubscribeEnabled: true,
       inquiryUrl: 'https://app.example/q/x',
     })
-    const disabled = await buildComplianceAttachments({ ...base, inquiryUrl: null })
-    expect(enabled.headers['List-Unsubscribe']).toBeDefined()
-    expect(disabled.headers['List-Unsubscribe']).toBeDefined()
+    expect(onInquiry.headers['List-Unsubscribe']).toBeDefined()
+
+    const off = await buildComplianceAttachments({ ...base, inquiryUrl: null })
+    expect(off.headers).toEqual({})
   })
 })
 

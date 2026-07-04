@@ -198,9 +198,9 @@ export function plainTextToHtmlBody(plain: string): string {
   return `<!DOCTYPE html><html><body><div>${withBreaks}</div></body></html>`
 }
 
-// Legal opt-out is mandatory (CAN-SPAM §5(a)(3), CASL §6), so
-// project_settings.unsubscribe_enabled is intentionally ignored — the
-// List-Unsubscribe header ships on every message. The token is bound to
+// The footer line itself satisfies the legal opt-out requirement (CAN-SPAM
+// §5(a)(3), CASL §6, 特定電子メール法 — an opt-out mechanism, not a header), so
+// the RFC 8058 headers are per-project opt-in. The token is bound to
 // (prospectId, tenantId), not the recipient email, so it stays valid even when
 // the message is routed to a non-prospect address. Caller resolves
 // tenantLegalName / tenantPhysicalAddress via assertTenantComplianceReady first
@@ -209,6 +209,7 @@ export async function buildComplianceAttachments(args: {
   prospectId: number
   tenantId: TenantId
   inquiryUrl: string | null
+  unsubscribeEnabled: boolean
   appUrl: string
   apiUrl: string
   secret: string
@@ -230,14 +231,16 @@ export async function buildComplianceAttachments(args: {
     lines.push(replyUnsubscribeFooterLine(args.locale, footerSeed))
   }
 
-  const token = await signUnsubscribeToken(
-    { prospectId: args.prospectId, tenantId: args.tenantId },
-    args.secret,
-  )
-  const userUrl = `${args.appUrl}/unsubscribe/${token}`
-  const oneClickUrl = `${args.apiUrl}/api/unsubscribe/${token}`
-  headers['List-Unsubscribe'] = `<${oneClickUrl}>, <${userUrl}>`
-  headers['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
+  if (args.unsubscribeEnabled) {
+    const token = await signUnsubscribeToken(
+      { prospectId: args.prospectId, tenantId: args.tenantId },
+      args.secret,
+    )
+    const userUrl = `${args.appUrl}/unsubscribe/${token}`
+    const oneClickUrl = `${args.apiUrl}/api/unsubscribe/${token}`
+    headers['List-Unsubscribe'] = `<${oneClickUrl}>, <${userUrl}>`
+    headers['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
+  }
 
   const footer = `\n\n---\n${lines.join('\n')}`
   return { footer, headers }

@@ -1464,7 +1464,7 @@ function buildToolRegistry(): ToolDef[] {
       senderJobTitle: z.string().min(1).max(200).nullable().optional()
         .describe('Optional job title / role shown alongside senderDisplayName on the inquiry landing header as "From {senderDisplayName}, {senderJobTitle} at {senderCompanyName}". No-op when senderDisplayName is null.'),
       unsubscribeEnabled: z.boolean().optional()
-        .describe('Currently no-op (always-on for compliance) — toggle reserved for v1.x. Updates persist but do not gate the unsubscribe link / List-Unsubscribe header.'),
+        .describe('Attach the RFC 8058 List-Unsubscribe one-click headers to outbound email. Default false: at cold-outreach volumes the header is a bulk-mail marker (pushes mail into Gmail\'s Promotions tab); the compliance footer\'s opt-out line ships on every send regardless and carries the legal opt-out.'),
       inquiryLandingEnabled: z.boolean().optional()
         .describe('When true, outbound emails include an inquiry-landing URL footer that hosts a per-recipient AI chat, meeting-request button, and unsubscribe-with-reason flow.'),
       inquiryChatBrief: z.string().max(4000).nullable().optional()

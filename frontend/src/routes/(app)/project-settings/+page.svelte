@@ -339,7 +339,13 @@
           class="mt-0.5"
         />
         <label for="unsubscribe-enabled" class="text-sm text-text">
-          Add unsubscribe link & List-Unsubscribe header to outbound emails
+          Attach the RFC 8058 List-Unsubscribe one-click header to outbound emails
+          <span class="block text-xs text-text-secondary">
+            Off by default: the header marks mail as bulk and pushes cold email into
+            Gmail's Promotions tab. The compliance footer always carries the opt-out
+            (a reply instruction, or the inquiry-landing link when enabled), so
+            opt-out compliance does not depend on this header.
+          </span>
         </label>
       </div>
 

@@ -1,8 +1,8 @@
 import type { Locale } from './locale'
 
 // Phrasing rotates per prospect so the footer isn't a byte-identical cross-tenant
-// signature for Gmail's spam-similarity clustering. The legal opt-out is the
-// List-Unsubscribe header, so varying the wording never weakens compliance.
+// signature for Gmail's spam-similarity clustering. Every variant carries the
+// legal opt-out itself, so varying the wording never weakens compliance.
 
 const INQUIRY_VARIANTS: Record<Locale, readonly string[]> = {
   en: [

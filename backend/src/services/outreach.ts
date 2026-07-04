@@ -259,6 +259,7 @@ async function buildOutreachFooter(
     outreachLogId: number
     compliance: TenantComplianceProjection
     inquiryLandingEnabled: boolean
+    unsubscribeEnabled: boolean
   },
 ): Promise<{ footer: string; headers: Record<string, string>; inquiryUrl: string | null }> {
   const inquiryUrl = await allocateInquiryUrl(
@@ -274,6 +275,7 @@ async function buildOutreachFooter(
     prospectId: args.prospectId,
     tenantId,
     inquiryUrl,
+    unsubscribeEnabled: args.unsubscribeEnabled,
     appUrl: ctx.appUrl,
     apiUrl: ctx.apiUrl,
     secret: ctx.unsubscribeSecret,
@@ -549,6 +551,7 @@ export async function recordOutreachWithInquiry(
     outreachLogId: log.id,
     compliance: complianceResult.value,
     inquiryLandingEnabled: sendSettings.inquiryLandingEnabled,
+    unsubscribeEnabled: sendSettings.unsubscribeEnabled,
   })
   const finalBody = `${input.body}${attachments.footer}`
 
@@ -723,6 +726,7 @@ export async function sendAndRecord(
     outreachLogId: log.id,
     compliance,
     inquiryLandingEnabled: sendSettings.inquiryLandingEnabled,
+    unsubscribeEnabled: sendSettings.unsubscribeEnabled,
   })
   const sendBody = `${input.body}${attachments.footer}`
 
@@ -1134,6 +1138,7 @@ export async function sendDraft(
     outreachLogId: draft.id,
     compliance,
     inquiryLandingEnabled: sendSettings.inquiryLandingEnabled,
+    unsubscribeEnabled: sendSettings.unsubscribeEnabled,
   })
   const sendBody = `${draft.body}${attachments.footer}`
 
@@ -1226,6 +1231,7 @@ export async function previewDraft(
     outreachLogId: id,
     compliance: complianceResult.value,
     inquiryLandingEnabled: sendSettings.inquiryLandingEnabled,
+    unsubscribeEnabled: sendSettings.unsubscribeEnabled,
   })
   return ok({ footer: { kind: 'rendered', text: attachments.footer } })
 }

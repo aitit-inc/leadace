@@ -65,7 +65,7 @@ This numbered list is the maximal checklist, not a length mandate. For a cold fi
 4. **Proof (optional, 1 line)**: If you have a concrete, relevant proof point — a number or a comparable customer from the "Track Record / Social Proof" section of SALES_STRATEGY.md — include one short line; specifics build credibility. If none fits naturally, skip it. A short honest ask beats forced credentials
 5. **CTA** (1 line): Present exactly one next action
 6. **Legal required disclosures**: Opt-out notice (see below)
-7. **Sign-off** (1-2 lines): Close light, in the email's language — a short sign-off (`Best,` for English; a natural Japanese close such as `よろしくお願いいたします` for Japanese) on one line, your name on the next; add your role only if it helps. Do **not** paste a full signature block (phone, postal address, multiple URLs): cold email closes light, and the backend appends the compliance footer (legal name, physical address, unsubscribe) automatically. Take the name/role from the "Sender Information" section of SALES_STRATEGY.md
+7. **Sign-off** (1-2 lines): Close light, in the email's language — a short sign-off (`Best,` for English; a natural Japanese close such as `よろしくお願いいたします` for Japanese) on one line, your name on the next; add your role only if it helps. No company/product line under your name — the compliance footer already shows the legal company name, and repeating it turns a light close into a marketing signature. Do **not** paste a full signature block (phone, postal address, multiple URLs): cold email closes light, and the backend appends the compliance footer (legal name, physical address, unsubscribe) automatically. Take the name/role from the "Sender Information" section of SALES_STRATEGY.md
 
 ## CTA (Call to Action)
 

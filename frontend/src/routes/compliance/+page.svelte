@@ -153,17 +153,20 @@ To unsubscribe, reply to this email with "unsubscribe".</code></pre>
       <p class="mt-2">
         Cold email is link-free by default: the opt-out is a reply instruction, honored
         server-side — a genuine reply asking to unsubscribe suppresses further contact.
-        The <code class="font-mono text-xs">List-Unsubscribe</code> header (below) is the
-        guaranteed one-click path that ratchets the prospect's
-        <code class="font-mono text-xs">do_not_contact</code> flag. When a workspace opts
-        into the inquiry landing page, that reply line is replaced by a link to the page,
-        which carries its own opt-out.
+        When a workspace opts into the inquiry landing page, that reply line is replaced
+        by a link to the page, which carries its own opt-out.
       </p>
       <p class="mt-2">
-        In both modes the unsubscribe path is also exposed via the RFC 8058
+        The RFC 8058
         <code class="font-mono text-xs">List-Unsubscribe</code> /
         <code class="font-mono text-xs">List-Unsubscribe-Post: List-Unsubscribe=One-Click</code>
-        headers, so Gmail and Yahoo's bulk-sender requirements are met.
+        headers are available as a per-project option (off by default). Gmail and
+        Yahoo require one-click unsubscribe headers only of bulk senders (roughly
+        5,000+ messages per day); LeadAce's per-mailbox warmup caps keep sending
+        volume far below that threshold. When enabled, the one-click endpoint
+        ratchets the prospect's
+        <code class="font-mono text-xs">do_not_contact</code> flag; unsubscribe
+        links in previously sent mail remain valid either way.
       </p>
     </section>
 
