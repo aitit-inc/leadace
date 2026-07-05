@@ -7,11 +7,13 @@ import {
   listTenantProspectsQuerySchema,
   projectProspectParamSchema,
   updateProspectStatusBodySchema,
+  updateProspectPriorityBodySchema,
   updateDoNotContactBodySchema,
   updateProspectBodySchema,
   linkSchema,
   listReachable,
   updateProspectStatus,
+  updateProspectPriority,
   updateProspect,
   listProjectProspects,
   getProjectProspect,
@@ -93,6 +95,22 @@ prospectsRouter.patch(
   zValidator('json', updateProspectStatusBodySchema),
   async (c) => {
     const result = await updateProspectStatus(
+      c.get('db'),
+      c.get('tenantId'),
+      c.req.valid('param').id,
+      c.req.valid('json'),
+    )
+    if (!result.ok) return respondWithError(c, result)
+    return c.json(result.value)
+  },
+)
+
+prospectsRouter.patch(
+  '/prospects/:id/priority',
+  zValidator('param', prospectIdParamSchema),
+  zValidator('json', updateProspectPriorityBodySchema),
+  async (c) => {
+    const result = await updateProspectPriority(
       c.get('db'),
       c.get('tenantId'),
       c.req.valid('param').id,

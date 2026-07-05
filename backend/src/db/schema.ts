@@ -277,6 +277,17 @@ export type EvaluationMetrics = {
     rate: number
     meanReward: number
   }>
+  // strategy=null bucket = sends to prospects without recorded provenance.
+  discoveryStrategyResponseRate: Array<{
+    strategy: string | null
+    total: number
+    responses: number
+    rate: number
+  }>
+  freshSignalResponseRate: {
+    withSignal: { total: number; responses: number; rate: number }
+    withoutSignal: { total: number; responses: number; rate: number }
+  }
   // Inquiry-landing outcomes per project. Captures self-serve conversions
   // ('signup_clicked') and chat-only engagement ('inquired') that the
   // response-axis metrics above miss — responses are written for
@@ -560,6 +571,10 @@ export const prospects = pgTable('prospects', {
   country: text('country'),
   countrySource: countrySourceEnum('country_source'),
   emailDeliverability: emailDeliverabilityEnum('email_deliverability').notNull().default('unknown'),
+  // Discovery-strategy slug; deliberately FK-less like variant_id (strategy
+  // definitions live in the sales_strategy document). NULL = provenance not
+  // recorded (manual/CSV import, referral-derived, pre-provenance rows).
+  discoveryStrategy: text('discovery_strategy'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [

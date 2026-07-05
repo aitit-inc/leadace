@@ -12,6 +12,7 @@ import {
 } from '../db/schema'
 import type { Db } from '../db/connection'
 import {
+  discoveryStrategySchema,
   projectRefSchema,
   type ProjectId,
   type ProjectRef,
@@ -84,6 +85,8 @@ const prospectInputSchema = z.object({
   // Only consulted when projectId is set on the request.
   matchReason: z.string().min(1).optional(),
   priority: prioritySchema.default(3),
+  // Write-once provenance; CSV import deliberately has no header for it.
+  discoveryStrategy: discoveryStrategySchema.optional(),
 }).refine(
   (p) => p.email || p.contactFormUrl || (p.snsAccounts && Object.values(p.snsAccounts).some(Boolean)),
   { message: 'At least one contact channel (email, contactFormUrl, or snsAccounts) is required' },
@@ -257,6 +260,7 @@ function prospectInsertValues(
     notes: input.notes ?? null,
     hypothesis: (input.hypothesis as ProspectHypothesis) ?? null,
     ...prospectCountryPatch(input),
+    discoveryStrategy: input.discoveryStrategy ?? null,
     doNotContact: input.doNotContact ?? false,
     createdAt: now,
     updatedAt: now,

@@ -145,6 +145,12 @@ export const updateProspectStatusBodySchema = z.object({
 })
 export type UpdateProspectStatusBody = z.infer<typeof updateProspectStatusBodySchema>
 
+export const updateProspectPriorityBodySchema = z.object({
+  projectId: projectRefSchema,
+  priority: prioritySchema,
+})
+export type UpdateProspectPriorityBody = z.infer<typeof updateProspectPriorityBodySchema>
+
 export const updateDoNotContactBodySchema = z.object({
   doNotContact: z.boolean(),
 })
@@ -665,6 +671,37 @@ export async function updateProspectStatus(
   }
 
   return ok({ updated: true, prospectId, status })
+}
+
+// Deliberately unconditional on status — an explicit override applies even
+// after contact, unlike recordEvaluation's status='new' bulk path.
+export async function updateProspectPriority(
+  db: Db,
+  tenantId: TenantId,
+  prospectId: number,
+  body: UpdateProspectPriorityBody,
+): Promise<ServiceResult<{ updated: true; prospectId: number; priority: Priority }>> {
+  const resolved = await resolveProject(db, tenantId, body.projectId)
+  if (!resolved.ok) return resolved
+  const projectId = resolved.value
+
+  const [pp] = await db
+    .update(projectProspects)
+    .set({ priority: body.priority, updatedAt: new Date() })
+    .where(
+      and(
+        eq(projectProspects.projectId, projectId),
+        eq(projectProspects.prospectId, prospectId),
+        eq(projectProspects.tenantId, tenantId),
+      ),
+    )
+    .returning({ id: projectProspects.id })
+
+  if (!pp) {
+    return err('NOT_FOUND', 'Prospect not found in this project')
+  }
+
+  return ok({ updated: true, prospectId, priority: body.priority })
 }
 
 // Shared so the list and single-prospect detail can never drift.

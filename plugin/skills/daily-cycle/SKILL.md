@@ -222,7 +222,7 @@ Include the following in the prompt:
 - Target count
 - Read Phase 1 (steps 1-5) of `${CLAUDE_PLUGIN_ROOT}/skills/build-list/SKILL.md` and follow its procedure
 - **Contact retrieval (email, form, etc.) is not needed**. Collect candidate name, official URL, overview, industry, country, match reason, and priority
-- After completion, return the candidate list as a JSON array (each object: name, organization_name, website_url, overview, industry, country, match_reason, priority (numeric 1-5 per build-list SKILL.md definition))
+- After completion, return the candidate list as a JSON array (each object: name, organization_name, website_url, overview, industry, country, match_reason, priority (numeric 1-5 per build-list SKILL.md definition), discovery_strategy (slug of the named strategy that surfaced the candidate, per build-list step 3))
 - Also update search notes via `mcp__plugin_leadace_api__save_document` with `projectId: "$0"`, `slug: "search_notes"`
 
 **8a2. Pre-dedup filter (main context)**
@@ -275,7 +275,7 @@ For each prospect, construct the MCP tool fields:
 - `organizationDomain`: apex domain extracted from `website_url` (strip `www.` and path)
 - `organizationName`: organization/entity name (or `name` if same)
 - `organizationWebsiteUrl`: official site URL
-- Plus all other fields: `name`, `overview`, `websiteUrl`, `email`, `contactFormUrl`, `formType`, `snsAccounts`, `matchReason`, `priority`, etc.
+- Plus all other fields: `name`, `overview`, `websiteUrl`, `email`, `contactFormUrl`, `formType`, `snsAccounts`, `matchReason`, `priority`, `discoveryStrategy` (from 8a's `discovery_strategy`), etc.
 - **At least one of `email`, `contactFormUrl`, `snsAccounts` must be set** (prospects without contact channel are rejected)
 
 The server returns `skippedDetails` with `{name, reason}` for rows it dedup-rejected (`already_in_project` / `email_duplicate` / `form_url_duplicate` / `do_not_contact` / `duplicate_in_batch`). Surface the breakdown in the completion report so the user can see how much of the candidate pool was already covered.

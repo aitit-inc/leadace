@@ -20,7 +20,7 @@ allowed-tools:
 
 # Evaluate - PDCA Evaluation & Improvement
 
-A skill that analyzes sales activity result data, reports on performance, and applies the improvements it still owns — numeric priorities and targeting / search keywords. Messaging (subject lines) and channel ranking are now optimized deterministically by the daily lever tick; evaluate **reads and narrates** those, it does not rewrite them as strategy prose.
+A skill that analyzes sales activity result data, reports on performance, and applies the improvements it still owns — numeric priorities, targeting / search keywords, and the discovery-strategy portfolio (`## Prospect Discovery Sources`). Messaging (subject lines) and channel ranking are now optimized deterministically by the daily lever tick; evaluate **reads and narrates** those, it does not rewrite them as strategy prose.
 
 **Before starting:** `Read` `${CLAUDE_PLUGIN_ROOT}/references/workspace-conventions.md` and follow the cross-cutting conventions there (data storage, MCP error handling, document writes, output discipline).
 
@@ -39,8 +39,10 @@ In parallel, call:
 If `get_eval_data` returns a "Project not found" error, instruct the user to run `/leadace` first and **abort**.
 
 `get_eval_data` response includes:
-- `metrics`: totalOutreach, channelCounts, responseCounts, sentimentBreakdown, priorityResponseRate, statusCounts, channelResponseRate, variantResponseRate, inquiryOutcomeCounts
+- `metrics`: totalOutreach, channelCounts, responseCounts, sentimentBreakdown, priorityResponseRate, statusCounts, channelResponseRate, variantResponseRate, discoveryStrategyResponseRate, freshSignalResponseRate, inquiryOutcomeCounts
   - `variantResponseRate` / `channelResponseRate` / `priorityResponseRate` are the **measured lever surfaces**. The subject and channel levers act on them automatically (lever tick) — read them to report, do not turn them into SALES_STRATEGY edits
+  - `discoveryStrategyResponseRate`: reply rate per named discovery strategy (the provenance slug /build-list stamps at registration). The `strategy: null` bucket is prospects without recorded provenance (manual/CSV imports, referrals, pre-provenance rows) — treat it as a baseline, not a strategy. **This is the lever evaluate owns** — it drives the `## Prospect Discovery Sources` Status updates in step 4
+  - `freshSignalResponseRate`: `{ withSignal, withoutSignal }` reply-rate split by whether a fresh why-now org signal existed at compose time — the first measured read of whether signal-led sends convert better. Report-level observation only
   - `metrics.inquiryOutcomeCounts`: per-project session totals keyed by outcome (`opened` / `inquired` / `lead` / `signup_clicked` / `unsubscribed`). `signup_clicked` is the self-serve conversion path (project's CTA mode is `signup`, visitor clicked the Sign up button); `lead` is the human-sales conversion (meeting requested, button or chat-derived). Both `signup_clicked` and `lead` flip `project_prospects.status` to `responded`, so the prospect drops out of the outbound pool — they are different conversion axes that both belong in the "won" column
 - `respondedMessages`: all outreach bodies that received responses (with sentiment and responseType)
 - `noResponseSample`: sample of outreach bodies that received no response
@@ -86,6 +88,10 @@ These feed the Step 6 report and the `[body]` entries of the Learnings Log (step
 - Segments with poor responses
 - Unexpected response patterns
 
+**Discovery Strategy Analysis (evaluate owns this lever — acted on in step 4):**
+- Per-strategy sends and reply rate from `discoveryStrategyResponseRate`: which named strategies produce prospects that actually respond, which only produce volume
+- Fresh-signal effect from `freshSignalResponseRate`: does a why-now signal at compose time correlate with responses at this project's n? Narrate the split honestly — small n means "no signal yet", not "signals don't work"
+
 **Channel Analysis (the channel lever applies — narrate it, don't rewrite SALES_STRATEGY; channel-usage traits feed the `[channel]` Learnings Log entry):**
 - Most effective channel (cross-reference `channelResponseRate` and the lever's `channelAffinity`)
 - Cost-effectiveness by channel
@@ -128,9 +134,10 @@ Before deciding on improvement actions, review the Learnings Log loaded in step 
 - Continue and deepen the direction of measures that were effective before
 - If proposing the same improvement as before, state why different results are expected this time
 
-**Update SALES_STRATEGY.md (targeting & KPI only):**
+**Update SALES_STRATEGY.md (targeting, KPI & discovery strategies only):**
 - Narrow or broaden targeting
 - Update KPI goals
+- Discovery-strategy portfolio updates (see the dedicated block below)
 
 Do **not** edit messaging (subject line / body) or channel priority here — those are optimized deterministically by the daily lever tick (subject draw weights, channel affinity). Report their measured performance in Step 6; do not encode it as prose. (Tone/sub-channel preferences a user wrote in SALES_STRATEGY stay as their authored hints; evaluate just doesn't rewrite them.)
 
@@ -139,6 +146,13 @@ Save the updated document via `mcp__plugin_leadace_api__save_document` with `pro
 **Update search keywords:**
 - Add keywords related to high-response segments
 - Remove ineffective keywords
+
+**Update discovery strategies (`## Prospect Discovery Sources` — same save as SALES_STRATEGY above):**
+Evaluate owns this section's `Status` flags the way it owns priorities — evidence-gated, per-slug:
+- **Demote**: flip a strategy to `Status: paused` when its reply rate underperforms the project's other strategies at `n ≥ minSamplePerArm` (from step 1's `get_lever_state`) across repeated cycles — never on a one-off gap
+- **Promote / keep**: outperformers stay `active`; cite the evidence in the report
+- **Hypothesize**: when fewer than ~3 strategies are active (or every measured one underperforms), add 1-2 new named strategies (slug heading + Status/How/Why per the `tpl_sales_strategy` format) derived from business / sales_strategy context and rejection feedback. New strategies start `active` with no history — that is the point: they need sends to become measurable
+- **Never rename or delete a slug** — that orphans its measured history. Pause instead
 
 **Update the Learnings Log (the cross-stage self-improvement memory):**
 
@@ -149,6 +163,7 @@ Each entry is one line: `[stage] [YYYY-MM-DD] claim — evidence: metric=<name>,
 - `[body]` — what responding messages do that non-responding ones don't (read by outbound, composition hint). Source: Message Analysis traits.
 - `[timing]` — recontact-window / cadence patterns that converted (read by outbound). Source: priority / recontact data.
 - `[channel]` — how to *use* a channel well (tone, opener), NOT which channel to pick (lever-owned). Read by outbound as color only.
+- `[discovery]` — which discovery strategies / source types yield responsive prospects (read by build-list, strategy selection). Source: `discoveryStrategyResponseRate` per-slug reply rates, fresh-signal split.
 
 **Write gate — all required; a claim that can't meet these is a hunch, drop it:**
 - `dataSufficiency.sufficient` is true and the stability discipline above says it is time to act.
@@ -187,6 +202,7 @@ Report the following directly to the user (no file output needed -- live metrics
 - Key KPIs (response rate, positive rate, etc.)
 - **Inquiry landing conversions** (from step 1's `inquiryOutcomeCounts`): show whenever any of `lead` / `signup_clicked` / `inquired` / `unsubscribed` is non-zero. Report `lead` (meeting-request conversions) and `signup_clicked` (self-serve signup conversions) separately — they reflect different CTA modes and inform whether the project's chosen CTA is converting. Skip the section when all five outcomes are 0
 - Changes since the last cycle (what the Learnings Log added or `[retired]` in step 4, plus notable lever shifts from `get_lever_decisions`)
+- **Discovery strategy performance** (from `discoveryStrategyResponseRate` / `freshSignalResponseRate`): per-strategy sends + reply rate, any `Status` changes applied in step 4, and the with/without-signal split. Skip when no send carries a strategy slug yet
 - Important findings from the analysis
 - List of improvements applied
 - **Tactical rejection signals** (from step 1's `get_rejection_feedback_summary`):

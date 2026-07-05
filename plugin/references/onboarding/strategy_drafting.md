@@ -95,10 +95,10 @@ Classify sections:
 | Category | Sections | Behavior |
 |---|---|---|
 | Not set | Missing / empty / incomplete | Subject to completion |
-| evaluate-managed | targeting, KPI, search keywords (when already populated) | **Do not touch by default** |
+| evaluate-managed | targeting, KPI, search keywords, prospect discovery sources (when already populated) | **Do not touch by default** |
 | Static settings | Sender info, response def, notification, track record, outreach mode, messaging, channels | Update only if user explicitly requests |
 
-`/evaluate` auto-tunes targeting / KPI / search keywords once a project has activity, so treat those sections as evaluate-managed whenever they already carry content. An empty such section is simply "not set" and is fillable here.
+`/evaluate` auto-tunes targeting / KPI / search keywords / prospect discovery sources once a project has activity, so treat those sections as evaluate-managed whenever they already carry content. An empty such section is simply "not set" and is fillable here.
 
 **Template update detection:** Compare section headings in `tpl_sales_strategy` master document with the existing file. Sections present in template but missing in file → report as "possibly added by an update".
 
@@ -190,9 +190,9 @@ Price range or pricing structure + current sales challenges.
 - "Up to you" → research industry common ranges, propose.
 
 #### 4-6. Prospect Discovery Sources
-Platforms / directories for finding prospect candidates (depends on target market, industry, region).
-- Examples: PR sites (PR Newswire, Business Wire, GlobeNewswire, TechCrunch), company DBs (LinkedIn, Crunchbase, Apollo, ZoomInfo, industry assoc.), startup/VC DBs (Crunchbase, AngelList, PitchBook, Product Hunt), trade-show / event lists, country/region directories.
-- "Up to you" → reasonable defaults by target market, write into "Prospect Discovery Sources" section of SALES_STRATEGY.md.
+Where to find prospect candidates (depends on target market, industry, region). Written into SALES_STRATEGY.md as 3-6 *named strategies* per the `tpl_sales_strategy` format (slug heading + Status/How/Why) — /build-list executes them and /evaluate measures reply rate per strategy.
+- Source examples to draw from: PR sites (PR Newswire, Business Wire, GlobeNewswire, TechCrunch), company DBs (LinkedIn, Crunchbase, Apollo, ZoomInfo, industry assoc.), startup/VC DBs (Crunchbase, AngelList, PitchBook, Product Hunt), trade-show / event lists, code/product platforms (GitHub, Product Hunt), country/region directories.
+- "Up to you" → reasonable defaults by target market, formulated as named strategies.
 
 #### 4-7. Sender Information
 Collect 5 items in order (display name / phone / email / signature required for outbound; company name optional but recommended for the AI inquiry landing):
@@ -382,7 +382,7 @@ mcp__plugin_leadace_api__save_document
 ## Step 7. Generate / Update SALES_STRATEGY.md
 
 - **Initial** (both modes): Retrieve template `tpl_sales_strategy`. Generate following structure.
-- **Update** (Mode A): Use existing from Step 3. Update only changed sections. **Evaluate-managed sections (targeting, KPI, search keywords) are only rewritten when user explicitly instructs an update.** Messaging and channels are user-authored hints (subject lines & channel ranking are auto-optimized by the lever tick) — rewrite only on explicit user request.
+- **Update** (Mode A): Use existing from Step 3. Update only changed sections. **Evaluate-managed sections (targeting, KPI, search keywords, prospect discovery sources) are only rewritten when user explicitly instructs an update.** Messaging and channels are user-authored hints (subject lines & channel ranking are auto-optimized by the lever tick) — rewrite only on explicit user request.
 
 **Sender Information section**: Write only the organization's phone number and a short human signature line (name, title, sign-off). Sender display name, sender company name, and email live in project settings (set in 4-7 / 4B-3); legal name, physical address, and the unsubscribe line live in Workspace Settings and are appended automatically by the backend at send time. **Do not duplicate any of these in the document signature** — duplicated address blocks make the recipient-side footer look broken. If the template prompts for sender display / company / email, replace with `Sender display name, company, and email: managed in Project Settings (Web UI → Project settings page; company name is on the Inquiry settings page)`. If the template prompts for legal name / postal address / unsubscribe, replace with `Legal identity + footer: managed in Workspace Settings (https://app.leadace.ai/workspace-settings)`.
 

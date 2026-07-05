@@ -56,6 +56,11 @@ export const outreachLogIdSchema = positiveInt
 const variantIdRegex = /^[a-zA-Z0-9_-]{1,32}$/
 export const variantIdSchema = z.string().regex(variantIdRegex)
 
+// Strict lowercase kebab-case so the stats GROUP BY bucket can't split on
+// case or hyphen variance of the same strategy ('github-' vs 'github').
+const discoveryStrategyRegex = /^[a-z0-9]+(-[a-z0-9]+)*$/
+export const discoveryStrategySchema = z.string().max(64).regex(discoveryStrategyRegex)
+
 // Path / query param wrappers — only for entities with a `:id` route segment.
 // The path-string wire format is `Record<string, string>`, so coerce here.
 export const projectRefParamSchema = z.object({ id: projectRefSchema })

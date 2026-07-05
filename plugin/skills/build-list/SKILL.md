@@ -79,15 +79,37 @@ Use this to continue exploration from where the last session left off. If
 `search_notes` is missing, treat every cell of the matrix as unexplored.
 
 Also call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and
-`slug: "learnings"`, then apply its `[targeting]` entries to the search strategy: explore
+`slug: "learnings"`, then apply its `[targeting]` entries to the search strategy (explore
 more of the segments evaluate found to respond above average, and deprioritize ones it
-flagged as low-response or targeting mismatches. These are evaluate's distilled,
-evidence-cited learnings (each carries the metric + sample it came from) — treat
-them as steering, not hard rules. Skip if the document is missing.
+flagged as low-response or targeting mismatches) and its `[discovery]` entries to
+strategy selection in step 3. These are evaluate's distilled, evidence-cited learnings
+(each carries the metric + sample it came from) — treat them as steering, not hard
+rules. Skip if the document is missing.
 
 ### 3. Search Strategy
 
-Based on the "Search Keywords" and "Target" sections of SALES_STRATEGY.md, formulate multiple search queries.
+Discovery runs as **named strategies**. Read the `## Prospect Discovery Sources`
+section of SALES_STRATEGY.md: each `### <slug>` entry (Status / How / Why) is one
+repeatable discovery strategy. Select the strategies for this pass:
+
+- Run `Status: active` strategies; skip `paused` ones (evaluate demoted them).
+- Bias selection with the `[discovery]` learnings from step 2 — spend more of the
+  pass on strategies with measured above-average reply rates, but keep at least
+  one unproven strategy in rotation so attribution data accumulates across the
+  portfolio (a strategy that never sends can never be promoted or demoted).
+- **Old-format or mixed section** (any prose bullets not under a `### <slug>`
+  subsection — e.g. a legacy section, or leftovers next to strategies another
+  skill appended): upgrade it once — fold those bullets plus the Target /
+  Search Keywords sections into named strategies (slug = lowercase kebab-case
+  ≤64 chars, `Status: active`, How, Why), keep existing `### <slug>` entries
+  as-is, rewrite the section in that format, and save the full document via
+  `mcp__plugin_leadace_api__save_document` (slug `sales_strategy`) before proceeding.
+- Every candidate surfaced by a strategy belongs to exactly one — carry its slug
+  through to registration (Phase 3 `discoveryStrategy`). Candidates from ad-hoc
+  user instructions have no strategy; they register without the field.
+
+Within each selected strategy, formulate queries from its `How:` line plus the
+"Search Keywords" and "Target" sections of SALES_STRATEGY.md.
 
 **Pick from unexplored cells of the coverage matrix first.** Each query
 should belong to a single (industry × region × size) cell, e.g.
@@ -106,6 +128,20 @@ Types of search queries (choose appropriate ones based on target type):
 - Client case studies from competitors
 - Target exploration on job sites
 - Directories or public databases of schools and corporations
+
+Strategies may be search-driven (WebSearch queries) or **crawl-driven** — walking a
+directory, association member list, exhibitor list, or GitHub topic/org page with
+`fetch_url.py` and extracting the organization list directly. Crawl-driven strategies
+usually out-yield search on structured sources; step 4's tooling applies to both.
+
+**Publicly posted addresses (legal gate):** a strategy that harvests emails published
+on the web (GitHub profiles, directory listings, etc.) is usable only within the
+public-address rules — Japan's Specified Commercial Email Act exempts published
+addresses ONLY when the page carries no "no solicitation" notice (営業お断り), and
+Canada's CASL "conspicuous publication" applies only when there is no such disclaimer
+AND the message relates to the recipient's business role. Skip any address whose
+source page shows a no-solicitation notice, and put the role/business relevance in
+`matchReason`.
 
 ### 4. Web Search Execution
 
@@ -329,6 +365,10 @@ For each prospect, construct the object as follows:
 - `snsAccounts`: `{ x?, linkedin?, instagram?, facebook? }` (optional*)
 - `matchReason`: why this prospect is a good target
 - `priority`: 1-5 (default 3)
+- `discoveryStrategy`: slug of the named strategy (step 3) that surfaced this
+  candidate — write-once provenance; `/evaluate` attributes reply rates per slug.
+  Omit only when the candidate came from an ad-hoc user instruction rather than
+  a named strategy.
 - `hypothesis`: per-prospect targeting hypothesis as a structured object (optional but recommended). Built from the assembled `overview` + any `## Recent Signals` + `matchReason` + SALES_STRATEGY context. Read by the inquiry-landing chat snapshot to ground answers about the visiting org. Shape:
   - `hypothesizedPain`: 1–3 short pain hypotheses, one sentence each (e.g. `["Manual lead routing slows reps", "No central buyer-signal aggregation"]`)
   - `valueMapping`: 1–3 bullets of how our offering addresses those pains (same order as `hypothesizedPain` when paired)

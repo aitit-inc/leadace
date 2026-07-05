@@ -228,6 +228,8 @@ export async function getProjectStats(
     statusCountsRows,
     channelResponseRateRows,
     channelByIndustryRows,
+    discoveryStrategyRows,
+    freshSignalRows,
     respondedMessagesRows,
     noResponseSampleRows,
     lastSentRows,
@@ -270,6 +272,23 @@ export async function getProjectStats(
                    LEFT JOIN responses r ON r.outreach_log_id = ol.id
                  WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}
                  GROUP BY ol.channel, NULLIF(TRIM(p.industry), '')`),
+    rawQuery<{ strategy: string | null; total: string | number; responses: string | number }>(sql`SELECT p.discovery_strategy AS strategy,
+                   COUNT(DISTINCT ol.id)::int AS total,
+                   COUNT(DISTINCT ol.id) FILTER (WHERE r.id IS NOT NULL)::int AS responses
+                 FROM outreach_logs ol
+                   JOIN prospects p ON p.id = ol.prospect_id
+                   LEFT JOIN responses r ON r.outreach_log_id = ol.id
+                 WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}
+                 GROUP BY p.discovery_strategy`),
+    // One row of FILTER aggregates, not GROUP BY had_fresh_signal: both buckets
+    // always come back and no boolean parsing through the pooler.
+    rawQuery<{ signalTotal: string | number; signalResponses: string | number; noSignalTotal: string | number; noSignalResponses: string | number }>(sql`SELECT
+                   COUNT(DISTINCT ol.id) FILTER (WHERE ol.had_fresh_signal)::int AS "signalTotal",
+                   COUNT(DISTINCT ol.id) FILTER (WHERE ol.had_fresh_signal AND r.id IS NOT NULL)::int AS "signalResponses",
+                   COUNT(DISTINCT ol.id) FILTER (WHERE NOT ol.had_fresh_signal)::int AS "noSignalTotal",
+                   COUNT(DISTINCT ol.id) FILTER (WHERE NOT ol.had_fresh_signal AND r.id IS NOT NULL)::int AS "noSignalResponses"
+                 FROM outreach_logs ol LEFT JOIN responses r ON r.outreach_log_id = ol.id
+                 WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}`),
     rawQuery<{ id: string | number; channel: Channel; subject: string | null; body: string; sentiment: Sentiment; responseType: ResponseType }>(sql`SELECT ol.id, ol.channel, ol.subject, ol.body, r.sentiment, r.response_type AS "responseType"
                  FROM responses r JOIN outreach_logs ol ON r.outreach_log_id = ol.id WHERE ol.project_id = ${projectId}`),
     rawQuery<{ id: string | number; channel: Channel; subject: string | null; body: string }>(sql`SELECT ol.id, ol.channel, ol.subject, ol.body
@@ -369,6 +388,30 @@ export async function getProjectStats(
         }
       })
       .sort((a, b) => b.total - a.total || b.rate - a.rate),
+    discoveryStrategyResponseRate: discoveryStrategyRows
+      .map((r) => {
+        const total = Number(r.total)
+        const responses = Number(r.responses)
+        return {
+          strategy: r.strategy,
+          total,
+          responses,
+          rate: total === 0 ? 0 : Math.round((responses / total) * 1000) / 10,
+        }
+      })
+      .sort((a, b) => b.total - a.total || b.rate - a.rate),
+    freshSignalResponseRate: (() => {
+      const row = freshSignalRows[0]
+      const bucket = (total: number, responses: number) => ({
+        total,
+        responses,
+        rate: total === 0 ? 0 : Math.round((responses / total) * 1000) / 10,
+      })
+      return {
+        withSignal: bucket(Number(row?.signalTotal ?? 0), Number(row?.signalResponses ?? 0)),
+        withoutSignal: bucket(Number(row?.noSignalTotal ?? 0), Number(row?.noSignalResponses ?? 0)),
+      }
+    })(),
     variantResponseRate,
     inquiryOutcomeCounts,
   }

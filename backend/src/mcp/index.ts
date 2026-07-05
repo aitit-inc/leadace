@@ -7,7 +7,7 @@ import { z } from 'zod'
 import { verifyJwt, verifySupabaseJwt } from '../auth/verify-jwt'
 import { BUG_REPORT_CATEGORIES, OUTBOUND_MODES, OUTBOUND_CHANNELS, REJECTION_PRIMARY_REASONS, REJECTION_RECONTACT_WINDOWS, prospectStatusEnum, prioritySchema } from '../db/schema'
 import { ALLOWED_SEND_COUNTRIES } from '../domain/country'
-import { variantIdSchema } from '../domain/ids'
+import { discoveryStrategySchema, variantIdSchema } from '../domain/ids'
 import type { OutreachQuota, OutreachQuotaWindow } from '../services/plan-limits'
 import {
   handleMetadata,
@@ -271,6 +271,7 @@ function buildToolRegistry(): ToolDef[] {
         doNotContact: z.boolean().optional().describe('Mark this prospect as do-not-contact (unsubscribed / opted-out). Defaults to false. On overwrite, true sets the flag but false never clears an existing one.'),
         matchReason: z.string().optional().describe('Why this prospect is a good target. Required when projectId is set; ignored otherwise.'),
         priority: prioritySchema.default(3),
+        discoveryStrategy: discoveryStrategySchema.optional().describe('Slug of the named discovery strategy that found this prospect (from the sales_strategy "Prospect Discovery Sources" section, e.g. "github-active-repos"). Lowercase kebab-case, ≤64 chars. Write-once provenance — /evaluate uses it to attribute reply rates to discovery strategies. Omit for user-supplied lists.'),
         country: z.string().regex(/^[A-Z]{2}$/).optional().describe('Per-prospect country override (ISO 3166-1 alpha-2). Usually unset — the org country (with TLD inference fallback) covers the typical case. Outreach currently only delivers to US / CA / JP recipients; other codes register fine but are blocked at outreach time.'),
         countrySource: z.enum(['manual', 'ai_inferred']).optional().describe('How the country value was determined. "manual" = operator confirmed; "ai_inferred" = LLM-derived from page content. Only meaningful when country is provided.'),
       })).describe('Array of prospects to register (max 100)'),
@@ -1024,6 +1025,30 @@ function buildToolRegistry(): ToolDef[] {
   )
 
   defineTool(
+    'set_prospect_priority',
+    'Set one prospect\'s outreach priority (1=highest … 5=lowest) within a project. Per-prospect override counterpart to record_evaluation\'s bulk per-industry updates: use it when a single prospect deserves a different rank than its cohort (strong buying signal, key account, explicit user instruction). Unlike record_evaluation it applies regardless of the prospect\'s status. Read the current value via list_project_prospects (any status); get_outbound_targets also returns it per reachable target.',
+    {
+      projectId: z.string().min(1).describe('Project name or ID'),
+      prospectId: z.number().int().positive(),
+      priority: prioritySchema,
+    },
+    async ({ projectId, prospectId, priority }, { apiUrl, authHeader }) => {
+      const { ok, data } = await callApi(
+        'PATCH',
+        `/prospects/${prospectId}/priority`,
+        { projectId, priority },
+        apiUrl,
+        authHeader,
+      )
+      if (!ok) {
+        const err = data as { error: string }
+        return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
+      }
+      return { content: [{ type: 'text' as const, text: `Prospect ${prospectId}: priority = ${priority}.` }] }
+    },
+  )
+
+  defineTool(
     'update_organization',
     'Partial-update an organization\'s name or website URL. Domain is immutable (it is the per-tenant dedup key). Use when /build-list or imports created the org with a stale name (e.g., before a rebrand) and the visible name needs correcting. organizationId is the integer PK from get_organizations / org listings, not a domain.',
     {
@@ -1050,7 +1075,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'update_prospect',
-    'Partial-update a tenant prospect\'s fields (organization-level columns: name / contactName / department / overview / industry / websiteUrl / email / contactFormUrl / formType / snsAccounts / notes / hypothesis / country / countrySource). Only the keys you pass are written; null clears a nullable field. The prospect must keep at least one contact channel (email, contactFormUrl, or any snsAccounts entry) — UNPROCESSABLE if the patch would leave none. CONFLICT when email or contactFormUrl already belongs to another prospect in the workspace. For per-project status use update_prospect_status. matchReason and priority also live on the project_prospects junction but are not patchable here or via update_prospect_status — they are set at registration / linking and rewritten only by re-importing the prospect with import_prospects (dedupPolicy="overwrite"). For DNC use set_prospect_do_not_contact.',
+    'Partial-update a tenant prospect\'s fields (organization-level columns: name / contactName / department / overview / industry / websiteUrl / email / contactFormUrl / formType / snsAccounts / notes / hypothesis / country / countrySource). Only the keys you pass are written; null clears a nullable field. The prospect must keep at least one contact channel (email, contactFormUrl, or any snsAccounts entry) — UNPROCESSABLE if the patch would leave none. CONFLICT when email or contactFormUrl already belongs to another prospect in the workspace. For per-project status use update_prospect_status; for per-project priority use set_prospect_priority. matchReason also lives on the project_prospects junction but is not patchable — it is set at registration / linking and rewritten only by re-importing the prospect with import_prospects (dedupPolicy="overwrite"). For DNC use set_prospect_do_not_contact.',
     {
       prospectId: z.number().int().positive(),
       patch: z.object({
@@ -1211,7 +1236,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_eval_data',
-    'Get evaluation statistics for a project: response rates, channel performance, sentiment breakdown, and inquiry-landing outcome counts (opened / inquired / lead / signup_clicked / unsubscribed). Also returns responded message bodies and a data sufficiency check.',
+    'Get evaluation statistics for a project: response rates, channel performance, sentiment breakdown, reply rate per discovery strategy (discoveryStrategyResponseRate; strategy=null bucket = prospects without recorded provenance), reply rate with vs without a fresh why-now signal at compose time (freshSignalResponseRate), and inquiry-landing outcome counts (opened / inquired / lead / signup_clicked / unsubscribed). Also returns responded message bodies and a data sufficiency check.',
     { projectId: z.string().min(1).describe('Project name or ID') },
     async ({ projectId }, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('GET', `/projects/${encodeURIComponent(projectId)}/stats`, null, apiUrl, authHeader)
@@ -1390,6 +1415,40 @@ function buildToolRegistry(): ToolDef[] {
         content: [{
           type: 'text' as const,
           text: `${result.total} tenant prospect(s).\n${JSON.stringify(result.prospects, null, 2)}`,
+        }],
+      }
+    },
+  )
+
+  defineTool(
+    'list_project_prospects',
+    'List a project\'s prospects with their per-project status, priority, and matchReason — the read counterpart to set_prospect_priority / update_prospect_status. Unlike get_outbound_targets (currently-reachable rows only), this lists prospects in ANY status (contacted, responded, deferred, rejected, ...), so use it to check current priority before/after an override on an already-contacted prospect. Sorted by priority ascending, newest first within a rank.',
+    {
+      projectId: z.string().min(1).describe('Project name or ID'),
+      status: z.enum(prospectStatusEnum.enumValues).optional().describe('Filter by per-project status'),
+      priority: prioritySchema.optional().describe('Filter by exact priority (1-5)'),
+      q: z.string().min(1).optional().describe('Substring search on prospect name / contact name / organization name / domain'),
+      limit: z.number().int().min(1).max(500).default(100),
+      offset: z.number().int().min(0).default(0),
+    },
+    async ({ projectId, status, priority, q, limit, offset }, { apiUrl, authHeader }) => {
+      const params = new URLSearchParams()
+      if (status) params.set('status', status)
+      if (priority !== undefined) params.set('priority', String(priority))
+      if (q) params.set('q', q)
+      params.set('limit', String(limit))
+      params.set('offset', String(offset))
+
+      const { ok, data } = await callApi('GET', `/projects/${encodeURIComponent(projectId)}/prospects?${params.toString()}`, null, apiUrl, authHeader)
+      if (!ok) {
+        const err = data as { error: string }
+        return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
+      }
+      const result = data as { prospects: unknown[]; total: number }
+      return {
+        content: [{
+          type: 'text' as const,
+          text: `${result.total} prospect(s) match; showing ${result.prospects.length} (offset ${offset}).\n${JSON.stringify(result.prospects, null, 2)}`,
         }],
       }
     },
