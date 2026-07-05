@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Net-new regression for sendDraft / markDraftSent preconditions + re-applied
-# compliance/country at send time (coverage-audit §2 gap #22).
+# Regression for sendDraft / markDraftSent preconditions + re-applied
+# compliance/country at send time.
 #
 # A draft composed earlier (clean) MUST be re-checked at send:
 #   sendDraft  (POST /outreach/drafts/:id/send, Gmail-backed email path) rejects
@@ -180,7 +180,6 @@ F_GB="$(mk_form_draft "$P_GB")"
 F_DNC="$(mk_form_draft "$P_DNC")"
 for v in D_SEND D_GB D_DNC D_NOE F_MARK F_GB F_DNC; do [[ -n "${!v}" ]] || { echo "failed to create draft $v" >&2; exit 1; }; done
 say "email: D_SEND=$D_SEND D_GB=$D_GB D_DNC=$D_DNC D_NOE=$D_NOE | form: F_MARK=$F_MARK F_GB=$F_GB F_DNC=$F_DNC"
-# Now make the prospect-state preconditions: null the noemail prospect's email, flag DNC.
 psql_local "UPDATE prospects SET email=NULL WHERE id=$P_NOE;" > /dev/null
 psql_local "UPDATE prospects SET do_not_contact=true WHERE id=$P_DNC;" > /dev/null
 say "nulled noemail email, flagged dnc do_not_contact"

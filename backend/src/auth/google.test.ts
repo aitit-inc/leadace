@@ -40,7 +40,7 @@ describe('buildComplianceAttachments', () => {
       inquiryUrl: null,
     })
     expect(footer).toMatch(/unsubscribe|opt out/i)
-    expect(footer).not.toMatch(/https?:\/\//) // no body link at all
+    expect(footer).not.toMatch(/https?:\/\//)
     expect(headers).toEqual({})
   })
 

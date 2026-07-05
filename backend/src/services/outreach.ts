@@ -76,8 +76,6 @@ export type ListDraftsQuery = z.infer<typeof listDraftsQuerySchema>
 // caller would let an authenticated user backdate a row past the daily/monthly
 // quota window (`sent_at >= window_start`), bypassing the cap. `.strict()` makes
 // the refusal explicit instead of silently dropping unknown keys.
-// Discriminated by status so the type system enforces "errorMessage required
-// iff status='failed'". Mirrors updateOutreachStatusSchema.
 const recordOutreachCommonFields = {
   projectId: projectRefSchema,
   prospectId: prospectIdSchema,
@@ -104,10 +102,8 @@ export const recordOutreachSchema = z.discriminatedUnion('status', [
 ])
 export type RecordOutreachInput = z.infer<typeof recordOutreachSchema>
 
-// A deliberate skip is distinct from a 'sent' or 'failed' outreach: no send is
-// attempted. `reason` is the structured skip_reason; `channel` is the channel
-// the run was about to use (kept for the audit feed, not a send target);
-// `note` is optional free-text context. `.strict()` rejects stray keys.
+// No send is attempted on a skip; `channel` is the channel the run was about
+// to use — kept for the audit feed, not a send target.
 export const skipProspectSchema = z
   .object({
     projectId: projectRefSchema,
@@ -133,9 +129,8 @@ export const sendAndRecordSchema = z
       .regex(/^<[^\r\n<>]+>$/, 'inReplyTo must be a single RFC 5322 Message-ID like <id@host>')
       .max(998)
       .optional(),
-    // Optional explicit subject-variant id to stamp on outreach_logs.variant_id.
-    // This path performs no variant selection — the weighted draw happens upstream
-    // in pick_subject_variant; when omitted, variant_id is left null.
+    // This path performs no variant selection — the weighted draw happens
+    // upstream in pick_subject_variant.
     variantId: variantIdSchema.optional(),
   })
   .strict()
@@ -151,16 +146,8 @@ export type EditDraftPatch = z.infer<typeof editDraftSchema>
 
 // Skill-driven channels (form / SNS DM): the skill calls this BEFORE submit so
 // the inquiry URL footer is allocated against a real outreach_log row
-// (pre_send), then submits the returned finalBody. On success it calls
-// updateOutreachStatus('sent'); on failure ('failed'). Prospect flips to
-// 'contacted' only on the 'sent' transition.
-//
-// `body` in DB diverges by status:
-//   - pre_send: core text only (the skill already has finalBody from the response).
-//   - pending_review: footer-bearing finalBody, because the user copy-pastes
-//     the row body from /drafts and there's no send-time hook to append the
-//     footer like email's gmail.send. Storing core only would silently strip
-//     the inquiry URL from manually-submitted form/SNS messages.
+// (pre_send), then submits the returned finalBody and confirms via
+// updateOutreachStatus('sent' / 'failed').
 export const recordOutreachWithInquirySchema = z
   .object({
     projectId: projectRefSchema,
@@ -197,9 +184,8 @@ export type SendContext = {
   e2eRecipientOverride: string | null
 }
 
-// Effective recipient country: prospect override first (per-prospect override
-// for distributed teams / regional reps), falling back to the organization.
-// Null when the prospect is missing or neither row carries a country.
+// The prospect's country wins over the organization's: per-prospect override
+// for distributed teams / regional reps.
 async function loadEffectiveRecipientCountry(
   db: Db,
   tenantId: TenantId,
@@ -366,7 +352,7 @@ export async function recordOutreach(
   if (quotaErr) return quotaErr
 
   // Resolved once per email send: the cap check, the row's sending_identity_id,
-  // and the first-send ramp stamp. Null for non-email or no configured identity.
+  // and the first-send ramp stamp.
   let sendingIdentityId: SendingIdentityId | null = null
   if (sending) {
     // Backstop: record_outreach('sent') logs an already-completed send.
@@ -419,13 +405,10 @@ export async function recordOutreach(
   return ok({ id: log?.id as number | undefined })
 }
 
-// Record a deliberate skip: an outbound run decided NOT to contact this
-// prospect (no send attempted) for an LLM-judged reason the server cannot
-// determine itself — bad timing or no fresh re-approach material. Writes a
-// 'skipped' audit row and defers re-eligibility by noResponseRecycleDays so
-// the prospect drops out of get_outbound_targets for that window. No quota is
-// consumed (only 'sent' counts) and the prospect is NOT flipped to
-// 'contacted'. Replaces the old pattern of fabricating a 'failed' row.
+// A deliberate skip: an outbound run decided NOT to contact this prospect for
+// an LLM-judged reason the server cannot determine itself — bad timing or no
+// fresh re-approach material. No quota is consumed (only 'sent' counts) and
+// the prospect is NOT flipped to 'contacted'.
 export async function skipProspect(
   db: Db,
   tenantId: TenantId,
@@ -449,10 +432,8 @@ export async function skipProspect(
       projectId,
       prospectId: input.prospectId,
       channel: input.channel,
-      // body carries the human-readable skip line (incl. the note); skipReason
-      // is the structured reason. errorMessage stays NULL — a deliberate skip
-      // is not an error, and the recent-outreach feed renders errorMessage as
-      // a red "Error:" line.
+      // errorMessage stays NULL: a deliberate skip is not an error, and the
+      // recent-outreach feed renders errorMessage as a red "Error:" line.
       body: buildSkipAuditBody(input.reason, input.note),
       status: 'skipped',
       skipReason: input.reason,
@@ -563,10 +544,9 @@ export async function recordOutreachWithInquiry(
   })
 }
 
-// Resolves a 'pre_send' allocation. status='sent' flips the prospect to
-// 'contacted'; 'failed' refunds the in-flight quota reservation and stamps the
-// recycle window onto next_outreach_after. Restricted to the 'pre_send' →
-// terminal transition so callers can't repurpose this for arbitrary flips.
+// Resolves a 'pre_send' allocation ('failed' refunds the in-flight quota
+// reservation). Restricted to the 'pre_send' → terminal transition so callers
+// can't repurpose this for arbitrary flips.
 export async function updateOutreachStatus(
   db: Db,
   tenantId: TenantId,
@@ -612,8 +592,7 @@ export async function updateOutreachStatus(
 
 // Branches on the project's outboundMode (loaded server-side, never passed by
 // the caller) so the mode decision is deterministic and lives here, not in
-// skill logic. `send` calls Gmail and writes sent/failed; `draft` writes
-// pending_review for the user to review and send from the web app.
+// skill logic.
 export type SendOutcome =
   | { mode: 'sent'; outreachId: number; messageId: string; threadId: string }
   | { mode: 'drafted'; outreachId: number }
@@ -824,8 +803,6 @@ export async function listRecentOutreachById(
 
   const visibleStatusFilter = and(
     eq(outreachLogs.projectId, projectId),
-    // Confirmed events belong in the recent activity feed (sent / failed /
-    // skipped); in-flight allocations (pending_review / pre_send) do not.
     // Spread because notInArray's typing rejects readonly inputs.
     notInArray(outreachLogs.status, [...IN_FLIGHT_OUTREACH_STATUSES]),
   )
@@ -1326,12 +1303,8 @@ export async function discardDraft(
   return ok({ deleted: true })
 }
 
-// Two input modes:
-//   { ids: [...] }            — explicit list (max 200)
-//   { allInProjectId: "..." } — wipe every pending_review draft in a project
-// Single SQL DELETE filters by tenant + pending_review; other-tenant or
-// already-sent rows are silently excluded. `skippedIds` is populated only
-// in explicit-id mode for caller-supplied ids that didn't match.
+// Other-tenant or already-sent ids are silently excluded (surfaced via
+// skippedIds in explicit-id mode) rather than erroring.
 export const discardDraftsBodySchema = z
   .union([
     z.object({
@@ -1456,11 +1429,9 @@ async function markProspectContacted(
 }
 
 // Defer a prospect's re-eligibility by noResponseRecycleDays so listReachable
-// drops it for that window. Called after a real send failure AND after a
-// deliberate skip_prospect (bad timing / no fresh material). Without the stamp
-// the next /outbound run re-picks the prospect and the LLM burns context
-// re-evaluating the same dead end. GREATEST preserves a longer explicit window
-// (e.g. rejection '12_months').
+// drops it for that window: without the stamp the next /outbound run re-picks
+// the prospect and the LLM burns context re-evaluating the same dead end.
+// GREATEST preserves a longer explicit window (e.g. rejection '12_months').
 async function deferProspectReeligibility(
   db: Db,
   projectId: ProjectId,

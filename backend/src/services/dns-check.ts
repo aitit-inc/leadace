@@ -66,7 +66,6 @@ const DNS_CHECK_CONCURRENCY = 20
 // product comfortably under ~25s if any of these three constants change.
 const MAX_DISTINCT_DOMAINS = 100
 
-// Per-email verdict, resolving each distinct domain once with bounded concurrency.
 export async function resolveEmailDeliverability(
   emails: readonly string[],
 ): Promise<Map<string, EmailDeliverability>> {

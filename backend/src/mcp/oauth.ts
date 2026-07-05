@@ -21,10 +21,8 @@ import { SignJWT } from 'jose'
 import { z } from 'zod'
 import { MCP_AUDIENCE, verifyJwt } from '../auth/verify-jwt'
 
-// Audience claim stamped on MCP-minted access tokens. Used by callers
-// that must distinguish Supabase-issued tokens from MCP-issued tokens
-// (e.g. /authorize/finalize, /sessions*). Supabase tokens carry
-// `aud: 'authenticated'`; ours carry `aud: 'mcp'`.
+// Supabase tokens carry `aud: 'authenticated'`; MCP-minted ones `aud: 'mcp'`
+// — lets /authorize/finalize and /sessions* refuse MCP-issued tokens.
 export const MCP_ACCESS_TOKEN_AUDIENCE = MCP_AUDIENCE
 
 interface AuthSession {
@@ -46,9 +44,7 @@ interface AuthCode {
 interface McpRefresh {
   userId: string
   // Optional only for backward-compat with refresh tokens minted before
-  // family tracking landed; new tokens always carry one. Tokens without a
-  // familyId get a fresh family on first refresh (one-shot migration; the
-  // 30-day TTL ages the legacy entries out).
+  // family tracking landed; migrated to a fresh family on first refresh.
   familyId?: string
   expiresAt: number
 }
@@ -68,9 +64,7 @@ interface McpFamily {
   clientName: string | null
   createdAt: number
   lastSeenAt: number
-  // Set when the family is revoked (via /revoke, reuse-detection, or the
-  // Settings page). Once set, every token in the family is rejected on
-  // next refresh.
+  // Once set, every token in the family is rejected on next refresh.
   revokedAt?: number
   revokedReason?: 'reuse' | 'revoke_endpoint' | 'user_revoke'
 }
@@ -221,8 +215,7 @@ export async function handleRegister(request: Request, kv: KVNamespace): Promise
 
   const parsed = registerBodySchema.safeParse(raw)
   if (!parsed.success) {
-    // redirect_uris failure surfaces as invalid_redirect_uri (RFC 7591 §3.2.2);
-    // everything else uses the generic invalid_client_metadata.
+    // RFC 7591 §3.2.2: redirect_uris failures surface as invalid_redirect_uri.
     const onRedirectUris = parsed.error.issues.some((i) => i.path[0] === 'redirect_uris')
     return oauthError(
       onRedirectUris ? 'invalid_redirect_uri' : 'invalid_client_metadata',
@@ -466,10 +459,7 @@ async function handleAuthCodeGrant(
 
   // RFC 6749 §4.1.3: when redirect_uri was included in the authorization
   // request (we always require it at /authorize, so always here), the client
-  // MUST resend the same value at /token and the values MUST match. PKCE
-  // already binds the code to the verifier, so the practical leak surface
-  // is small — but keeping the spec invariant closes the gap and stops
-  // looking like a foot-gun in audits.
+  // MUST resend the same value at /token and the values MUST match.
   if (!redirect_uri || redirect_uri !== stored.redirectUri) {
     return oauthError('invalid_grant', 400, 'redirect_uri mismatch or missing')
   }
@@ -556,12 +546,9 @@ async function handleRefreshGrant(
 
   const inFp = await fingerprint(refreshToken)
 
-  // OAuth 2.1 reuse detection: a presented refresh token that's already
-  // been rotated lives in the tombstone namespace. A legitimate client
-  // discards the old token after a successful refresh, so reuse signals
-  // either a leak or a non-conforming client. Either way the rule is:
-  // revoke the entire family. Clients hitting this must restart from
-  // /authorize.
+  // OAuth 2.1 reuse detection: a rotated token presented again signals a
+  // leak or a non-conforming client — revoke the entire family; the client
+  // must restart from /authorize.
   const tomb = await mcpRefreshTombs.get(kv, refreshToken)
   if (tomb) {
     await revokeFamily(kv, tomb.familyId, 'reuse')
@@ -601,16 +588,12 @@ async function handleRefreshGrant(
     return oauthError('invalid_grant', 400, 'Refresh token family revoked')
   }
 
-  // Rotate: mint new → live FIRST, then tombstone old + delete old in
-  // parallel. Per OAuth 2.1 §6.1 (and mitigates RFC 6819 §5.2.2.3 leak
-  // scenarios) — public clients MUST get a fresh refresh token on every
-  // exchange. Ordering matters: KV writes are non-transactional and
-  // can fail independently. If we wrote the tombstone before the new
-  // token, a transient failure on the new-token put would 5xx the
-  // client, which then retries with the old token — only to hit the
-  // tombstone and trigger a reuse-detection family-revoke. By writing
-  // the new token first, a partial failure leaves the old token live
-  // and replayable.
+  // Rotate per OAuth 2.1 §6.1 (mitigates RFC 6819 §5.2.2.3): public clients
+  // MUST get a fresh refresh token on every exchange. Mint the new token
+  // FIRST — KV writes are non-transactional, and if the tombstone landed
+  // before a failed new-token put, the client's retry with the old token
+  // would hit the tombstone and trigger a spurious family-revoke; new-first
+  // leaves the old token live and replayable on partial failure.
   const newRefresh = generateId()
   const now = Date.now()
 
@@ -746,9 +729,7 @@ export async function handleRevokeSession(
 }
 
 // HS256-signed with SUPABASE_JWT_SECRET so the existing verifyJwt /
-// verifySupabaseJwt path validates these via the HS256 fallback. The
-// `aud: 'mcp'` claim lets surfaces that should refuse MCP-issued tokens
-// (/authorize/finalize, /sessions*) reject them.
+// verifySupabaseJwt path validates these via the HS256 fallback.
 async function mintAccessJwt(userId: string, jwtSecret: string): Promise<string> {
   const secret = new TextEncoder().encode(jwtSecret)
   const now = Math.floor(Date.now() / 1000)

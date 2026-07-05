@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Net-new regression for the public unsubscribe-token route family
-# (coverage-audit §2 gap #3). The HMAC-signed token in the email footer IS the
-# auth — these routes bypass RLS via raw createDb() and flip do_not_contact for
-# anyone holding a valid token. The whole DB write/read of this CAN-SPAM/CASL
-# compliance promise had ZERO end-to-end coverage; the token verify logic alone
-# is unit-tested.
+# Regression for the public unsubscribe-token route family. The HMAC-signed
+# token in the email footer IS the auth — these routes bypass RLS via raw
+# createDb() and flip do_not_contact for anyone holding a valid token (a
+# CAN-SPAM/CASL compliance promise). The token verify logic alone is
+# unit-tested; this covers the DB write/read end-to-end.
 #
 # Covers, against the local stack (localhost:8787 API + 54322 Postgres):
 #
@@ -70,9 +69,8 @@ api() {
 
 # Public unsubscribe routes take NO Authorization header — the URL token is the
 # auth. `pub` echoes the HTTP status on stdout and writes the response body to
-# the fixed temp file $PUB_OUT (created once in the parent so command-subst
-# call sites can read it back). Same split as regression-skip-reachable's
-# api_status, but body-to-file instead of body-to-stderr.
+# $PUB_OUT (created once in the parent so command-subst call sites can read it
+# back).
 PUB_OUT=""
 pub() {
   local method="$1" path="$2" body="${3:-}"

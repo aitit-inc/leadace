@@ -6,8 +6,6 @@ import type { Env, Variables } from '../types'
 
 export const bugReportsRouter = new Hono<{ Bindings: Env; Variables: Variables }>()
 
-// POST /bug-reports — file a bug / feedback / idea. Daily-capped per
-// tenant. Authenticated; the row is RLS-scoped to the caller's tenant.
 bugReportsRouter.post(
   '/bug-reports',
   zValidator('json', recordBugReportBodySchema),

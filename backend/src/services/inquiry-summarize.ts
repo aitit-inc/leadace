@@ -17,8 +17,7 @@ import {
 } from './inquiry-session'
 import { sendForIdentity } from '../auth/google'
 
-// Env subset for the lead-notification email path. Carries the bindings
-// sendForIdentity + the dashboard URL need; intentionally narrower than
+// Env subset for the lead-notification email path; intentionally narrower than
 // the chat path so notifyLeadByEmail's signature names exactly what it uses.
 export type LeadNotifyEnv = {
   APP_URL: string
@@ -47,7 +46,6 @@ export async function generateSessionSummary(
 
   const transcript = await loadInquiryTranscript(db, sessionId)
   if (transcript.length === 0) {
-    // No user/assistant exchanges — nothing to summarize.
     await closeSessionWithSummary(db, sessionId, '(session closed before any messages)')
     return
   }
@@ -63,8 +61,7 @@ export async function generateSessionSummary(
 
   const parsed = parseSummaryJson(llm.outputText)
 
-  // 'lead' escalates the session and creates a meeting_request response row.
-  // Anything else (incl. parse failure / missing field) stays as 'inquired'
+  // Anything but 'lead' (incl. parse failure / missing field) stays 'inquired'
   // — better to under-flag a lead than fabricate one.
   if (parsed?.outcome === 'lead') {
     const escalated = await recordMeetingRequestForSession(db, target, 'chat', parsed.summary)
@@ -72,15 +69,12 @@ export async function generateSessionSummary(
     // already finalised the session and the tx rolled back, including the
     // recordResponse insert. The concurrent path's outcome wins; skip email.
     if (!escalated.ok) return
-    // Best-effort email notification — failures don't unwind the lead. The
-    // dashboard banner (frontend reads inquiry_sessions WHERE outcome='lead')
-    // is the always-on path; email is a nudge for operators not staring at
-    // the app.
+    // Best-effort — failures don't unwind the lead. The dashboard banner is the
+    // always-on path; email is a nudge for operators not staring at the app.
     try {
       await notifyLeadByEmail(db, env, sessionId, parsed.summary)
     } catch {
-      // Swallow — Gmail not connected, refresh token revoked, send rejected,
-      // etc. None of these should fail the lead escalation.
+      // Gmail not connected, token revoked, send rejected — never fail the lead.
     }
   } else {
     await closeSessionWithSummary(db, sessionId, parsed?.summary ?? llm.outputText.trim())
@@ -132,11 +126,9 @@ export type ParsedSummary = {
   outcome: 'inquired' | 'lead'
 }
 
-// Sends a self-notification email via the project owner's own Gmail. Skips
-// silently when the tenant has no Gmail sending identity (form/SNS-only
-// projects). The recipient and the From: are the same address — operators
-// see the lead arriving in their own inbox, no separate transactional
-// transport (Resend etc.) needed.
+// Skips silently when the tenant has no Gmail sending identity (form/SNS-only
+// projects). The recipient and the From: are the same address — the lead lands
+// in the operator's own inbox; no separate transactional transport needed.
 async function notifyLeadByEmail(
   db: Db,
   env: LeadNotifyEnv,
@@ -197,8 +189,7 @@ async function notifyLeadByEmail(
 }
 
 export function parseSummaryJson(raw: string): ParsedSummary | null {
-  // Models occasionally wrap JSON in code fences despite instructions; strip
-  // them before parsing.
+  // Models occasionally wrap JSON in code fences despite instructions.
   const stripped = raw
     .trim()
     .replace(/^```(?:json)?\s*/i, '')

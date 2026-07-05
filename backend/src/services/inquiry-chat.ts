@@ -33,10 +33,8 @@ import {
 import { generateSessionSummary, type LeadNotifyEnv } from './inquiry-summarize'
 import type { Edition } from '../domain/edition'
 
-// Chat path needs OpenAI directly + LeadNotifyEnv via the lead-escalation
-// callback in generateSessionSummary. Two narrow aliases compose here so
-// notifyLeadByEmail's signature isn't forced to declare OPENAI_API_KEY just
-// because it sits behind the same chat run.
+// Composed from two narrow aliases so notifyLeadByEmail's signature isn't
+// forced to declare OPENAI_API_KEY just because it sits behind the same chat run.
 type InquiryChatEnv = OpenAIEnv & LeadNotifyEnv
 
 // Lazy idle-timeout. Sessions left untouched longer than this are considered
@@ -44,10 +42,9 @@ type InquiryChatEnv = OpenAIEnv & LeadNotifyEnv
 // message so the recipient gets a clean error and can refresh.
 const INQUIRY_IDLE_TIMEOUT_MS = 30 * 60 * 1000
 
-// gpt-5.4-mini chosen for cost/latency on the chat path. Exported so the
-// stateless preview path (inquiry-preview-chat.ts) reuses the exact same model
-// config instead of duplicating it — the preview must mirror the live chat,
-// not drift from it.
+// gpt-5.4-mini chosen for cost/latency. Exported so the stateless preview path
+// (inquiry-preview-chat.ts) reuses the same config — the preview must mirror
+// the live chat, not drift from it.
 export const CHAT_MODEL = 'gpt-5.4-mini'
 export const CHAT_TEMPERATURE = 0.6
 export const CHAT_MAX_OUTPUT_TOKENS = 400
@@ -62,33 +59,22 @@ export type InquiryChatRunResult = {
   reachedTurnLimit: boolean
 }
 
-// The fields buildSystemPrompt reads. Shared with the stateless preview chat
-// path so neither caller fabricates session state. `brief` is always required
-// (chat is gated on a non-empty project brief). Every other field is nullable
-// because each is a genuinely optional input the prompt branches on: sender_*
-// are unset until the user configures them, recipient_* are absent on the
-// no-prospect preview / legacy sessions.
+// Shared with the stateless preview chat path so neither caller fabricates
+// session state. Nullable fields are genuinely optional inputs the prompt
+// branches on; `brief` is required (chat is gated on a non-empty brief).
 export type ChatPromptContext = {
   brief: string
   // Page language (client-reported browser language): the default reply
   // language and the meeting-button label the prompt references.
   locale: Locale
-  // project_settings.sender_display_name verbatim. Null when unset — the
-  // system prompt then frames the AI as representing the company (or, if
-  // both are null, the offering generically). Deliberately NOT falling back
-  // to tenants.name (internal workspace label, never to be sent to
-  // recipients per the schema contract).
+  // Deliberately NOT falling back to tenants.name — internal workspace label,
+  // never to be sent to recipients per the schema contract.
   senderName: string | null
-  // project_settings.sender_company_name. Null when the user hasn't set it.
-  // When present, the system prompt frames the AI as representing the
-  // company (with senderName as the personal voice when also set).
   senderCompany: string | null
-  // project_settings.sender_job_title. Optional role appended after senderName
-  // in the system prompt's senderIntro. Has no effect when senderName is null.
+  // No effect when senderName is null.
   senderJobTitle: string | null
-  // Drawn from inquiry_sessions.context_snapshot.prospectHints (populated at
-  // session open). Null on legacy sessions whose snapshot was never composed
-  // — buildSystemPrompt then falls back to a generic visitor framing.
+  // From context_snapshot.prospectHints; null on legacy sessions whose snapshot
+  // was never composed — the prompt then falls back to generic visitor framing.
   recipientName: string | null
   recipientOrganization: string | null
 }
@@ -166,19 +152,16 @@ export async function runInquiryChat(
   // concurrent-turn race rolls the messages back too.
   let newTurnsUsed: number
   try {
-    // db.transaction here is legitimate: this service is only called from the
+    // db.transaction is legitimate here: this service is only called from the
     // public token-authenticated inquiry routes, which use createDb() directly
-    // and bypass the RLS middleware (see CLAUDE.md "Multi-Tenancy"). The `db`
-    // received here is therefore a raw connection, not a tx already opened by
-    // rls.ts — opening one here does not nest, so postgres-js's SAVEPOINT
-    // semantics don't apply.
+    // and bypass the RLS middleware — `db` is a raw connection, not a tx opened
+    // by rls.ts, so this does not nest (no postgres-js SAVEPOINT semantics).
     newTurnsUsed = await db.transaction(async (tx) => {
       const txDb = tx as unknown as Db
       const reserved = await reserveChatTurnSlot(txDb, ctx.sessionId)
       await appendInquiryMessage(txDb, ctx.sessionId, ctx.tenantId, 'user', input.message)
       await appendInquiryMessage(txDb, ctx.sessionId, ctx.tenantId, 'assistant', assistantMessage)
-      // First user message flips the session from 'opened' to 'inquired'.
-      // reserveChatTurnSlot returned 1 ↔ this turn was the first.
+      // reserved === 1 ↔ first user turn: flip the session from 'opened' to 'inquired'.
       if (reserved === 1) {
         await markSessionInquired(txDb, ctx.sessionId)
       }
@@ -223,10 +206,8 @@ async function loadChatContext(
   db: Db,
   shortId: ShortId,
 ): Promise<ServiceResult<ChatContext>> {
-  // Single round-trip: open session + token + project_settings(brief) +
-  // tenant.name. NOT_FOUND if the session is already closed, the token is
-  // revoked, the chat brief is missing, or inquiry_landing_enabled=false —
-  // we collapse all of those into the same error so scanners can't probe.
+  // Closed session, revoked token, and disabled landing all collapse into the
+  // same NOT_FOUND so scanners can't probe which condition failed.
   const [row] = await db
     .select({
       sessionId: inquirySessions.id,
@@ -252,10 +233,9 @@ async function loadChatContext(
   if (row.tokenRevokedAt !== null) return err('NOT_FOUND', 'Inquiry session is no longer open')
   if (!row.landingEnabled) return err('NOT_FOUND', 'Inquiry session is no longer open')
 
-  // The per-session snapshot wins when present — it folds in the prospect
-  // hypothesis and recent org signals on top of the project brief. Fall
-  // back to the bare project-level brief for legacy sessions / projects
-  // where snapshot composition was skipped.
+  // The per-session snapshot wins — it folds the prospect hypothesis and recent
+  // org signals on top of the project brief. The bare brief covers legacy
+  // sessions / projects where snapshot composition was skipped.
   const effectiveBrief = row.sessionContextSnapshot?.brief ?? row.brief
   if (!effectiveBrief || effectiveBrief.trim().length === 0) {
     return err('PRECONDITION_FAILED', 'Chat is not configured for this project')
@@ -280,9 +260,6 @@ async function idleCloseAndReject(
   env: InquiryChatEnv,
   ctx: ChatContext,
 ): Promise<ServiceResult<never>> {
-  // Best-effort: if there were never any messages, just close (nothing to
-  // summarize). Otherwise summarize-and-close. Either way, the request fails
-  // with CONFLICT so the frontend can prompt for a refresh.
   if (ctx.chatTurnsUsed > 0) {
     try {
       await generateSessionSummary(db, env, ctx.sessionId, 'idle')
@@ -304,10 +281,7 @@ async function idleCloseAndReject(
 
 export function buildSystemPrompt(ctx: ChatPromptContext, currentTurn: number): string {
   const visitorLine = describeVisitor(ctx)
-  // Pick the most specific framing the operator gave us: company+person if
-  // both, either alone, otherwise a generic phrasing. We do NOT use
-  // tenants.name (internal workspace label). senderJobTitle is appended
-  // after senderName when present (no-op without senderName).
+  // We do NOT use tenants.name (internal workspace label).
   const speakerLabel = ctx.senderName
     ? ctx.senderJobTitle
       ? `${ctx.senderName} (${ctx.senderJobTitle})`

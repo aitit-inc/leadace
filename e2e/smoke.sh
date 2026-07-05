@@ -39,9 +39,8 @@ DELETE_OUT="$OUTPUT_DIR/smoke-cleanup-$(ts).json"
 
 echo "==> Running /leadace $URL (output=$LEAD_ACE_OUT)" >&2
 
-# Smoke prompt: pre-resolves every interactive Q&A so the chain runs to 4B-4
-# unattended. The trailing PROJECT_ID marker makes the created project id
-# trivially greppable from the JSON `.result` string.
+# The trailing PROJECT_ID marker makes the created project id trivially
+# greppable from the JSON `.result` string.
 "$RUN_SH" "/leadace $URL
 
 Headless smoke test — no interactive Q&A is available. Run the onboarding chain end-to-end making sensible default choices: when env_check would normally ask, treat optional integrations as unsure/skip; when strategy_drafting needs sender details, use placeholder values; when overlap with existing config would normally ask for a merge decision, prefer create-new. Do not send any outreach. Goal: verify the full chain reaches the 4B-4 strategy summary without stopping to ask the user.

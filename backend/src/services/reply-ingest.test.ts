@@ -4,7 +4,7 @@ import { clampReceivedAt, recordFieldsForReply } from './reply-ingest'
 // The reply ingest clamps a captured reply's receivedAt into record_response's
 // accepted [now-7d, now] window. A stale or sender-forged Date header that fell
 // outside that window would otherwise be rejected (reply lost) or shift
-// next_outreach_after. `now` is injected so the clamp is pure.
+// next_outreach_after.
 describe('clampReceivedAt', () => {
   const now = Date.parse('2026-06-10T12:00:00Z')
 

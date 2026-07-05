@@ -210,7 +210,7 @@ export type LinkInput = z.infer<typeof linkSchema>
 // "Substantive" = responseType ∈ {reply, rejection, bounce, meeting_request}.
 // Auto-replies excluded so the skill never disambiguates them from real prior
 // contact.
-// 'short_cycle_followup' = a pending day-scale follow-up touch (P1), vs
+// 'short_cycle_followup' = a pending day-scale follow-up touch, vs
 // 'no_response' = the months-scale recycle re-send.
 export type CycleKind = 'first' | 'no_response' | 'rejection_followup' | 'short_cycle_followup'
 
@@ -452,8 +452,6 @@ export async function listReachable(
     ),
   )
 
-  // Stale-signal / signal-less rows are demoted by adding a virtual +1 to
-  // their priority for ordering only.
   const orderingPriorityExpr = sql<number>`(${projectProspects.priority} + (CASE WHEN ${freshSignalExpr} THEN 0 ELSE 1 END))`
 
   const [rows, summaryRows, stateRows] = await Promise.all([
@@ -572,7 +570,6 @@ const SUBSTANTIVE_RESPONSE_TYPES: ReadonlyArray<typeof responseTypeEnum.enumValu
   'meeting_request',
 ]
 
-// Drafts / failures excluded from `n` so the count matches "real attempts".
 async function loadCycleContext(
   db: Db,
   projectId: ProjectId,

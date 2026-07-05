@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Net-new regression for decision-maker-pointer derivation
-# (coverage-audit §2 gap #17).
+# Regression for decision-maker-pointer derivation.
 #
 # record_response with a rejectionFeedback.decision_maker_pointer can derive a
-# referred prospect (derivePointerProspect, services/responses.ts:254-344). The
+# referred prospect (derivePointerProspect, services/responses.ts). The
 # guarded branches under test:
 #   A no-create-when-referrer-DNC — if the referrer's own rejection forces DNC
 #     (unsubscribe_request / consent / never), derivation is suppressed entirely.
@@ -81,7 +80,6 @@ psql_val()    { psql_local "$1" | head -1; }  # first line only (skips the INSER
 
 prospect_count_email() { psql_local "SELECT COUNT(*)::int FROM prospects WHERE tenant_id='$TENANT_ID' AND email='$1';"; }
 
-# Seed-row builder; $3 optional contactName.
 mkseed() {
   local tag="$1" cname="${2:-}"
   local dom="$RUN_TAG-$tag.example"
@@ -133,7 +131,6 @@ restore_and_exit() {
   # match both the seeded (contact@$RUN_TAG-*) and derived (%$RUN_TAG%) rows.
   psql_local "DELETE FROM prospects WHERE tenant_id='$TENANT_ID' AND (email LIKE 'contact@$RUN_TAG-%' OR email LIKE '%$RUN_TAG%');" > /dev/null || true
   psql_local "DELETE FROM organizations WHERE tenant_id='$TENANT_ID' AND domain LIKE '$RUN_TAG-%';" > /dev/null || true
-  # Foreign tenant (synthetic) + its child rows.
   psql_local "DELETE FROM prospects WHERE tenant_id='$FOREIGN_TENANT';" > /dev/null || true
   psql_local "DELETE FROM organizations WHERE tenant_id='$FOREIGN_TENANT';" > /dev/null || true
   psql_local "DELETE FROM tenants WHERE id='$FOREIGN_TENANT';" > /dev/null || true

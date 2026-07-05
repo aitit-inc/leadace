@@ -44,10 +44,8 @@ export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: Varia
       tenantId = membership.tenantId
       mcpStamped = membership.firstMcpConnectedAt !== null
     } else {
-      // Auto-provision tenant for new users.
       // Wrapped in a transaction so a UNIQUE(user_id) violation on tenant_members
       // (race against a concurrent first request) rolls back the tenant/plan rows too.
-      // On conflict, re-select the existing membership and use that tenantId.
       const newTenantId = generateId()
       const now = new Date()
       try {
@@ -60,10 +58,8 @@ export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: Varia
         // An MCP-first signup is stamped by the shared post-block below, not inline.
         mcpStamped = false
       } catch (e) {
-        // Only the UNIQUE(user_id) race (Postgres 23505) is recoverable by
-        // re-reading the winner's tenantId. Anything else (schema error,
-        // connection failure, RLS misconfig) gets rethrown so it surfaces as
-        // a real 500 instead of being papered over by the re-select.
+        // Only the UNIQUE(user_id) race is recoverable by re-reading the winner's
+        // tenantId; anything else rethrows so it surfaces as a real 500.
         if (!isUniqueViolation(e)) throw e
         const [existing] = await db
           .select({
@@ -103,9 +99,8 @@ function generateId(length = 21): string {
   return randomFromAlphabet(TENANT_ID_ALPHABET, length)
 }
 
-// postgres.js surfaces Postgres errors as objects carrying SQLSTATE in `code`.
-// 23505 = unique_violation — the only failure we expect from the tenant
-// auto-provision transaction and recover from by re-reading the winner row.
+// postgres.js surfaces Postgres errors as objects carrying SQLSTATE in `code`;
+// 23505 = unique_violation.
 function isUniqueViolation(e: unknown): boolean {
   return typeof e === 'object' && e !== null && (e as { code?: unknown }).code === '23505'
 }

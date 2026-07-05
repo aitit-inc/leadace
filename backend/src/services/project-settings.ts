@@ -28,14 +28,13 @@ import {
   type FollowUpSequence,
 } from '../domain/follow-up-sequence'
 
-// 6-digit hex only; 3-digit shorthand and named colors rejected so the
-// frontend swatch / preview is deterministic.
+// 3-digit shorthand and named colors rejected so the frontend swatch / preview is deterministic.
 const BRAND_COLOR_REGEX = /^#[0-9A-Fa-f]{6}$/
 
 export const updateSettingsSchema = z
   .object({
     outboundMode: z.enum(OUTBOUND_MODES).optional(),
-    // Sending identity; null falls back to the tenant's connected Gmail.
+    // null falls back to the tenant's connected Gmail.
     sendingIdentityId: sendingIdentityIdSchema.nullable().optional(),
     senderEmailAlias: z.email().nullable().optional(),
     senderDisplayName: z.string().min(1).max(200).nullable().optional(),

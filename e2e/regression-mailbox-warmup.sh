@@ -93,18 +93,15 @@ mq()       { reach | jq -r ".mailboxQuota.$1"; }
 mh()       { api GET "/api/projects/$PROJECT_ID/mailbox-health" | jq -r ".$1"; }
 started_null() { psql_local "SELECT (warmup_started_at IS NULL) FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth';"; }
 
-# PUT a partial warmup patch to the gmail identity; first echoes the health body,
-# second the status code.
 put_warmup()        { api PUT "/api/me/sending-identities/$GMAIL_IDENTITY_ID/warmup" "$1"; }
 put_warmup_status() { curl -sS -o /dev/null -w '%{http_code}' -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d "$1" "$API_URL/api/me/sending-identities/$GMAIL_IDENTITY_ID/warmup"; }
 
-# Set the three warmup columns. Args are raw SQL fragments (NULL / number /
-# NOW()-expr) so callers control nullability precisely.
+# Args are raw SQL fragments (NULL / number / NOW()-expr) so callers control
+# nullability precisely.
 set_warmup() { # started_at override paused
   psql_local "UPDATE sending_identities SET warmup_started_at=$1, daily_cap_override=$2, paused_until=$3 WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth';" >/dev/null
 }
 
-# POST a 'sent' outreach; echoes only the HTTP status code.
 send_status() { # prospectId channel
   curl -sS -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
     -d "$(jq -nc --arg pid "$PROJECT_ID" --argjson prid "$1" --arg ch "$2" \

@@ -8,8 +8,6 @@ export const load: PageServerLoad = async ({ fetch, parent, depends, locals }) =
   depends('app:project-settings');
   const { activeProjectId } = await parent();
   if (!activeProjectId) return { projectId: null, settings: null };
-  // The backend returns the full project_settings row; we narrow to the
-  // inquiry-specific subset.
   const settings = await getProjectSettings<InquirySettings>(
     activeProjectId,
     fetch,

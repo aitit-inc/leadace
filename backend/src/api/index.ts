@@ -42,8 +42,7 @@ const app = new Hono<{ Bindings: Env; Variables: Variables }>()
 // part of any auth decision — gating it would just block legitimate
 // CLI/local-dev/self-host traffic without raising the security bar.
 app.use('*', cors())
-// Resolves LEADACE_EDITION into Variables for every request. Must run before
-// any route that gates on edition (Stripe webhook, billing, /me/plan, …).
+// Must run before any route that gates on edition (Stripe webhook, billing, /me/plan, …).
 app.use('*', editionMiddleware)
 
 app.get('/health', (c) => c.json({ ok: true }))
@@ -147,9 +146,8 @@ const handler = {
       return
     }
 
-    // Every other scheduled trigger (the 0 4 beta digest, or a temporary test
-    // cron) runs the beta KPI digest. Log the dispatch so a test/temporary cron
-    // is visible in Workers Logs even on a successful or no-op run.
+    // Log the dispatch so a test/temporary cron is visible in Workers Logs
+    // even on a successful or no-op run.
     console.log(`[scheduled] beta-stats digest cron=${controller.cron}`)
     ctx.waitUntil(
       runDailyBetaStats(db, env).catch((e: unknown) => {

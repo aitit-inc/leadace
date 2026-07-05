@@ -15,8 +15,7 @@
     onChanged: () => void | Promise<void>;
   } = $props();
 
-  // Manages user-supplied SMTP mailboxes only (the connected Gmail lives in the
-  // section above). Free hides the add form; paid-plan caps are enforced server-side.
+  // The connected Gmail lives in the section above; paid-plan caps are enforced server-side.
   let smtpIdentities = $derived(identities.filter((i) => i.provider === 'smtp_imap'));
   let freeBlocked = $derived(planTier === 'free');
 

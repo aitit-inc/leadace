@@ -7,10 +7,9 @@ import {
 type ResponseType = (typeof responseTypeEnum.enumValues)[number]
 type Sentiment = (typeof sentimentEnum.enumValues)[number]
 
-// Maps a recorded response to the next prospect status. Returns null when the
-// response shouldn't change status (auto-replies). When `reapproachMonths` is
-// set, what would otherwise be a hard rejection becomes 'deferred' (contacted,
-// waiting for the recontact window to elapse).
+// Returns null when the response shouldn't change status (auto-replies). When
+// `reapproachMonths` is set, what would otherwise be a hard rejection becomes
+// 'deferred' (contacted, waiting for the recontact window to elapse).
 export function nextStatusFromResponse(args: {
   responseType: ResponseType
   sentiment: Sentiment

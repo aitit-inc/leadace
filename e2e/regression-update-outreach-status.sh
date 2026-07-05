@@ -1,18 +1,9 @@
 #!/usr/bin/env bash
-# Net-new regression for update_outreach_status — the confirm step of the
-# two-phase form/SNS send (coverage-audit §2 gap #11).
-#
-# PATCH /outreach/:id/status resolves a 'pre_send' reservation to a terminal
-# state, gated by a single atomic UPDATE ... WHERE status='pre_send'
-# (services/outreach.ts:456-495):
-#   - 'sent'   → row sent, error_message cleared, prospect flipped to 'contacted'
-#   - 'failed' → row failed + error_message, prospect NOT contacted, re-eligibility
-#                deferred (prospects.next_outreach_after stamped)
-#   - any non-pre_send row (pending_review / already-terminal) → 404 NOT_FOUND
-#     (the WHERE guard matches no row), so the confirm is one-shot — no
-#     double-contact / double-quota.
-# The discriminated-union body (sent | failed+errorMessage) is enforced by
-# zValidator BEFORE the service, so a malformed/unsupported status is 400.
+# Regression for update_outreach_status — the confirm step of the two-phase
+# form/SNS send. PATCH /outreach/:id/status resolves a 'pre_send' reservation
+# to a terminal state, gated by a single atomic UPDATE ... WHERE
+# status='pre_send', so the confirm is one-shot — no double-contact /
+# double-quota.
 #
 # Runs against the local stack (localhost:8787 API + 54322 Postgres). pre_send
 # rows are minted via record-with-inquiry (outboundMode=send default, compliant
@@ -87,7 +78,6 @@ mkseed() {
       name:$n, overview:"seed", websiteUrl:("https://"+$d+"/about"), email:$e, matchReason:"seed"}'
 }
 
-# Mint a pre_send row via record-with-inquiry; echoes the outreachLogId.
 mint_presend() {
   local prid="$1"
   api POST /api/outreach/record-with-inquiry \

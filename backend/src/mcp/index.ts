@@ -54,7 +54,7 @@ type Env = {
 const SERVER_VERSION = '1.0.0'
 // 0.7.14 hard-cuts older plugins: their onboarding never collects the new
 // targetLanguage setting, so a JP-audience project they create would silently
-// send English. (Previous cut: 0.6.16, evaluations-table drop.)
+// send English.
 const MIN_PLUGIN_VERSION = '0.7.14'
 
 async function extractUserId(request: Request, jwtSecret: string, supabaseUrl?: string): Promise<string | null> {
@@ -128,11 +128,8 @@ type ToolDef = {
   handler: (args: Record<string, unknown>, ctx: ToolCtx) => Promise<CallToolResult> | CallToolResult
 }
 
-// The tool catalog (names, descriptions, input schemas, handlers) is immutable
-// and built once per isolate here. Only the per-request execution context
-// (apiUrl, authHeader) varies — createMcpServer injects it at call time. Building
-// the tool schemas once instead of per request keeps the MCP fetch path off the
-// Worker CPU limit (per-request rebuild used to exceed Free's 10 ms ceiling).
+// Building the tool schemas once per isolate keeps the MCP fetch path off the
+// Worker CPU limit — per-request rebuild used to exceed Free's 10 ms ceiling.
 function buildToolRegistry(): ToolDef[] {
   const tools: ToolDef[] = []
   const defineTool = <S extends z.ZodRawShape>(
@@ -1576,9 +1573,8 @@ function buildToolRegistry(): ToolDef[] {
   return tools
 }
 
-// Built lazily on the first MCP request per isolate, then memoized. Requests
-// that never touch the catalog (OAuth flow, /.well-known/*) don't pay the
-// build cost on a cold isolate.
+// Lazy so requests that never touch the catalog (OAuth flow, /.well-known/*)
+// don't pay the build cost on a cold isolate.
 let toolRegistry: ToolDef[] | null = null
 
 function createMcpServer(ctx: ToolCtx): McpServer {

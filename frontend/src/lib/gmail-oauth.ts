@@ -11,9 +11,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 export const GOOGLE_OAUTH_SCOPES =
   'openid profile email https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly';
 
-// Initiate the Google OAuth flow. The redirect lands at /auth/callback, where the
-// server persists the refresh token and bounces the user back into the app. On
-// successful initiation the browser navigates away to Google, so this never
+// On successful initiation the browser navigates away to Google, so this never
 // resolves to `null` on the success path — only error returns mean the redirect
 // did not start.
 export async function connectGmail(supabase: SupabaseClient): Promise<string | null> {

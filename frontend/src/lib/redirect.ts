@@ -15,9 +15,7 @@ export function isSafeRelativePath(p: string): boolean {
 // Defense-in-depth for absolute URLs rendered as <a href={...}>. The backend
 // write path now refuses javascript: / data: / file: etc. for prospect /
 // organization URLs, but legacy rows persisted before that constraint may
-// still hold them. Return the original URL when the scheme is http: or
-// https:, null otherwise — callers gate the anchor with
-// `{#if safeHttpUrl(url)}` or fall back to `href={safeHttpUrl(url) ?? '#'}`.
+// still hold them.
 export function safeHttpUrl(raw: string | null | undefined): string | null {
   if (!raw) return null;
   try {

@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# Cloud-edition regression: inquiry-chat plan quota (coverage-audit §2 gap #6 —
-# services/plan-limits.ts INQUIRY_CHAT_LIMITS + the enforcement in
-# services/inquiry-chat.ts runInquiryChat).
+# Cloud-edition regression: inquiry-chat plan quota (INQUIRY_CHAT_LIMITS in
+# services/plan-limits.ts, enforced in services/inquiry-chat.ts runInquiryChat).
 #
 # The free-tier lifetime cap (25 chat turns, SUM over the tenant's
 # inquiry_sessions) only binds on a LEADACE_EDITION=cloud worker. The quota gate
-# (inquiry-chat.ts:129) runs BEFORE the OpenAI call (line 143), so the blocked
-# path is reachable with no LLM round-trip and no cost. The happy path (a turn
-# that succeeds + increments) needs a live OpenAI call and is NOT exercised here.
+# runs BEFORE the OpenAI call, so the blocked path is reachable with no LLM
+# round-trip and no cost. The happy path (a turn that succeeds + increments)
+# needs a live OpenAI call and is NOT exercised here.
 #
 # Setup nuance: runInquiryChat checks the per-session hard cap
 # (INQUIRY_CHAT_TURNS_MAX=5) BEFORE the plan quota. To reach the plan-quota 403
@@ -53,7 +52,7 @@ post_msg() {
 step "seed the inquiry FK chain (project → prospect → outreach_log → token → sessions)"
 PROJ="$(api POST /api/projects "$(jq -nc '{name:"cloud-chat proj"}')" | jq -r '.id // ""')"
 [[ -n "$PROJ" ]] || { echo "project create failed" >&2; exit 1; }
-# loadChatContext requires inquiry_landing_enabled (now defaults OFF — link-free
+# loadChatContext requires inquiry_landing_enabled (defaults OFF — link-free
 # cold mail) AND a non-empty chat brief (inquiry_chat_brief is NULL by default).
 psql_local "UPDATE project_settings SET inquiry_landing_enabled = true, inquiry_chat_brief = 'E2E chat brief' WHERE project_id = '$PROJ' AND tenant_id = '$T';" > /dev/null
 

@@ -26,7 +26,6 @@ if [ "${1:-up}" != "up" ]; then
   exit 2
 fi
 
-# --- pre-flight -------------------------------------------------------------
 if [ ! -f backend/.dev.vars ]; then
   echo "ERROR: backend/.dev.vars is missing — cp backend/.dev.vars.example backend/.dev.vars" >&2
   exit 1
@@ -43,7 +42,6 @@ if [ -z "${SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID:-}" ]; then
   echo "WARN: SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID unset — local Google sign-in won't work (see .envrc.example)."
 fi
 
-# --- ports (overridable; unset => standard defaults) ------------------------
 [ -f dev.ports.env ] && . ./dev.ports.env
 FRONTEND_PORT="${LEADACE_FRONTEND_PORT:-5173}"
 API_PORT="${LEADACE_API_PORT:-8787}"
@@ -58,7 +56,6 @@ MCP_INSPECTOR="${LEADACE_MCP_INSPECTOR_PORT:-$(( MCP_PORT == 8788 ? 9230 : MCP_P
 dupe=$(printf '%s\n' "$FRONTEND_PORT" "$API_PORT" "$MCP_PORT" "$API_INSPECTOR" "$MCP_INSPECTOR" | sort | uniq -d | head -1)
 [ -n "$dupe" ] && { echo "ERROR: port $dupe is used by more than one service; set LEADACE_*_INSPECTOR_PORT" >&2; exit 1; }
 
-# --- Supabase ---------------------------------------------------------------
 if supa status >/dev/null 2>&1; then
   echo "==> Supabase already running"
 else
@@ -71,7 +68,6 @@ npm --prefix backend run db:migrate
 echo "==> Seeding master documents"
 npm --prefix backend run db:seed-master-documents
 
-# --- dev servers ------------------------------------------------------------
 if [ -t 1 ]; then
   C_API=$'\033[36m'; C_MCP=$'\033[35m'; C_FE=$'\033[32m'; C_RST=$'\033[0m'
 else

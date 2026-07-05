@@ -10,8 +10,7 @@
   let { data }: PageProps = $props();
   let supabase = $derived(data.supabase);
 
-  // Map known /auth/callback ?error= reasons to human-readable hints;
-  // pass unknown reasons through so they don't disappear silently.
+  // Unknown /auth/callback ?error= reasons pass through so they don't disappear silently.
   function describeCallbackError(reason: string): string {
     if (reason === 'gmail_scope_required') {
       return "Gmail send permission wasn't granted. LeadAce needs gmail.send to send outbound email — please continue with Google again and approve all requested scopes.";

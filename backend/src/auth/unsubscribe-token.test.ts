@@ -23,7 +23,6 @@ describe('unsubscribe token sign/verify', () => {
   it('rejects a forged prospectId/tenantId (signature no longer matches)', async () => {
     const token = await signUnsubscribeToken({ prospectId: 42, tenantId: tenant }, SECRET)
     const [, , sig] = token.split('.')
-    // Swap in a different prospectId while keeping the original signature.
     await expect(verifyUnsubscribeToken(`99.${tenant}.${sig}`, SECRET)).rejects.toThrow(InvalidUnsubscribeTokenError)
   })
 

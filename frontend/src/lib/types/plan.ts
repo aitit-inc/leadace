@@ -14,9 +14,7 @@ export interface OutreachQuotaWindow {
   limit: number;
 }
 
-// 'unlimited' tiers (Scale, complimentary 'unlimited', or any plan with no
-// configured caps) carry only `used`; 'capped' tiers expose limit / remaining
-// / per-window breakdown.
+// kind 'unlimited' = Scale, complimentary 'unlimited', or any plan with no configured caps.
 export type OutreachQuota =
   | {
       plan: PlanTier;

@@ -5,11 +5,8 @@ import { resolveProject } from './projects'
 import { resolveSendingIdentityId } from '../auth/google'
 import { getMailboxHealth, type MailboxHealth } from './plan-limits'
 
-// The warmup / safe-daily-cap health of the mailbox a given PROJECT sends from:
-// resolve the project's sending identity (its assigned custom mailbox, else the
-// connected Gmail), then read that identity's health — so the agent sees the same
-// mailbox the send path enforces, not a fixed gmail row. null identity (neither a
-// per-project assignment nor a connected Gmail) → no_mailbox.
+// Resolves the project's sending identity first so the agent sees the health of
+// the same mailbox the send path enforces, not a fixed gmail row.
 export async function getProjectMailboxHealth(
   db: Db,
   tenantId: TenantId,

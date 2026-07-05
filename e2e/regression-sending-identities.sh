@@ -1,26 +1,13 @@
 #!/usr/bin/env bash
-# Regression for the sending-identity registry (G3 P1):
+# Regression for the sending-identity registry:
 #   services/sending-identity.ts (register/list/delete) + routes/sending-identities.ts
 #   + schema (sending_identities constraints, project_settings.sending_identity_id FK).
 #
-# Sending now happens server-side over 465 implicit-TLS (services/smtp-send), and
+# Sending happens server-side over 465 implicit-TLS (services/smtp-send), and
 # registration VERIFIES the mailbox by connecting before storing. A real
-# successful register/send therefore needs a reachable mailbox with valid creds
-# (manual, against a real cold mailbox) — so this suite covers everything that
-# does NOT require a working external mailbox:
-#
-#   1. Register validation rejects an unverifiable mailbox → 422 (the verify
-#      connect fails: 127.0.0.1 over TLS is blocked from the Worker).
-#   2. List returns the read-only SMTP connection view (host/port/username) and
-#      NEVER the app password / secret.
-#   3. DB shape: provider='smtp_imap', scope IS NULL, secret decrypts to the exact
-#      JSON connection payload (pgp_sym_encrypt round-trip).
-#   4. Duplicate From address → 409 (checked before the verify).
-#   5. A project pointing at the identity blocks delete → 409, then unset → 200.
-#   6. gmail_oauth is not deletable via this registry (→ 404); unknown id → 404.
-#
-# Test identities are SQL-inserted (the API register would connect-verify, which a
-# fake mailbox can't pass). The pure plan gate/cap is unit-tested.
+# register/send therefore needs a reachable mailbox with valid creds (manual,
+# against a real cold mailbox), so this suite covers only what does NOT require
+# one. The pure plan gate/cap is unit-tested.
 #
 # Curl-only, no Claude session / Anthropic budget. Single tenant, one project,
 # one identity, cleans up after itself.

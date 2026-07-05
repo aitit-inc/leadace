@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Net-new regression for the P0 email-deliverability gate (DNS-only, invalid-only).
+# Regression for the email-deliverability gate (DNS-only, invalid-only).
 # Covers the two server-side behaviors the gate adds, decoupled from real DNS so
 # the test is deterministic (the DoH parsing itself is unit-tested in
 # backend/src/domain/email-deliverability.test.ts):
@@ -105,7 +105,6 @@ mkseed_form() {
       contactFormUrl:("https://"+$d+"/contact"), matchReason:"seed"}'
 }
 
-# ---------------------------------------------------------------------------
 require_jq
 TOKEN="$("$REPO_ROOT/e2e/mint-jwt.sh")"
 [[ -n "$TOKEN" ]] || { echo "failed to mint JWT" >&2; exit 1; }
@@ -137,7 +136,6 @@ restore_and_exit() {
   psql_local "DELETE FROM outreach_logs WHERE tenant_id='$TENANT_ID' AND project_id='${PROJECT_ID:-}';" > /dev/null 2>&1 || true
   psql_local "DELETE FROM prospects WHERE tenant_id = '$TENANT_ID' AND email LIKE 'contact@$RUN_TAG-%';" > /dev/null || true
   psql_local "DELETE FROM organizations WHERE tenant_id = '$TENANT_ID' AND domain LIKE '$RUN_TAG-%';" > /dev/null || true
-  # Restore the tenant compliance fields exactly as captured (NULL when empty).
   psql_local "UPDATE tenants SET
     legal_name = NULLIF('$ORIG_LEGAL',''),
     physical_address = NULLIF('$ORIG_ADDR',''),
@@ -148,7 +146,6 @@ restore_and_exit() {
 }
 trap restore_and_exit EXIT
 
-# ---------------------------------------------------------------------------
 step "create project + seed three US prospects (good email / dead email / dead email+form)"
 CREATE_RESP="$(api POST /api/projects "$(jq -nc --arg n "$PROJECT_NAME" '{name:$n}')")"
 PROJECT_ID="$(echo "$CREATE_RESP" | jq -r '.id // ""')"
@@ -168,14 +165,12 @@ GOOD_ID="$(pid_of good)"; DEAD_ID="$(pid_of dead)"; DEADFORM_ID="$(pid_of deadfo
 [[ -n "$GOOD_ID" && -n "$DEAD_ID" && -n "$DEADFORM_ID" ]] || { echo "could not resolve prospect ids" >&2; echo "$LIST_RESP" >&2; exit 1; }
 say "ids: good=$GOOD_ID dead=$DEAD_ID deadform=$DEADFORM_ID"
 
-# Pin the verdicts deterministically (override whatever registration-time DoH set).
 psql_local "UPDATE prospects SET email_deliverability='unknown'       WHERE id=$GOOD_ID AND tenant_id='$TENANT_ID';" > /dev/null
 psql_local "UPDATE prospects SET email_deliverability='undeliverable' WHERE id IN ($DEAD_ID,$DEADFORM_ID) AND tenant_id='$TENANT_ID';" > /dev/null
 assert_eq "good verdict=unknown"           "$(psql_local "SELECT email_deliverability FROM prospects WHERE id=$GOOD_ID;")" "unknown"
 assert_eq "dead verdict=undeliverable"     "$(psql_local "SELECT email_deliverability FROM prospects WHERE id=$DEAD_ID;")" "undeliverable"
 assert_eq "deadform verdict=undeliverable" "$(psql_local "SELECT email_deliverability FROM prospects WHERE id=$DEADFORM_ID;")" "undeliverable"
 
-# ---------------------------------------------------------------------------
 step "Test 1: listReachable drops the undeliverable email, keeps unknown, reclassifies email+form into formOnly"
 R1="$(api GET "/api/projects/$PROJECT_ID/prospects/reachable?limit=200")"
 assert_eq "reachable.good present"                "$(reachable_has "$R1" "$GOOD_ID")"     "y"
@@ -185,7 +180,6 @@ assert_eq "reachable.total=2"                     "$(echo "$R1" | jq -r '.total'
 assert_eq "byChannel.email=1 (dead/deadform emails not counted)" "$(echo "$R1" | jq -r '.byChannel.email')" "1"
 assert_eq "byChannel.formOnly=1 (deadform reclassified to form)" "$(echo "$R1" | jq -r '.byChannel.formOnly')" "1"
 
-# ---------------------------------------------------------------------------
 step "Test 2: send-and-record 422s the undeliverable recipient (no quota, no sent row)"
 # The send path 412s without tenant compliance (before the deliverability gate),
 # so set it temporarily; teardown restores the originals.
@@ -202,7 +196,6 @@ assert_eq "send.error mentions deliverability" \
 SENT_AFTER="$(psql_local "SELECT COUNT(*) FROM outreach_logs WHERE tenant_id='$TENANT_ID' AND status='sent';")"
 assert_eq "no 'sent' row written (quota untouched)" "$SENT_AFTER" "$SENT_BEFORE"
 
-# ---------------------------------------------------------------------------
 step "summary"
 echo "  PASS=$PASS  FAIL=$FAIL" >&2
 [[ "$FAIL" -gt 0 ]] && exit 2

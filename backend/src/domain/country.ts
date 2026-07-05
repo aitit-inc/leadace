@@ -1,6 +1,3 @@
-// Country handling for outreach send guardrail and organization / prospect
-// bootstrap. Pure functions: ccTLD inference and the allowlist gate.
-//
 // Send-target allowlist currently covers US + CA + JP. Anything else is
 // blocked at the outreach send paths so users cannot accidentally send into
 // a jurisdiction whose compliance rules we do not yet implement (UK PECR,

@@ -22,7 +22,6 @@ describe('coarseIndustry', () => {
   })
 
   it('distinguishes the tech-vs-vertical and vendor-vs-operator splits', () => {
-    // The two pairs most likely to be confused must land in different buckets.
     expect(coarseIndustry('B2B SaaS')).toBe('software_tech')
     expect(coarseIndustry('HealthTech / Biotech')).toBe('vertical_tech')
     expect(coarseIndustry('Healthcare Provider')).toBe('services')
@@ -43,7 +42,6 @@ describe('coarseIndustry', () => {
   })
 
   it('is case-sensitive on the controlled vocabulary (no silent fuzzy match)', () => {
-    // The vocabulary is exact-match by contract; a mis-cased label is unknown.
     expect(coarseIndustry('fintech')).toBe('other')
   })
 

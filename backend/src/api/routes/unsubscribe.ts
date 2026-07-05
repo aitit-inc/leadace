@@ -20,17 +20,13 @@ import type { Env, Variables } from '../types'
 // Public, unauthenticated unsubscribe routes. The HMAC token in the URL is
 // the auth — anyone holding a valid token can flip do_not_contact for that
 // prospect. No user session, no RLS (we use createDb() directly to bypass).
-//
-// Mounted BEFORE the /api/* auth middleware. UX:
-//   GET  /api/unsubscribe/:token              -> returns prospect summary for confirmation page
-//   POST /api/unsubscribe/:token              -> sets do_not_contact=true (idempotent, RFC 8058 one-click target)
-//   POST /api/unsubscribe/:token/with-reason  -> same DNC ratchet PLUS records a structured rejection
-//                                                 (responses + rejection_feedback) for /check-feedback aggregation.
+// Mounted BEFORE the /api/* auth middleware. The plain POST is the idempotent
+// RFC 8058 one-click target; /with-reason additionally records a structured
+// rejection (responses + rejection_feedback) for /check-feedback aggregation.
 
 export const unsubscribeRouter = new Hono<{ Bindings: Env; Variables: Variables }>()
 
-// Returns the verified payload or a ready-to-return 400 Response. Centralizes
-// the InvalidUnsubscribeTokenError → 400 mapping that all three handlers share.
+// Centralizes the InvalidUnsubscribeTokenError → 400 mapping that all three handlers share.
 async function verifyTokenOrFail(
   c: Context<{ Bindings: Env; Variables: Variables }>,
   token: string,

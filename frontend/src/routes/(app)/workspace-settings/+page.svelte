@@ -16,10 +16,9 @@
   let saveMessage = $state('');
   let validationErrors = $state<Partial<Record<keyof TenantSettings, string>>>({});
 
-  // Currently allowed send-target countries. Matches
-  // backend/src/domain/country.ts:ALLOWED_SEND_COUNTRIES. Anything outside
-  // this list is accepted by the backend (the column is free-form ISO
-  // 3166-1 alpha-2) but the send-time guardrail will block it.
+  // Matches backend/src/domain/country.ts:ALLOWED_SEND_COUNTRIES. Anything
+  // outside this list is accepted by the backend (the column is free-form
+  // ISO 3166-1 alpha-2) but the send-time guardrail will block it.
   const SUPPORTED_COUNTRIES: { code: string; label: string }[] = [
     { code: 'US', label: 'United States (US)' },
     { code: 'CA', label: 'Canada (CA)' },
@@ -89,10 +88,9 @@
     }
   }
 
-  // Required fields for compliance: legal_name + physical_address +
-  // default_sender_country. The send paths refuse with PRECONDITION_FAILED
-  // if any are missing. We surface this as a banner so the user knows up
-  // front rather than after a failed /outbound run.
+  // The send paths refuse with PRECONDITION_FAILED if any of these is
+  // missing. We surface this as a banner so the user knows up front rather
+  // than after a failed /outbound run.
   let complianceReady = $derived(
     !!formData?.legalName?.trim() &&
       !!formData?.physicalAddress?.trim() &&

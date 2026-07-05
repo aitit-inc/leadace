@@ -1,9 +1,6 @@
-// Normalize an organization domain to the apex form stored in
-// `organizations.domain` (see db/schema.ts). Tolerates raw URLs / scheme /
-// path / port / leading "www." so LLM- and CSV-supplied domains land in the
-// same shape the dedup index queries against. Without this, a candidate
-// passing "https://www.example.com/about" silently misses an existing
-// "example.com" row.
+// Normalize to the apex form stored in `organizations.domain` so LLM- and
+// CSV-supplied domains match the dedup index — without this, a candidate passing
+// "https://www.example.com/about" silently misses an existing "example.com" row.
 export function normalizeDomain(input: string): string {
   let s = input.trim().toLowerCase()
   s = s.replace(/^https?:\/\//, '')

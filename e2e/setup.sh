@@ -36,9 +36,8 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export CLAUDE_CONFIG_DIR="$REPO_ROOT/e2e/.claude-state"
 mkdir -p "$CLAUDE_CONFIG_DIR"
 
-# Pin the OAuth-callback port so the host browser knows where to land. With
-# this unset Claude Code picks an ephemeral port, which still works on host
-# but is harder to document.
+# Pin the OAuth-callback port; unset, Claude Code picks an ephemeral port,
+# which works but is harder to document (the header above names 47291).
 export MCP_OAUTH_CALLBACK_PORT="${MCP_OAUTH_CALLBACK_PORT:-47291}"
 
 # shellcheck source=./_lib.sh

@@ -25,8 +25,6 @@
   let { data }: PageProps = $props();
   let token = $derived(data.session?.access_token);
 
-  // Page-local UI state. Drafts come from `data` and refresh via
-  // invalidate('app:drafts') on successful mutations.
   let expandedId = $state<number | null>(null);
   let edits = $state<Record<number, EditState>>({});
   // Footer is independent of the editable body, so fetch once per draft.
@@ -43,10 +41,8 @@
   let selectedIds = $state<Set<number>>(new Set());
   let batchBusy = $state(false);
 
-  // Drop edit copies / selection / expand state for rows that are no longer
-  // in the visible page (project / page change, or drafts removed by another
-  // tab). A deleted draft must not linger in selectedIds and resurrect on the
-  // next batch action.
+  // Drop per-row state for rows no longer in the visible page — a deleted
+  // draft must not linger in selectedIds and resurrect on the next batch action.
   $effect(() => {
     const present = new Set(data.drafts.map((d) => d.id));
 
@@ -98,10 +94,7 @@
     void goto(qs ? `?${qs}` : '?', { replaceState: true, keepFocus: true, noScroll: true });
   }
 
-  // After a removal that empties the current page (e.g. last row of page N
-  // discarded / sent), step back one page so the empty pager doesn't appear.
-  // Server-side `total` updates on reload anyway; we just need to land on a
-  // page that still has rows.
+  // Step back a page when a removal empties the current one — avoid an empty pager.
   async function refreshAfterMutation(removed: number) {
     const visibleCount = Math.max(0, data.drafts.length - removed);
     if (visibleCount === 0 && data.page > 1) {
@@ -126,8 +119,7 @@
   // Form / SNS drafts already carry the footer in the (editable) body.
   async function loadPreview(d: OutreachDraft) {
     if (d.channel !== 'email') return;
-    // Re-fetch only when there's no entry or the last attempt errored — a
-    // transient failure must not be cached for the rest of the session.
+    // A transient failure must not be cached for the rest of the session.
     const existing = previews[d.id];
     if (existing && (existing.loading || !existing.error)) return;
     previews[d.id] = { loading: true, footer: null, error: null };
@@ -150,8 +142,7 @@
   }
 
   // Throws on failure so send / mark-sent paths can abort before dispatching
-  // the pre-edit server-side body. The standalone Save button uses
-  // handleSaveEditsButton below for banner handling.
+  // the pre-edit server-side body.
   async function saveEdits(d: OutreachDraft): Promise<void> {
     const e = edits[d.id];
     if (!e || !isDirty(d)) return;

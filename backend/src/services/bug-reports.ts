@@ -5,9 +5,7 @@ import type { Db } from '../db/connection'
 import type { TenantId } from '../domain/ids'
 import { ok, err, type ServiceResult } from './result'
 
-// Per-tenant per-day cap. Generous so a real burst of feedback doesn't get
-// rate-limited, but bounded to keep accidental loops or spam from filling
-// the table. Adjust if real usage justifies it.
+// Generous enough for a real feedback burst, bounded so loops/spam can't fill the table.
 const DAILY_CAP = 20
 
 export const recordBugReportBodySchema = z
@@ -15,9 +13,8 @@ export const recordBugReportBodySchema = z
     category: z.enum(BUG_REPORT_CATEGORIES),
     title: z.string().trim().min(3).max(200),
     body: z.string().trim().min(10).max(4000),
-    // Free-form metadata: skill name, plugin version, prospect/project ids,
-    // anything the caller thinks helps reproduce. We don't constrain shape
-    // so context can evolve without schema changes.
+    // Unconstrained so reproduction context (skill name, plugin version,
+    // ids, ...) can evolve without schema changes.
     context: z.record(z.string(), z.unknown()).optional(),
   })
   .strict()

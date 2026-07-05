@@ -1,34 +1,18 @@
 #!/usr/bin/env bash
-# Net-new regression for the CSV import one-way do-not-contact ratchet
-# (coverage-audit §2 gap #5). A stale CSV re-imported with doNotContact
-# omitted/false must NEVER clear an existing opt-out — a CAN-SPAM/CASL leak.
+# Regression for the CSV import one-way do-not-contact ratchet: a stale CSV
+# re-imported with doNotContact omitted/false must NEVER clear an existing
+# opt-out — a CAN-SPAM/CASL leak.
 #
-# Two layers enforce this (the live behavior is stronger than the audit's
-# one-line framing, which only named the second):
-#   - PRIMARY: resolveDedup (prospect-dedup.ts:63) maps an existing-DNC email
+# Two layers enforce this:
+#   - PRIMARY: resolveDedup (prospect-dedup.ts) maps an existing-DNC email
 #     match to a `do_not_contact` skip regardless of dedupPolicy — the row is
-#     never touched, so the flag can't be cleared and the overwrite path is
-#     never even reached for a DNC prospect.
+#     never touched, so the overwrite path is never reached for a DNC prospect.
 #   - SECONDARY: for a NON-DNC existing row that IS overwritten, prospectUpdateSet
 #     sets doNotContact only when the incoming row is explicitly true; omitted /
 #     false is a no-op (can raise the flag, never lower it).
 #
-# Covers, against the local stack (localhost:8787 API + 54322 Postgres),
-# tenant-only imports (no projectId, so no matchReason needed) deduped by email:
-#
-#   1. fresh import with doNotContact=1  → do_not_contact=true
-#   2. re-import (overwrite) of the DNC prospect, DNC OMITTED  → skipped
-#      (reason do_not_contact), row untouched, flag stays true
-#   3. re-import (overwrite) of the DNC prospect, doNotContact=0 explicit  → same
-#   4. fresh import of a clean prospect (DNC=0)  → do_not_contact=false
-#   5. overwrite the clean prospect, DNC omitted  → row IS updated (overview
-#      bumped), flag stays false (prospectUpdateSet no-op on omit)
-#   6. overwrite the clean prospect with doNotContact=1  → flag flips true
-#      (one-way ratchet UP)
-#   7. once it is DNC, overwrite with doNotContact=0  → skipped do_not_contact,
-#      stays true (the prospect has crossed into the protected set)
-#
-# Curl-only, no Claude session, no Anthropic budget. Cleans up on exit.
+# Curl-only against the local stack (localhost:8787 API + 54322 Postgres);
+# no Claude session, no Anthropic budget. Cleans up on exit.
 #
 # Usage:
 #   ./e2e/regression-import-dnc.sh
@@ -77,14 +61,13 @@ api() {
 require_jq() { command -v jq >/dev/null 2>&1 || { echo "need jq on PATH" >&2; exit 1; }; }
 psql_local() { PGPASSWORD=postgres psql -h 127.0.0.1 -p 54322 -U postgres -d postgres -tAc "$1"; }
 
-# POST a CSV import. $1 = csvText, $2 = dedupPolicy. No projectId (tenant-only).
+# No projectId → tenant-only import.
 import_csv() {
   local csv="$1" policy="$2"
   api POST /api/prospects/import "$(jq -nc --arg c "$csv" --arg p "$policy" '{csvText:$c, dedupPolicy:$p}')"
 }
 
-# Build a one-row CSV. $1=tag (→domain/email), $2=overview, $3=dnc cell value
-# ('' => omit the doNotContact column entirely).
+# dnc='' omits the doNotContact column entirely (vs an explicit 0/1 cell).
 mkcsv() {
   local tag="$1" overview="$2" dnc="$3"
   local dom="$RUN_TAG-$tag.example" email="contact@$RUN_TAG-$tag.example"
@@ -99,7 +82,6 @@ mkcsv() {
 
 dnc_of() { psql_local "SELECT do_not_contact FROM prospects WHERE tenant_id='$TENANT_ID' AND email='contact@$RUN_TAG-$1.example';"; }
 overview_of() { psql_local "SELECT overview FROM prospects WHERE tenant_id='$TENANT_ID' AND email='contact@$RUN_TAG-$1.example';"; }
-# First skip reason in skippedDetails[], or '-' when none.
 skip_reason() { echo "$1" | jq -r '(.skippedDetails // [])[0].reason // "-"'; }
 
 require_jq

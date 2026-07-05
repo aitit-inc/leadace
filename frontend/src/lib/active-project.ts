@@ -1,8 +1,7 @@
-// Cookie-based active-project preference. The server's `(app)/+layout.server.ts`
-// reads this cookie to pre-render with the right project; the client writes
-// it on switch / create. A 1-year `Max-Age` matches the SvelteKit auth-cookie
-// convention (long enough to feel sticky, short enough that abandoned
-// browsers don't hold a tenant pointer indefinitely).
+// The server's `(app)/+layout.server.ts` reads this cookie to pre-render with
+// the right project; the client writes it on switch / create. A 1-year `Max-Age`
+// matches the SvelteKit auth-cookie convention (long enough to feel sticky,
+// short enough that abandoned browsers don't hold a tenant pointer indefinitely).
 
 import { browser, dev } from '$app/environment';
 import { invalidate } from '$app/navigation';

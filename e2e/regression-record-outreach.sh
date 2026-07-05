@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Net-new regression for the record_outreach MCP path (POST /api/outreach,
-# coverage-audit §2 gap #4). regression-outbound.sh covers send-and-record but
-# NOT record_outreach — its header explicitly notes the gap. record_outreach
+# Regression for the record_outreach MCP path (POST /api/outreach), which
+# regression-outbound.sh (send-and-record) does not cover. record_outreach
 # with status='sent' must re-run the SAME guard set as send-and-record
 # (compliance → quota → do-not-contact → country) and flip the prospect to
 # 'contacted'; if a guard is dropped here a mis-send gets logged as a legit
@@ -66,7 +65,6 @@ api() {
   fi
 }
 
-# HTTP status on stdout; response body written to the fixed temp file $API_OUT.
 API_OUT=""
 api_status() {
   local method="$1" path="$2" body="${3:-}"
@@ -90,7 +88,6 @@ mkseed() {
       name:$n, overview:"seed", websiteUrl:("https://"+$d+"/about"), email:$e, matchReason:"seed"}'
 }
 
-# record_outreach body for a given prospect/status.
 rec_body() {
   local prid="$1" status="$2"
   if [[ "$status" == "failed" ]]; then
@@ -120,7 +117,6 @@ TENANT_ID="$(psql_local "SELECT tenant_id FROM tenant_members WHERE user_id = '$
 [[ -n "$TENANT_ID" ]] || { echo "no tenant for user $USER_ID — sign in once via the frontend first" >&2; exit 1; }
 say "tenant_id=$TENANT_ID"
 
-# Snapshot tenant compliance so we can restore the shared tenant on exit.
 ORIGINAL_TENANT="$(api GET /api/tenant-settings)"
 ORIG_LEGAL="$(echo "$ORIGINAL_TENANT" | jq -r '.legalName // ""')"
 ORIG_ADDR="$(echo "$ORIGINAL_TENANT" | jq -r '.physicalAddress // ""')"

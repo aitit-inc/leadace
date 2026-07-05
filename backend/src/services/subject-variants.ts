@@ -60,7 +60,6 @@ export async function listSubjectVariantsById(
   return ok({ variants: rows })
 }
 
-// Covers create, edit, archive, and unarchive.
 export async function upsertSubjectVariant(
   db: Db,
   tenantId: TenantId,
@@ -101,9 +100,7 @@ export async function upsertSubjectVariant(
   return ok(row)
 }
 
-// Weighted draw over active variants using lever_state weights (uniform when no
-// tick has run). Returns null when none are active (caller uses a one-off
-// subject). `explicitVariantId` bypasses the draw; unknown / archived fall through.
+// Returns null when no variants are active (caller uses a one-off subject).
 export type PickedVariant = { variantId: string; subjectPattern: string; label: string | null }
 
 export async function pickSubjectVariant(

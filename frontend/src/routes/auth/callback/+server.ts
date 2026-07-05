@@ -57,10 +57,9 @@ export const GET: RequestHandler = async ({ url, cookies, fetch, locals }) => {
 	}
 	const next = decodedNext && isSafeRelativePath(decodedNext) ? decodedNext : DEFAULT_DEST;
 
-	// provider_refresh_token is only present on the immediate sign-in event.
-	// Forward it to the backend so the Worker can mint Gmail access tokens later.
-	// On restored sessions (no refresh token) the previous callback already saved
-	// it — skip the post and route through.
+	// provider_refresh_token is only present on the immediate sign-in event;
+	// the backend needs it to mint Gmail access tokens later. On restored
+	// sessions (no token) the previous callback already saved it.
 	const session = data.session;
 	const refreshToken = session.provider_refresh_token ?? null;
 	const providerScope =
@@ -81,7 +80,6 @@ export const GET: RequestHandler = async ({ url, cookies, fetch, locals }) => {
 		} catch (e) {
 			// 400 = gmail.send scope wasn't granted; sign the user out and surface
 			// the consent message on the login page so a retry forces re-consent.
-			// Other failures: drop the user back at /login with a generic error.
 			// Without a persisted refresh token, outbound email won't work later, so
 			// a silent pass-through would just defer the failure to first send.
 			await signOutAndClearCookies(locals.supabase, cookies);

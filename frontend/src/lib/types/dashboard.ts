@@ -1,5 +1,5 @@
 // Mirrors backend domain/dashboard.ts DashboardSummary (the GET
-// /projects/:id/dashboard response). Keep in sync with that file.
+// /projects/:id/dashboard response).
 import type { Channel } from './outreach';
 
 export type DashboardPeriod = '7d' | '30d' | 'all';

@@ -16,8 +16,6 @@ describe('imapResponseEnd', () => {
   })
 
   it('skips a literal whose payload contains a fake tagged line', () => {
-    // The literal body literally contains "a1 OK" + CRLF — must not be mistaken
-    // for the real completion, which is the trailing "a1 OK FETCH done".
     const lit = 'a1 OK not-the-end\r\nmore'
     const buf = `* 1 FETCH (UID 5 BODY[] {${lit.length}}\r\n${lit})\r\na1 OK FETCH done\r\n`
     const end = imapResponseEnd(buf, 'a1')
@@ -39,8 +37,6 @@ describe('imapTaggedStatus', () => {
   })
 
   it('ignores a forged tagged-status line inside a fetched literal body', () => {
-    // The message body contains "a4 NO pwned" — must not be read as the FETCH
-    // status; the genuine completion is the trailing "a4 OK".
     const lit = 'Subject: x\r\n\r\na4 NO pwned\r\n'
     const buf = `* 1 FETCH (UID 5 BODY[] {${lit.length}}\r\n${lit})\r\na4 OK FETCH done\r\n`
     expect(imapTaggedStatus(buf, 'a4')).toBe('OK')

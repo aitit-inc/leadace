@@ -13,8 +13,8 @@ import type { Env, Variables } from '../types'
 
 export const billingRouter = new Hono<{ Bindings: Env; Variables: Variables }>()
 
-// GET /me/plan — current plan + quota info. Available on every edition;
-// self-hosted installs see plan='unlimited' with empty quota windows.
+// Available on every edition; self-hosted installs see plan='unlimited'
+// with empty quota windows.
 billingRouter.get('/me/plan', async (c) => {
   const result = await getPlanInfo(c.get('db'), c.get('tenantId'), c.get('edition'))
   if (!result.ok) return respondWithError(c, result)

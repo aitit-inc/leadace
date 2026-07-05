@@ -1,7 +1,6 @@
-// Pure core of reply ingest: model a captured reply and decide which sent
-// outreach it answers. Attribution is threading-first (an unforgeable match on a
-// Message-ID we generated) with a sender-recency fallback; the returned `binding`
-// tells the caller how much to trust it (the bounce→DNC path requires 'threaded').
+// Attribution is threading-first (an unforgeable match on a Message-ID we
+// generated) with a sender-recency fallback; the returned `binding` tells the
+// caller how much to trust it (the bounce→DNC path requires 'threaded').
 
 import { getHeader, parseAddress, parseMessageIdList, type ParsedEmail } from './email-message'
 import type { ParsedDsn } from './dsn'
@@ -12,11 +11,9 @@ export type InboundReply = {
   subject: string | null
   bodyText: string
   receivedAt: Date
-  // Message-IDs this message threads to: its In-Reply-To + References headers,
-  // plus (for a bounce) the returned original's Message-ID. A match against a
-  // sent outreach's message_id is unforgeable — a spoofer can't echo our token.
+  // Message-IDs this message threads to; a match against a sent outreach's
+  // message_id is unforgeable — a spoofer can't echo our token.
   referencedMessageIds: string[]
-  // Parsed bounce facts; null when the message is not a DSN.
   dsn: ParsedDsn | null
 }
 
@@ -68,10 +65,9 @@ export function normalizeMessageId(id: string): string {
   return id.trim().replace(/^<|>$/g, '').trim().toLowerCase()
 }
 
-// Attribute a captured reply to one sent outreach. `now` is the trusted poll time
-// (not the sender-controlled Date header), so a forged clock can't escape the
-// window. Threading wins over sender-recency; ties break to the later send, then
-// later id, for determinism.
+// `now` is the trusted poll time (not the sender-controlled Date header), so a
+// forged clock can't escape the window. Threading wins over sender-recency;
+// ties break to the later send, then later id, for determinism.
 export function attributeReply(
   reply: InboundReply,
   candidates: OutreachCandidate[],

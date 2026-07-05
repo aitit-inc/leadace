@@ -23,11 +23,9 @@ function decode(payload: JWTPayload): VerifiedJwt | null {
 }
 
 /**
- * Verify a JWT minted by Supabase or by the MCP worker (both signed with
- * SUPABASE_JWT_SECRET on the HS256 fallback path).
- *
- * Tries ES256 via JWKS first (new Supabase CLI), falls back to HS256.
- * Returns the verified payload subset or null on failure.
+ * Accepts JWTs minted by Supabase or by the MCP worker (both signed with
+ * SUPABASE_JWT_SECRET on the HS256 fallback path). Tries ES256 via JWKS
+ * first (new Supabase CLI), falls back to HS256.
  */
 export async function verifyJwt(
   token: string,
@@ -55,10 +53,8 @@ export async function verifyJwt(
 }
 
 /**
- * Verify a JWT and return only the `sub` claim. Convenience wrapper for
- * the common case where the caller doesn't care which authority issued
- * the token. Surfaces that DO care (Supabase-issued only) must use
- * `verifyJwt` and check `aud` themselves.
+ * Accepts tokens from either authority. Surfaces that must refuse
+ * MCP-minted tokens use `verifyJwt` and check `aud` themselves.
  */
 export async function verifySupabaseJwt(
   token: string,

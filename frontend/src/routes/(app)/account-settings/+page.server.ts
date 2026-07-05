@@ -16,9 +16,7 @@ export const load: PageServerLoad = async ({ fetch, depends, locals }) => {
     }),
   );
 
-  // Each identity carries its own warmup health (cap/used/ramp); the warmup UI
-  // and the custom-mailbox list both read from this one list. Let an auth
-  // failure (kitError(401)) reach +error.svelte rather than hide the section.
+  // Let an auth failure (kitError(401)) reach +error.svelte rather than hide the section.
   const sendingIdentities = await listSendingIdentities(fetch, token).then(
     (list) => ({ list, error: false }),
     (e: unknown) => {

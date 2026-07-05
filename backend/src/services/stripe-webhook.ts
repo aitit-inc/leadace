@@ -59,11 +59,9 @@ export function planFromMetadata(metadata: Record<string, string> | undefined): 
   return null
 }
 
-// A paid tier is only effective while the Stripe subscription is actually
-// active or trialing; any other status (incomplete, past_due, canceled, ...)
-// or a missing/invalid plan falls back to 'free'. Async payment methods can
-// leave checkout.session.completed in 'processing'/'incomplete', so the tier
-// is granted here only when status confirms it.
+// Async payment methods can leave checkout.session.completed in
+// 'processing'/'incomplete', so the paid tier is granted only when the
+// subscription status confirms it.
 export function effectivePlanFromStatus(
   status: string | undefined,
   plan: PaidPlanTier | null,
@@ -181,9 +179,8 @@ async function handleCheckoutSessionCompleted(
 
   const tenantId = member.tenantId
 
-  // Never overwrite 'unlimited' with a paid plan. Unlimited tenants aren't
-  // expected to go through Checkout (UI hides Upgrade), but defensively abort
-  // if they do so their special status is preserved.
+  // Unlimited tenants aren't expected to go through Checkout (UI hides
+  // Upgrade); defensively abort so their special status is never overwritten.
   const [existingPlan] = await db
     .select({ plan: tenantPlans.plan })
     .from(tenantPlans)

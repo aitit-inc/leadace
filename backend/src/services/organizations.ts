@@ -59,8 +59,7 @@ export type OrganizationProspectRow = {
   interactions: OrganizationProspectInteraction[]
 }
 
-// Discriminated union: each row is either an outbound outreach attempt or an
-// inbound response. Frontend renders these in a single timeline per prospect.
+// Frontend renders these in a single timeline per prospect.
 export type OrganizationProspectInteraction =
   | {
       type: 'outreach'

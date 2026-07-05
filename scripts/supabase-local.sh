@@ -48,7 +48,6 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-# No project id requested -> behave exactly like `npx supabase "$@"`.
 if [ -z "${SUPABASE_PROJECT_ID:-}" ]; then
   exec npx supabase "$@"
 fi
@@ -80,8 +79,8 @@ mkdir -p "$DST"
 [ -d "$DST/templates" ] && rm -rf "$DST/templates"
 [ -d "$SRC/templates" ] && cp -R "$SRC/templates" "$DST/templates"
 
-# Rewrite project_id and shift ports. content_path/seed paths in config.toml are
-# resolved relative to the workdir root, hence the copied supabase/ subtree.
+# content_path/seed paths in config.toml are resolved relative to the workdir
+# root, hence the copied supabase/ subtree.
 awk -v pid="$PROJECT_ID" -v off="$OFFSET" '
   /^project_id = / { print "project_id = \"" pid "\""; next }
   /^(port|shadow_port|inspector_port) = [0-9]+$/ {

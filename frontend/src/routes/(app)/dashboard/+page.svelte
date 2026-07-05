@@ -96,8 +96,7 @@
   let hasReplyData = $derived((summary?.kpis.approached.current ?? 0) > 0);
   let rejectionMax = $derived(Math.max(1, ...(summary?.rejections.topReasons ?? []).map((r) => r.percentage)));
 
-  // Anything blocking sending flips the pill to "Paused"; only the opportunity/queue
-  // items (hot leads, outreach drafts) leave autopilot "on".
+  // Only the opportunity/queue kinds (hot leads, outreach drafts) leave autopilot "on".
   const SENDING_BLOCKERS: AttentionItem['kind'][] = [
     'mcp_not_connected',
     'compliance_incomplete',

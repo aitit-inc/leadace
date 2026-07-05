@@ -1,23 +1,12 @@
 import { z } from 'zod'
 import { INQUIRY_SHORT_ID_PATTERN } from '../auth/inquiry-token'
 
-// Branded entity-identity primitives for string-shaped IDs.
-//
-// Only the string-shaped IDs (TenantId, ProjectId, ShortId) carry a brand.
-// They cross tenant/project/inquiry-token boundaries as opaque tokens, and
-// the brand catches "passed a project id where a tenant id was expected"
-// at compile time — a class of mistake that RLS can only catch at runtime.
-//
-// Number-shaped row PKs (prospect / outreach_log / response / inquiry_session
-// / evaluation / project_document / bug_report) are NOT branded. The
-// compile-time payoff for those was small (you'd need to swap two same-shape
-// `number` args in the same call) and the ceremony was high (every DB row
-// read needed a manual `as XxxId` cast that the compiler couldn't verify
-// anyway). The composite (entity_id, tenant_id) FKs + RLS already enforce
-// the cross-tenant invariant at the DB level.
-//
-// See `.claude/rules/backend-architecture.md` § "Branded IDs and
-// parse-don't-validate" for the policy.
+// Only string-shaped IDs carry a brand — it catches "passed a project id where
+// a tenant id was expected" at compile time. Number-shaped row PKs are
+// deliberately unbranded: low payoff, high `as XxxId` ceremony, and the
+// composite (entity_id, tenant_id) FKs + RLS already enforce cross-tenant
+// isolation. See `.claude/rules/backend-architecture.md` § "Branded IDs and
+// parse-don't-validate".
 
 export type TenantId = string & { readonly __brand: 'TenantId' }
 export type ProjectId = string & { readonly __brand: 'ProjectId' }
@@ -52,7 +41,6 @@ export const shortIdSchema = z
 export const prospectIdSchema = positiveInt
 export const outreachLogIdSchema = positiveInt
 
-// Subject-variant slug, shared by the variants upsert and every variant_id write.
 const variantIdRegex = /^[a-zA-Z0-9_-]{1,32}$/
 export const variantIdSchema = z.string().regex(variantIdRegex)
 
@@ -61,8 +49,6 @@ export const variantIdSchema = z.string().regex(variantIdRegex)
 const discoveryStrategyRegex = /^[a-z0-9]+(-[a-z0-9]+)*$/
 export const discoveryStrategySchema = z.string().max(64).regex(discoveryStrategyRegex)
 
-// Path / query param wrappers — only for entities with a `:id` route segment.
-// The path-string wire format is `Record<string, string>`, so coerce here.
 export const projectRefParamSchema = z.object({ id: projectRefSchema })
 export const prospectIdParamSchema = z.object({ id: coercedPositiveInt })
 export const organizationIdParamSchema = z.object({ id: coercedPositiveInt })

@@ -7,11 +7,9 @@ import type { Env, Variables } from '../types'
 
 export const mailboxRouter = new Hono<{ Bindings: Env; Variables: Variables }>()
 
-// GET /projects/:id/mailbox-health — warmup / per-mailbox daily-cap state of the
-// mailbox THIS project sends from (resolves the project's sending identity, else
-// the connected Gmail). Read-only; available on every edition (the cap is a
-// deliverability guardrail, not a billing gate). `no_mailbox` is a normal state,
-// not an error, so the service returns a plain value the route ships verbatim.
+// Available on every edition — the per-mailbox daily cap is a deliverability
+// guardrail, not a billing gate. `no_mailbox` is a normal state, not an error,
+// so the service returns it as a plain ok value.
 mailboxRouter.get(
   '/projects/:id/mailbox-health',
   zValidator('param', projectRefParamSchema),

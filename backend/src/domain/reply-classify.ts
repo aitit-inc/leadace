@@ -48,9 +48,8 @@ function isInstructedUnsubscribe(bodyText: string): boolean {
   return false
 }
 
-// The recipient's own text ends at the first quoted line. Our opt-out footer
-// (carries "unsubscribe"/"配信停止") is quoted back on every reply, so feeding the
-// whole body to the LLM would bias it toward a false unsubscribe → wrongful DNC.
+// Our opt-out footer ("unsubscribe"/"配信停止") is quoted back on every reply, so feeding
+// the whole body to the LLM would bias it toward a false unsubscribe → wrongful DNC.
 export function leadingUnquotedText(bodyText: string): string {
   const lines: string[] = []
   for (const raw of bodyText.split(/\r?\n/)) {

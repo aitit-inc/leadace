@@ -98,7 +98,6 @@ export type RejectionFeedbackSummaryQuery = z.infer<typeof rejectionFeedbackSumm
 
 const DECISION_MAKER_LIMIT = 50
 
-// Skip-if-not-needed wrapper so the gated arms incur zero DB cost.
 function gated<T>(when: boolean, q: () => Promise<T>): Promise<T | null> {
   return when ? q() : Promise.resolve(null)
 }
@@ -185,8 +184,6 @@ export async function recordResponse(
         unspecifiedMonths: reapproachSettings.unspecifiedRecontactWindowMonths,
       })
     : null
-  // Cap-reached rejections lose the reapproach window: straight to 'rejected'
-  // + DNC, no next_outreach_after stamped.
   const { cycleCapReached, effectiveWindowMonths: reapproachMonths } = resolveEffectiveReapproachWindow({
     responseType: input.responseType,
     rejectionCycle,
@@ -199,7 +196,6 @@ export async function recordResponse(
     reapproachMonths,
   })
 
-  // DNC ratchet: caller-requested, bounce, hard opt-out, or cycle cap reached.
   const forceDnc = input.rejectionFeedback ? feedbackForcesDoNotContact(input.rejectionFeedback) : false
   const dncForced = input.markDoNotContact || input.responseType === 'bounce' || forceDnc || cycleCapReached
 
@@ -267,26 +263,11 @@ export async function recordResponse(
 
   return ok({
     id: newResponse?.id,
-    // Strip the internal email carrier; the public result is { id, name, action }.
     derivedProspects: derivedProspects.map(({ id, name, action }) => ({ id, name, action })),
     emailsToVerify,
   })
 }
 
-// Materialise a decision_maker_pointer into a prospect row.
-//
-// Dedup ladder:
-//   1. pointer.email → (tenant, email). DNC blocks any update.
-//      - hit: fill missing contactName/department only; never overwrite.
-//      - miss: create new prospect inheriting org/overview/websiteUrl/industry
-//        from the referring prospect, link it to every project the referring
-//        prospect is in (priority preserved per-link).
-//   2. pointer.email absent + pointer.name → (tenant, organizationId,
-//      contactName ILIKE name). Hit fills missing department. Miss is a no-op
-//      because a contact-channel-less prospect would violate the schema refine.
-//   3. neither → no-op.
-// Self-references (pointer matches referring prospect's own email/contactName)
-// are skipped to avoid recursive defer/role-flip loops.
 async function derivePointerProspect(
   db: Db,
   tenantId: TenantId,
@@ -317,6 +298,7 @@ async function derivePointerProspect(
 
   if (!referring) return null
 
+  // Skip self-references to avoid recursive defer/role-flip loops.
   if (pointerEmail && referring.email === pointerEmail) return null
   if (pointerName && referring.contactName && referring.contactName.toLowerCase() === pointerName.toLowerCase()) return null
 
@@ -379,8 +361,6 @@ async function derivePointerProspect(
   return { id: existing.id, name: existing.name, action: 'matched_existing' }
 }
 
-// Prefer pointer.name; fall back to "Role (Referrer)" for context; finally
-// the email if no name material is available.
 function derivedDisplayName(
   pointer: { name: string | null; email: string; role: string | null },
   referringName: string,
@@ -510,9 +490,6 @@ export async function listProjectResponses(
 
   return ok({ responses: rows, total: countRows[0]?.total ?? 0 })
 }
-
-// `scope` filters which queries fire: 'pmf' skips recontact/decision-maker/
-// not-relevant, 'tactical' skips feature_gap, 'all' runs them all.
 
 export type RecontactSample = {
   receivedAt: Date
@@ -644,7 +621,6 @@ export async function getRejectionFeedbackSummaryById(
     sql`, `,
   )
 
-  // Queries irrelevant to the requested scope are gated to null.
   const [reasonRows, featureGapRows, recontactRows, decisionMakerRows, notRelevantRows] = await Promise.all([
     db
       .select({

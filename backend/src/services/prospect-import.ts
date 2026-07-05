@@ -64,8 +64,8 @@ const prospectInputSchema = z.object({
   organizationDomain: z.string().min(1).transform(normalizeDomain),
   organizationName: z.string().min(1),
   organizationWebsiteUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG),
-  // Optional. Caller may NOT claim 'tld_inferred' as the source; only the
-  // server writes that on bootstrap.
+  // Caller may NOT claim 'tld_inferred' as the source; only the server
+  // writes that on bootstrap.
   country: z.string().regex(COUNTRY_CODE_REGEX).optional(),
   countrySource: z.enum(['manual', 'ai_inferred']).optional(),
   name: z.string().min(1),
@@ -212,19 +212,9 @@ export function csvRowToInput(header: string[], row: string[]): { ok: true; valu
   return { ok: true, value: parsed.data }
 }
 
-// Insert and update have asymmetric semantics:
-//   - INSERT seeds every column with `... ?? null`.
-//   - UPDATE (overwrite path) only touches columns the caller explicitly
-//     supplied — a sparse CSV row that omits `notes` must not NULL existing
-//     notes. Optional columns are spread conditionally so an absent key
-//     never produces an UPDATE clause.
-// Required scalar columns (name / overview / websiteUrl / organizationId)
-// always update; the CSV schema forbids them from being absent.
-
-// Only emits keys when the caller explicitly supplies a country, preserving
-// the existing prospect.country on the overwrite path. Org country is the
-// primary signal; prospect.country is for "person located in a different
-// country than their employer".
+// Absent keys preserve the existing prospect.country on the overwrite path.
+// Org country is the primary signal; prospect.country is for "person located
+// in a different country than their employer".
 function prospectCountryPatch(input: ProspectInput): {
   country?: string
   countrySource?: CountrySource
@@ -267,6 +257,8 @@ function prospectInsertValues(
   }
 }
 
+// Overwrite touches only caller-supplied columns — a sparse CSV row that
+// omits `notes` must not NULL existing notes.
 function prospectUpdateSet(input: ProspectInput, orgId: number, now: Date) {
   return {
     name: input.name,
@@ -753,8 +745,8 @@ async function upsertOrganization(
   return org ?? null
 }
 
-// Caller-supplied takes precedence over TLD inference; absent both we leave
-// it null and let the send-time guardrail warn instead of block.
+// When neither source yields a country, null lets the send-time guardrail
+// warn instead of block.
 function deriveOrgCountryBootstrap(input: {
   organizationDomain: string
   country?: string

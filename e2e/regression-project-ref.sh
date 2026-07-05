@@ -1,21 +1,11 @@
 #!/usr/bin/env bash
-# Regression for server-side project-ref resolution (name-or-id, introduced
-# when the MCP worker's resolveProjectId round-trip was removed). Every
-# project-scoped endpoint accepts a project NAME or ID; resolveProject
-# (services/projects.ts) resolves it with id-match precedence. If resolution
-# regresses, every MCP tool that passes a project name breaks at once.
+# Regression for server-side project-ref resolution: every project-scoped
+# endpoint accepts a project NAME or ID; resolveProject (services/projects.ts)
+# resolves it with id-match precedence. If resolution regresses, every MCP
+# tool that passes a project name breaks at once.
 #
-# Covers, against the local stack (localhost:8787 API + 54322 Postgres):
-#
-#   1. GET /projects/:ref/settings with the project NAME (incl. space,
-#      URL-encoded) → 200, returns the project's settings row
-#   2. Same endpoint with the project ID → 200 (id path unchanged)
-#   3. Same endpoint with a bogus name → 404 Project "<ref>" not found
-#   4. Body-embedded ref: POST /prospects/check-dedup with projectId=<name>
-#      → 200; with a bogus name → 404
-#   5. DELETE /projects/:ref by NAME → 200 and the row is gone
-#
-# Curl-only, no Claude session. Cleans up (the suite's own project only).
+# Runs against the local stack (localhost:8787 API). Curl-only, no Claude
+# session. Cleans up (the suite's own project only).
 #
 # Usage:
 #   ./e2e/regression-project-ref.sh
@@ -50,7 +40,6 @@ assert_eq() {
   fi
 }
 
-# HTTP status on stdout; response body written to the fixed temp file $API_OUT.
 API_OUT=""
 api_status() {
   local method="$1" path="$2" body="${3:-}"

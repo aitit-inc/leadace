@@ -10,28 +10,22 @@ import {
 
 type ResponseType = (typeof responseTypeEnum.enumValues)[number]
 
-// Decision-maker referral payload embedded in rejectionFeedback. Shared by
-// both the wire schema (Zod) and the service-level helpers that materialise
-// it into a prospect row.
+// Decision-maker referral payload embedded in rejectionFeedback.
 export type DecisionMakerPointer = {
   name?: string
   email?: string
   role?: string
 }
 
-// Consent flag triplet used by every wire shape that accepts an unsubscribe
-// reason — services/responses.ts (rejectionFeedbackSchema), unsubscribe.ts
-// (withReasonBodySchema), inquiry-session.ts (inquiryUnsubscribeBodySchema).
+// Shared by every wire shape that accepts an unsubscribe reason.
 export const rejectionConsentSchema = z.object({
   gdpr_erasure_request: z.boolean().optional(),
   ccpa_opt_out: z.boolean().optional(),
   marketing_opt_out: z.boolean().optional(),
 })
 
-// Five-field opt-in subset shared by the full RejectionFeedbackV1 wire schema
-// (services/responses.ts) and the legacy unsubscribe-with-reason wire schema
-// (services/unsubscribe.ts). The full responses.ts schema extends this with
-// version, decision_maker_pointer, submitted_at, and tenant_signature.
+// Subset shared by the full RejectionFeedbackV1 wire schema (services/responses.ts)
+// and the legacy unsubscribe-with-reason wire schema (services/unsubscribe.ts).
 export const rejectionFeedbackCommonSchema = z.object({
   primary_reason: z.enum(REJECTION_PRIMARY_REASONS),
   secondary_reasons: z.array(z.enum(REJECTION_PRIMARY_REASONS)).max(5).optional(),
@@ -53,7 +47,6 @@ export const PMF_RELEVANT_REASONS: readonly RejectionPrimaryReason[] = [
 ]
 
 // Reapproach signal: a rejection that's conditional on time, not preference.
-// The prospect should be re-eligible for outreach once the window passes.
 export const REAPPROACH_REASONS: readonly RejectionPrimaryReason[] = ['wrong_timing', 'budget']
 
 export const REAPPROACH_WINDOWS: readonly RejectionRecontactWindow[] = [
@@ -62,9 +55,8 @@ export const REAPPROACH_WINDOWS: readonly RejectionRecontactWindow[] = [
   '12_months',
 ]
 
-// Static window lengths in months. `unspecified` is project-tunable so it
-// is resolved at the call site (see reapproachWindowMonths) using the
-// project_settings.unspecified_recontact_window_months value.
+// `unspecified` is project-tunable, so it is resolved at the call site (see
+// reapproachWindowMonths) using project_settings.unspecified_recontact_window_months.
 export const REAPPROACH_WINDOW_MONTHS: Record<RejectionRecontactWindow, number | null> = {
   never: null,
   '3_months': 3,
@@ -73,8 +65,7 @@ export const REAPPROACH_WINDOW_MONTHS: Record<RejectionRecontactWindow, number |
   unspecified: null,
 }
 
-// True when the rejection feedback indicates a hard opt-out that must flip
-// do_not_contact regardless of the markDoNotContact flag the caller passed.
+// Hard opt-out: flips do_not_contact regardless of the caller's markDoNotContact flag.
 export function feedbackForcesDoNotContact(fb: RejectionFeedbackV1): boolean {
   return (
     fb.primary_reason === 'unsubscribe_request' ||
@@ -85,8 +76,6 @@ export function feedbackForcesDoNotContact(fb: RejectionFeedbackV1): boolean {
   )
 }
 
-// Months to wait before re-attempting outreach. Returns null when the
-// rejection is not a reapproach signal (preference rejection, no window).
 // `unspecifiedMonths` is the project-configured fallback applied when the
 // recipient said "yes, contact me again later" without committing to a
 // concrete window — see project_settings.unspecified_recontact_window_months.
@@ -101,8 +90,7 @@ export function reapproachWindowMonths(
 }
 
 // Rejection cycle ratchet: once a prospect's rejection count reaches
-// maxReapproachCycles, any reapproach window is dropped. The cap is
-// rejection-specific; other response types pass their window through unchanged.
+// maxReapproachCycles, any reapproach window is dropped.
 export function resolveEffectiveReapproachWindow(args: {
   responseType: ResponseType
   rejectionCycle: number

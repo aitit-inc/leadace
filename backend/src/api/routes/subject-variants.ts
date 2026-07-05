@@ -50,9 +50,7 @@ const pickQuerySchema = z.object({
 })
 
 // POST, not GET: the pick is a weighted random draw, so each call may return a
-// different variant — a cacheable GET would be wrong. It mutates no state (the
-// old cursor advance is gone). The skill calls this once per send to learn
-// which variant + pattern to render before composing the subject.
+// different variant — a cacheable GET would be wrong.
 subjectVariantsRouter.post(
   '/projects/:id/subject-variants/pick',
   zValidator('param', projectRefParamSchema),

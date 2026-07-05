@@ -43,16 +43,13 @@ export function overwriteSourceToSkipReason(source: DedupOverwriteSource): Dedup
   }
 }
 
-// Single source of truth for the intra-batch project/domain claim key, used by
-// both the check (resolveDedup) and the add (claimRow) so the two can never
-// drift. The space separator is unambiguous: a nanoid projectId and a
-// normalized domain never contain spaces.
+// The space separator is unambiguous: a nanoid projectId and a normalized
+// domain never contain spaces.
 const claimedDomainKey = (projectId: ProjectId, organizationDomain: string): string =>
   `${projectId} ${organizationDomain}`
 
 // Channel priority is email > form > domain. DNC on an existing email blocks
-// any update. Intra-batch claim sets implement "first wins": a later row that
-// collides with an earlier row is reported as duplicate_in_batch.
+// any update.
 export function resolveDedup(
   idx: DedupIndex,
   projectId: ProjectId | undefined,

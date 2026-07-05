@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Cloud-edition regression: plan project-count + prospect-registration limits
-# (coverage-audit §2 gap #20 — services/projects.ts maxProjects,
-# services/prospect-import.ts maxProspects budget).
+# (services/projects.ts maxProjects, services/prospect-import.ts maxProspects budget).
 #
 # These caps only bind on a LEADACE_EDITION=cloud worker (self-hosted resolves
 # every tenant to 'unlimited'). Targets the cloud worker on :8789 (override with
@@ -52,7 +51,6 @@ assert_eq "  detail names the free 1-project cap" "$(echo "$BODY" | jq -r '.deta
 api DELETE "/api/projects/$P1" > /dev/null
 CODE="$(api_status POST /api/projects "$(jq -nc '{name:"cloud-limits P-after-delete"}')")"
 assert_eq "N+1 project create allowed after delete → 201" "$CODE" "201"
-# Clean the slate for part B: delete every project this tenant now holds.
 for pid in $(api GET /api/projects | jq -r '.projects[]?.id'); do
   api DELETE "/api/projects/$pid" > /dev/null
 done
@@ -70,8 +68,7 @@ assert_eq "6th project create → 403" "$CODE" "403"
 assert_eq "  detail names the pro 5-project cap" "$(echo "$BODY" | jq -r '.detail // ""')" \
   "Your pro plan allows 5 project(s). Delete an existing project or upgrade your plan."
 
-# Tear down projects so part C starts clean (prospect budget is independent of
-# projects, but keeps the tenant tidy).
+# Prospect budget is independent of projects; this teardown just keeps the tenant tidy.
 for pid in $(api GET /api/projects | jq -r '.projects[]?.id'); do
   api DELETE "/api/projects/$pid" > /dev/null
 done

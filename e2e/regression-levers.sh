@@ -72,7 +72,6 @@ api() {
 require_jq() { command -v jq >/dev/null 2>&1 || { echo "need jq on PATH" >&2; exit 1; }; }
 psql_local() { PGPASSWORD=postgres psql -h 127.0.0.1 -p 54322 -U postgres -d postgres -tAc "$1"; }
 
-# ---------------------------------------------------------------------------
 require_jq
 TOKEN="$("$REPO_ROOT/e2e/mint-jwt.sh")"
 [[ -n "$TOKEN" ]] || { echo "failed to mint JWT" >&2; exit 1; }
@@ -88,7 +87,7 @@ TENANT_ID="$(psql_local "SELECT tenant_id FROM tenant_members WHERE user_id = '$
 say "tenant_id=$TENANT_ID user_id=$USER_ID"
 
 PROJECT_ID=""
-PROJECT_ID2=""   # forgetting-window project (own teardown below)
+PROJECT_ID2=""
 restore_and_exit() {
   local rc=$?
   if [[ "$SKIP_CLEANUP" == "1" ]]; then
@@ -113,7 +112,6 @@ restore_and_exit() {
 }
 trap restore_and_exit EXIT
 
-# ---------------------------------------------------------------------------
 step "create test project"
 CREATE_RESP="$(api POST /api/projects "$(jq -nc --arg n "$PROJECT_NAME" '{name:$n}')")"
 PROJECT_ID="$(echo "$CREATE_RESP" | jq -r '.id // ""')"
@@ -245,7 +243,6 @@ case "$PAID" in
   *)     assert_eq "archived v3 falls through to draw" "$PAID" "v1-or-v2" ;;
 esac
 
-# ---------------------------------------------------------------------------
 # Forgetting window (rewardLookbackDays). A separate project so the carefully
 # tuned scenario above is untouched. One variant with sends at two ages: 40 in
 # the band, 25 too old. With rewardLookbackDays=30 (and the default 14d maturity
@@ -283,7 +280,6 @@ SF="$(api GET "/api/projects/$PROJECT_ID2/stats")"
 assert_eq "stats w1 all-history total (unwindowed = 65)" \
   "$(echo "$SF" | jq -r '.metrics.variantResponseRate[] | select(.variantId=="w1") | .total')" "65"
 
-# ---------------------------------------------------------------------------
 echo "" >&2
 printf 'RESULT: %d passed, %d failed\n' "$PASS" "$FAIL" >&2
 [[ "$FAIL" -eq 0 ]] || exit 2

@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Net-new regression for the PATCH /prospects/:id post-merge contact-channel
-# invariant (coverage-audit §2 gap #21).
+# Regression for the PATCH /prospects/:id post-merge contact-channel invariant.
 #
 # updateProspect (services/prospects.ts:833-899) merges the patch over the
 # STORED row and refuses the write if no contact channel (email, contactFormUrl,

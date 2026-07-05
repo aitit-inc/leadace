@@ -5,8 +5,7 @@ export type Channel = 'email' | 'form' | 'sns_twitter' | 'sns_linkedin';
 // Mirror of backend OutreachStatus minus 'pre_send' — the endpoints that
 // surface this field (listRecentOutreach, org-detail history) exclude
 // in-flight 'pre_send' rows server-side. 'skipped' is a deliberate
-// no-contact decision and does appear in those feeds. If a future endpoint
-// returns raw outreach_logs rows, widen this type to include 'pre_send'.
+// no-contact decision and does appear in those feeds.
 export type OutreachStatus = 'sent' | 'failed' | 'pending_review' | 'skipped';
 
 export interface OutreachLog {

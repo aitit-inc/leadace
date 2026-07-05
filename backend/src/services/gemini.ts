@@ -62,7 +62,6 @@ type GeminiStructuredArgs = {
   maxOutputTokens: number
 }
 
-// Structured JSON output without web grounding — for classification/extraction.
 export async function callGeminiStructured(args: GeminiStructuredArgs): Promise<string> {
   const ai = new GoogleGenAI({ apiKey: args.apiKey })
   let text: string | undefined
@@ -99,7 +98,6 @@ type GeminiTextArgs = {
   maxOutputTokens: number
 }
 
-// Plain (non-grounded) text generation — summarization, no web search.
 export async function callGeminiText(args: GeminiTextArgs): Promise<string> {
   const ai = new GoogleGenAI({ apiKey: args.apiKey })
   let text: string | undefined

@@ -366,7 +366,6 @@ export const sendingIdentities = pgTable('sending_identities', {
   uniqueIndex('uq_sending_identities_gmail_per_user')
     .on(table.tenantId, table.userId)
     .where(sql`${table.provider} = 'gmail_oauth'`),
-  // No two identities share a From address within a tenant.
   unique('uq_sending_identities_tenant_from_email').on(table.tenantId, table.fromEmail),
   index('idx_sending_identities_tenant_provider').on(table.tenantId, table.provider),
 ])
@@ -442,15 +441,10 @@ export const projectSettings = pgTable('project_settings', {
   inquiryPdfUrl: text('inquiry_pdf_url'),
   inquiryBrandColor: text('inquiry_brand_color'),
   inquiryBrandLogoUrl: text('inquiry_brand_logo_url'),
-  // Landing background mode. false = light canvas (default), true = dark. The
-  // brand color stays the accent on either; text/surface tokens follow the
-  // mode for contrast. Rendered by toggling the `.dark` class on the inquiry
-  // landing root, which re-scopes the CSS-var theme tokens.
+  // The brand color stays the accent on either mode; rendered by toggling the
+  // `.dark` class on the inquiry landing root, which re-scopes the CSS-var
+  // theme tokens.
   inquiryDarkBackground: boolean('inquiry_dark_background').notNull().default(false),
-  // Landing CTA mode. 'meeting' renders Book/Request meeting (the
-  // human-sales path); 'signup' renders a Sign up button that redirects
-  // visitors to inquiryCtaUrl (the self-serve path, no human follow-up).
-  // The two are mutually exclusive — chosen per project, never both.
   inquiryCtaType: inquiryCtaTypeEnum('inquiry_cta_type').notNull().default('meeting'),
   // External CTA URL. For 'meeting' mode this is an optional scheduling
   // URL (Calendly, TimeRex, etc.); when non-null the meeting button opens
@@ -490,7 +484,7 @@ export const projectSettings = pgTable('project_settings', {
   index('idx_project_settings_tenant').on(table.tenantId),
   // Composite FK ties project_id + tenant_id together so a settings row
   // cannot reference a project in a different tenant (defense-in-depth on
-  // top of RLS). The single-column .references() is folded in here.
+  // top of RLS).
   foreignKey({
     columns: [table.projectId, table.tenantId],
     foreignColumns: [projects.id, projects.tenantId],
@@ -609,7 +603,7 @@ export const prospects = pgTable('prospects', {
   // Composite FK ties organization_id + tenant_id so a prospect cannot
   // reference an organization in a different tenant. No onDelete: keep the
   // default NO ACTION (an org with prospects cannot be deleted out from
-  // under them). Folds in the former single-column .references().
+  // under them).
   foreignKey({
     columns: [table.organizationId, table.tenantId],
     foreignColumns: [organizations.id, organizations.tenantId],
@@ -641,8 +635,7 @@ export const projectProspects = pgTable('project_prospects', {
   check('chk_priority', sql`${table.priority} BETWEEN 1 AND 5`),
   // Composite FKs require tenant_id to match across both ends, so a row in
   // this junction table cannot reference a project / prospect in a different
-  // tenant. Single-column .references()` has been moved into these composite
-  // declarations — keeping both would duplicate the FK constraint.
+  // tenant.
   foreignKey({
     columns: [table.projectId, table.tenantId],
     foreignColumns: [projects.id, projects.tenantId],
@@ -698,8 +691,7 @@ export const outreachLogs = pgTable('outreach_logs', {
   // top of RLS).
   unique('uq_outreach_id_tenant').on(table.id, table.tenantId),
   // Composite FKs tie project_id / prospect_id to tenant_id so an outreach
-  // row cannot reference a project / prospect in a different tenant. The
-  // single-column .references() are folded in here.
+  // row cannot reference a project / prospect in a different tenant.
   foreignKey({
     columns: [table.projectId, table.tenantId],
     foreignColumns: [projects.id, projects.tenantId],
@@ -828,7 +820,7 @@ export const responses = pgTable('responses', {
     .on(table.tenantId, table.sourceMessageId)
     .where(sql`${table.sourceMessageId} IS NOT NULL`),
   // Composite FK ties outreach_log_id + tenant_id (defense-in-depth on top
-  // of RLS). Folds in the former single-column .references().
+  // of RLS).
   foreignKey({
     columns: [table.outreachLogId, table.tenantId],
     foreignColumns: [outreachLogs.id, outreachLogs.tenantId],
@@ -853,8 +845,8 @@ export const inquiryTokens = pgTable('inquiry_tokens', {
   // Required so inquiry_sessions can declare a composite (short_id, tenant_id)
   // foreign key (defense-in-depth on top of RLS).
   unique('uq_inquiry_token_short_id_tenant').on(table.shortId, table.tenantId),
-  // Composite FKs tie prospect_id / outreach_log_id to tenant_id. Fold in the
-  // former single-column .references().
+  // Composite FKs tie prospect_id / outreach_log_id to tenant_id
+  // (defense-in-depth on top of RLS).
   foreignKey({
     columns: [table.prospectId, table.tenantId],
     foreignColumns: [prospects.id, prospects.tenantId],
@@ -909,7 +901,7 @@ export const inquirySessions = pgTable('inquiry_sessions', {
   // time (defense-in-depth on top of RLS).
   unique('uq_inquiry_session_id_tenant').on(table.id, table.tenantId),
   // Composite FKs tie prospect_id / outreach_log_id / short_id / response_id
-  // to tenant_id. Fold in the former single-column .references().
+  // to tenant_id (defense-in-depth on top of RLS).
   foreignKey({
     columns: [table.prospectId, table.tenantId],
     foreignColumns: [prospects.id, prospects.tenantId],
@@ -950,8 +942,7 @@ export const inquiryMessages = pgTable('inquiry_messages', {
   index('idx_inquiry_messages_tenant').on(table.tenantId),
   // Composite FK ties session_id + tenant_id together, so a row in
   // inquiry_messages cannot point at an inquiry_sessions row in a different
-  // tenant. The single-column .references() has been moved into this
-  // composite declaration — keeping both would duplicate the FK constraint.
+  // tenant.
   foreignKey({
     columns: [table.sessionId, table.tenantId],
     foreignColumns: [inquirySessions.id, inquirySessions.tenantId],

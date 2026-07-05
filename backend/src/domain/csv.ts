@@ -1,13 +1,6 @@
-// Minimal RFC 4180 CSV parser. Pure CPU; no I/O.
-//
-// Supports:
-//   - quoted fields with embedded commas/newlines
-//   - escaped double quotes inside quoted fields ("")
-//   - CRLF and LF line endings
-//   - leading UTF-8 BOM (stripped)
-//
-// Returns rows as `string[][]`. Caller is responsible for header validation,
-// trimming, and row-shape checks.
+// Minimal RFC 4180 CSV parser; also accepts LF-only line endings and strips a
+// leading UTF-8 BOM. Caller is responsible for header validation, trimming,
+// and row-shape checks.
 export function parseCsv(text: string): string[][] {
   if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1)
   const rows: string[][] = []

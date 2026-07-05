@@ -56,7 +56,6 @@
     { href: '/project-settings', label: 'Settings', icon: Settings },
   ];
 
-  // Pages that don't require an active project (tenant-scoped or global).
   // Pages NOT listed here (prospects, organizations' siblings, project-
   // settings, etc.) are hidden behind the "No projects yet" CTA below when
   // projects.length === 0 — the +layout.server.ts reconciliation guarantees

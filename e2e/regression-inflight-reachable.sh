@@ -1,33 +1,26 @@
 #!/usr/bin/env bash
-# Net-new regression for the get_outbound_targets in-flight exclusion
-# (coverage-audit §2 gap #18) — the daily-cycle double-send guard.
+# Regression for the get_outbound_targets in-flight exclusion — the
+# daily-cycle double-send guard.
 #
-# listReachable (GET /projects/:id/prospects/reachable) drops a prospect that
-# already has in-flight outreach so the same prospect is never handed to two
-# callers. The NOT EXISTS subquery (services/prospects.ts:362-377) excludes a
-# prospect when an outreach_logs row exists with:
-#   - status='pending_review' (an open draft), OR
-#   - status='pre_send' AND sent_at > NOW() - PRE_SEND_TTL_MINUTES (an in-TTL
-#     reservation). PRE_SEND_TTL_MINUTES=30 (schema.ts:102).
-# A pre_send whose sent_at is older than the TTL is treated as abandoned and
-# the prospect becomes re-pickable. The daily-cycle "run outbound in series"
-# rule papers over a regression here; this server guard is the real backstop
-# and was previously unasserted (skip-exclusion is e2e'd, in-flight is not).
+# listReachable (GET /projects/:id/prospects/reachable) must drop a prospect
+# that has in-flight outreach, so the same prospect is never handed to two
+# callers. The NOT EXISTS subquery (services/prospects.ts) excludes it while
+# an open pending_review draft exists, or a pre_send row younger than
+# PRE_SEND_TTL_MINUTES (30, schema.ts); an older pre_send is treated as
+# abandoned and the prospect becomes re-pickable. The daily-cycle "run
+# outbound in series" rule papers over a regression here; this server guard
+# is the real backstop.
 #
 # Runs against the local stack (localhost:8787 API + 54322 Postgres). pre_send
-# rows are hand-INSERTed via psql: no API mints pre_send except
-# record-with-inquiry (gated on outboundMode=send + compliance + inquiry-URL),
-# which is too indirect for this unit — the audit intent explicitly sanctions
-# psql for the age-out. Does NOT touch tenant settings. Curl-only, cleans up.
+# rows are hand-INSERTed via psql — no API mints pre_send except
+# record-with-inquiry, which is too indirect for this unit. Does NOT touch
+# tenant settings. Curl-only, cleans up.
 #
 # Usage:
 #   ./e2e/regression-inflight-reachable.sh
 #   SKIP_CLEANUP=1 ./e2e/regression-inflight-reachable.sh
 #
-# Exit status:
-#   0 — all assertions passed
-#   1 — a setup or HTTP step failed
-#   2 — at least one assertion mismatch
+# Exit status: 0 all passed · 1 setup/HTTP failure · 2 assertion mismatch
 
 set -uo pipefail
 

@@ -45,7 +45,7 @@ export function aggregateByCoarse(rows: ChannelFineStat[]): ChannelCoarseStat[] 
 }
 
 // Ranked by Wilson lower bound, not raw rate, so a high rate on tiny n does not
-// outrank a solid one. Channels under min-sample drop; an empty bucket is omitted.
+// outrank a solid one.
 export function computeChannelAffinity(
   stats: ChannelCoarseStat[],
   config: LeverConfig,

@@ -6,7 +6,6 @@ import {
   resolveEffectiveReapproachWindow,
 } from './rejection-feedback'
 
-// Minimal valid wire object; tests override only the fields under test.
 const fb = (over: Partial<RejectionFeedbackV1>): RejectionFeedbackV1 => ({
   version: 1,
   primary_reason: 'not_relevant',

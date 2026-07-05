@@ -239,8 +239,6 @@ export type LeverDecisionHistoryEntry = {
   channelAffinity: ChannelAffinityMap
 }
 
-// Read-only audit trail of the daily tick over the last `days`, newest first. The
-// no-control observability surface (P4): narrates how the levers moved, never writes.
 export async function getLeverDecisionsHistory(
   db: Db,
   tenantId: TenantId,

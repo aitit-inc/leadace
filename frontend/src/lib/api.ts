@@ -7,11 +7,8 @@ export const API_BASE = PUBLIC_API_URL;
 export const MCP_BASE = PUBLIC_MCP_URL;
 
 export class ApiError extends Error {
-  // `message` is the displayable string (detail when present, falling back
-  // to the short error label) so call sites can render `e.message` directly
-  // without re-implementing the detail-vs-label fallback. `error` keeps the
-  // raw short label, `detail` keeps the raw long form — both are still
-  // available for any consumer that needs the structural breakdown.
+  // `message` is the displayable string (detail when present) so call sites
+  // can render `e.message` directly without re-implementing the fallback.
   constructor(
     public status: number,
     public error: string,
@@ -22,11 +19,8 @@ export class ApiError extends Error {
 }
 
 // Backend sends `detail` as either a plain string (service errors) or a
-// `z.flattenError` object (zValidator failures: `{ formErrors, fieldErrors }`).
-// Plain `String(obj)` would render the latter as `[object Object]`, so flatten
-// it into a "field: message; …" string here before it reaches `ApiError`.
-// Anything else falls back to JSON.stringify so dev-time anomalies stay
-// visible instead of crashing.
+// `z.flattenError` object (zValidator failures), which `String(obj)` would
+// render as `[object Object]` — flatten it into a "field: message; …" string.
 function formatDetail(detail: unknown): string | undefined {
   if (detail === undefined || detail === null) return undefined;
   if (typeof detail === 'string') return detail;
@@ -73,12 +67,7 @@ export type RequestOptions = {
   path: string;
   body?: unknown;
   auth: RequestAuth;
-  /**
-   * Explicit access token. Required when `auth: 'required'`. Server-side
-   * loaders pass `event.locals.session.access_token`; client-side callers
-   * pass `data.session.access_token` (data inherits the root layout's
-   * session, so every page has it).
-   */
+  /** Required when `auth: 'required'`. */
   token?: string;
 };
 
@@ -111,9 +100,6 @@ export async function request<T>(
   }
   if (opts.auth === 'required') {
     if (!opts.token) {
-      // Misuse: caller failed to thread the token through. Surface loudly.
-      // Server-side this becomes a 500 via SvelteKit's error path; client-
-      // side it crashes the originating handler — both correct outcomes.
       throw new Error('request: auth=required but no token was provided');
     }
     headers['Authorization'] = `Bearer ${opts.token}`;
@@ -128,8 +114,6 @@ export async function request<T>(
   if (!res.ok) {
     const err = (await res.json().catch(() => ({}))) as { error?: string; detail?: unknown };
     if (res.status === 401 && opts.auth === 'required') {
-      // Client: navigate to /login. Server: throw a SvelteKit redirect via
-      // error(401) so the load fails fast and surfaces through +error.svelte.
       // The route group already gates on session, so a 401 here means the
       // backend rejected an otherwise-valid Supabase session.
       if (browser) {
@@ -141,8 +125,7 @@ export async function request<T>(
     const label = err.error ?? `Request failed (${res.status})`;
     throw new ApiError(res.status, label, formatDetail(err.detail));
   }
-  // 204 No Content — the caller is typed as Promise<void> and won't read
-  // the body. Avoid res.json() on an empty body (it would reject).
+  // Callers of 204 endpoints are typed Promise<void>; res.json() on the empty body would reject.
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }

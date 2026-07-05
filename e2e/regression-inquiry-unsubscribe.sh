@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Net-new regression for the inquiry landing unsubscribe ratchet
-# (coverage-audit §2 gap #8).
+# Regression for the inquiry landing unsubscribe ratchet.
 #
-# recordInquiryUnsubscribe (services/inquiry-session.ts:668-791) ALWAYS ratchets
+# recordInquiryUnsubscribe (services/inquiry-session.ts) ALWAYS ratchets
 # prospects.do_not_contact=true for the recipient landing opt-out. Two legs:
 #   (1) CHIP-LESS FIRST-TAP — empty body on an open session: DNC set directly,
 #       NO responses row written, session closed (outcome='unsubscribed',
@@ -89,8 +88,6 @@ mkseed() {
       name:$n, overview:"seed", websiteUrl:("https://"+$d+"/about"), email:$e, matchReason:"seed"}'
 }
 
-# psql-seed a 'sent' outreach_log + an inquiry_token; opens the session via the
-# public GET. Echoes "<sessionId> <shortId>".
 seed_token_and_open() {
   local prid="$1" sid="$2"
   local olid

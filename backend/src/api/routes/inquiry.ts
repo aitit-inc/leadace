@@ -48,9 +48,8 @@ inquiryRouter.get(
   },
 )
 
-// Stateless sender-side preview chat — writes nothing. Registered before the
-// public `/inquiry/:shortId/message` route so `preview` isn't captured as a
-// shortId.
+// Registered before the public `/inquiry/:shortId/message` route so `preview`
+// isn't captured as a shortId.
 inquiryRouter.post(
   '/inquiry/preview/message',
   authMiddleware,

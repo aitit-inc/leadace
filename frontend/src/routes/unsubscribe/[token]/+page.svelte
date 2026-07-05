@@ -18,7 +18,6 @@
     | { kind: 'invalid'; message: string }
     | { kind: 'done' };
 
-  // overrideView (post-submit / error) wins over loader data.
   let overrideView = $state<View | null>(null);
   let view = $derived<View>(
     overrideView ??

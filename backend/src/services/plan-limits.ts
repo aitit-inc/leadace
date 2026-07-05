@@ -45,8 +45,6 @@ export function getPlanLimits(plan: PlanTier): PlanLimits {
   return PLAN_LIMITS[plan]
 }
 
-// Free has no paid seat for a custom mailbox; paid plans cap the total identity
-// count (the connected Gmail counts toward it).
 export function canRegisterSmtpIdentity(
   plan: PlanTier,
   currentIdentityCount: number,
@@ -73,8 +71,7 @@ export function canRegisterSmtpIdentity(
 
 type Db = ReturnType<typeof createDb>
 
-// Self-hosted installs short-circuit to 'unlimited'. Edition gate at this
-// single chokepoint means every downstream cap check inherits the override.
+// Edition gate at this single chokepoint means every downstream cap check inherits the self-host override.
 export async function getTenantPlan(
   db: Db,
   tenantId: TenantId,
@@ -159,9 +156,6 @@ const TIE_BREAK_ORDER: Record<OutreachWindowKind, number> = {
   daily: 2,
 }
 
-// The binding window is the one with the least remaining; ties break toward the
-// most terminal (lifetime > monthly > daily) so the UX nudges toward the right
-// action. No applicable windows → no caps → unlimited.
 export function selectOutreachQuota(
   plan: PlanTier,
   windows: { kind: OutreachWindowKind; limit: number; used: number }[],
@@ -303,7 +297,6 @@ export type MailboxDailyQuota =
 export async function getMailboxDailyQuota(
   db: Db,
   tenantId: TenantId,
-  // Resolved sending identity (resolveSendingIdentityId); null = no mailbox to cap.
   identityId: SendingIdentityId | null,
   now: Date = new Date(),
 ): Promise<MailboxDailyQuota> {
@@ -331,9 +324,8 @@ export async function getMailboxDailyQuota(
   }
 }
 
-// Today's reputation-consuming sends for one identity: EMAIL only, sent +
-// in-flight pre_send. Counted by sending_identity_id, not from_email (a Send-As
-// alias drifts from_email while the mailbox/reputation stays the same identity).
+// Counted by sending_identity_id, not from_email: a Send-As alias drifts
+// from_email while the mailbox/reputation stays the same identity.
 async function countMailboxEmailSendsToday(
   db: Db,
   tenantId: TenantId,
@@ -360,10 +352,9 @@ async function countMailboxEmailSendsToday(
   return row?.used ?? 0
 }
 
-// Today's reputation-consuming EMAIL sends grouped by sending identity, for the
-// per-identity health list (avoids one count query per identity). Same predicate
-// as countMailboxEmailSendsToday; a NULL sending_identity_id (legacy rows) is
-// dropped since it maps to no identity.
+// Same predicate as countMailboxEmailSendsToday, grouped for the per-identity
+// health list (avoids one count query per identity). A NULL sending_identity_id
+// (legacy rows) is dropped since it maps to no identity.
 export async function countMailboxEmailSendsTodayByIdentity(
   db: Db,
   tenantId: TenantId,
@@ -418,10 +409,9 @@ export function formatMailboxQuotaError(quota: MailboxDailyQuota): string {
   return `This mailbox's safe daily send limit (${quota.cap}/day) is reached. This protects your sending domain's reputation; it resets at UTC midnight. Reach remaining prospects by form/SNS, or continue tomorrow.`
 }
 
-// Read-only warmup / cap health for the tenant's sending mailbox. Exposes the
-// warmup state behind the per-mailbox daily cap — getMailboxDailyQuota only
-// returns the resulting cap/used/remaining, so operators can't see ramp
-// progress from it.
+// Exposes the warmup state behind the per-mailbox daily cap —
+// getMailboxDailyQuota only returns the resulting cap/used/remaining, so
+// operators can't see ramp progress from it.
 export type MailboxHealth =
   | { kind: 'no_mailbox' }
   | {
@@ -438,9 +428,6 @@ export type MailboxHealth =
       remaining: number
     }
 
-// Health of a specific sending identity (resolved by the caller — the project's
-// identity for the agent, or each identity in turn for the settings list).
-// null identity → no_mailbox.
 export async function getMailboxHealth(
   db: Db,
   tenantId: TenantId,
@@ -520,8 +507,7 @@ export async function updateMailboxWarmup(
 }
 
 // 1 turn = 1 user message + 1 AI reply (counted on the AI reply via
-// inquiry_sessions.chat_turns_used). Free has a lifetime cap; Starter/Pro
-// reset on the Stripe billing period; Scale/unlimited have no cap.
+// inquiry_sessions.chat_turns_used).
 export type InquiryChatWindowKind = 'lifetime' | 'monthly'
 
 export type InquiryChatLimits = {

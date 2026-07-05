@@ -1,21 +1,16 @@
 #!/usr/bin/env bash
-# Cloud-edition regression: outreach QUOTA enforcement (coverage-audit §2 gap
-# #1 — services/plan-limits.ts windows + the enforcement call-sites in
-# services/outreach.ts and listReachable).
+# Cloud-edition regression: outreach quota enforcement — services/plan-limits.ts
+# windows + the enforcement call-sites in services/outreach.ts and listReachable.
 #
 # selectOutreachQuota's window math is unit-tested; this exercises the
 # end-to-end binding that only fires on a LEADACE_EDITION=cloud worker
 # (self-hosted = every tenant 'unlimited', so quota never binds). Targets the
 # cloud worker on :8789 (override API_URL); start it with ./e2e/cloud-edition-up.sh.
 #
-# Provisions a throwaway tenant, seeds 'sent' outreach_logs to the cap via psql,
-# then asserts:
-#   1. free daily=5   — send-and-record → 403 'per day' AND allocates NO pre_send
-#      row; record_outreach(sent) → 403; reachable → empty list + 'try again tomorrow'
-#   2. free lifetime=50 — past-dated rows bind the lifetime window (daily clear) → 403 'lifetime'
-#   3. starter monthly=1500 — current_period_start anchored → 403 'this month'
-#   4. effectiveLimit clamp — reachable returns at most quota.remaining targets;
-#      an in-flight 'pre_send' row counts toward used (concurrent-race guard)
+# Provisions a throwaway tenant, seeds 'sent' outreach_logs to the cap via
+# psql, then asserts each window (free daily / free lifetime / starter monthly)
+# binds end-to-end and that the effectiveLimit clamp counts in-flight pre_send
+# rows toward used (concurrent-race guard).
 #
 # Usage:
 #   ./e2e/regression-cloud-quota.sh
@@ -57,7 +52,6 @@ P0="$(echo "$SEED" | jq -r '.insertedIds[0]')"
 EMAIL0="$(api GET "/api/projects/$PROJ/prospects?limit=50" | jq -r --argjson id "$P0" '.prospects[]?|select(.prospectId==$id)|.email' | head -1)"
 [[ -n "$EMAIL0" ]] || { echo "could not resolve P0 email" >&2; exit 1; }
 
-# psql seed helpers
 reset_outreach() { psql_local "DELETE FROM outreach_logs WHERE tenant_id='$T';" > /dev/null; }
 # seed_sent <count> <sent_at_sql>  — append N counted 'sent' rows against P0.
 seed_sent() {

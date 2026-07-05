@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Cloud-edition regression: Stripe webhook signature + tenant_plans mutations
-# (coverage-audit §2 gap #12 — routes/stripe-webhook.ts + services/stripe-webhook.ts).
+# (routes/stripe-webhook.ts + services/stripe-webhook.ts).
 #
 # verifyStripeSignature is unit-tested; this drives the live route on a
 # LEADACE_EDITION=cloud worker (self-hosted 404s the webhook). Fixtured,

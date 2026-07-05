@@ -43,8 +43,7 @@
   let token = $derived(data.session?.access_token);
   let activeProjectId = $derived(data.activeProjectId);
 
-  // Only custom SMTP mailboxes are selectable (default null = the connected Gmail);
-  // with none, the selector stays hidden.
+  // null = the connected Gmail default; only custom SMTP mailboxes are selectable.
   let smtpIdentities = $derived(
     data.sendingIdentities.filter((i: SendingIdentity) => i.provider === 'smtp_imap'),
   );
@@ -100,8 +99,6 @@
   let showDeleteDialog = $state(false);
   let deleting = $state(false);
 
-  // Look up the active project's name from the layout-loaded projects list
-  // instead of refetching /projects here.
   let projectName = $derived.by(() => {
     if (!data.projectId) return null;
     const proj = data.projects.find((p) => p.id === data.projectId);

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Curl-based regression for the 0.5.91 build-list dedup flow:
+# Curl-based regression for the build-list dedup flow:
 #   - POST /prospects/check-dedup (the new pre-flight)
 #   - normalize-domain transform on both prospectInputSchema and dedupCandidateSchema
 #   - DedupSkipReason coverage: do_not_contact / email_duplicate / form_url_duplicate /
@@ -76,7 +76,6 @@ require_jq() {
   command -v jq >/dev/null 2>&1 || { echo "need jq on PATH" >&2; exit 1; }
 }
 
-# ---------------------------------------------------------------------------
 require_jq
 TOKEN="$("$REPO_ROOT/e2e/mint-jwt.sh")"
 [[ -n "$TOKEN" ]] || { echo "failed to mint JWT" >&2; exit 1; }
@@ -122,7 +121,6 @@ INSERTED="$(echo "$SEED_RESP" | jq -r '.inserted // 0')"
 say "inserted=$INSERTED skipped=$(echo "$SEED_RESP" | jq -r '.skipped // 0')"
 assert_eq "seed inserted=5" "$INSERTED" "5"
 
-# Flip prospect E to do_not_contact via tenant prospects list lookup
 PROSPECT_E_ID="$(api GET "/api/projects/$PROJECT_ID/prospects?limit=200" \
   | jq -r --arg e "$EMAIL_E" '.prospects[] | select(.email == $e) | .prospectId' | head -1)"
 [[ -n "$PROSPECT_E_ID" && "$PROSPECT_E_ID" != "null" ]] || { echo "could not locate prospect E id" >&2; exit 1; }
@@ -130,15 +128,9 @@ DNC_RESP="$(api PATCH "/api/prospects/$PROSPECT_E_ID/do-not-contact" '{"doNotCon
 DNC_OK="$(echo "$DNC_RESP" | jq -r '.doNotContact')"
 assert_eq "DNC flipped on prospect E" "$DNC_OK" "true"
 
-# ---------------------------------------------------------------------------
 step "Test A: tenant scope (no projectId) — email/form match only"
-# Candidates:
-#   A.email -> skip:email_duplicate
-#   FORM_C -> skip:form_url_duplicate
-#   EMAIL_E (DNC) -> skip:do_not_contact
-#   FRESH email -> fresh
-#   B.email duplicated twice -> first skip:email_duplicate, second still skip
-#     (intra-batch claim only fires for fresh inserts; existing email always skips)
+# B.email appears twice: both skip as email_duplicate, not duplicate_in_batch —
+# the intra-batch claim only fires for fresh inserts; an existing email always skips.
 A_BODY="$(jq -nc \
   --arg dA "$DOMAIN_A" --arg dC "$DOMAIN_C" --arg dE "$DOMAIN_E" --arg dF "$DOMAIN_FRESH" --arg dB "$DOMAIN_B" \
   --arg eA "$EMAIL_A" --arg fC "$FORM_C" --arg eE "$EMAIL_E" --arg eF "$EMAIL_FRESH" --arg eB "$EMAIL_B" \
@@ -163,12 +155,8 @@ assert_eq "A[4] reason"         "$(echo "$A_RESP" | jq -r '.decisions[4].reason'
 assert_eq "A[5] kind=skip"      "$(echo "$A_RESP" | jq -r '.decisions[5].kind')"   "skip"
 assert_eq "A[5] reason"         "$(echo "$A_RESP" | jq -r '.decisions[5].reason')" "email_duplicate"
 
-# ---------------------------------------------------------------------------
 step "Test B: project scope — domain dedup activates"
-# Candidates:
-#   A.domain (already in project) -> skip:already_in_project (no email/form to short-circuit)
-#   D.domain (already in project) -> skip:already_in_project
-#   FRESH domain -> fresh
+# Candidates carry no email/form so nothing short-circuits the domain path.
 B_BODY="$(jq -nc --arg pid "$PROJECT_ID" \
   --arg dA "$DOMAIN_A" --arg dD "$DOMAIN_D" --arg dF "$DOMAIN_FRESH" \
   '{projectId:$pid, candidates:[
@@ -183,10 +171,7 @@ assert_eq "B[1] kind=skip"     "$(echo "$B_RESP" | jq -r '.decisions[1].kind')" 
 assert_eq "B[1] reason"        "$(echo "$B_RESP" | jq -r '.decisions[1].reason')" "already_in_project"
 assert_eq "B[2] kind=fresh"    "$(echo "$B_RESP" | jq -r '.decisions[2].kind')"   "fresh"
 
-# ---------------------------------------------------------------------------
 step "Test C: normalize-domain transform — apex/url/www/path all converge"
-# Same candidate intent, surface variants. All should map to DOMAIN_A and skip
-# as already_in_project under projectId.
 C_BODY="$(jq -nc --arg pid "$PROJECT_ID" \
   --arg apex "$DOMAIN_A" \
   --arg withWww "www.$DOMAIN_A" \
@@ -206,11 +191,8 @@ for i in 0 1 2 3 4; do
   assert_eq "C[$i] reason"          "$(echo "$C_RESP" | jq -r ".decisions[$i].reason")" "already_in_project"
 done
 
-# ---------------------------------------------------------------------------
 step "Test D: intra-batch claim — fresh first, duplicate_in_batch second"
-# Two candidates with the same brand-new email. First wins; second sees
-# claimed email and reports duplicate_in_batch. Tenant scope so only the
-# email claim path is exercised.
+# Tenant scope so only the email claim path is exercised.
 D_BODY="$(jq -nc --arg dF "$DOMAIN_FRESH" --arg eF "$EMAIL_FRESH" \
   '{candidates:[
     {organizationDomain:$dF, email:$eF},
@@ -222,8 +204,6 @@ assert_eq "D[1] kind=skip"   "$(echo "$D_RESP" | jq -r '.decisions[1].kind')"   
 assert_eq "D[1] reason"      "$(echo "$D_RESP" | jq -r '.decisions[1].reason')" "duplicate_in_batch"
 
 step "Test D2: intra-batch domain claim — fresh then duplicate_in_batch (project scope)"
-# Same brand-new domain, no email/form, twice in one batch under projectId.
-# First candidate is fresh, second collides on the project-domain claim set.
 D2_BODY="$(jq -nc --arg pid "$PROJECT_ID" --arg dF "$DOMAIN_FRESH" --arg fF "$FORM_FRESH" \
   '{projectId:$pid, candidates:[
     {organizationDomain:$dF, contactFormUrl:$fF},
@@ -234,14 +214,10 @@ assert_eq "D2[0] kind=fresh"  "$(echo "$D2_RESP" | jq -r '.decisions[0].kind')" 
 assert_eq "D2[1] kind=skip"   "$(echo "$D2_RESP" | jq -r '.decisions[1].kind')"   "skip"
 assert_eq "D2[1] reason"      "$(echo "$D2_RESP" | jq -r '.decisions[1].reason')" "duplicate_in_batch"
 
-# ---------------------------------------------------------------------------
 step "Test E: prospectInputSchema normalize-domain parity (silent dedup miss fix)"
-# 0.5.91 added normalizeDomain to prospectInputSchema as well, so a register
-# call passing https://www.<existing>/path lands on the same org row instead
-# of creating a near-duplicate. Re-register prospect A's domain in URL form
-# under tenant scope (no projectId) — the email differs so the email-dedup
-# path doesn't fire; we want to confirm the row still maps to the existing
-# org and reports already_in_project under project scope.
+# normalizeDomain applies to prospectInputSchema as well, so a register call
+# passing https://www.<existing>/path lands on the same org row instead of
+# creating a near-duplicate.
 E_BODY="$(jq -nc --arg pid "$PROJECT_ID" \
   --arg dirty "https://www.$DOMAIN_A/about" \
   '{projectId:$pid, candidates:[
@@ -251,7 +227,6 @@ E_RESP="$(api POST /api/prospects/check-dedup "$E_BODY")"
 assert_eq "E[0] kind=skip"   "$(echo "$E_RESP" | jq -r '.decisions[0].kind')"   "skip"
 assert_eq "E[0] reason"      "$(echo "$E_RESP" | jq -r '.decisions[0].reason')" "already_in_project"
 
-# ---------------------------------------------------------------------------
 step "Test F: Phase 1.5 parity — check-dedup breakdown == /prospects/batch skippedDetails"
 # Seed 10 fresh prospects in a fresh project (5 email-only, 5 form-only) so
 # we have a clean dedup-source set isolated from the A-E setup.
@@ -365,7 +340,6 @@ assert_eq "F batch skipped=10"           "$(echo "$F_BATCH_RESP" | jq -r .skippe
 assert_eq "F batch email_duplicate=5"    "$(echo "$F_BATCH_RESP" | jq '[.skippedDetails[] | select(.reason == "email_duplicate")] | length')" "5"
 assert_eq "F batch form_url_duplicate=5" "$(echo "$F_BATCH_RESP" | jq '[.skippedDetails[] | select(.reason == "form_url_duplicate")] | length')" "5"
 
-# ---------------------------------------------------------------------------
 step "Test G: candidate cap — 100 OK, 101 → 400"
 G_BODY_100="$(jq -nc --arg pfx "$RUN_TAG-cap" '
   {candidates: [range(0;100)] | map({
@@ -385,7 +359,6 @@ G_STATUS_101="$(jq -nc --arg pfx "$RUN_TAG-cap" '
     -d @- "$API_URL/api/prospects/check-dedup")"
 assert_eq "G 101 candidates → 400" "$G_STATUS_101" "400"
 
-# ---------------------------------------------------------------------------
 step "cleanup"
 if [[ "$SKIP_CLEANUP" == "1" ]]; then
   say "SKIP_CLEANUP=1 — leaving project $PROJECT_ID + parity project $F_PROJECT and seed prospects in place"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Net-new regression for cross-tenant RLS isolation with a REAL second tenant
-# (coverage-audit §2 gap #13; also covers the #19 account-deletion blast radius).
+# Regression for cross-tenant RLS isolation with a REAL second tenant; also
+# covers the account-deletion blast radius.
 #
 # The single load-bearing multi-tenancy guarantee: tenant A cannot read or write
 # tenant B's rows. rlsMiddleware pins each request to its tenant via
@@ -52,7 +52,6 @@ assert_eq() {
   fi
 }
 
-# Tokened request: token is the explicit first arg (2-tenant test).
 api() {
   local tok="$1" method="$2" path="$3" body="${4:-}"
   if [[ -n "$body" ]]; then
@@ -197,7 +196,7 @@ assert_eq "app_rls(A) INSERT tenant_id=B → row-level security violation" \
   "$(echo "$RLS_OUT" | grep -qi 'row-level security' && echo violated || echo "NOT-violated: $RLS_OUT")" "violated"
 
 step "account-deletion blast radius (self-host edition): deleting B leaves A intact"
-# Deletion now requires the mandatory survey body (else 400).
+# Deletion requires the mandatory survey body (else 400).
 assert_eq "DELETE /api/me/account as B → 200" \
   "$(api_status "$TOKEN_B" DELETE /api/me/account '{"reason":"no_longer_needed"}')" "200"
 assert_eq "tenant B removed" "$(psql_local "SELECT count(*)::int FROM tenants WHERE id='$TENANT_B';")" "0"

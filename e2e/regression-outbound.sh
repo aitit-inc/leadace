@@ -91,13 +91,8 @@ api() {
   fi
 }
 
-# Same call, but emits the HTTP status code on stdout and the response body
-# on stderr — the two channels are separated so the caller can assert on the
-# exact code (412 vs 422 vs 201, etc.) without relying on body shape alone.
-#
-# Caller pattern:
-#   CODE="$(api_status POST /path "$body" 2>"$tmpfile")"
-#   BODY="$(cat "$tmpfile")"
+# Emits the HTTP status code on stdout and the response body on stderr, so
+# callers can assert on the exact code without relying on body shape alone.
 api_status() {
   local method="$1" path="$2" body="${3:-}"
   local tmpfile
@@ -125,7 +120,6 @@ psql_local() {
   PGPASSWORD=postgres psql -h 127.0.0.1 -p 54322 -U postgres -d postgres -tAc "$1"
 }
 
-# ---------------------------------------------------------------------------
 require_jq
 TOKEN="$("$REPO_ROOT/e2e/mint-jwt.sh")"
 [[ -n "$TOKEN" ]] || { echo "failed to mint JWT" >&2; exit 1; }
@@ -142,14 +136,12 @@ TENANT_ID="$(psql_local "SELECT tenant_id FROM tenant_members WHERE user_id = '$
 [[ -n "$TENANT_ID" ]] || { echo "no tenant for user $USER_ID — sign in once via the frontend first" >&2; exit 1; }
 say "tenant_id=$TENANT_ID user_id=$USER_ID"
 
-# Snapshot the tenant compliance fields so we can restore them at the end.
 ORIGINAL_TENANT="$(api GET /api/tenant-settings)"
 ORIG_LEGAL="$(echo "$ORIGINAL_TENANT" | jq -r '.legalName // ""')"
 ORIG_ADDR="$(echo "$ORIGINAL_TENANT" | jq -r '.physicalAddress // ""')"
 ORIG_COUNTRY="$(echo "$ORIGINAL_TENANT" | jq -r '.defaultSenderCountry // ""')"
 say "snapshot: legal='$ORIG_LEGAL' addr='$ORIG_ADDR' country='$ORIG_COUNTRY'"
 
-# Always restore + cleanup, even if an assertion failure exits early.
 restore_and_exit() {
   local rc=$?
   if [[ "$SKIP_CLEANUP" == "1" ]]; then
@@ -169,17 +161,15 @@ restore_and_exit() {
     say "deleted project $PROJECT_ID"
   fi
 
-  # Drop tenant-level orphan organizations / prospects from this run. The
-  # project delete cascades the project_prospects link rows but not the
+  # The project delete cascades the project_prospects link rows but not the
   # tenant-scoped prospect/organization rows themselves; an unrelated tenant
   # has no domain match, so this is safe.
   psql_local "DELETE FROM prospects WHERE tenant_id = '$TENANT_ID' AND email LIKE 'contact@$RUN_TAG-%';" > /dev/null || true
   psql_local "DELETE FROM organizations WHERE tenant_id = '$TENANT_ID' AND domain LIKE '$RUN_TAG-%';" > /dev/null || true
   say "dropped tenant-scope test rows tagged $RUN_TAG"
 
-  # Restore tenant compliance settings to the snapshot. Empty captured
-  # strings (the field was null in the snapshot) round-trip back to JSON
-  # null; non-empty strings are passed through with proper JSON escaping.
+  # Empty captured strings were null in the snapshot; round-trip them back to
+  # JSON null.
   local restore_body
   restore_body="$(jq -nc \
     --arg legal "$ORIG_LEGAL" \
@@ -197,7 +187,6 @@ restore_and_exit() {
 }
 trap restore_and_exit EXIT
 
-# ---------------------------------------------------------------------------
 step "clear tenant compliance to test the gate"
 CLEAR_RESP="$(api PUT /api/tenant-settings '{"legalName":null,"physicalAddress":null,"defaultSenderCountry":null}')"
 assert_eq "tenant.legalName cleared" "$(echo "$CLEAR_RESP" | jq -r '.legalName')" "null"
@@ -245,7 +234,6 @@ PROSPECT_DNC_ID="$(echo "$LIST_RESP" | jq -r --arg e "$EMAIL_DNC" '.prospects[]?
 }
 say "prospect_us=$PROSPECT_US_ID prospect_gb=$PROSPECT_GB_ID prospect_dnc=$PROSPECT_DNC_ID"
 
-# ---------------------------------------------------------------------------
 # Fabricated prospectId must be a clean 404, not a 500 from the outreach_logs FK.
 step "fabricated prospectId returns 404 (not 500)"
 BOGUS_BODY="$(jq -nc \
@@ -263,7 +251,6 @@ RFS_RESP="$(cat /tmp/regression-outbound-out.$$ 2>/dev/null || true)"; rm -f /tm
 assert_eq "rejection-feedback/summary default scope → 200" "$RFS_CODE" "200"
 [[ "$RFS_CODE" == "200" ]] || say "body: $RFS_RESP"
 
-# ---------------------------------------------------------------------------
 step "compliance gate: send-and-record returns 412 with missing fields"
 GATE_BODY="$(jq -nc \
   --arg pid "$PROJECT_ID" --argjson prid "$PROSPECT_US_ID" \
@@ -280,7 +267,6 @@ assert_eq "gate.error" "$(echo "$GATE_RESP" | jq -r '.error // ""')" "Tenant com
 GATE_MISSING_SORTED="$(echo "$GATE_RESP" | jq -r '.missing // [] | sort | join(",")')"
 assert_eq "gate.missing fields" "$GATE_MISSING_SORTED" "defaultSenderCountry,legalName,physicalAddress"
 
-# ---------------------------------------------------------------------------
 step "set compliance + draft mode for happy-path test"
 SET_TENANT="$(api PUT /api/tenant-settings "$(jq -nc \
   '{legalName:"E2E Test Corp",
@@ -292,7 +278,6 @@ assert_eq "tenant.defaultSenderCountry set" "$(echo "$SET_TENANT" | jq -r '.defa
 SET_SETTINGS="$(api PUT "/api/projects/$PROJECT_ID/settings" '{"outboundMode":"draft"}')"
 assert_eq "project.outboundMode=draft" "$(echo "$SET_SETTINGS" | jq -r '.outboundMode')" "draft"
 
-# ---------------------------------------------------------------------------
 step "draft happy path: outboundMode=draft → mode='drafted'"
 DRAFT_BODY="$(jq -nc \
   --arg pid "$PROJECT_ID" --argjson prid "$PROSPECT_US_ID" \
@@ -307,16 +292,13 @@ assert_eq "draft.mode" "$(echo "$DRAFT_RESP" | jq -r '.mode // ""')" "drafted"
 DRAFT_OUTREACH_ID="$(echo "$DRAFT_RESP" | jq -r '.outreachId // ""')"
 [[ -n "$DRAFT_OUTREACH_ID" ]] || { echo "draft response missing outreachId: $DRAFT_RESP" >&2; FAIL=$((FAIL + 1)); }
 
-# DB-side assertion: row exists with status='pending_review'.
 DRAFT_STATUS="$(psql_local "SELECT status FROM outreach_logs WHERE id = $DRAFT_OUTREACH_ID;")"
 assert_eq "draft.outreach_logs.status" "$DRAFT_STATUS" "pending_review"
 
-# Listing the drafts via the API should surface this row too.
 DRAFTS_LIST="$(api GET "/api/projects/$PROJECT_ID/drafts")"
 DRAFTS_FOUND="$(echo "$DRAFTS_LIST" | jq --arg id "$DRAFT_OUTREACH_ID" '[.drafts[]? | select(.id == ($id | tonumber))] | length')"
 assert_eq "draft visible via /drafts list" "$DRAFTS_FOUND" "1"
 
-# ---------------------------------------------------------------------------
 step "send mode + country=GB: 422 country guardrail"
 api PUT "/api/projects/$PROJECT_ID/settings" '{"outboundMode":"send"}' > /dev/null
 GB_BODY="$(jq -nc \
@@ -332,12 +314,10 @@ assert_eq "country_gb.country (extra)" "$(echo "$GB_RESP" | jq -r '.country // "
 GB_ERROR_OK="$(echo "$GB_RESP" | jq -r '.error // ""' | grep -q '^Recipient country GB is not supported' && echo y || echo n)"
 assert_eq "country_gb.error message" "$GB_ERROR_OK" "y"
 
-# No outreach_logs row should have been allocated for the GB prospect (refused
-# before the optimistic INSERT).
+# Refused before the optimistic INSERT — no outreach_logs row allocated.
 GB_LOG_COUNT="$(psql_local "SELECT count(*) FROM outreach_logs WHERE prospect_id = $PROSPECT_GB_ID AND project_id = '$PROJECT_ID';")"
 assert_eq "country_gb.no log row allocated" "$GB_LOG_COUNT" "0"
 
-# ---------------------------------------------------------------------------
 step "send mode + do-not-contact: 422 DNC backstop"
 # country=US so the country gate passes and only the DNC backstop can refuse.
 psql_local "UPDATE prospects SET do_not_contact = true WHERE id = $PROSPECT_DNC_ID;" > /dev/null
@@ -356,11 +336,8 @@ assert_eq "dnc.error message" "$DNC_ERROR_OK" "y"
 DNC_LOG_COUNT="$(psql_local "SELECT count(*) FROM outreach_logs WHERE prospect_id = $PROSPECT_DNC_ID AND project_id = '$PROJECT_ID';")"
 assert_eq "dnc.no log row allocated" "$DNC_LOG_COUNT" "0"
 
-# ---------------------------------------------------------------------------
-# Gmail-dependent branch: no-credential rollback OR real-send happy path,
-# whichever the local state can cover. Never delete `sending_identities` —
-# that wipes the user's connection and the next run can't recover without
-# a manual web-UI reconnect.
+# Never delete `sending_identities` — that wipes the user's Gmail connection
+# and the next run can't recover without a manual web-UI reconnect.
 GMAIL_COUNT="$(psql_local "SELECT count(*) FROM sending_identities WHERE tenant_id = '$TENANT_ID' AND provider='gmail_oauth';")"
 
 if [[ "$GMAIL_COUNT" == "0" ]]; then
@@ -430,7 +407,6 @@ else
   fi
 fi
 
-# ---------------------------------------------------------------------------
 step "summary"
 echo "  PASS=$PASS  FAIL=$FAIL" >&2
 if [[ "$FAIL" -gt 0 ]]; then

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Net-new regression for the rejection-cycle ratchet (coverage-audit §2 gap #16).
+# Regression for the rejection-cycle ratchet.
 #
 # Two invariants in recordResponse (services/responses.ts):
 #
@@ -77,7 +77,6 @@ psql_local() { PGPASSWORD=postgres psql -h 127.0.0.1 -p 54322 -U postgres -d pos
 ppA_status() { psql_local "SELECT status FROM project_prospects WHERE prospect_id=$1 AND project_id='$PROJECT_A';"; }
 ppB_status() { psql_local "SELECT status FROM project_prospects WHERE prospect_id=$1 AND project_id='$PROJECT_B';"; }
 dnc()        { psql_local "SELECT do_not_contact FROM prospects WHERE id=$1;"; }
-# rejection count for a (prospect, project)
 rej_count()  { psql_local "SELECT COUNT(*)::int FROM responses r JOIN outreach_logs o ON o.id=r.outreach_log_id WHERE o.prospect_id=$1 AND o.project_id='$2' AND r.response_type='rejection';"; }
 
 mkseed() {
@@ -89,7 +88,6 @@ mkseed() {
       name:$n, overview:"seed", websiteUrl:("https://"+$d+"/about"), email:$e, matchReason:"seed"}'
 }
 
-# Seed a pending_review outreach row; echoes its log id.
 seed_log() {
   local pid="$1" prid="$2"
   api POST /api/outreach "$(jq -nc --arg pid "$pid" --argjson prid "$prid" \

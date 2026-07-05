@@ -47,10 +47,9 @@
   const t = $derived(inquiryCopy(locale));
 
   // Initial view derives from the server-reported session state so a
-  // recipient who navigates back after closing the session (lead /
-  // unsubscribed) sees the resolved screen instead of interactive
-  // controls. Once the recipient acts on this page, we override `view`
-  // explicitly. Preview always starts on the landing kind.
+  // recipient who navigates back after closing the session sees the
+  // resolved screen instead of interactive controls. Once the recipient
+  // acts on this page, we override `view` explicitly.
   let viewOverride = $state<View | null>(null);
   let view = $derived<View>(viewOverride ?? defaultView(landing));
 
@@ -63,8 +62,8 @@
     return { kind: 'landing' };
   }
 
-  // Chat state. Initial values are read once at component mount via
-  // untrack(); thereafter we update them locally from each chat response.
+  // Initial values are read once at component mount via untrack();
+  // thereafter we update them locally from each chat response.
   const initialSession = untrack(() => landing.session);
   let chatTurns = $state<InquiryChatTurn[]>([]);
   let chatInput = $state('');
@@ -77,9 +76,8 @@
 
   // Keep the newest message (or the typing indicator) in view as the chat
   // grows. The thread lives in normal page flow, so without this a fresh
-  // assistant reply can land below the fold on mobile. Skips the initial
-  // empty render so the page doesn't jump past the greeting on load, and
-  // honors prefers-reduced-motion.
+  // assistant reply can land below the fold on mobile. The empty-render
+  // guard avoids jumping past the greeting on load.
   let chatBottom = $state<HTMLDivElement | null>(null);
   $effect(() => {
     if (chatTurns.length === 0 && !chatBusy) return;
@@ -90,7 +88,6 @@
     el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'end' });
   });
 
-  // Action busy / error state (request-meeting + unsubscribe).
   let actionBusy = $state(false);
   let actionError = $state<string | null>(null);
 
@@ -112,8 +109,7 @@
 
   // Convert YouTube watch / youtu.be / Vimeo URLs to their embed form so a
   // raw share URL pasted into AI Inquiry settings still renders as an
-  // embedded player. Falls back to null when the URL doesn't match a
-  // recognized pattern; the caller renders a plain link in that case.
+  // embedded player.
   function videoEmbedSrc(url: string | null): string | null {
     if (!url) return null;
     try {
@@ -178,8 +174,6 @@
     if (!message || chatBusy || reachedTurnLimit) return;
     chatInput = '';
     const sent = await postChatTurn(message);
-    // Restore the input on failure so the recipient can edit and retry
-    // without re-typing.
     if (!sent) chatInput = message;
   }
 
@@ -249,10 +243,9 @@
     }
   }
 
-  // Step 1: tap "Unsubscribe" → record the opt-out immediately (chip-less)
-  // and flip the view. If the recipient closes the tab here, the opt-out is
-  // already recorded server-side. We surface chips on the resolved screen so
-  // they can still tell us why if they want to.
+  // Record the opt-out immediately (chip-less) before flipping the view: if
+  // the recipient closes the tab here, the opt-out is already recorded
+  // server-side. Chips on the resolved screen keep the "why" optional.
   async function startUnsubscribe() {
     if (isPreview || !onUnsubscribe || actionBusy) return;
     actionBusy = true;
@@ -267,8 +260,7 @@
     }
   }
 
-  // Step 2 (optional): after the opt-out is recorded, picking a chip attaches
-  // feedback to the already-closed session. Backend is idempotent — first-wins.
+  // Backend is idempotent — first-wins.
   async function pickChip(reason: InquiryPrimaryReason) {
     if (isPreview || !onUnsubscribe || actionBusy) return;
     actionBusy = true;
@@ -291,11 +283,9 @@
     return t.greetingFallback;
   });
 
-  // Header subtitle: "From {sender}, {role} at {company}" when all three
-  // exist; falls back to subsets ({sender} at {company}, {sender}, {company},
-  // or hides the row when both name and company are null). The role slot is
-  // suppressed without senderName since "From, CEO at Acme" reads as broken.
-  // Tenant workspace label is never substituted here (per backend spec).
+  // The role slot is suppressed without senderName since "From, CEO at
+  // Acme" reads as broken. Tenant workspace label is never substituted
+  // here (per backend spec).
   const fromLine = $derived.by<
     { who: string | null; role: string | null; where: string | null } | null
   >(() => {
@@ -306,12 +296,9 @@
     return { who, role, where };
   });
 
-  // Body-copy display name. Used wherever copy reads as "{senderName} has
-  // been notified", "{senderName}'s scheduling page", chat author label, etc.
-  // Order: personal name → company → generic. Never the tenant label.
+  // Never the tenant label (per backend spec).
   const displayName = $derived(landing.senderName ?? landing.senderCompany ?? 'the team');
 
-  // Labels come from the locale copy; order is fixed.
   const chipReasons: InquiryPrimaryReason[] = [
     'not_relevant',
     'wrong_timing',
@@ -636,11 +623,8 @@
 </div>
 
 <style>
-  /* Brand color theming. `--brand` is set inline on the root when the
-     project has a valid #RRRRRR brand color; the `.themed` toggle gates
-     the rules below so an unthemed page keeps its neutral defaults. We
-     keep brand color out of body copy and opt-out controls — only
-     interactive accents (CTA fill, link decorations on hover, FAQ chip
+  /* Brand color is deliberately kept out of body copy and opt-out controls —
+     only interactive accents (CTA fill, link decorations on hover, FAQ chip
      focus, chat input focus) pick it up. */
   .themed .brand-cta {
     background-color: var(--brand);
@@ -663,8 +647,6 @@
     border-color: var(--brand);
   }
 
-  /* Sent (user) chat bubble adopts the brand color when themed; otherwise it
-     keeps the neutral bg-text / text-page fill set in the class list. */
   .themed .brand-bubble {
     background-color: var(--brand);
     color: var(--brand-fg);
@@ -705,8 +687,7 @@
     font-style: italic;
   }
 
-  /* Subtle entrance for each newly mounted bubble (and the typing
-     indicator). Keyed each-blocks reuse existing DOM, so only the new row
+  /* Keyed each-blocks reuse existing DOM, so only the newly mounted row
      animates — past turns stay put. */
   .chat-enter {
     animation: chat-enter 0.22s ease-out both;

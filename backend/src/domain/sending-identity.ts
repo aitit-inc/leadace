@@ -14,8 +14,6 @@ export const smtpImapSecretPayloadSchema = z.object({
 })
 export type SmtpImapSecretPayload = z.infer<typeof smtpImapSecretPayloadSchema>
 
-// Decrypted secret, parsed once at the boundary: gmail_oauth = the refresh token
-// verbatim; smtp_imap = a JSON connection payload.
 export type SendingIdentitySecret =
   | { provider: 'gmail_oauth'; refreshToken: string }
   | ({ provider: 'smtp_imap' } & SmtpImapSecretPayload)

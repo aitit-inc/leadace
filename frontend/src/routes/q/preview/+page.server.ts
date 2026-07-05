@@ -14,8 +14,7 @@ export type PreviewProspect = {
   organizationName: string;
 };
 
-// /q/preview is outside the (app) group, so hooks.server.ts doesn't gate it.
-// Gate here: bounce unauthenticated visitors to /login with a `next`.
+// /q/preview is outside the (app) group, so hooks.server.ts doesn't gate it — gate here.
 export const load: PageServerLoad = async ({ url, fetch, locals }) => {
   const projectId = url.searchParams.get('project');
   if (!projectId) {

@@ -122,26 +122,24 @@ export function parseEmailMessage(raw: string, depth = 0): ParsedEmail {
 // the Gmail arm from its payload tree, and domain/dsn consumes them uniformly.
 export type MessagePart = { mimeType: string; headers: Map<string, string>; body: string }
 
-// Parse only the leading header block of a raw message — used to read the
-// returned original's Message-ID out of a DSN's message/rfc822 part body.
+// Used to read the returned original's Message-ID out of a DSN's message/rfc822 part body.
 export function parseTopHeaders(raw: string): Map<string, string> {
   const normalized = raw.replace(/\r\n|\r|\n/g, '\r\n')
   const split = normalized.indexOf('\r\n\r\n')
   return unfoldHeaders(split === -1 ? normalized : normalized.slice(0, split))
 }
 
-// Extract every `<id>` token from an In-Reply-To / References header value.
-// The char class forbids spaces/brackets, so it is linear — a crafted header
-// can't ReDoS the poll.
+// The char class forbids spaces/brackets, so it is linear — a crafted
+// In-Reply-To / References header can't ReDoS the poll.
 export function parseMessageIdList(value: string | null): string[] {
   if (!value) return []
   return value.match(/<[^<>\s]+>/g) ?? []
 }
 
-// Flatten a raw RFC822 message into its MIME parts. multipart/* containers
-// recurse; message/rfc822 (a DSN's returned original) and message/delivery-status
-// stay leaves so domain/dsn can read their text. Mirrors extractText's boundary
-// handling but keeps every part instead of collapsing to the text/plain leaf.
+// multipart/* containers recurse; message/rfc822 (a DSN's returned original) and
+// message/delivery-status stay leaves so domain/dsn can read their text. Mirrors
+// extractText's boundary handling but keeps every part instead of collapsing to
+// the text/plain leaf.
 export function flattenMessageParts(raw: string, depth = 0): MessagePart[] {
   const normalized = raw.replace(/\r\n|\r|\n/g, '\r\n')
   const split = normalized.indexOf('\r\n\r\n')

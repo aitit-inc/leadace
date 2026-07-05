@@ -15,9 +15,8 @@
   let connectingGmail = $state(false);
   let gmailMessage = $state('');
 
-  // Google OAuth populates user_metadata with avatar_url/picture, full_name,
-  // and the verified email. Fall back gracefully if any field is missing
-  // (e.g. a non-Google identity).
+  // Google OAuth populates user_metadata with avatar_url/picture and full_name;
+  // fields may be missing on a non-Google identity, hence the fallbacks.
   let profile = $derived.by(() => {
     const meta = (data.user?.user_metadata ?? {}) as Record<string, unknown>;
     const get = (k: string): string | null => (typeof meta[k] === 'string' ? (meta[k] as string) : null);

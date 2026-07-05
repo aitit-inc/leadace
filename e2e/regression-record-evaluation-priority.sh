@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Net-new regression for record_evaluation priorityUpdates scope
-# (coverage-audit §2 gap #26).
+# Regression for record_evaluation priorityUpdates scope.
 #
 # record_evaluation's sole persisted effect is a bulk per-industry priority
 # override, restricted to status='new' project_prospects rows (the

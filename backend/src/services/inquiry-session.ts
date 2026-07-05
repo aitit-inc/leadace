@@ -49,8 +49,7 @@ export class SessionRaceError extends Error {
   }
 }
 
-// Subset of RejectionFeedbackV1: the landing chip only collects
-// primary_reason + free_text + consent. Other fields belong to email-reply
+// Subset of RejectionFeedbackV1 — the omitted fields belong to email-reply
 // flows where the recipient types freely.
 export const inquiryUnsubscribeBodySchema = z.object({
   primary_reason: z.enum(REJECTION_PRIMARY_REASONS).optional(),
@@ -89,14 +88,11 @@ export type InquirySessionRow = {
   closedAt: Date | null
 }
 
-// Signals are considered "fresh" when refreshed within this many days. Stale
-// signals are dropped from the snapshot to avoid feeding the chat LLM
+// Stale signals are dropped from the snapshot to avoid feeding the chat LLM
 // outdated talking points.
 const SIGNAL_FRESH_DAYS_FOR_SNAPSHOT = 30
 
-// Compose the per-session brief used as the chat system prompt. Falls back
-// gracefully when hypothesis / signals are missing — at minimum the project's
-// inquiry_chat_brief and the visiting organization's name make it through.
+// The composed brief is used verbatim as the chat system prompt.
 export function composeContextSnapshot(args: {
   projectInquiryChatBrief: string
   contactName: string | null
@@ -174,8 +170,6 @@ export function composeContextSnapshot(args: {
 
 // One-time write per session: the conditional UPDATE only lands the snapshot
 // when it's still NULL, so concurrent first-message paths can't double-write.
-// Returns the freshly snapshotted session so callers can use it without an
-// extra round-trip.
 export async function ensureSessionContextSnapshot(
   db: Db,
   session: InquirySessionRow,
@@ -239,8 +233,7 @@ const brandSessionRow = <T extends { tenantId: string; shortId: string }>(
 // A re-visit after a closing outcome opens a NEW session rather than
 // reviving the closed one — funnel analytics treat each visit as distinct.
 // The partial unique index `idx_inquiry_session_open` collapses concurrent
-// first-visits to a single row; the re-select after onConflictDoNothing
-// recovers the row the loser of the race didn't insert.
+// first-visits to a single row.
 export async function openLandingSession(
   db: Db,
   token: InquiryTokenRow,
@@ -306,9 +299,7 @@ export async function appendInquiryMessage(
   })
 }
 
-// Flip opened → inquired on the first user message. Conditional WHERE so a
-// concurrent request-meeting / unsubscribe close wins; the same WHERE also
-// makes the call a no-op when outcome has already advanced past 'opened'.
+// Conditional WHERE so a concurrent request-meeting / unsubscribe close wins.
 export async function markSessionInquired(
   db: Db,
   sessionId: number,
@@ -323,11 +314,9 @@ export async function markSessionInquired(
     ))
 }
 
-// Atomic reservation in a single round trip: only increments when the session
-// is still open AND under the per-session cap. Throws SessionRaceError on any
-// other case (concurrent close via unsubscribe / request-meeting, or a
-// concurrent chat turn just hit the cap), so the surrounding tx rolls back
-// cleanly. Caller maps SessionRaceError → CONFLICT.
+// Single-round-trip reservation — a read-then-write would race. Throws
+// SessionRaceError (concurrent close or cap hit) so the surrounding tx rolls
+// back cleanly; caller maps it to CONFLICT.
 export async function reserveChatTurnSlot(
   db: Db,
   sessionId: number,
@@ -376,10 +365,9 @@ const MEETING_REQUEST_PLACEHOLDER: Record<MeetingRequestSource, string> = {
   chat: '(meeting requested via inquiry chat)',
 }
 
-// Pre-resolved session info needed to commit a meeting-request inside the
-// race-safe transaction. Both recordMeetingRequest (loads from shortId) and
-// inquiry-summarize.ts (loads alongside the LLM step) feed the same shape
-// through here so the SessionRaceError handling lives in one place.
+// Both recordMeetingRequest (loads from shortId) and inquiry-summarize.ts
+// (loads alongside the LLM step) feed the same shape through here so the
+// SessionRaceError handling lives in one place.
 export type MeetingRequestTarget = {
   sessionId: number
   tenantId: TenantId
@@ -446,38 +434,28 @@ export async function recordMeetingRequestForSession(
   }
 }
 
-// Records that the visitor clicked the Sign up CTA. Closes the session
-// with outcome='signup_clicked' so daily-cycle / evaluate can aggregate
-// self-serve conversions separately from human-sales 'lead' conversions.
-// No responses row is written — signup is the explicit non-meeting path,
-// so the response-typed reporting axes (sentiment, response_type) don't
-// apply. Idempotent on repeat clicks: a session already closed as
-// 'signup_clicked' returns ok so a double-click doesn't surface as an
-// error in the UI.
+// Closes with outcome='signup_clicked' so daily-cycle / evaluate can aggregate
+// self-serve conversions separately from human-sales 'lead' conversions. No
+// responses row is written — signup is the explicit non-meeting path, so the
+// response-typed reporting axes (sentiment, response_type) don't apply.
 //
-// Also flips project_prospects.status to 'responded' (same terminal state
-// the meeting_request flow uses via nextStatusFromResponse) so the prospect
-// drops out of REACHABLE_STATUSES and won't be re-targeted by
-// get_outbound_targets after the no-response recycle window elapses.
-// Without this, a converted prospect would re-enter the outbound pool
-// ~90 days later and receive an unwanted follow-up — the
-// inquiry_sessions.outcome alone never feeds the outbound selector.
+// Also flips project_prospects.status to 'responded' (same terminal state the
+// meeting_request flow uses via nextStatusFromResponse) so the prospect drops
+// out of REACHABLE_STATUSES — inquiry_sessions.outcome alone never feeds the
+// outbound selector, so without this a converted prospect would re-enter the
+// outbound pool once the no-response recycle window elapses and receive an
+// unwanted follow-up.
 //
-// Server-side gates the action by project_settings.inquiry_cta_type to
-// prevent direct POSTs from recording signup_clicked against a project
-// that is configured for the meeting CTA — the URL token is the only
-// auth, so a stale or hand-crafted client must not be able to skew
-// outcome aggregates.
+// Gated server-side by project_settings.inquiry_cta_type — the URL token is
+// the only auth, so a stale or hand-crafted client must not be able to record
+// signup_clicked against a meeting-CTA project and skew outcome aggregates.
 export async function recordSignupClick(
   db: Db,
   shortId: ShortId,
 ): Promise<ServiceResult<{ sessionId: number }>> {
-  // Idempotent: any prior closed signup_clicked row for this short_id is the
-  // recorded conversion regardless of whether the recipient has since opened
-  // a new session by revisiting. Without this, the second click would
-  // re-record (closing the new open session as signup_clicked) and the
-  // table would carry two signup_clicked rows for the same short_id —
-  // skewing per-prospect conversion counts.
+  // Idempotent: any prior closed signup_clicked row is the recorded conversion
+  // — otherwise a second click after a revisit would close the new open
+  // session as signup_clicked too, skewing per-prospect conversion counts.
   const prior = await selectClosedSignupClick(db, shortId)
   if (prior) return ok({ sessionId: prior.id })
 
@@ -545,13 +523,11 @@ async function readInquiryCtaType(
   return row.inquiryCtaType
 }
 
-// Button-source meeting requests come from /inquiry/:shortId/request-meeting
-// only — chat-derived escalations call recordMeetingRequestForSession
-// directly from inquiry-summarize.ts. Source-'button' means the visitor
-// tapped the meeting CTA; that CTA is only rendered when the project is
-// in 'meeting' mode, so a button POST against a 'signup'-mode project is
-// either a stale client or a hand-crafted request — reject so outcome
-// aggregates can't be skewed by direct POSTs to the public route.
+// The meeting CTA is only rendered when the project is in 'meeting' mode, so
+// a source-'button' POST against a 'signup'-mode project is a stale client or
+// a hand-crafted request — reject so outcome aggregates can't be skewed by
+// direct POSTs to the public route. Chat-derived escalations call
+// recordMeetingRequestForSession directly from inquiry-summarize.ts.
 export async function recordMeetingRequest(
   db: Db,
   shortId: ShortId,
@@ -559,9 +535,7 @@ export async function recordMeetingRequest(
   summary: string | null,
 ): Promise<ServiceResult<{ responseId: number }>> {
   // Idempotent re-click: a session already closed as 'lead' with a linked
-  // response returns ok so a double-tap (or a re-visit after the close)
-  // doesn't surface as 409 in the UI. Mirrors recordSignupClick's
-  // signup_clicked short-circuit.
+  // response returns ok so a double-tap doesn't surface as 409 in the UI.
   const existing = await selectRelevantSession(db, shortId)
   if (
     existing &&
@@ -626,9 +600,6 @@ async function selectRelevantSession(
   return row ? brandSessionRow(row) : undefined
 }
 
-// Look up the most recent closed-as-signup_clicked session for this short_id,
-// ignoring any concurrently open session opened on revisit. Used by
-// recordSignupClick's idempotent shortcut.
 async function selectClosedSignupClick(
   db: Db,
   shortId: ShortId,
@@ -679,15 +650,11 @@ export async function recordInquiryUnsubscribe(
     return err('CONFLICT', `Session is already closed with outcome '${s.outcome}'`)
   }
 
-  // Re-call on an already-unsubscribed session that already has feedback
-  // attached: idempotent no-op. First-wins keeps semantics simple — the
-  // recipient's first chip is the one of record.
+  // First-wins: the recipient's first chip is the one of record.
   if (s.closedAt !== null && s.responseId !== null) {
     return ok({ unsubscribed: true, responseId: s.responseId })
   }
 
-  // Re-call on already-unsubscribed without a chip + no chip in this call:
-  // idempotent no-op.
   if (s.closedAt !== null && !body.primary_reason) {
     return ok({ unsubscribed: true, responseId: null })
   }
@@ -735,9 +702,8 @@ export async function recordInquiryUnsubscribe(
         }
         responseId = result.value.id
       } else if (s.closedAt === null) {
-        // Open + chip-less path: skip the `responses` write but ratchet DNC
-        // directly. status is intentionally not flipped — without a response
-        // there's no signal to derive 'rejected' / 'deferred' from.
+        // status is intentionally not flipped — without a response there's
+        // no signal to derive 'rejected' / 'deferred' from.
         await tx
           .update(prospects)
           .set({ doNotContact: true, updatedAt: now })
@@ -745,7 +711,6 @@ export async function recordInquiryUnsubscribe(
       }
 
       if (s.closedAt === null) {
-        // Open session: close it. SessionRaceError on concurrent close.
         const [updated] = await tx
           .update(inquirySessions)
           .set({
@@ -758,11 +723,10 @@ export async function recordInquiryUnsubscribe(
 
         if (!updated) throw new SessionRaceError()
       } else if (responseId !== null) {
-        // Already unsubscribed; this call attached feedback. Conditional CAS
-        // on responseId keeps first-wins. On 0 rows affected, throw so the
-        // transaction rolls back the just-inserted response row — otherwise
-        // concurrent chip picks would each commit a response with only one
-        // linked from the session.
+        // Conditional CAS on responseId keeps first-wins. On 0 rows affected,
+        // throw so the transaction rolls back the just-inserted response row —
+        // otherwise concurrent chip picks would each commit a response with
+        // only one linked from the session.
         const [updated] = await tx
           .update(inquirySessions)
           .set({ responseId })
@@ -807,45 +771,28 @@ export type InquiryLandingPayload = {
   shortId: ShortId | null
   preview: boolean
 
-  // project_settings.sender_display_name verbatim. Null when unset — frontend
-  // then omits the personal-name slot of the landing header (and falls back
-  // to senderCompany / a generic phrasing in body copy). We deliberately do
-  // NOT fall back to tenants.name: that column is the internal workspace
-  // label and is documented as never being sent to recipients.
+  // Deliberately no fallback to tenants.name — that column is the internal
+  // workspace label and is documented as never being sent to recipients.
   senderName: string | null
-  // project_settings.sender_company_name. Null when the user hasn't set it
-  // on /inquiry-settings — the landing then shows "From {senderName}"
-  // without an "at {company}" suffix. Distinct from tenants.legal_name
-  // (compliance footer, never shown here) and tenants.name (internal
-  // workspace label that is documented as never sent to recipients).
+  // Distinct from tenants.legal_name (compliance footer, never shown here)
+  // and tenants.name (internal workspace label never sent to recipients).
   senderCompany: string | null
-  // project_settings.sender_job_title. Optional role displayed alongside
-  // senderName / senderCompany on the landing header
-  // ("From {senderName}, {senderJobTitle} at {senderCompany}"). Null omits
-  // the role slot.
   senderJobTitle: string | null
   brandColor: string | null
   brandLogoUrl: string | null
-  // Landing background mode. false = light canvas, true = dark. The brand
-  // color stays the accent on either; the frontend toggles the .dark class on
-  // the landing root so text / surface tokens follow the mode for contrast.
   backgroundDark: boolean
 
-  // Greeting hints. Null on preview (no real prospect) or for legacy
-  // prospect rows missing contact_name. Frontend falls back gracefully.
+  // Null on preview (no real prospect) or legacy rows missing contact_name.
   recipientName: string | null
   recipientOrganization: string | null
 
   oneLiner: string | null
   videoUrl: string | null
   pdfUrl: string | null
-  // CTA the landing page renders. 'meeting' = Book/Request a meeting (the
-  // human-sales path; schedulingUrl optional). 'signup' = Sign up button
-  // linking to signupUrl (self-serve, no human follow-up). The two
-  // variants are mutually exclusive — the landing renders one CTA, never
-  // both. Variant carries only the URL each mode actually needs, so
-  // invalid combinations (signup without a destination) cannot exist on
-  // the wire.
+  // 'meeting' = the human-sales path (schedulingUrl optional); 'signup' =
+  // self-serve, no human follow-up. Each variant carries only the URL its
+  // mode needs, so invalid combinations (signup without a destination)
+  // cannot exist on the wire.
   cta:
     | { type: 'meeting'; schedulingUrl: string | null }
     | { type: 'signup'; signupUrl: string }
@@ -854,9 +801,7 @@ export type InquiryLandingPayload = {
   // other fields and must not render the chat input when it's false.
   chatEnabled: boolean
 
-  // Up to FAQ_SUGGESTIONS_MAX `Q:` lines parsed from inquiryChatBrief, in the
-  // order they appear. Empty array when the brief is null, has no Q/A
-  // structure, or chat is disabled. Frontend renders these as 1-tap chips.
+  // `Q:` lines parsed from inquiryChatBrief; frontend renders them as chips.
   chatFaqSuggestions: string[]
 
   session: InquiryLandingSession | null
@@ -887,10 +832,9 @@ const previewableSettingsCols = {
 const httpsOrNull = (u: string | null): string | null =>
   u !== null && isHttpsUrl(u) ? u : null
 
-// Build the discriminated CTA payload. signup mode requires a non-null,
-// https URL — the write path enforces this, but a row that pre-dates the
-// constraint or stores a non-https URL falls back to meeting notify-only
-// here so the landing page always renders a coherent CTA.
+// signup requires a non-null https URL — the write path enforces this, but a
+// row that pre-dates the constraint or stores a non-https URL falls back to
+// meeting notify-only so the landing page always renders a coherent CTA.
 export const buildCta = (
   type: InquiryCtaType | null,
   rawUrl: string | null,
@@ -943,10 +887,8 @@ export async function loadLandingContext(
   }
 
   const opened = await openLandingSession(db, token)
-  // Compose / persist the per-prospect chat snapshot once at session open;
-  // subsequent chat turns read it verbatim so the LLM context stays stable
-  // across the conversation. Skipped when chat is disabled (no project
-  // brief) or when the snapshot already exists from a prior visit.
+  // Snapshot once at session open; subsequent chat turns read it verbatim so
+  // the LLM context stays stable across the conversation.
   const session = await ensureSessionContextSnapshot(db, opened, row.inquiryChatBrief)
 
   return ok({

@@ -62,7 +62,6 @@ require_jq() { command -v jq >/dev/null 2>&1 || { echo "need jq on PATH" >&2; ex
 psql_local() { PGPASSWORD=postgres psql -h 127.0.0.1 -p 54322 -U postgres -d postgres -tAc "$1"; }
 dotenv() { grep -E "^$1=" "$REPO_ROOT/backend/.dev.vars" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'; }
 
-# Confirm the target worker is up AND is the cloud edition before seeding.
 # Edition probe: self-hosted 404s POST /api/stripe/webhook (requireCloudEdition
 # fails first); cloud 400s it (passes the edition + stripe-env guards, then
 # rejects the missing signature). Unauthenticated, no side effects.
@@ -77,7 +76,6 @@ cloud_preflight() {
   say "cloud worker healthy at $API_URL (edition=cloud confirmed)"
 }
 
-# GoTrue Admin credentials, resolved once from backend/.dev.vars.
 SVC=""
 SUPA_URL=""
 cloud_init_admin() {
@@ -86,9 +84,7 @@ cloud_init_admin() {
   [[ -n "$SVC" ]] || { echo "SUPABASE_SERVICE_ROLE_KEY not found in backend/.dev.vars" >&2; exit 1; }
 }
 
-# Provision a throwaway tenant: create a GoTrue user, mint its JWT, make the
-# first authenticated hit (auto-provisions tenant + tenant_members), resolve the
-# tenant id. Sets globals THROW_USER_ID, TOKEN, THROW_TENANT_ID.
+# Sets globals THROW_USER_ID, TOKEN, THROW_TENANT_ID.
 THROW_USER_ID=""
 THROW_TENANT_ID=""
 cloud_provision_tenant() {
@@ -107,7 +103,7 @@ cloud_provision_tenant() {
   say "throwaway tenant=$THROW_TENANT_ID (user=$email)"
 }
 
-# Seed/refresh the tenant_plans row. plan ∈ free|starter|pro|scale|unlimited.
+# plan ∈ free|starter|pro|scale|unlimited.
 # starter/pro get a current_period_start — MANDATORY, else the monthly window
 # never fires and quota is effectively unlimited (manual-plan-setup.local.md
 # pitfall 1, plan-limits.ts:182). Optional sub_id sets stripe_subscription_id
@@ -131,9 +127,7 @@ cloud_seed_plan() {
     ON CONFLICT (tenant_id) DO UPDATE SET $setp;" > /dev/null
 }
 
-# Teardown for the trap: drop the throwaway tenant (CASCADE wipes plans /
-# projects / prospects / outreach_logs / inquiry_* rows) and its GoTrue user.
-# Idempotent and tolerant of partial state.
+# Trap handler: idempotent and tolerant of partial state.
 cloud_teardown() {
   local rc=$?
   rm -f "${API_OUT:-}" 2>/dev/null || true
@@ -153,8 +147,7 @@ cloud_teardown() {
   exit "$rc"
 }
 
-# Print the PASS/FAIL tally and exit 2 on any failure, 0 otherwise. Call at the
-# end of the suite body (BEFORE the trap-driven teardown runs).
+# Call at the end of the suite body (BEFORE the trap-driven teardown runs).
 cloud_summary() {
   step "summary"
   echo "  PASS=$PASS  FAIL=$FAIL" >&2

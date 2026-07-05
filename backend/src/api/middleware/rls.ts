@@ -4,8 +4,6 @@ import type { Db } from '../../db/connection'
 import type { Env, Variables } from '../types'
 
 /**
- * RLS middleware: wraps the request in a transaction with tenant isolation.
- *
  * Must run AFTER authMiddleware (requires tenantId and db in context).
  *
  * Inside the transaction:

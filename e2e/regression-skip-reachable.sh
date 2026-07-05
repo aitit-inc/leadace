@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Net-new regression for PR #70 (single-source plugin config + skip_prospect).
 # Covers the two server-side behaviors the plugin refactor leans on, which the
 # existing outbound/dedup harnesses do NOT exercise:
 #
@@ -72,9 +71,8 @@ api() {
   fi
 }
 
-# Emits the HTTP status code on stdout, the response body on stderr — lets the
-# caller assert the exact code without parsing the body. Same shape as
-# regression-outbound.sh's api_status.
+# HTTP status code on stdout, response body on stderr, so callers can assert
+# the exact code without parsing the body.
 api_status() {
   local method="$1" path="$2" body="${3:-}"
   local tmpfile
@@ -120,7 +118,6 @@ mkseed() {
   fi
 }
 
-# ---------------------------------------------------------------------------
 require_jq
 TOKEN="$("$REPO_ROOT/e2e/mint-jwt.sh")"
 [[ -n "$TOKEN" ]] || { echo "failed to mint JWT" >&2; exit 1; }
@@ -155,7 +152,6 @@ restore_and_exit() {
 }
 trap restore_and_exit EXIT
 
-# ---------------------------------------------------------------------------
 step "create test project"
 CREATE_RESP="$(api POST /api/projects "$(jq -nc --arg n "$PROJECT_NAME" '{name:$n}')")"
 PROJECT_ID="$(echo "$CREATE_RESP" | jq -r '.id // ""')"
@@ -187,7 +183,6 @@ say "ids: us=$US_ID ca=$CA_ID jp=$JP_ID gb=$GB_ID null=$NULL_ID"
 NULL_COUNTRIES="$(psql_local "SELECT COALESCE(p.country,'-')||'/'||COALESCE(o.country,'-') FROM prospects p JOIN organizations o ON o.id=p.organization_id WHERE p.id=$NULL_ID;")"
 assert_eq "NULL prospect has no country (prospect/org)" "$NULL_COUNTRIES" "-/-"
 
-# ---------------------------------------------------------------------------
 step "Test 1: listReachable admits US/CA/JP/NULL, excludes GB (hard country filter)"
 R1="$(api GET "/api/projects/$PROJECT_ID/prospects/reachable?limit=200")"
 assert_eq "reachable.US present"                 "$(reachable_has "$R1" "$US_ID")"   "y"
@@ -197,7 +192,6 @@ assert_eq "reachable.NULL present (warn-allow)"  "$(reachable_has "$R1" "$NULL_I
 assert_eq "reachable.GB excluded (hard filter)"  "$(reachable_has "$R1" "$GB_ID")"   "n"
 assert_eq "reachable.total=4"                    "$(echo "$R1" | jq -r '.total')"    "4"
 
-# ---------------------------------------------------------------------------
 step "Test 2: skip_prospect US (bad_timing) → 'skipped' audit row, not contacted"
 SKIP_BODY="$(jq -nc --arg pid "$PROJECT_ID" --argjson prid "$US_ID" \
   '{projectId:$pid, prospectId:$prid, channel:"email", reason:"bad_timing", note:"e2e net-new skip"}')"
@@ -206,13 +200,11 @@ SKIP_RESP="$(cat /tmp/regression-skip-out.$$)"; rm -f /tmp/regression-skip-out.$
 assert_eq "skip.http_status" "$SKIP_CODE" "201"
 SKIP_ID="$(echo "$SKIP_RESP" | jq -r '.id // ""')"
 [[ -n "$SKIP_ID" ]] || { echo "skip response missing id: $SKIP_RESP" >&2; FAIL=$((FAIL + 1)); }
-# status / skip_reason / errorMessage(NULL) / channel — one round-trip.
 SKIP_ROW="$(psql_local "SELECT status||'/'||COALESCE(skip_reason::text,'-')||'/'||COALESCE(error_message,'-')||'/'||channel FROM outreach_logs WHERE id=$SKIP_ID;")"
 assert_eq "skip row = skipped/bad_timing/-(no error)/email" "$SKIP_ROW" "skipped/bad_timing/-/email"
 assert_eq "prospect NOT flipped to contacted" \
   "$(psql_local "SELECT status FROM project_prospects WHERE prospect_id=$US_ID AND project_id='$PROJECT_ID';")" "new"
 
-# ---------------------------------------------------------------------------
 step "Test 3: skipped prospect drops out of listReachable, others remain"
 R2="$(api GET "/api/projects/$PROJECT_ID/prospects/reachable?limit=200")"
 assert_eq "reachable.US now excluded (deferred)" "$(reachable_has "$R2" "$US_ID")"   "n"
@@ -220,7 +212,6 @@ assert_eq "reachable.CA still present"           "$(reachable_has "$R2" "$CA_ID"
 assert_eq "reachable.NULL still present"         "$(reachable_has "$R2" "$NULL_ID")" "y"
 assert_eq "reachable.total=3"                    "$(echo "$R2" | jq -r '.total')"    "3"
 
-# ---------------------------------------------------------------------------
 step "Test 4: remaining skip_reason variants (no_fresh_material / other) recorded"
 for pair in "$CA_ID:no_fresh_material" "$JP_ID:other"; do
   prid="${pair%%:*}"; reason="${pair##*:}"
@@ -232,7 +223,6 @@ for pair in "$CA_ID:no_fresh_material" "$JP_ID:other"; do
   assert_eq "skip[$reason].skip_reason recorded" "$GOT" "$reason"
 done
 
-# ---------------------------------------------------------------------------
 step "summary"
 echo "  PASS=$PASS  FAIL=$FAIL" >&2
 if [[ "$FAIL" -gt 0 ]]; then

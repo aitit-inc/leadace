@@ -5,20 +5,14 @@
   import type { InquirySettings } from './types';
 
   // The /projects/:id/settings endpoint returns more fields than we touch
-  // here, but we declare the response as InquirySettings — TS structural
-  // typing accepts the wider runtime object, and only the inquiry fields
-  // appear in the typed view. We round-trip just the inquiry subset via
-  // partial-update PUT; other server-side columns stay untouched.
+  // here; we round-trip just the inquiry subset via partial-update PUT, so
+  // other server-side columns stay untouched.
   let { data }: PageProps = $props();
   let token = $derived(data.session?.access_token);
 
-  // Editable copy of the server-fetched settings. Hydrated once per
-  // project (initial load / project switch). The post-save invalidate
-  // re-runs this $effect, but data.projectId hasn't changed so it's a
-  // no-op — typed input is preserved on both success and failure.
-  // Successful save() re-syncs formData explicitly below; a failed save
-  // leaves the typed input intact so the user can retry without losing
-  // work.
+  // Hydrated once per project: the post-save invalidate re-runs this
+  // $effect with an unchanged projectId (no-op), so a failed save never
+  // clobbers typed input; success re-syncs formData explicitly in save().
   let formData = $state<InquirySettings | null>(null);
   let saving = $state(false);
   let hydratedFor = $state<string | null | undefined>(undefined);

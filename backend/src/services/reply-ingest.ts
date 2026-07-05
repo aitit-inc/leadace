@@ -17,10 +17,6 @@ import { pollImapInbox } from './imap-poll'
 import { classifyReply, type ReplyClassification } from './reply-classify'
 import { recordResponse, type RecordResponseInput } from './responses'
 
-// Server-side, provider-agnostic reply collection, run by an hourly cron: poll
-// each sending mailbox, attribute each reply (sender-recency), classify it, and
-// record it through the single record_response recorder.
-
 type ReplyIngestEnv = {
   GMAIL_TOKEN_ENCRYPTION_KEY: string
   GOOGLE_CLIENT_ID: string
@@ -233,13 +229,8 @@ async function ingestIdentity(
     const det = detectDeterministicType(captured.email)
     const attribution = attributeReply(reply, candidates, ATTRIBUTION_WINDOW_DAYS, now)
 
-    // Bounce-recall instrumentation, ORTHOGONAL to the recorded/deduped/
-    // unattributed partition below. Classify EVERY bounce this poll re-fetches
-    // over the lookback window — before the dedup short-circuit — so both counters
-    // span the same population and are directly comparable as option A's recall:
-    // threaded (recorded + DNC) vs Final-Recipient-only (dropped — the recall A
-    // trades for spoof-safety). These are per-poll snapshots of the trailing
-    // window, NOT unique counts; read one cron line's ratio, don't sum across runs.
+    // Counted before the dedup short-circuit so both bounce counters span the
+    // same population (semantics documented on ReplyIngestSummary).
     if (det === 'bounce') {
       if (attribution?.binding === 'threaded') {
         summary.bouncesThreaded++

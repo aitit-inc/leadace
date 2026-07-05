@@ -116,7 +116,6 @@ describe('quotedPrintableEncode', () => {
   it('soft-wraps long lines to <= 76 chars with =\\r\\n and never splits a triplet', () => {
     const out = quotedPrintableEncode('x'.repeat(80))
     for (const physical of out.split('\r\n')) expect(physical.length).toBeLessThanOrEqual(76)
-    // Strip the soft breaks and the original text is recovered.
     expect(out.replace(/=\r\n/g, '')).toBe('x'.repeat(80))
   })
 

@@ -3,7 +3,6 @@ import { getOrganization } from '$lib/api/organizations';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ fetch, params, depends, locals }) => {
-  // Save handler invalidates this tag to pick up edits without a hard reload.
   depends('app:organization-detail');
   try {
     const res = await getOrganization(

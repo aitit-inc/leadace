@@ -5,11 +5,7 @@ export type InquiryLocale = 'ja' | 'en';
 
 export type InquiryOutcome = 'opened' | 'inquired' | 'lead' | 'signup_clicked' | 'unsubscribed';
 
-// Discriminated CTA payload — landing renders one variant, never both.
-// 'meeting' is the human-sales path (Book/Request meeting); schedulingUrl
-// is optional and, when null, the button is notify-only. 'signup' is the
-// self-serve path (Sign up button → SaaS signup page); signupUrl is
-// always present (the backend rejects signup mode without a URL).
+// For 'meeting', a null schedulingUrl means the CTA button is notify-only.
 export type InquiryLandingCta =
   | { type: 'meeting'; schedulingUrl: string | null }
   | { type: 'signup'; signupUrl: string };
@@ -31,8 +27,6 @@ export type InquiryLandingPayload = {
   senderJobTitle: string | null;
   brandColor: string | null;
   brandLogoUrl: string | null;
-  // Landing background mode. false = light canvas, true = dark. The landing
-  // view toggles the `.dark` class on its root so theme tokens follow it.
   backgroundDark: boolean;
 
   recipientName: string | null;
@@ -58,8 +52,7 @@ export type InquiryChatMessageResult = {
 
 export type InquiryChatTurn = { role: 'user' | 'assistant'; content: string };
 
-// Mirrors backend REJECTION_PRIMARY_REASONS — frontend exposes the
-// chip-relevant subset to keep the landing chip strip honest.
+// Mirrors backend REJECTION_PRIMARY_REASONS (chip-relevant subset only).
 export type InquiryPrimaryReason =
   | 'not_relevant'
   | 'wrong_timing'
@@ -97,9 +90,6 @@ export function loadLanding(
   });
 }
 
-// Preview is sender-side and auth-required, so it goes through the
-// authenticated transport (which redirects to /login on 401) rather than
-// the public path used by loadLanding.
 export function loadInquiryPreview(
   projectId: string,
   prospectId: number | null,

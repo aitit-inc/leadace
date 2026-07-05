@@ -7,8 +7,6 @@ import {
   type MailboxWarmupState,
 } from './warmup'
 
-// Fixed anchor; warmupStartedAt offsets are derived from it so the math is
-// independent of wall-clock (domain functions take `now` explicitly).
 const NOW = new Date('2026-06-21T12:00:00Z')
 const weeksAgo = (n: number) => new Date(NOW.getTime() - n * 7 * 24 * 60 * 60 * 1000)
 

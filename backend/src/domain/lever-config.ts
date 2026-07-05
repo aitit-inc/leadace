@@ -15,7 +15,7 @@ export const leverConfigSchema = z.object({
   // `rewardLookbackDays` days of reply-mature sends: the band is
   // [now - rewardWindowDays - rewardLookbackDays, now - rewardWindowDays). Stacking
   // past the maturation cutoff keeps the band non-empty for any value >= 1, so no
-  // cross-field invariant can be violated. Unset = all mature history (today's behavior).
+  // cross-field invariant can be violated. Unset = all mature history.
   rewardLookbackDays: rewardLookbackDays.optional(),
   reward: rewardWeightsSchema.default(defaultRewardWeights),
 })

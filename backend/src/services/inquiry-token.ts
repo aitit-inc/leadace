@@ -12,9 +12,8 @@ import {
 } from '../domain/ids'
 import { ok, err, type ServiceResult } from './result'
 
-// Re-export the canonical short-id param schema. `shortIdSchema` in domain
-// bakes in INQUIRY_SHORT_ID_PATTERN, so a single boundary parser owns the
-// brand-with-format invariant.
+// `shortIdSchema` in domain bakes in INQUIRY_SHORT_ID_PATTERN, so a single
+// boundary parser owns the brand-with-format invariant.
 export { shortIdParamSchema as inquiryShortIdParamSchema } from '../domain/ids'
 
 export const createInquiryTokenBodySchema = z.object({
@@ -44,11 +43,7 @@ function buildInquiryUrl(appUrl: string, shortId: ShortId): string {
 
 // Idempotent on (outreach_log_id) for live tokens — keeps URLs stable across
 // retried sends. Revoked rows are kept; re-issuance allocates a new short_id.
-// `appUrl` is taken as an argument (rather than read from env here) so the
-// service stays HTTP/runtime-agnostic — same shape as auth/google.ts:
-// buildInquiryAttachments. Both the public route and the Phase 2 email
-// send path get a ready-to-embed URL without re-implementing the `/q/...`
-// template.
+// `appUrl` is a parameter so the service stays HTTP/runtime-agnostic.
 export async function createInquiryToken(
   db: Db,
   tenantId: TenantId,
@@ -104,12 +99,8 @@ export async function createInquiryToken(
   return err('INTERNAL_ERROR', 'Failed to allocate inquiry short_id')
 }
 
-// Convenience wrapper for the send-paths (sendAndRecord, sendDraft,
-// recordOutreachWithInquiry) that all share the same shape: skip when the
-// project setting is off, otherwise allocate a token and reduce the result
-// to the URL string. NOT_FOUND from createInquiryToken is treated the same
-// as "skipped" — the caller still has the outreach row, the footer just
-// won't include an inquiry line.
+// NOT_FOUND from createInquiryToken is deliberately swallowed — the caller
+// still has the outreach row, the footer just won't include an inquiry line.
 export async function allocateInquiryUrl(
   db: Db,
   tenantId: TenantId,
@@ -153,8 +144,6 @@ export async function resolveInquiryToken(
     : null
 }
 
-// Returns NOT_FOUND when the token is already revoked (idempotent re-revoke
-// is not distinguished from "never existed").
 export async function revokeInquiryToken(
   db: Db,
   tenantId: TenantId,

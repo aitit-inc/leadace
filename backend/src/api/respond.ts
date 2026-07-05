@@ -13,11 +13,9 @@ const STATUS_BY_CODE: Record<ServiceErrorCode, ContentfulStatusCode> = {
   BAD_GATEWAY: 502,
 }
 
-// Adapter at the HTTP boundary: turn a `ServiceError` into the standard
-// `{ error, detail?, ...extra }` JSON body with the matching status code.
-// Lives under `api/` because services are HTTP-agnostic and must not import
-// `hono`. The optional `extra` map flows through verbatim so endpoints can
-// surface partial-result context on a pre-flight refusal (see batch register).
+// Lives under `api/` because services are HTTP-agnostic and must not import `hono`.
+// `extra` flows through verbatim so endpoints can surface partial-result context
+// on a pre-flight refusal (see batch register).
 export function respondWithError(c: Context, e: ServiceError) {
   const body: Record<string, unknown> = { error: e.error }
   if (e.detail !== undefined) body.detail = e.detail

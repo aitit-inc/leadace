@@ -20,9 +20,7 @@ export interface MailboxWarmupState {
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000
 
-// Completed weeks since warmup began, clamped to [0, rampWeeks]. null start
-// (never sent) and a clock-skew future both read as week 0; past the ramp it
-// saturates at rampWeeks. Drives both the cap step and the health read-out.
+// null start (never sent) and a clock-skew future both read as week 0.
 export function warmupWeeksElapsed(
   state: MailboxWarmupState,
   config: WarmupConfig,
@@ -61,11 +59,10 @@ export interface MailboxDailyStatus {
   steadyStatePerDay: number
 }
 
-// The per-mailbox daily-cap projection: warmup state + today's used count → the
-// numbers every cap surface needs. The send guard (getMailboxDailyQuota), the
-// health read (getMailboxHealth), and the per-identity list (listSendingIdentities)
-// all derive from this one pure function — they differ only in how they wrap it
-// (no_mailbox vs identity metadata), never in how they compute cap/remaining.
+// The send guard (getMailboxDailyQuota), the health read (getMailboxHealth), and
+// the per-identity list (listSendingIdentities) all derive from this one pure
+// function — they differ only in how they wrap it (no_mailbox vs identity
+// metadata), never in how they compute cap/remaining.
 export function mailboxDailyStatus(
   state: MailboxWarmupState,
   used: number,

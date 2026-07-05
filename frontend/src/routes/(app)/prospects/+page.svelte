@@ -14,10 +14,8 @@
   let expandedId = $state<number | null>(null);
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Filters are URL-driven — `data.filters` is the source of truth. We render
-  // the bound `value` from data and push URL updates from the select handlers,
-  // so external navigation (back / direct link) and in-page edits stay in
-  // sync without a parallel $state mirror.
+  // Filters are URL-driven — `data.filters` is the source of truth; no parallel
+  // $state mirror, so back / direct-link navigation and in-page edits stay in sync.
   let filterStatus = $derived<string>(data.filters.status ?? '');
   let filterPriority = $derived<string>(String(data.filters.priority));
   let filterQ = $derived<string>(data.filters.q ?? '');
@@ -35,7 +33,6 @@
     else sp.delete('priority');
     if (q) sp.set('q', q);
     else sp.delete('q');
-    // Filter changes reset page; pure page changes preserve filters.
     if (next.page !== undefined && nextPage > 1) sp.set('page', String(nextPage));
     else sp.delete('page');
 

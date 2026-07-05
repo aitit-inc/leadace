@@ -146,8 +146,6 @@ export async function collectBetaStats(db: Db): Promise<BetaStats> {
   }
 }
 
-// ----- org-signal trend summary -----
-
 type SignalUpdate = { domain: string; signals: OrgSignals }
 
 export async function fetchTodaySignalUpdates(db: Db): Promise<SignalUpdate[]> {
@@ -159,8 +157,7 @@ export async function fetchTodaySignalUpdates(db: Db): Promise<SignalUpdate[]> {
   return rows.flatMap((r) => (r.signals ? [{ domain: r.domain, signals: r.signals }] : []))
 }
 
-// One compact line per company capturing which signal categories were found,
-// no URLs. Feeds the trend-summary prompt — not shown to users directly.
+// Feeds the trend-summary prompt, not shown to users; URLs deliberately omitted.
 function condenseSignals(domain: string, s: OrgSignals): string {
   const parts: string[] = []
   if (s.pressReleases?.length) {
@@ -203,9 +200,7 @@ function trendPrompt(updates: SignalUpdate[]): string {
   ].join('\n')
 }
 
-// Best-effort: 3-bullet text on success, an "unavailable" marker on LLM
-// failure, or null when there is nothing to summarize. Never throws — the
-// digest must still post its KPIs.
+// Never throws — the digest must still post its KPIs.
 export async function summarizeSignalTrends(
   env: { GEMINI_API_KEY: string },
   updates: SignalUpdate[],

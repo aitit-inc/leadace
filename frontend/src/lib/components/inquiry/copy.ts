@@ -3,8 +3,6 @@ import type { InquiryLocale, InquiryPrimaryReason } from '$lib/api/inquiry';
 // Recipient-facing copy for the inquiry landing page, localized by the
 // visitor's browser language ($lib/browser-locale). Scoped to this feature on
 // purpose — this is NOT app-wide i18n; the operator UI stays English.
-// Interpolated strings are functions so the call sites read naturally. The
-// shared `InquiryCopy` shape makes TypeScript enforce en/ja parity.
 export type InquiryCopy = {
   greetingName: (name: string) => string;
   greetingOrg: (org: string) => string;

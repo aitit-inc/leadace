@@ -121,13 +121,11 @@
   // unnamed clients are surfaced as such.
   let displayClient = $derived(clientName?.trim() || 'an unverified MCP client');
 
-  // The redirect host is the receiver of the authorization code, so it
-  // must be visible in the consent UI even when redirect_uri allow-listing
-  // is intact — anyone can register an MCP client via DCR (open by spec),
-  // and the brand label alone cannot tell the user where their code is
-  // being shipped. Show host only, not the full URL: query strings and
-  // paths are noise here, and the host is what matters for "should I trust
-  // this destination".
+  // The redirect host is the receiver of the authorization code, so it must
+  // be visible even when redirect_uri allow-listing is intact — anyone can
+  // register an MCP client via DCR (open by spec), and the brand label alone
+  // cannot tell the user where their code is shipped. Host only, not the
+  // full URL: paths and query strings are noise here.
   let redirectHost = $derived.by(() => {
     if (!redirectUri) return '';
     try {

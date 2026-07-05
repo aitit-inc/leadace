@@ -88,8 +88,7 @@ export type ProjectStatsResult = {
   dailyActivity: DailyActivity[]
 }
 
-// Per-variant aggregate over the reply-mature window (shared by getProjectStats
-// and run_lever_tick). `responses` is COUNT(DISTINCT replied send) so it stays ≤
+// `responses` is COUNT(DISTINCT replied send) so it stays ≤
 // total even when one send draws two countable replies — else responses>total
 // throws in wilsonBounds. `rewardSum` deliberately sums over every countable
 // reply row (graded reward per reply event). `NOT IN ('bounce','auto_reply')`
@@ -104,8 +103,7 @@ export async function getVariantStats(
 ): Promise<VariantStat[]> {
   const SENT: OutreachStatus = 'sent'
   const matureBefore = sql`now() - make_interval(days => ${config.rewardWindowDays})`
-  // Forgetting lower bound (opt-in). Empty fragment when unset/disabled, so the SQL is
-  // byte-for-byte today's. Two variants because the denom query uses bare `sent_at`
+  // Two lookback variants because the denom query uses bare `sent_at`
   // while the response/reward queries alias it `ol.sent_at`.
   const lookbackDays =
     applyLookback && config.rewardLookbackDays !== undefined
@@ -298,15 +296,13 @@ export async function getProjectStats(
     rawQuery<{ totalSent: string | number; lastSentAt: string | Date | null }>(sql`SELECT COUNT(*)::int AS "totalSent", MAX(sent_at) AS "lastSentAt"
                  FROM outreach_logs WHERE project_id = ${projectId} AND status = ${SENT}`),
     // inquiry_sessions has no project_id column — project scope flows through
-    // outreach_logs. Counts every session ever opened for this project,
-    // grouped by terminal-or-current outcome.
+    // outreach_logs.
     rawQuery<{ outcome: InquiryOutcome; count: string | number }>(sql`SELECT s.outcome, COUNT(*)::int AS count
                  FROM inquiry_sessions s
                  JOIN outreach_logs ol ON ol.id = s.outreach_log_id
                  WHERE ol.project_id = ${projectId}
                  GROUP BY s.outcome`),
-    // Daily sent / response counts over the last 30 days, bucketed by UTC day
-    // (matches the UTC-midnight quota window). Drives the activity-trend table.
+    // Bucketed by UTC day to match the UTC-midnight quota window.
     rawQuery<{ day: string; count: string | number }>(sql`SELECT (sent_at AT TIME ZONE 'UTC')::date::text AS day, COUNT(*)::int AS count
                  FROM outreach_logs
                  WHERE project_id = ${projectId} AND status = ${SENT}
@@ -416,10 +412,7 @@ export async function getProjectStats(
     inquiryOutcomeCounts,
   }
 
-  // Daily activity trend (last 30d, UTC day boundary). Only days with at least
-  // one sent or one response appear — zero-activity days are omitted to keep
-  // the table compact. Derived live; no stored snapshot (the raw outreach_logs
-  // / responses rows are the single source of truth).
+  // Zero-activity days are omitted to keep the table compact.
   const dailyMap = new Map<string, DailyActivity>()
   for (const row of dailySentRows) {
     dailyMap.set(row.day, { date: row.day, sent: Number(row.count), responses: 0 })
@@ -471,11 +464,8 @@ export async function recordEvaluation(
   if (!resolved.ok) return resolved
   const projectId = resolved.value
 
-  // Apply every per-industry priority override in a single
-  // UPDATE ... FROM (VALUES ...) so the endpoint issues one round-trip
-  // regardless of list size. The schema caps the list (max 50, no duplicate
-  // industries); RETURNING the matched industry lets us report per-industry
-  // rowsAffected. Only 'new' rows are touched.
+  // Single UPDATE ... FROM (VALUES ...) so the endpoint issues one round-trip
+  // regardless of list size.
   //
   // Raw db.execute bypasses drizzle's column-type mappers, so two casts the
   // builder would normally insert must be written by hand against postgres-js's

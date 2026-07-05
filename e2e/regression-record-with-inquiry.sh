@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Net-new regression for record_outreach_with_inquiry footer persistence +
-# send-mode gates (coverage-audit §2 gap #15).
+# Regression for record_outreach_with_inquiry footer persistence + send-mode
+# gates.
 #
-# recordOutreachWithInquiry (services/outreach.ts:364-450) has two invariants
-# the curl harness never exercised:
+# recordOutreachWithInquiry (services/outreach.ts:364-450) has two invariants:
 #
 #  (1) FOOTER PERSISTENCE BY MODE. willSend = project outboundMode==='send'.
 #      The row is INSERTed with body=input.body. finalBody = input.body + footer

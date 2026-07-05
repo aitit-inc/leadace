@@ -7,18 +7,14 @@ export type Env = {
   SUPABASE_JWT_SECRET: string
   SUPABASE_URL: string
   ENVIRONMENT: string
-  // Stripe is cloud-only. Self-hosted installs leave these unset; the
-  // billing / stripe-webhook routes are gated behind requireCloudEdition,
-  // which itself guarantees the env vars are present (see
-  // services/runtime-guards.ts:requireStripeEnv for the narrowing pattern).
-  // Optional here keeps the type honest about that invariant — typing
-  // them as required would force self-hosters to set bogus values.
+  // Stripe is cloud-only; self-hosted installs leave these unset. The billing /
+  // stripe-webhook routes are gated behind requireCloudEdition, which guarantees
+  // presence (see services/runtime-guards.ts:requireStripeEnv for the narrowing).
   STRIPE_SECRET_KEY?: string
   STRIPE_WEBHOOK_SECRET?: string
-  // Required on cloud for DELETE /me/account (removes the auth.users row after
-  // the tenant cascade). Self-host installs can leave this unset — the account
-  // route gates the admin call behind requireCloudEdition, so missing key never
-  // reaches the guard there. Optional in the type to keep the invariant honest.
+  // Cloud-only, for DELETE /me/account (removes the auth.users row after the
+  // tenant cascade). Self-host leaves it unset — the admin call is gated behind
+  // requireCloudEdition.
   SUPABASE_SERVICE_ROLE_KEY?: string
   GOOGLE_CLIENT_ID: string
   GOOGLE_CLIENT_SECRET: string
@@ -26,23 +22,20 @@ export type Env = {
   UNSUBSCRIBE_TOKEN_SECRET: string
   APP_URL: string
   OPENAI_API_KEY: string
-  // Google AI Studio key for the daily org-signal refresh. Required — the
-  // cron throws without it.
+  // Google AI Studio key for the daily org-signal refresh cron.
   GEMINI_API_KEY: string
   // 'cloud' on the hosted SurpassOne deploy, 'self-hosted' (default) for
   // local dev and public-repo self-hosters. See domain/edition.ts.
   LEADACE_EDITION: string
-  // E2E test harness only. When set (in local .dev.vars or a staging
-  // worker secret), every outbound Gmail call collapses To: / Cc: / Bcc:
-  // to this single mailbox and preserves the originals in an
-  // X-E2E-Original-To header. Unset (the production default) is a no-op.
+  // E2E test harness only. When set (in local .dev.vars or a staging worker
+  // secret), every outbound Gmail call collapses To: / Cc: / Bcc: to this single
+  // mailbox and preserves the originals in an X-E2E-Original-To header.
   E2E_RECIPIENT_OVERRIDE?: string
   // Cloud-only error tracking. Set as a Worker secret on the hosted deploy;
   // unset everywhere else (local dev, self-host), where Sentry stays a no-op.
   SENTRY_DSN?: string
-  // Cloud-only daily KPI digest → Google Chat incoming webhook. Set as a
-  // Worker secret on the hosted deploy; unset everywhere else, where the
-  // beta-stats cron no-ops.
+  // Cloud-only daily KPI digest → Google Chat incoming webhook. Unset everywhere
+  // else, where the beta-stats cron no-ops.
   BETA_STATS_WEBHOOK_URL?: string
 }
 
@@ -51,7 +44,6 @@ export type Variables = {
   tenantId: TenantId
   db: Db
   // Set by editionMiddleware on every request (incl. unauthenticated public
-  // routes). Routes pass this to plan / billing services so the Stripe and
-  // quota code paths share a single source of truth for the install kind.
+  // routes); the single source of truth for the install kind in plan / billing.
   edition: Edition
 }

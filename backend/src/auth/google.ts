@@ -81,11 +81,8 @@ export async function sendGmailMessage(args: {
   return (await res.json()) as { id: string; threadId: string }
 }
 
-// Pure helper used by every Gmail-send path. When `override` is non-empty,
-// every recipient is rewritten to that single mailbox and the originals are
-// preserved in `X-E2E-Original-To`. Sourced from `E2E_RECIPIENT_OVERRIDE` —
-// unset in production, a no-op there. Callers pass `null` / `undefined` /
-// `""` to disable.
+// `override` is sourced from `E2E_RECIPIENT_OVERRIDE` — unset in production
+// deploys, so this is a no-op there.
 export function applyE2eRedirect<
   T extends {
     to: string[]
@@ -114,8 +111,7 @@ export function applyE2eRedirect<
 
 // Built as multipart/alternative so URLs (especially the inquiry-landing and
 // unsubscribe footer links) become clickable in HTML-capable clients while
-// still rendering for plain-text-only readers. The HTML part is auto-derived
-// from the plain body — callers continue passing plain text only.
+// still rendering for plain-text-only readers.
 export function buildRfc822(args: {
   from: string
   to: string[]
@@ -350,8 +346,6 @@ export async function loadSendingIdentitySecret(
   }
 }
 
-// The project's explicit sending_identity_id, else the tenant's connected Gmail.
-// null = neither exists (caller maps to "not connected").
 export async function resolveSendingIdentityId(
   db: Db,
   args: { tenantId: TenantId; projectId: ProjectId },
@@ -368,8 +362,6 @@ export async function resolveSendingIdentityId(
   return id ? asSendingIdentityId(id) : null
 }
 
-// Per-id load + decrypt, returning the provider-tagged secret union; the project
-// send dispatch handles either provider.
 export async function loadSendingIdentitySecretById(
   db: Db,
   args: {
@@ -422,7 +414,6 @@ export async function stampMailboxFirstSendIfNeeded(
   `)
 }
 
-// Drop a revoked gmail_oauth credential so its status flips to disconnected.
 export async function deleteGmailRefreshToken(
   db: Db,
   args: { tenantId: TenantId; identityId: SendingIdentityId },
@@ -435,11 +426,9 @@ export async function deleteGmailRefreshToken(
   `)
 }
 
-// Discriminated union so callers map to HTTP status uniformly. Both providers
-// deliver from the Worker (kind 'sent'). messageId/threadId are the Gmail
-// resource ids (empty for SMTP). rfc822MessageId is the self-generated RFC822
-// Message-ID header we set on BOTH arms — the threading anchor persisted to
-// outreach_logs.message_id (distinct from Gmail's resource id).
+// messageId/threadId are the Gmail resource ids (empty for SMTP). rfc822MessageId
+// is the self-generated RFC822 Message-ID set on both arms — the threading anchor
+// persisted to outreach_logs.message_id (distinct from Gmail's resource id).
 export type MailSendResult =
   | { ok: true; kind: 'sent'; messageId: string; threadId: string; rfc822MessageId: string; from: string; identityId: SendingIdentityId }
   | { ok: false; httpStatus: 412; error: 'Gmail not connected' | 'Gmail token revoked'; detail: string }
@@ -462,8 +451,6 @@ export async function sendForIdentity(
   db: Db,
   args: {
     tenantId: TenantId
-    // Pre-resolved by the caller (resolveSendingIdentityId for project sends,
-    // the tenant's gmail id for owner notifications). Null → 412 not connected.
     identityId: SendingIdentityId | null
     encryptionKey: string
     clientId: string
@@ -481,10 +468,6 @@ export async function sendForIdentity(
     // Gmail rejects unverified aliases at send time; we surface that error.
     senderEmailAlias?: string | null
     senderDisplayName?: string | null
-    // E2E test override. When non-empty, every recipient is rewritten to
-    // this mailbox and the originals are preserved in `X-E2E-Original-To`.
-    // Sourced from the worker `E2E_RECIPIENT_OVERRIDE` env, which is unset
-    // in production deploys — a no-op there.
     e2eRecipientOverride?: string | null
   },
 ): Promise<MailSendResult> {
@@ -600,8 +583,7 @@ export async function sendForIdentity(
       if (!result.ok) {
         return { ok: false, httpStatus: 502, error: 'Send failed', detail: result.detail, from: sendAsEmail }
       }
-      // No Gmail resource ids for SMTP; rfc822MessageId is the Message-ID we set
-      // in the DATA payload (preserved by the MSA for threading).
+      // No Gmail resource ids for SMTP.
       return { ok: true, kind: 'sent', messageId: '', threadId: '', rfc822MessageId, from: sendAsEmail, identityId: identity.identityId }
     }
   }
