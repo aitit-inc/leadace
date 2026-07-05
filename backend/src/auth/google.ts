@@ -3,6 +3,7 @@ import type { Db } from '../db/connection'
 import { signUnsubscribeToken } from './unsubscribe-token'
 import { randomFromAlphabet } from './random-id'
 import {
+  composeFooterBlock,
   inquiryFooterLine,
   replyUnsubscribeFooterLine,
 } from '../domain/inquiry-footer'
@@ -216,6 +217,7 @@ export async function buildComplianceAttachments(args: {
   tenantLegalName: string
   tenantPhysicalAddress: string
   locale: Locale
+  footerOverride: string | null
 }): Promise<{ footer: string; headers: Record<string, string> }> {
   const lines: string[] = []
   const headers: Record<string, string> = {}
@@ -242,7 +244,7 @@ export async function buildComplianceAttachments(args: {
     headers['List-Unsubscribe-Post'] = 'List-Unsubscribe=One-Click'
   }
 
-  const footer = `\n\n---\n${lines.join('\n')}`
+  const footer = `\n\n${args.footerOverride ?? composeFooterBlock(lines)}`
   return { footer, headers }
 }
 

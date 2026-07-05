@@ -44,3 +44,8 @@ export function inquiryFooterLine(inquiryUrl: string, locale: Locale, seed: numb
 export function replyUnsubscribeFooterLine(locale: Locale, seed: number): string {
   return pickVariant(REPLY_UNSUBSCRIBE_VARIANTS[locale], seed)
 }
+
+// Shared by send-time assembly and the settings default preview so they can't drift.
+export function composeFooterBlock(lines: string[]): string {
+  return `---\n${lines.join('\n')}`
+}

@@ -12,6 +12,9 @@ export type ProjectSettingsData = {
   senderEmailAlias: string | null;
   senderDisplayName: string | null;
   unsubscribeEnabled: boolean;
+  footerOverride: string | null;
+  footerDefault: string | null;
+  inquiryLandingEnabled: boolean;
   followUpSequence: FollowUpSequence;
   outboundChannels: OutboundChannel[];
   targetCountries: AllowedSendCountry[];

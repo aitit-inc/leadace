@@ -41,7 +41,7 @@ Examples:
 ## Sender Information
 - Sender name: (Name displayed as email sender)
 - Sender email address: (The From: address shown to recipients)
-- Signature: (A light sign-off appended to emails — e.g., `Best,` + your full name, optionally your role. Keep it light; avoid phone / postal address / multiple URLs. The backend appends the compliance footer with legal name + physical address automatically.)
+- Signature: (A light sign-off appended to emails — e.g., `Best,` + your full name, optionally your role. Keep it light; avoid phone / postal address / multiple URLs. The backend appends the email footer automatically (by default: legal name + physical address + opt-out).)
 - Scheduling link: (Timerex / Calendly / Cal.com URL. In meeting CTA mode, the inquiry-landing page uses this URL behind its "Book a meeting" button. If inquiry landing is disabled, this URL is also embedded inline in email CTAs as the meeting fallback.)
 - Signup URL: (SaaS self-serve signup / "Get started" / "Start your trial" URL. In signup CTA mode, the inquiry-landing page uses this URL behind its "Sign up" button. **Never embedded in email bodies** — the recipient reaches the signup page through the inquiry-landing footer link. Mutually exclusive with the scheduling link — the project picks one CTA mode.)
 

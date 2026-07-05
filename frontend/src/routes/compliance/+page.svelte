@@ -52,7 +52,7 @@
           <tr class="border-b border-border">
             <td class="py-2">US (CAN-SPAM)</td>
             <td class="py-2">Supported</td>
-            <td class="py-2">Footer carries legal name + physical address + unsubscribe.</td>
+            <td class="py-2">Default footer carries legal name + physical address + unsubscribe (§4).</td>
           </tr>
           <tr class="border-b border-border">
             <td class="py-2">CA (CASL)</td>
@@ -63,7 +63,7 @@
             <td class="py-2">JP (特定電子メール法 / 特商法)</td>
             <td class="py-2">Supported</td>
             <td class="py-2">
-              Sender identity + opt-out are carried in the same footer block.{#if EDITION === 'cloud'}
+              Sender identity + opt-out are carried in the same footer block by default (§4).{#if EDITION === 'cloud'}
                 特商法 disclosure on <a href="/legal" class="underline">/legal</a>.{/if}
             </td>
           </tr>
@@ -139,11 +139,13 @@
     </section>
 
     <section>
-      <h2 class="text-base font-semibold text-text">4. Mandatory footer</h2>
+      <h2 class="text-base font-semibold text-text">4. Send-time footer</h2>
       <p class="mt-2">
-        Every outbound message — email, web form, or social DM — has the following footer
-        appended server-side. Workspaces cannot disable it; the message body the operator
-        composes is concatenated with this block at send time.
+        Every outbound message — email, web form, or social DM — has a footer appended
+        server-side at send time; the append step cannot be skipped. By default the footer
+        is the following block. A workspace may replace the footer text per project; as
+        the sender of record, the operator is then responsible for keeping the required
+        sender identity, postal address, and opt-out mechanism in it.
       </p>
       <pre class="mt-3 rounded border border-border bg-surface p-3 text-xs text-text overflow-x-auto"><code
           >---

@@ -1524,6 +1524,8 @@ function buildToolRegistry(): ToolDef[] {
         .describe('Optional job title / role shown alongside senderDisplayName on the inquiry landing header as "From {senderDisplayName}, {senderJobTitle} at {senderCompanyName}". No-op when senderDisplayName is null.'),
       unsubscribeEnabled: z.boolean().optional()
         .describe('Attach the RFC 8058 List-Unsubscribe one-click headers to outbound email. Default false: at cold-outreach volumes the header is a bulk-mail marker (pushes mail into Gmail\'s Promotions tab); the compliance footer\'s opt-out line ships on every send regardless and carries the legal opt-out.'),
+      footerOverride: z.string().trim().min(1).max(2000).nullable().optional()
+        .describe('Custom outreach footer replacing the default (legal name + physical address + reply-based opt-out line) VERBATIM on every outbound message (emails; also baked into form / SNS draft text) — include the "---" separator and the legally required disclosures yourself; the operator owns that content when set. null restores the default (recipient-localized, per-prospect-rotated wording). Mutually exclusive with inquiryLandingEnabled (400). Set only on explicit user request.'),
       inquiryLandingEnabled: z.boolean().optional()
         .describe('When true, outbound emails include an inquiry-landing URL footer that hosts a per-recipient AI chat, meeting-request button, and unsubscribe-with-reason flow.'),
       inquiryChatBrief: z.string().max(4000).nullable().optional()

@@ -260,6 +260,7 @@ async function buildOutreachFooter(
     compliance: TenantComplianceProjection
     inquiryLandingEnabled: boolean
     unsubscribeEnabled: boolean
+    footerOverride: string | null
   },
 ): Promise<{ footer: string; headers: Record<string, string>; inquiryUrl: string | null }> {
   const inquiryUrl = await allocateInquiryUrl(
@@ -282,6 +283,7 @@ async function buildOutreachFooter(
     tenantLegalName: identity.legalName,
     tenantPhysicalAddress: identity.physicalAddress,
     locale: recipientLocale,
+    footerOverride: args.footerOverride,
   })
   return { footer: attachments.footer, headers: attachments.headers, inquiryUrl }
 }
@@ -552,6 +554,7 @@ export async function recordOutreachWithInquiry(
     compliance: complianceResult.value,
     inquiryLandingEnabled: sendSettings.inquiryLandingEnabled,
     unsubscribeEnabled: sendSettings.unsubscribeEnabled,
+    footerOverride: sendSettings.footerOverride,
   })
   const finalBody = `${input.body}${attachments.footer}`
 
@@ -727,6 +730,7 @@ export async function sendAndRecord(
     compliance,
     inquiryLandingEnabled: sendSettings.inquiryLandingEnabled,
     unsubscribeEnabled: sendSettings.unsubscribeEnabled,
+    footerOverride: sendSettings.footerOverride,
   })
   const sendBody = `${input.body}${attachments.footer}`
 
@@ -1139,6 +1143,7 @@ export async function sendDraft(
     compliance,
     inquiryLandingEnabled: sendSettings.inquiryLandingEnabled,
     unsubscribeEnabled: sendSettings.unsubscribeEnabled,
+    footerOverride: sendSettings.footerOverride,
   })
   const sendBody = `${draft.body}${attachments.footer}`
 
@@ -1232,6 +1237,7 @@ export async function previewDraft(
     compliance: complianceResult.value,
     inquiryLandingEnabled: sendSettings.inquiryLandingEnabled,
     unsubscribeEnabled: sendSettings.unsubscribeEnabled,
+    footerOverride: sendSettings.footerOverride,
   })
   return ok({ footer: { kind: 'rendered', text: attachments.footer } })
 }

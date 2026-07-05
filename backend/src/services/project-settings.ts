@@ -18,6 +18,9 @@ import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { isHttpsUrl, HTTPS_ONLY_MSG } from '../domain/url'
 import { ALLOWED_SEND_COUNTRIES } from '../domain/country'
+import { composeFooterBlock, replyUnsubscribeFooterLine } from '../domain/inquiry-footer'
+import { localeForCountry } from '../domain/locale'
+import { loadTenantSettings, localizeComplianceIdentity } from './tenants'
 import { leverConfigSchema, leverConfigPatchSchema, type LeverConfig } from '../domain/lever-config'
 import {
   followUpSequenceSchema,
@@ -39,6 +42,7 @@ export const updateSettingsSchema = z
     senderCompanyName: z.string().min(1).max(200).nullable().optional(),
     senderJobTitle: z.string().min(1).max(200).nullable().optional(),
     unsubscribeEnabled: z.boolean().optional(),
+    footerOverride: z.string().trim().min(1).max(2000).nullable().optional(),
     inquiryLandingEnabled: z.boolean().optional(),
     inquiryChatBrief: z.string().max(4000).nullable().optional(),
     inquiryOneLiner: z.string().max(140).nullable().optional(),
@@ -86,6 +90,7 @@ const settingsCols = {
   senderCompanyName: projectSettings.senderCompanyName,
   senderJobTitle: projectSettings.senderJobTitle,
   unsubscribeEnabled: projectSettings.unsubscribeEnabled,
+  footerOverride: projectSettings.footerOverride,
   inquiryLandingEnabled: projectSettings.inquiryLandingEnabled,
   inquiryChatBrief: projectSettings.inquiryChatBrief,
   inquiryOneLiner: projectSettings.inquiryOneLiner,
@@ -114,6 +119,9 @@ export type ProjectSettingsRow = {
   senderCompanyName: string | null
   senderJobTitle: string | null
   unsubscribeEnabled: boolean
+  footerOverride: string | null
+  // Not a column — the default footer resolved at read (resolveFooterDefault).
+  footerDefault: string | null
   inquiryLandingEnabled: boolean
   inquiryChatBrief: string | null
   inquiryOneLiner: string | null
@@ -150,6 +158,7 @@ export type ProjectSendSettings = {
   senderEmailAlias: string | null
   senderDisplayName: string | null
   unsubscribeEnabled: boolean
+  footerOverride: string | null
   inquiryLandingEnabled: boolean
 }
 
@@ -163,6 +172,7 @@ export async function loadProjectSendSettings(
       senderEmailAlias: projectSettings.senderEmailAlias,
       senderDisplayName: projectSettings.senderDisplayName,
       unsubscribeEnabled: projectSettings.unsubscribeEnabled,
+      footerOverride: projectSettings.footerOverride,
       inquiryLandingEnabled: projectSettings.inquiryLandingEnabled,
     })
     .from(projectSettings)
@@ -239,6 +249,36 @@ export async function loadProjectFollowUpConfig(
   return followUpSequenceSchema.parse(assertSettingsRow(row, projectId).followUpSequence)
 }
 
+// Representative preview of the send-time footer: locale follows the tenant's
+// own country here (the recipient's at send) and the opt-out wording rotates
+// per prospect. null until workspace legalName / physicalAddress are set.
+async function resolveFooterDefault(
+  db: Db,
+  tenantId: TenantId,
+): Promise<ServiceResult<string | null>> {
+  const settings = await loadTenantSettings(db, tenantId)
+  if (!settings.ok) return settings
+  const t = settings.value
+  if (!t.legalName || !t.physicalAddress) return ok(null)
+  const locale = localeForCountry(t.defaultSenderCountry)
+  const identity = localizeComplianceIdentity(
+    {
+      legalName: t.legalName,
+      physicalAddress: t.physicalAddress,
+      legalNameJa: t.legalNameJa,
+      physicalAddressJa: t.physicalAddressJa,
+    },
+    locale,
+  )
+  return ok(
+    composeFooterBlock([
+      identity.legalName,
+      identity.physicalAddress,
+      replyUnsubscribeFooterLine(locale, 0),
+    ]),
+  )
+}
+
 export async function getProjectSettings(
   db: Db,
   tenantId: TenantId,
@@ -254,9 +294,12 @@ export async function getProjectSettings(
     .where(eq(projectSettings.projectId, projectId))
     .limit(1)
   const r = assertSettingsRow(row, projectId)
+  const footerDefault = await resolveFooterDefault(db, tenantId)
+  if (!footerDefault.ok) return footerDefault
   return ok({
     ...r,
     projectId: r.projectId as ProjectId,
+    footerDefault: footerDefault.value,
     outboundChannels: r.outboundChannels as OutboundChannel[],
     followUpSequence: followUpSequenceSchema.parse(r.followUpSequence),
   })
@@ -293,6 +336,29 @@ export async function updateProjectSettings(
     }
   }
 
+  // Friendly 400 in the single-writer case; chk_footer_override_inquiry_off is
+  // the atomic guarantee (same race caveat as the CTA pre-check above).
+  if (patch.footerOverride !== undefined || patch.inquiryLandingEnabled !== undefined) {
+    const [existing] = await db
+      .select({
+        inquiryLandingEnabled: projectSettings.inquiryLandingEnabled,
+        footerOverride: projectSettings.footerOverride,
+      })
+      .from(projectSettings)
+      .where(eq(projectSettings.projectId, projectId))
+      .limit(1)
+    const e = assertSettingsRow(existing, projectId)
+    const nextEnabled = patch.inquiryLandingEnabled ?? e.inquiryLandingEnabled
+    const nextOverride = patch.footerOverride !== undefined ? patch.footerOverride : e.footerOverride
+    if (nextEnabled && nextOverride !== null) {
+      return err(
+        'INVALID_INPUT',
+        'A custom footer and the inquiry landing are mutually exclusive',
+        'The inquiry landing appends a per-prospect link the static footer cannot carry. Reset the footer to default to enable the inquiry landing, or disable the inquiry landing to customize the footer.',
+      )
+    }
+  }
+
   // FK is the atomic guarantee; this pre-check turns the common case into a clean 400.
   if (patch.sendingIdentityId != null) {
     const [identity] = await db
@@ -315,6 +381,7 @@ export async function updateProjectSettings(
     ...(patch.senderCompanyName !== undefined ? { senderCompanyName: patch.senderCompanyName } : {}),
     ...(patch.senderJobTitle !== undefined ? { senderJobTitle: patch.senderJobTitle } : {}),
     ...(patch.unsubscribeEnabled !== undefined ? { unsubscribeEnabled: patch.unsubscribeEnabled } : {}),
+    ...(patch.footerOverride !== undefined ? { footerOverride: patch.footerOverride } : {}),
     ...(patch.inquiryLandingEnabled !== undefined ? { inquiryLandingEnabled: patch.inquiryLandingEnabled } : {}),
     ...(patch.inquiryChatBrief !== undefined ? { inquiryChatBrief: patch.inquiryChatBrief } : {}),
     ...(patch.inquiryOneLiner !== undefined ? { inquiryOneLiner: patch.inquiryOneLiner } : {}),
@@ -359,9 +426,12 @@ export async function updateProjectSettings(
   }
 
   const r = assertSettingsRow(row, projectId)
+  const footerDefault = await resolveFooterDefault(db, tenantId)
+  if (!footerDefault.ok) return footerDefault
   return ok({
     ...r,
     projectId: r.projectId as ProjectId,
+    footerDefault: footerDefault.value,
     outboundChannels: r.outboundChannels as OutboundChannel[],
     followUpSequence: followUpSequenceSchema.parse(r.followUpSequence),
   })

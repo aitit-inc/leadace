@@ -1,0 +1,2 @@
+ALTER TABLE "project_settings" ADD COLUMN "footer_override" text;--> statement-breakpoint
+ALTER TABLE "project_settings" ADD CONSTRAINT "chk_footer_override_inquiry_off" CHECK (NOT "project_settings"."inquiry_landing_enabled" OR "project_settings"."footer_override" IS NULL);

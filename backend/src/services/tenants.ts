@@ -105,7 +105,10 @@ export type TenantComplianceProjection = {
 }
 
 export function localizeComplianceIdentity(
-  c: TenantComplianceProjection,
+  c: Pick<
+    TenantComplianceProjection,
+    'legalName' | 'physicalAddress' | 'legalNameJa' | 'physicalAddressJa'
+  >,
   locale: Locale,
 ): { legalName: string; physicalAddress: string } {
   if (locale !== 'ja') {

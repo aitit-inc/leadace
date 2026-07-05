@@ -20,6 +20,7 @@ describe('buildComplianceAttachments', () => {
     tenantPhysicalAddress: '1 Main St',
     locale: 'en' as const,
     unsubscribeEnabled: false,
+    footerOverride: null,
   }
 
   it('collapses to the inquiry link and drops the standalone unsubscribe line when inquiry is enabled', async () => {
@@ -78,6 +79,20 @@ describe('buildComplianceAttachments', () => {
 
     const off = await buildComplianceAttachments({ ...base, inquiryUrl: null })
     expect(off.headers).toEqual({})
+  })
+
+  it('uses footerOverride verbatim — no assembly, no localization — headers unaffected', async () => {
+    const override = '---\nAcme Inc. / Jane Doe\n1 Main St\nLeadAce: https://example.com\nReply "unsubscribe" to opt out.'
+    const { footer, headers } = await buildComplianceAttachments({
+      ...base,
+      locale: 'ja',
+      unsubscribeEnabled: true,
+      inquiryUrl: null,
+      footerOverride: override,
+    })
+    expect(footer).toBe(`\n\n${override}`)
+    expect(footer).not.toMatch(/配信停止/) // no assembled localized line
+    expect(headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click')
   })
 })
 

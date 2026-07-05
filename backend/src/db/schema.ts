@@ -424,6 +424,10 @@ export const projectSettings = pgTable('project_settings', {
   // header lands cold mail in Gmail's Promotions tab; the footer line carries the
   // legal opt-out on its own.
   unsubscribeEnabled: boolean('unsubscribe_enabled').notNull().default(false),
+  // Verbatim replacement for the assembled footer (`---` included); NULL =
+  // assemble the default. Mutually exclusive with inquiry_landing_enabled —
+  // a static override can't carry the per-prospect inquiry link.
+  footerOverride: text('footer_override'),
   // Format checks (URL shape, hex color) live in zod, not DB CHECK
   // constraints — those would be brittle for URL/hex evolution.
   // Default off: cold mail is link-free by default (a shared app-domain link is
@@ -502,6 +506,12 @@ export const projectSettings = pgTable('project_settings', {
   check(
     'chk_inquiry_cta_signup_requires_url',
     sql`${table.inquiryCtaType} <> 'signup' OR ${table.inquiryCtaUrl} IS NOT NULL`,
+  ),
+  // The pre-check in updateProjectSettings gives the friendly 400; like the CTA
+  // check above, this is the atomic guarantee under concurrent partial PUTs.
+  check(
+    'chk_footer_override_inquiry_off',
+    sql`NOT ${table.inquiryLandingEnabled} OR ${table.footerOverride} IS NULL`,
   ),
 ])
 

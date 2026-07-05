@@ -48,6 +48,10 @@
   // Sent back only when actually edited — an unrelated save must not materialize
   // the resolved defaults into the overrides-only follow_up_sequence cell.
   let followUpLoaded = $state<FollowUpSequence | null>(null);
+  // Text matching the default (or empty) saves as null so an unedited prefill
+  // never freezes the recipient-adaptive default footer.
+  let footerText = $state('');
+  let footerLoadedOverride = $state<string | null>(null);
 
   // When sending from a custom SMTP mailbox, the Gmail Send-As alias doesn't apply.
   // A non-null sendingIdentityId is always a custom SMTP mailbox (the selector only
@@ -64,6 +68,8 @@
     if (!loaded) {
       projectSettings = null;
       followUpLoaded = null;
+      footerText = '';
+      footerLoadedOverride = null;
       return;
     }
     projectSettings = {
@@ -77,6 +83,8 @@
       ...loaded.followUpSequence,
       gapDays: [...loaded.followUpSequence.gapDays],
     };
+    footerText = loaded.footerOverride ?? loaded.footerDefault ?? '';
+    footerLoadedOverride = loaded.footerOverride;
   });
 
   let savingSettings = $state(false);
@@ -105,6 +113,7 @@
         senderEmailAlias: projectSettings.senderEmailAlias?.trim() || null,
         senderDisplayName: projectSettings.senderDisplayName?.trim() || null,
         unsubscribeEnabled: projectSettings.unsubscribeEnabled,
+        ...(footerChanged() ? { footerOverride: computedFooterOverride() } : {}),
         ...(followUpChanged() ? { followUpSequence: projectSettings.followUpSequence } : {}),
         outboundChannels: projectSettings.outboundChannels,
         targetCountries: projectSettings.targetCountries,
@@ -174,6 +183,20 @@
       cur.gapDays.length !== base.gapDays.length ||
       cur.gapDays.some((d, i) => d !== base.gapDays[i])
     );
+  }
+
+  function computedFooterOverride(): string | null {
+    const text = footerText.trim();
+    const def = (projectSettings?.footerDefault ?? '').trim();
+    return text === '' || text === def ? null : text;
+  }
+
+  function footerChanged(): boolean {
+    return computedFooterOverride() !== footerLoadedOverride;
+  }
+
+  function resetFooter() {
+    footerText = projectSettings?.footerDefault ?? '';
   }
 
   async function handleDelete() {
@@ -342,11 +365,61 @@
           Attach the RFC 8058 List-Unsubscribe one-click header to outbound emails
           <span class="block text-xs text-text-secondary">
             Off by default: the header marks mail as bulk and pushes cold email into
-            Gmail's Promotions tab. The compliance footer always carries the opt-out
-            (a reply instruction, or the inquiry-landing link when enabled), so
-            opt-out compliance does not depend on this header.
+            Gmail's Promotions tab. The default footer carries the opt-out (a reply
+            instruction, or the inquiry-landing link when enabled) — keep an opt-out
+            line in a custom footer too — so opt-out compliance does not depend on
+            this header.
           </span>
         </label>
+      </div>
+
+      <div>
+        <label for="email-footer" class="block text-xs font-medium text-text-secondary mb-1">
+          Message footer
+        </label>
+        {#if s.inquiryLandingEnabled}
+          <p class="text-xs text-text-muted">
+            The inquiry landing is enabled, so the footer carries each prospect's personal
+            inquiry link and is assembled per send — it can't be replaced with static text.
+            Disable the landing in
+            <a href="/inquiry-settings" class="underline hover:text-text">Inquiry settings</a>
+            to customize the footer.
+          </p>
+        {:else}
+          <textarea
+            id="email-footer"
+            rows="5"
+            bind:value={footerText}
+            class="w-full max-w-lg rounded border border-border bg-page px-2 py-1.5 text-sm text-text font-mono"
+          ></textarea>
+          <div class="mt-1 flex items-center gap-3">
+            <span class="text-xs {computedFooterOverride() !== null ? 'text-accent' : 'text-text-muted'}">
+              {computedFooterOverride() !== null ? 'Custom' : 'Default'}
+            </span>
+            <button
+              type="button"
+              onclick={resetFooter}
+              disabled={!s.footerDefault || footerText.trim() === s.footerDefault}
+              class="text-xs text-accent hover:text-accent-strong transition-colors disabled:opacity-50"
+            >
+              Reset to default
+            </button>
+          </div>
+          <p class="mt-1 text-xs text-text-muted">
+            Appended after the body of every outbound message — emails, and the form /
+            social-DM draft text you copy from Drafts. The default adapts to each
+            recipient — Japanese recipients get a Japanese footer and the opt-out wording
+            varies per prospect. Edited text is sent verbatim to everyone; keep your sender
+            identity, address, and an opt-out instruction in it (that content is your legal
+            responsibility). Clearing the text restores the default.
+          </p>
+          {#if !s.footerDefault}
+            <p class="mt-1 text-xs text-text-muted">
+              No default available yet — set Legal name and Physical address in
+              <a href="/workspace-settings" class="underline hover:text-text">Workspace settings</a>.
+            </p>
+          {/if}
+        {/if}
       </div>
 
       <div>

@@ -108,8 +108,8 @@
   <header>
     <h1 class="text-2xl font-semibold text-text">Workspace settings</h1>
     <p class="mt-1 text-sm text-text-secondary">
-      Identity used in every outgoing email's compliance footer (CAN-SPAM / CASL). All sends are
-      blocked until legal name, physical address, and sender country are set.
+      Identity used in the default footer of every outgoing email (CAN-SPAM / CASL). All sends
+      are blocked until legal name, physical address, and sender country are set.
     </p>
   </header>
 
@@ -216,7 +216,7 @@
           <h2 class="text-sm font-semibold text-text">Japanese footer (for recipients in Japan)</h2>
           <p class="mt-1 text-xs text-text-muted">
             Optional. When a recipient's country is Japan (set on the prospect, or inherited from
-            their organization), the footer uses these instead of the values above — so a bilingual
+            their organization), the default footer uses these instead of the values above — so a bilingual
             sender shows its Japanese legal identity to Japanese customers and the English one to
             everyone else. Leave any field blank to fall back to the value above. Recipient language
             switches automatically by country; no other setup needed.

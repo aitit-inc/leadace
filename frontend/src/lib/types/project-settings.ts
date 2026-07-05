@@ -23,6 +23,9 @@ export type ProjectSettings = {
   senderEmailAlias: string | null;
   senderDisplayName: string | null;
   unsubscribeEnabled: boolean;
+  footerOverride: string | null;
+  // Server-resolved default preview; null until workspace legalName / physicalAddress are set.
+  footerDefault: string | null;
   senderCompanyName: string | null;
   senderJobTitle: string | null;
   inquiryLandingEnabled: boolean;
