@@ -8,7 +8,6 @@ import {
 } from '../db/schema'
 import type { Db } from '../db/connection'
 import { asTenantId } from '../domain/ids'
-import { localeForCountry, type Locale } from '../domain/locale'
 import { ok, err, type ServiceResult } from './result'
 import { recordResponse } from './responses'
 import { rejectionFeedbackCommonSchema } from '../domain/rejection-feedback'
@@ -26,9 +25,6 @@ export type UnsubscribeInfo = {
   email: string
   organizationName: string
   alreadyUnsubscribed: boolean
-  // Recipient language for the legacy unsubscribe page (effective country:
-  // prospect override → organization). JP → Japanese, else English.
-  locale: Locale
 }
 
 export async function getUnsubscribeInfo(
@@ -39,9 +35,7 @@ export async function getUnsubscribeInfo(
     .select({
       email: prospects.email,
       doNotContact: prospects.doNotContact,
-      prospectCountry: prospects.country,
       organizationName: organizations.name,
-      organizationCountry: organizations.country,
     })
     .from(prospects)
     .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
@@ -56,7 +50,6 @@ export async function getUnsubscribeInfo(
     email: row.email,
     organizationName: row.organizationName,
     alreadyUnsubscribed: row.doNotContact,
-    locale: localeForCountry(row.prospectCountry ?? row.organizationCountry),
   })
 }
 

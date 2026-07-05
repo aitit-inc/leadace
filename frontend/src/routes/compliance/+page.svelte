@@ -98,8 +98,9 @@
           address (street address, registered PO Box, or CMRA-registered private mailbox).
         </li>
         <li>
-          <strong>Default sender country</strong> — ISO 3166-1 alpha-2. Determines which
-          country-specific footer rules are applied as those ship.
+          <strong>Default sender country</strong> — ISO 3166-1 alpha-2. Workspace metadata
+          recorded for compliance readiness; it is not rendered into outbound mail and does
+          not affect message language (a per-project setting, §4).
         </li>
       </ul>
       <p class="mt-2">
@@ -143,7 +144,9 @@
       <p class="mt-2">
         Every outbound message — email, web form, or social DM — has a footer appended
         server-side at send time; the append step cannot be skipped. By default the footer
-        is the following block. A workspace may replace the footer text per project; as
+        is the following block, assembled in the project's configured message language
+        (English or Japanese); matching that language to the project's audience is the
+        operator's responsibility. A workspace may replace the footer text per project; as
         the sender of record, the operator is then responsible for keeping the required
         sender identity, postal address, and opt-out mechanism in it.
       </p>

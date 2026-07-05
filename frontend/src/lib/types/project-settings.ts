@@ -10,6 +10,10 @@ export type OutboundChannel = (typeof OUTBOUND_CHANNELS)[number];
 export const ALLOWED_SEND_COUNTRIES = ['US', 'CA', 'JP'] as const;
 export type AllowedSendCountry = (typeof ALLOWED_SEND_COUNTRIES)[number];
 
+// Keep aligned with backend Locale (domain/locale.ts).
+export const TARGET_LANGUAGES = ['en', 'ja'] as const;
+export type TargetLanguage = (typeof TARGET_LANGUAGES)[number];
+
 // Keep aligned with backend FollowUpSequence (domain/follow-up-sequence.ts).
 export type FollowUpSequence = {
   enabled: boolean;
@@ -41,5 +45,6 @@ export type ProjectSettings = {
   followUpSequence: FollowUpSequence;
   outboundChannels: OutboundChannel[];
   targetCountries: AllowedSendCountry[];
+  targetLanguage: TargetLanguage;
   updatedAt: string | null;
 };

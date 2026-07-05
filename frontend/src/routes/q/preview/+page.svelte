@@ -6,6 +6,7 @@
     type InquiryChatTurn,
     type InquiryLandingPayload,
   } from '$lib/api/inquiry';
+  import { browserLocale } from '$lib/browser-locale';
   import InquiryLandingView from '$lib/components/inquiry/InquiryLandingView.svelte';
   import Logo from '$lib/components/Logo.svelte';
   import type { PageProps } from './$types';
@@ -53,6 +54,7 @@
       data.selectedProspectId,
       history,
       message,
+      browserLocale(),
       fetch,
       token,
     );

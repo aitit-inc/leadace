@@ -216,7 +216,7 @@ Phone stays in SALES_STRATEGY.md "Sender Information" (forms reference it). The 
 
 If the email is a Send-As alias **not yet verified** in Gmail (Settings → Accounts → "Send mail as"), Gmail will reject the send. Tell the user to verify before `/outbound`. Primary Gmail addresses don't need verification.
 
-#### 4-8. Outbound Mode, Channels & Target Countries
+#### 4-8. Outbound Mode, Channels, Target Countries & Language
 
 **Outbound mode:**
 - `send` (default): emails sent immediately during `/outbound`.
@@ -226,6 +226,8 @@ If the email is a Send-As alias **not yet verified** in Gmail (Settings → Acco
 
 **Target countries (optional)** — by default `/outbound` reaches every supported recipient country (the server enforces the current allowlist). Only collect this if the user wants to **restrict** delivery to a subset — take ISO 3166-1 alpha-2 codes (the backend validates them against the allowlist and rejects unsupported ones).
 
+**Target language** — the language of every outbound message for this project (`en` | `ja`; default `en`): the AI-written subject/body and the server-rendered footer. One project targets one language — audiences in different languages belong in separate projects. Propose a default from the target market discussed in 4-2 (Japanese audience → `ja`, otherwise `en`) and confirm with the user. Independent of target countries (a delivery restriction) — e.g. English outreach to a Japanese developer audience is a legitimate `en` + JP combination.
+
 Save the values the user actually chose:
 ```
 mcp__plugin_leadace_api__update_project_settings
@@ -233,6 +235,7 @@ mcp__plugin_leadace_api__update_project_settings
   outboundMode: "send" | "draft"
   outboundChannels: ["email", ...]   # a NON-EMPTY subset; see guard below. Omit to keep the all-channels default
   targetCountries: ["US", ...]       # omit entirely unless the user is restricting delivery
+  targetLanguage: "en" | "ja"        # the value confirmed with the user; always include it
 ```
 Guards:
 - `outboundMode`: "Up to you" → default `send`.
@@ -323,11 +326,12 @@ Ask for these in 2-3 questions max. Each item below declares its own input style
 2. **Notification email** (4-10 equivalent): "Email address for daily-cycle completion notifications, or 'none'."
 3. **Inquiry landing optional polish** (4-11 equivalent): run **only Step 4-11's collection / parsing parts** — issue the combined free-text prompt (free-text, not `AskUserQuestion`), pre-filling whatever §4B-2 inferred (`inquiryVideoUrl` / `inquiryPdfUrl` / inferred CTA `inquiryCtaType` + `inquiryCtaUrl`) **plus** any `INQUIRY_PREFILLS` carried over from 4-0; show those defaults in the prompt and let the user accept them by replying "ok", override, or skip per-field. Don't double-ask for items already supplied; only items the user has neither pre-filled nor that 4B-2 could infer should appear as fresh blanks. **Do NOT issue 4-11's `update_project_settings` call here, and do NOT print 4-11's "All set" closing line** — §4B-4 saves the inquiry-extra fields together with sender / brief / one-liner so that nothing is persisted before the user confirms the §4B-4 summary.
 
-Do not ask for prospect discovery sources, outbound mode, channels, target countries, or response definition in Mode B — apply defaults:
+Do not ask for prospect discovery sources, outbound mode, channels, target countries, target language, or response definition in Mode B — apply defaults:
 - Prospect discovery sources: pick 2-3 from `tpl_targeting_guide` matching the inferred target market.
 - Outbound mode: default `draft` (recommended for new users to review the first batch before sending).
 - Outbound channels: per `ENV_SUMMARY` `BROWSER_AUTOMATION` — `chrome` → omit the field (project defaults to all channels); `other` → `outboundChannels: ["email", "form"]` (SNS needs Chrome); `none`/`unsure` → `["email"]`. **Never write an empty array.**
 - Target countries: omit (unrestricted by default — the server enforces the supported-country allowlist).
+- Target language: infer from the target market (`targetLanguage: "ja"` when the audience is Japanese; otherwise omit — the default is `en`). Include the inferred value in the §4B-4 summary so the user can correct it.
 - Response definition: defaults (1)(2)(3) from 4-9.
 
 #### 4B-4. Show inference summary and confirm
@@ -342,6 +346,7 @@ mcp__plugin_leadace_api__update_project_settings
   senderEmailAlias: <email>
   outboundMode: "draft"
   outboundChannels: ["email"]     # BROWSER_AUTOMATION: other → ["email","form"]; none/unsure → ["email"]; chrome → omit (all). Never []
+  targetLanguage: "ja"            # only when §4B-3 inferred a Japanese audience; omit for the "en" default
   inquiryChatBrief: <brief>
   inquiryOneLiner: <one-liner>
   inquiryVideoUrl: <url>          # include when accepted/overridden in §4B-3; omit only when explicitly skipped
@@ -419,7 +424,7 @@ The AI inquiry chat on the recipient landing page reads `inquiry_chat_brief` fro
 `EXISTING_BRIEF = SETTINGS.inquiryChatBrief` (from Step 3).
 
 **Content / style spec** — used both here (Mode A) and by §4B-2 (Mode B):
-- Target **~1000 characters** (English baseline; CJK languages can aim shorter given the higher information density per character). Hard cap is 4000 chars (DB column limit) but aim for ~1000 — the brief is a system-prompt fragment for the inquiry chat, not a UI document. Plain prose with optional `Q: …` / `A: …` lines for the FAQ section. No markdown headings or bullet trees. Match the project's working language.
+- Target **~1000 characters** (English baseline; CJK languages can aim shorter given the higher information density per character). Hard cap is 4000 chars (DB column limit) but aim for ~1000 — the brief is a system-prompt fragment for the inquiry chat, not a UI document. Plain prose with optional `Q: …` / `A: …` lines for the FAQ section. No markdown headings or bullet trees. Match the project's target language (`targetLanguage` in project settings).
 - Cover, in this order:
   1. one-line elevator pitch (what / for whom)
   2. 2-3 specific problems the offer solves + the differentiating mechanism (1 short paragraph)
@@ -467,7 +472,7 @@ Tell the user once: "You can edit the brief / one-liner later in the Web UI → 
 2. Generate 2-3 short subject patterns (each ≤ 80 chars) following these rules:
    - Distinct angles, not paraphrases of one idea (e.g., warm-intro / direct-question / signal-driven). One-shot subjects only — no follow-up wording.
    - Use placeholders sparingly: `{{org}}` for the recipient organization, `{{name}}` for the contact name, `{{signal}}` for a recent signal phrase. The skill substitutes these at send time; never invent other placeholder names.
-   - Match the project's working language and tone (read `BUSINESS.md` + `SALES_STRATEGY.md` Messaging section for voice).
+   - Match the project's target language (`targetLanguage` in project settings) and tone (read `BUSINESS.md` + `SALES_STRATEGY.md` Messaging section for voice).
    - Avoid fabricating company-specific claims in the subject. Pricing, exact metrics, and unverified track record stay in the body.
 3. For each, call `mcp__plugin_leadace_api__upsert_subject_variant`:
    ```

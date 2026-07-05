@@ -8,6 +8,7 @@ import { verifyJwt, verifySupabaseJwt } from '../auth/verify-jwt'
 import { BUG_REPORT_CATEGORIES, OUTBOUND_MODES, OUTBOUND_CHANNELS, REJECTION_PRIMARY_REASONS, REJECTION_RECONTACT_WINDOWS, prospectStatusEnum, prioritySchema } from '../db/schema'
 import { ALLOWED_SEND_COUNTRIES } from '../domain/country'
 import { discoveryStrategySchema, variantIdSchema } from '../domain/ids'
+import { localeSchema } from '../domain/locale'
 import type { OutreachQuota, OutreachQuotaWindow } from '../services/plan-limits'
 import {
   handleMetadata,
@@ -51,12 +52,10 @@ type Env = {
 // that the old plugin cannot tolerate (removed tool, renamed required arg,
 // changed response shape). See .claude/rules/release.md.
 const SERVER_VERSION = '1.0.0'
-// 0.6.16 hard-cuts < 0.6.16 plugins because the evaluations table was dropped:
-// `get_evaluation_history` was removed (old `/evaluate`, `/daily-cycle`,
-// `/leadace` SKILL.md still call it) and `record_evaluation` now requires a
-// non-empty `priorityUpdates` (old skills also passed metrics/findings/
-// improvements and, on the insufficient-data path, no priorities at all → 400).
-const MIN_PLUGIN_VERSION = '0.6.16'
+// 0.7.14 hard-cuts older plugins: their onboarding never collects the new
+// targetLanguage setting, so a JP-audience project they create would silently
+// send English. (Previous cut: 0.6.16, evaluations-table drop.)
+const MIN_PLUGIN_VERSION = '0.7.14'
 
 async function extractUserId(request: Request, jwtSecret: string, supabaseUrl?: string): Promise<string | null> {
   const authHeader = request.headers.get('Authorization')
@@ -563,7 +562,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'update_tenant_settings',
-    'Update workspace-level identity / compliance fields. All fields are optional — only the keys you pass are written. legalName / physicalAddress / defaultSenderCountry are the three mandatory-for-outbound fields; setting them clears the 412 send-time refusal. defaultSenderCountry is the sender-side ISO 3166-1 alpha-2 code recorded in the compliance footer; any valid alpha-2 is accepted. It is independent from the recipient-delivery allowlist (which is enforced separately on prospect / organization country). Used by /leadace to interactively fill compliance during onboarding.',
+    'Update workspace-level identity / compliance fields. All fields are optional — only the keys you pass are written. legalName / physicalAddress / defaultSenderCountry are the three mandatory-for-outbound fields; setting them clears the 412 send-time refusal. defaultSenderCountry is the sender-side ISO 3166-1 alpha-2 code (workspace metadata; not rendered into outbound mail); any valid alpha-2 is accepted. It is independent from the recipient-delivery allowlist (enforced separately on prospect / organization country) and from message language (project targetLanguage). Used by /leadace to interactively fill compliance during onboarding.',
     {
       name: z.string().min(1).max(120).optional().describe('Workspace display name (internal label).'),
       legalName: z.string().min(1).max(200).nullable().optional().describe('Registered business name shown in the email compliance footer (CAN-SPAM § 5(a)(5)).'),
@@ -1525,7 +1524,7 @@ function buildToolRegistry(): ToolDef[] {
       unsubscribeEnabled: z.boolean().optional()
         .describe('Attach the RFC 8058 List-Unsubscribe one-click headers to outbound email. Default false: at cold-outreach volumes the header is a bulk-mail marker (pushes mail into Gmail\'s Promotions tab); the compliance footer\'s opt-out line ships on every send regardless and carries the legal opt-out.'),
       footerOverride: z.string().trim().min(1).max(2000).nullable().optional()
-        .describe('Custom outreach footer replacing the default (legal name + physical address + reply-based opt-out line) VERBATIM on every outbound message (emails; also baked into form / SNS draft text) — include the "---" separator and the legally required disclosures yourself; the operator owns that content when set. null restores the default (recipient-localized, per-prospect-rotated wording). Mutually exclusive with inquiryLandingEnabled (400). Set only on explicit user request.'),
+        .describe('Custom outreach footer replacing the default (legal name + physical address + reply-based opt-out line) VERBATIM on every outbound message (emails; also baked into form / SNS draft text) — include the "---" separator and the legally required disclosures yourself; the operator owns that content when set. null restores the default (rendered in the targetLanguage of the project, per-prospect-rotated wording). Mutually exclusive with inquiryLandingEnabled (400). Set only on explicit user request.'),
       inquiryLandingEnabled: z.boolean().optional()
         .describe('When true, outbound emails include an inquiry-landing URL footer that hosts a per-recipient AI chat, meeting-request button, and unsubscribe-with-reason flow.'),
       inquiryChatBrief: z.string().max(4000).nullable().optional()
@@ -1561,6 +1560,8 @@ function buildToolRegistry(): ToolDef[] {
         .describe('Channels the project is allowed to use for outbound. Subset of {email, form, sns_twitter, sns_linkedin}. Default is all four. Narrow this when the operator wants to avoid less-stable browser-driven channels — skills must skip prospects whose only reachable channel is disabled. An empty array effectively pauses the project for outbound.'),
       targetCountries: z.array(z.enum(ALLOWED_SEND_COUNTRIES)).optional()
         .describe('ISO 3166-1 alpha-2 codes that further narrow the compliance-level send allowlist (currently US / CA / JP). Empty array (default) = no project-level restriction. Non-empty = explicit allowlist; /build-list focuses discovery on these countries and /outbound excludes prospects outside the set in addition to the unchanged send-time compliance gate.'),
+      targetLanguage: localeSchema.optional()
+        .describe('Language of this project\'s outbound messages ("en" or "ja", default "en"): the compliance footer wording / identity localization server-side, and the language skills should write subjects and bodies in. One project targets one language — split mixed-language audiences into separate projects. A content setting, not a targeting filter: independent of targetCountries, and recipient-facing web pages (inquiry landing, unsubscribe) follow the visitor\'s browser language instead.'),
     },
     async ({ projectId, ...patch }, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('PUT', `/projects/${encodeURIComponent(projectId)}/settings`, patch, apiUrl, authHeader)

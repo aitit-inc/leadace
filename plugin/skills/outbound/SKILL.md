@@ -85,6 +85,7 @@ Retrieve the uncontacted prospect list and the project's send settings:
 The targets response includes `Outbound mode: send | draft`. **Capture this value** — it determines whether each channel actually delivers (`send`) or only stores a draft for the user to review and send manually from https://app.leadace.ai/drafts (`draft`). The draft path applies to all channels (email, form, SNS).
 
 From the settings response, surface for body composition:
+- `targetLanguage` (`en` | `ja`) — the language of every outbound message: subject, body, and sign-off. Compose in it regardless of any language phrasing in project documents; the server renders the footer in the same language.
 - `inquiryLandingEnabled` — drives the mail template branch in step 3.
 - `inquiryCtaType` (`meeting` | `signup`) — read alongside `inquiryLandingEnabled`. Determines which backup CTA the email body carries; see step 3's "Inquiry-aware CTA branch" for the rule.
 - `inquiryChatBrief` (when non-empty) — the system-prompt fragment the

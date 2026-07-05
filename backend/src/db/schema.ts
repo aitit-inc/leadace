@@ -20,6 +20,7 @@ import {
 import { sql } from 'drizzle-orm'
 import type { LeverConfigPatch } from '../domain/lever-config'
 import type { FollowUpSequencePatch } from '../domain/follow-up-sequence'
+import type { Locale } from '../domain/locale'
 import type { ChannelAffinityMap, ChannelCoarseStat } from '../domain/channel-affinity'
 
 const bytea = customType<{ data: Uint8Array; driverData: Uint8Array }>({
@@ -305,15 +306,15 @@ export const tenants = pgTable('tenants', {
   // assertTenantComplianceReady before any actual outreach.
   legalName: text('legal_name'),
   physicalAddress: text('physical_address'),
-  // ISO 3166-1 alpha-2 (e.g. 'US'). The tenant's own country, used for
-  // future jurisdiction-specific footer rendering and per-country audit. Not
-  // the recipient's country (that lives on prospects / organizations).
+  // ISO 3166-1 alpha-2. The tenant's own country: presence-gated by
+  // compliance readiness, but never rendered into mail and unrelated to
+  // message language (project_settings.target_language).
   defaultSenderCountry: text('default_sender_country'),
-  // Japanese footer variants, used verbatim for JP recipients (effective
-  // country = JP) so a bilingual sender shows its Japanese legal identity to
-  // Japanese customers and the English one to everyone else. Null = no JA
-  // variant; the footer falls back to the columns above. Optional — never
-  // gates a send (the *_ja columns are not part of compliance readiness).
+  // Japanese footer variants, used verbatim when the sending project's
+  // target_language is 'ja' so a bilingual sender shows its Japanese legal
+  // identity to Japanese audiences and the English one to everyone else.
+  // Null = no JA variant; the footer falls back to the columns above.
+  // Optional — never gates a send (not part of compliance readiness).
   legalNameJa: text('legal_name_ja'),
   physicalAddressJa: text('physical_address_ja'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -480,6 +481,9 @@ export const projectSettings = pgTable('project_settings', {
   // Further narrows ALLOWED_SEND_COUNTRIES for automated outbound; empty =
   // no project-level restriction. Send-time compliance gate is independent.
   targetCountries: text('target_countries').array().notNull().default(sql`'{}'`),
+  // Outbound-message language. A content setting, not a targeting filter —
+  // independent of target_countries. Mirrors localeSchema (domain/locale.ts).
+  targetLanguage: text('target_language').$type<Locale>().notNull().default('en'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
@@ -512,6 +516,10 @@ export const projectSettings = pgTable('project_settings', {
   check(
     'chk_footer_override_inquiry_off',
     sql`NOT ${table.inquiryLandingEnabled} OR ${table.footerOverride} IS NULL`,
+  ),
+  check(
+    'chk_target_language',
+    sql`${table.targetLanguage} IN ('en', 'ja')`,
   ),
 ])
 

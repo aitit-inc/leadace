@@ -19,7 +19,7 @@ import { resolveProject } from './projects'
 import { isHttpsUrl, HTTPS_ONLY_MSG } from '../domain/url'
 import { ALLOWED_SEND_COUNTRIES } from '../domain/country'
 import { composeFooterBlock, replyUnsubscribeFooterLine } from '../domain/inquiry-footer'
-import { localeForCountry } from '../domain/locale'
+import { localeSchema, type Locale } from '../domain/locale'
 import { loadTenantSettings, localizeComplianceIdentity } from './tenants'
 import { leverConfigSchema, leverConfigPatchSchema, type LeverConfig } from '../domain/lever-config'
 import {
@@ -60,6 +60,7 @@ export const updateSettingsSchema = z
     noResponseRecycleDays: z.coerce.number().int().min(7).max(365).optional(),
     outboundChannels: z.array(z.enum(OUTBOUND_CHANNELS)).optional(),
     targetCountries: z.array(z.enum(ALLOWED_SEND_COUNTRIES)).optional(),
+    targetLanguage: localeSchema.optional(),
     // Overrides only: stored as the caller sent it (a partial), merged with the
     // defaults at read time by loadLeverConfig. Whole-cell replace (not deep-merged)
     // — a PUT must carry the full set of overrides it wants; an unset field then
@@ -107,6 +108,7 @@ const settingsCols = {
   followUpSequence: projectSettings.followUpSequence,
   outboundChannels: projectSettings.outboundChannels,
   targetCountries: projectSettings.targetCountries,
+  targetLanguage: projectSettings.targetLanguage,
   updatedAt: projectSettings.updatedAt,
 }
 
@@ -138,6 +140,7 @@ export type ProjectSettingsRow = {
   followUpSequence: FollowUpSequence
   outboundChannels: OutboundChannel[]
   targetCountries: string[]
+  targetLanguage: Locale
   updatedAt: Date | null
 }
 
@@ -160,6 +163,7 @@ export type ProjectSendSettings = {
   unsubscribeEnabled: boolean
   footerOverride: string | null
   inquiryLandingEnabled: boolean
+  targetLanguage: Locale
 }
 
 export async function loadProjectSendSettings(
@@ -174,6 +178,7 @@ export async function loadProjectSendSettings(
       unsubscribeEnabled: projectSettings.unsubscribeEnabled,
       footerOverride: projectSettings.footerOverride,
       inquiryLandingEnabled: projectSettings.inquiryLandingEnabled,
+      targetLanguage: projectSettings.targetLanguage,
     })
     .from(projectSettings)
     .where(eq(projectSettings.projectId, projectId))
@@ -249,18 +254,18 @@ export async function loadProjectFollowUpConfig(
   return followUpSequenceSchema.parse(assertSettingsRow(row, projectId).followUpSequence)
 }
 
-// Representative preview of the send-time footer: locale follows the tenant's
-// own country here (the recipient's at send) and the opt-out wording rotates
-// per prospect. null until workspace legalName / physicalAddress are set.
+// Same locale input as the send path so the preview can't drift; opt-out
+// wording rotates per prospect at send, fixed seed here. null until
+// workspace legalName / physicalAddress are set.
 async function resolveFooterDefault(
   db: Db,
   tenantId: TenantId,
+  locale: Locale,
 ): Promise<ServiceResult<string | null>> {
   const settings = await loadTenantSettings(db, tenantId)
   if (!settings.ok) return settings
   const t = settings.value
   if (!t.legalName || !t.physicalAddress) return ok(null)
-  const locale = localeForCountry(t.defaultSenderCountry)
   const identity = localizeComplianceIdentity(
     {
       legalName: t.legalName,
@@ -294,7 +299,7 @@ export async function getProjectSettings(
     .where(eq(projectSettings.projectId, projectId))
     .limit(1)
   const r = assertSettingsRow(row, projectId)
-  const footerDefault = await resolveFooterDefault(db, tenantId)
+  const footerDefault = await resolveFooterDefault(db, tenantId, r.targetLanguage)
   if (!footerDefault.ok) return footerDefault
   return ok({
     ...r,
@@ -397,6 +402,7 @@ export async function updateProjectSettings(
     ...(patch.noResponseRecycleDays !== undefined ? { noResponseRecycleDays: patch.noResponseRecycleDays } : {}),
     ...(patch.outboundChannels !== undefined ? { outboundChannels: patch.outboundChannels } : {}),
     ...(patch.targetCountries !== undefined ? { targetCountries: patch.targetCountries } : {}),
+    ...(patch.targetLanguage !== undefined ? { targetLanguage: patch.targetLanguage } : {}),
     ...(patch.leverConfig !== undefined ? { leverConfig: patch.leverConfig } : {}),
     ...(patch.followUpSequence !== undefined ? { followUpSequence: patch.followUpSequence } : {}),
     updatedAt: now,
@@ -426,7 +432,7 @@ export async function updateProjectSettings(
   }
 
   const r = assertSettingsRow(row, projectId)
-  const footerDefault = await resolveFooterDefault(db, tenantId)
+  const footerDefault = await resolveFooterDefault(db, tenantId, r.targetLanguage)
   if (!footerDefault.ok) return footerDefault
   return ok({
     ...r,

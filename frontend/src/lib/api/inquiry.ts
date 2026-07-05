@@ -1,7 +1,6 @@
 import { request, type RequestFetch } from '../api';
 
-// Recipient language for the parts a prospect reads. Mirrors backend
-// domain/locale.ts `Locale`. JP recipients get 'ja', everyone else 'en'.
+// Mirrors backend domain/locale.ts `Locale`.
 export type InquiryLocale = 'ja' | 'en';
 
 export type InquiryOutcome = 'opened' | 'inquired' | 'lead' | 'signup_clicked' | 'unsubscribed';
@@ -26,7 +25,6 @@ export type InquiryLandingSession = {
 export type InquiryLandingPayload = {
   shortId: string | null;
   preview: boolean;
-  locale: InquiryLocale;
 
   senderName: string | null;
   senderCompany: string | null;
@@ -124,6 +122,7 @@ export function sendPreviewChatMessage(
   prospectId: number | null,
   transcript: InquiryChatTurn[],
   message: string,
+  locale: InquiryLocale,
   fetchFn: RequestFetch = fetch,
   token?: string,
 ): Promise<InquiryChatMessageResult> {
@@ -135,6 +134,7 @@ export function sendPreviewChatMessage(
       ...(prospectId !== null ? { prospectId } : {}),
       transcript,
       message,
+      locale,
     },
     auth: 'required',
     token,
@@ -144,12 +144,13 @@ export function sendPreviewChatMessage(
 export function sendChatMessage(
   shortId: string,
   message: string,
+  locale: InquiryLocale,
   fetchFn: RequestFetch = fetch,
 ): Promise<InquiryChatMessageResult> {
   return request<InquiryChatMessageResult>(fetchFn, {
     method: 'POST',
     path: `/inquiry/${encodeURIComponent(shortId)}/message`,
-    body: { message },
+    body: { message, locale },
     auth: 'none',
   });
 }

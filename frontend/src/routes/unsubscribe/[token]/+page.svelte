@@ -2,15 +2,16 @@
   import { page } from '$app/state';
   import Logo from '$lib/components/Logo.svelte';
   import { confirmUnsubscribe } from '$lib/api/unsubscribe';
+  import { browserLocale } from '$lib/browser-locale';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
 
-  // Recipient language for this legacy opt-out page. Available only once the
-  // token resolves to a prospect; the invalid branch (bad token, no prospect)
-  // has no country signal, so it stays English.
-  const locale = $derived(data.result.kind === 'ready' ? data.result.info.locale : 'en');
-  const ja = $derived(locale === 'ja');
+  // Switched after mount so SSR ('en') and hydration render the same DOM.
+  let ja = $state(false);
+  $effect(() => {
+    ja = browserLocale() === 'ja';
+  });
 
   type View =
     | { kind: 'ready'; email: string; organizationName: string; alreadyUnsubscribed: boolean }

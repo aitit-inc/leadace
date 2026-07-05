@@ -9,7 +9,7 @@ import {
 } from '../db/schema'
 import type { Db } from '../db/connection'
 import { projectRefSchema, prospectIdSchema, type ProjectId, type TenantId } from '../domain/ids'
-import { localeForCountry } from '../domain/locale'
+import { localeSchema } from '../domain/locale'
 import { ok, err, type ServiceResult } from './result'
 import {
   callOpenAIResponses,
@@ -46,6 +46,8 @@ export const inquiryPreviewChatBodySchema = z.object({
     .max(INQUIRY_CHAT_TURNS_MAX * 2)
     .default([]),
   message: z.string().min(1).max(2000),
+  // Same contract as the live chat: the client reports the page language.
+  locale: localeSchema.default('en'),
 })
 export type InquiryPreviewChatInput = z.infer<typeof inquiryPreviewChatBodySchema>
 
@@ -101,7 +103,7 @@ export async function runInquiryPreviewChat(
   })
 
   const turnNumber = userTurns + 1
-  const instructions = buildSystemPrompt(promptCtx, turnNumber)
+  const instructions = buildSystemPrompt({ ...promptCtx, locale: input.locale }, turnNumber)
 
   const apiInput: OpenAIInputMessage[] = [
     ...input.transcript.map((m) => ({ role: m.role, content: m.content })),
@@ -149,9 +151,9 @@ async function loadPreviewPromptContext(
   projectId: ProjectId,
   prospectId: number | null,
   sender: SenderFields,
-): Promise<ChatPromptContext> {
+): Promise<Omit<ChatPromptContext, 'locale'>> {
   if (prospectId === null) {
-    return { ...sender, locale: 'en', recipientName: null, recipientOrganization: null }
+    return { ...sender, recipientName: null, recipientOrganization: null }
   }
 
   const [row] = await db
@@ -163,7 +165,6 @@ async function loadPreviewPromptContext(
       prospectOverview: prospects.overview,
       prospectIndustry: prospects.industry,
       prospectCountry: prospects.country,
-      organizationCountry: organizations.country,
       signals: orgSignalsGlobal.signals,
       signalsUpdatedAt: orgSignalsGlobal.signalsUpdatedAt,
     })
@@ -180,7 +181,7 @@ async function loadPreviewPromptContext(
     .limit(1)
 
   if (!row) {
-    return { ...sender, locale: 'en', recipientName: null, recipientOrganization: null }
+    return { ...sender, recipientName: null, recipientOrganization: null }
   }
 
   const snapshot = composeContextSnapshot({
@@ -198,7 +199,6 @@ async function loadPreviewPromptContext(
 
   return {
     brief: snapshot.brief,
-    locale: localeForCountry(row.prospectCountry ?? row.organizationCountry),
     senderName: sender.senderName,
     senderCompany: sender.senderCompany,
     senderJobTitle: sender.senderJobTitle,

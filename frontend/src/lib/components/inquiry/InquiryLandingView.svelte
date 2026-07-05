@@ -1,8 +1,9 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import type { InquiryChatMessageResult, InquiryChatTurn, InquiryLandingPayload, InquiryPrimaryReason } from '$lib/api/inquiry';
+  import type { InquiryChatMessageResult, InquiryChatTurn, InquiryLandingPayload, InquiryLocale, InquiryPrimaryReason } from '$lib/api/inquiry';
   import { renderInquiryMarkdown } from '$lib/markdown';
   import { EDITION } from '$lib/config';
+  import { browserLocale } from '$lib/browser-locale';
   import { inquiryCopy } from './copy';
 
   type Props = {
@@ -37,9 +38,13 @@
 
   const isPreview = $derived(mode === 'preview');
 
-  // Recipient-facing copy in the recipient's language (JP → Japanese). The
-  // preview banner stays English — it's for the operator, not the recipient.
-  const t = $derived(inquiryCopy(landing.locale));
+  // Visitor's browser language, switched after mount so SSR ('en') and
+  // hydration render the same DOM.
+  let locale = $state<InquiryLocale>('en');
+  $effect(() => {
+    locale = browserLocale();
+  });
+  const t = $derived(inquiryCopy(locale));
 
   // Initial view derives from the server-reported session state so a
   // recipient who navigates back after closing the session (lead /

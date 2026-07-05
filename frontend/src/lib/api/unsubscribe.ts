@@ -1,11 +1,9 @@
 import { request, type RequestFetch } from '../api';
-import type { InquiryLocale } from './inquiry';
 
 export type UnsubscribeInfo = {
   email: string;
   organizationName: string;
   alreadyUnsubscribed: boolean;
-  locale: InquiryLocale;
 };
 
 export function loadUnsubscribeInfo(

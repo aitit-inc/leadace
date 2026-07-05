@@ -4,12 +4,10 @@ import {
   inquiryTokens,
   outreachLogs,
   projectSettings,
-  prospects,
-  organizations,
 } from '../db/schema'
 import type { Db } from '../db/connection'
 import { asTenantId, type ShortId, type TenantId } from '../domain/ids'
-import { localeForCountry, type Locale } from '../domain/locale'
+import type { Locale } from '../domain/locale'
 import { ok, err, type ServiceResult } from './result'
 import {
   callOpenAIResponses,
@@ -30,6 +28,7 @@ import {
   loadInquiryTranscript,
   SessionRaceError,
   INQUIRY_CHAT_TURNS_MAX,
+  type InquiryChatMessageInput,
 } from './inquiry-session'
 import { generateSessionSummary, type LeadNotifyEnv } from './inquiry-summarize'
 import type { Edition } from '../domain/edition'
@@ -71,9 +70,8 @@ export type InquiryChatRunResult = {
 // no-prospect preview / legacy sessions.
 export type ChatPromptContext = {
   brief: string
-  // Recipient language. 'ja' makes the assistant reply in polite business
-  // Japanese; 'en' keeps it English. Derived from the effective recipient
-  // country (prospect override → organization).
+  // Page language (client-reported browser language): the default reply
+  // language and the meeting-button label the prompt references.
   locale: Locale
   // project_settings.sender_display_name verbatim. Null when unset — the
   // system prompt then frames the AI as representing the company (or, if
@@ -95,7 +93,7 @@ export type ChatPromptContext = {
   recipientOrganization: string | null
 }
 
-type ChatContext = ChatPromptContext & {
+type ChatContext = Omit<ChatPromptContext, 'locale'> & {
   sessionId: number
   tenantId: TenantId
   chatTurnsUsed: number
@@ -107,7 +105,7 @@ export async function runInquiryChat(
   env: InquiryChatEnv,
   edition: Edition,
   shortId: ShortId,
-  userMessage: string,
+  input: InquiryChatMessageInput,
 ): Promise<ServiceResult<InquiryChatRunResult>> {
   const ctxResult = await loadChatContext(db, shortId)
   if (!ctxResult.ok) return ctxResult
@@ -137,13 +135,13 @@ export async function runInquiryChat(
     return err('FORBIDDEN', 'Chat limit reached', formatChatQuotaError(quota))
   }
 
-  const input: OpenAIInputMessage[] = [
+  const chatInput: OpenAIInputMessage[] = [
     ...transcript.map((m) => ({ role: m.role, content: m.content })),
-    { role: 'user', content: userMessage },
+    { role: 'user', content: input.message },
   ]
 
   const turnNumber = ctx.chatTurnsUsed + 1
-  const instructions = buildSystemPrompt(ctx, turnNumber)
+  const instructions = buildSystemPrompt({ ...ctx, locale: input.locale }, turnNumber)
 
   let assistantMessage: string
   try {
@@ -151,7 +149,7 @@ export async function runInquiryChat(
       apiKey: env.OPENAI_API_KEY,
       model: CHAT_MODEL,
       instructions,
-      input,
+      input: chatInput,
       temperature: CHAT_TEMPERATURE,
       maxOutputTokens: CHAT_MAX_OUTPUT_TOKENS,
     })
@@ -177,7 +175,7 @@ export async function runInquiryChat(
     newTurnsUsed = await db.transaction(async (tx) => {
       const txDb = tx as unknown as Db
       const reserved = await reserveChatTurnSlot(txDb, ctx.sessionId)
-      await appendInquiryMessage(txDb, ctx.sessionId, ctx.tenantId, 'user', userMessage)
+      await appendInquiryMessage(txDb, ctx.sessionId, ctx.tenantId, 'user', input.message)
       await appendInquiryMessage(txDb, ctx.sessionId, ctx.tenantId, 'assistant', assistantMessage)
       // First user message flips the session from 'opened' to 'inquired'.
       // reserveChatTurnSlot returned 1 ↔ this turn was the first.
@@ -242,15 +240,11 @@ async function loadChatContext(
       senderDisplayName: projectSettings.senderDisplayName,
       senderCompanyName: projectSettings.senderCompanyName,
       senderJobTitle: projectSettings.senderJobTitle,
-      prospectCountry: prospects.country,
-      organizationCountry: organizations.country,
     })
     .from(inquirySessions)
     .innerJoin(inquiryTokens, eq(inquiryTokens.shortId, inquirySessions.shortId))
     .innerJoin(outreachLogs, eq(outreachLogs.id, inquirySessions.outreachLogId))
     .innerJoin(projectSettings, eq(projectSettings.projectId, outreachLogs.projectId))
-    .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
-    .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
     .where(and(eq(inquirySessions.shortId, shortId), isNull(inquirySessions.closedAt)))
     .limit(1)
 
@@ -273,7 +267,6 @@ async function loadChatContext(
     chatTurnsUsed: row.sessionChatTurnsUsed,
     openedAt: row.sessionOpenedAt,
     brief: effectiveBrief,
-    locale: localeForCountry(row.prospectCountry ?? row.organizationCountry),
     senderName: row.senderDisplayName,
     senderCompany: row.senderCompanyName,
     senderJobTitle: row.senderJobTitle,
@@ -330,9 +323,8 @@ export function buildSystemPrompt(ctx: ChatPromptContext, currentTurn: number): 
           : 'You are an AI sales assistant for this offering.'
   const offerOwner = ctx.senderCompany ?? ctx.senderName ?? 'this offering'
   const visitorClause = visitorLine ? ` ${visitorLine}` : ''
-  // The recipient is a Japanese company — name the button as the JA landing
-  // labels it and steer the model to Japanese output. Instructions stay in
-  // English (the model follows the language directive reliably).
+  // Name the button exactly as the visitor's page labels it. Instructions
+  // stay in English (the model follows the language directive reliably).
   const meetingButton =
     ctx.locale === 'ja'
       ? 'the "打ち合わせを依頼" (request a meeting) button'
@@ -341,6 +333,10 @@ export function buildSystemPrompt(ctx: ChatPromptContext, currentTurn: number): 
     ctx.locale === 'ja'
       ? '- Keep replies under ~300 Japanese characters. The recipient values their time.'
       : '- Keep replies under ~150 words. The recipient values their time.'
+  const languageRule =
+    ctx.locale === 'ja'
+      ? '- Reply in natural, polite Japanese business language (です・ます調 / 敬語) — the page is shown to this visitor in Japanese. If the visitor writes in a different language, mirror their language instead.'
+      : '- Reply in English — the page is shown to this visitor in English. If the visitor writes in a different language, mirror their language instead.'
   return [
     senderIntro,
     `A potential customer${visitorClause} clicked an inquiry link from a cold-outreach message and is asking questions about the offering. Your job is to be genuinely helpful, concise, and honest.`,
@@ -349,11 +345,7 @@ export function buildSystemPrompt(ctx: ChatPromptContext, currentTurn: number): 
     ctx.brief,
     '',
     'Rules:',
-    ...(ctx.locale === 'ja'
-      ? [
-          '- Always reply in natural, polite Japanese business language (です・ます調 / 敬語). The recipient is a Japanese company, even though these instructions are written in English.',
-        ]
-      : []),
+    languageRule,
     `- Stay strictly on the topic of ${offerOwner}'s offering. Politely decline unrelated questions.`,
     lengthRule,
     '- If you cannot answer with the information provided, say so honestly — never fabricate features, pricing, or guarantees.',

@@ -141,7 +141,7 @@ inquiryRouter.post(
       },
       c.get('edition'),
       c.req.valid('param').shortId,
-      c.req.valid('json').message,
+      c.req.valid('json'),
     )
     if (!result.ok) return respondWithError(c, result)
     return c.json(result.value)

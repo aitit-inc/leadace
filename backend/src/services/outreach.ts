@@ -54,7 +54,7 @@ import {
 } from './tenants'
 import { addDays } from '../domain/prospect-status'
 import { isAllowedSendCountry } from '../domain/country'
-import { localeForCountry, type Locale } from '../domain/locale'
+import type { Locale } from '../domain/locale'
 import { buildSkipAuditBody } from '../domain/outreach-skip'
 import { isPublicHttpsUrl } from '../domain/url'
 import type { Edition } from '../domain/edition'
@@ -218,17 +218,6 @@ async function loadEffectiveRecipientCountry(
   return row.prospectCountry ?? row.organizationCountry
 }
 
-// Recipient language for the compliance footer, derived from the same
-// effective country the send guardrail uses. Defaults to English when country
-// is unknown.
-async function resolveRecipientLocale(
-  db: Db,
-  tenantId: TenantId,
-  prospectId: number,
-): Promise<Locale> {
-  return localeForCountry(await loadEffectiveRecipientCountry(db, tenantId, prospectId))
-}
-
 // Bypassed under E2E: sendForIdentity redirects every recipient to a test sink,
 // so the localhost links a dev stack produces never reach a real inbox.
 function assertPublicHttpsSendHosts(ctx: SendContext): ServiceResult<undefined> {
@@ -261,6 +250,7 @@ async function buildOutreachFooter(
     inquiryLandingEnabled: boolean
     unsubscribeEnabled: boolean
     footerOverride: string | null
+    targetLanguage: Locale
   },
 ): Promise<{ footer: string; headers: Record<string, string>; inquiryUrl: string | null }> {
   const inquiryUrl = await allocateInquiryUrl(
@@ -270,8 +260,7 @@ async function buildOutreachFooter(
     args.outreachLogId,
     args.inquiryLandingEnabled,
   )
-  const recipientLocale = await resolveRecipientLocale(db, tenantId, args.prospectId)
-  const identity = localizeComplianceIdentity(args.compliance, recipientLocale)
+  const identity = localizeComplianceIdentity(args.compliance, args.targetLanguage)
   const attachments = await buildComplianceAttachments({
     prospectId: args.prospectId,
     tenantId,
@@ -282,7 +271,7 @@ async function buildOutreachFooter(
     secret: ctx.unsubscribeSecret,
     tenantLegalName: identity.legalName,
     tenantPhysicalAddress: identity.physicalAddress,
-    locale: recipientLocale,
+    locale: args.targetLanguage,
     footerOverride: args.footerOverride,
   })
   return { footer: attachments.footer, headers: attachments.headers, inquiryUrl }
@@ -555,6 +544,7 @@ export async function recordOutreachWithInquiry(
     inquiryLandingEnabled: sendSettings.inquiryLandingEnabled,
     unsubscribeEnabled: sendSettings.unsubscribeEnabled,
     footerOverride: sendSettings.footerOverride,
+    targetLanguage: sendSettings.targetLanguage,
   })
   const finalBody = `${input.body}${attachments.footer}`
 
@@ -731,6 +721,7 @@ export async function sendAndRecord(
     inquiryLandingEnabled: sendSettings.inquiryLandingEnabled,
     unsubscribeEnabled: sendSettings.unsubscribeEnabled,
     footerOverride: sendSettings.footerOverride,
+    targetLanguage: sendSettings.targetLanguage,
   })
   const sendBody = `${input.body}${attachments.footer}`
 
@@ -1144,6 +1135,7 @@ export async function sendDraft(
     inquiryLandingEnabled: sendSettings.inquiryLandingEnabled,
     unsubscribeEnabled: sendSettings.unsubscribeEnabled,
     footerOverride: sendSettings.footerOverride,
+    targetLanguage: sendSettings.targetLanguage,
   })
   const sendBody = `${draft.body}${attachments.footer}`
 
@@ -1238,6 +1230,7 @@ export async function previewDraft(
     inquiryLandingEnabled: sendSettings.inquiryLandingEnabled,
     unsubscribeEnabled: sendSettings.unsubscribeEnabled,
     footerOverride: sendSettings.footerOverride,
+    targetLanguage: sendSettings.targetLanguage,
   })
   return ok({ footer: { kind: 'rendered', text: attachments.footer } })
 }

@@ -7,9 +7,11 @@
   import {
     ALLOWED_SEND_COUNTRIES,
     OUTBOUND_CHANNELS,
+    TARGET_LANGUAGES,
     type AllowedSendCountry,
     type FollowUpSequence,
     type OutboundChannel,
+    type TargetLanguage,
   } from '$lib/types/project-settings';
   import type { PageProps } from './$types';
   import type { ProjectSettingsData } from './types';
@@ -31,6 +33,10 @@
     US: 'United States',
     CA: 'Canada',
     JP: 'Japan',
+  };
+  const LANGUAGE_LABELS: Record<TargetLanguage, string> = {
+    en: 'English',
+    ja: '日本語 (Japanese)',
   };
 
   let { data }: PageProps = $props();
@@ -117,6 +123,7 @@
         ...(followUpChanged() ? { followUpSequence: projectSettings.followUpSequence } : {}),
         outboundChannels: projectSettings.outboundChannels,
         targetCountries: projectSettings.targetCountries,
+        targetLanguage: projectSettings.targetLanguage,
       };
       await updateProjectSettings<ProjectSettingsData>(
         data.projectId,
@@ -374,6 +381,26 @@
       </div>
 
       <div>
+        <div class="block text-xs font-medium text-text-secondary mb-2">
+          Message language
+        </div>
+        <div class="flex gap-4">
+          {#each TARGET_LANGUAGES as lang (lang)}
+            <label class="flex items-center gap-2 text-sm text-text">
+              <input type="radio" name="target-language" value={lang} bind:group={s.targetLanguage} />
+              <span>{LANGUAGE_LABELS[lang]}</span>
+            </label>
+          {/each}
+        </div>
+        <p class="mt-2 text-xs text-text-muted">
+          Language of this project's outbound messages — the AI-written subject and body,
+          and the footer below. One project targets one language; create separate projects
+          for audiences in different languages. Pages recipients open in a browser
+          (inquiry landing, unsubscribe) follow the visitor's browser language instead.
+        </p>
+      </div>
+
+      <div>
         <label for="email-footer" class="block text-xs font-medium text-text-secondary mb-1">
           Message footer
         </label>
@@ -407,11 +434,11 @@
           </div>
           <p class="mt-1 text-xs text-text-muted">
             Appended after the body of every outbound message — emails, and the form /
-            social-DM draft text you copy from Drafts. The default adapts to each
-            recipient — Japanese recipients get a Japanese footer and the opt-out wording
-            varies per prospect. Edited text is sent verbatim to everyone; keep your sender
-            identity, address, and an opt-out instruction in it (that content is your legal
-            responsibility). Clearing the text restores the default.
+            social-DM draft text you copy from Drafts. The default is assembled in the
+            message language above and the opt-out wording varies per prospect. Edited
+            text is sent verbatim to everyone; keep your sender identity, address, and an
+            opt-out instruction in it (that content is your legal responsibility).
+            Clearing the text restores the default.
           </p>
           {#if !s.footerDefault}
             <p class="mt-1 text-xs text-text-muted">

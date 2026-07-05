@@ -3,6 +3,7 @@ import type {
   FollowUpSequence,
   OutboundChannel,
   OutboundMode,
+  TargetLanguage,
 } from '$lib/types/project-settings';
 
 export type ProjectSettingsData = {
@@ -18,5 +19,6 @@ export type ProjectSettingsData = {
   followUpSequence: FollowUpSequence;
   outboundChannels: OutboundChannel[];
   targetCountries: AllowedSendCountry[];
+  targetLanguage: TargetLanguage;
   updatedAt: string | null;
 };

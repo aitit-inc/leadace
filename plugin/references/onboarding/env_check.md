@@ -51,7 +51,7 @@ Use `AskUserQuestion`: "Have you connected the Gmail MCP in claude.ai? (Required
 
 Call `mcp__plugin_leadace_api__get_tenant_settings`. Hold the response as `TENANT_SETTINGS`.
 
-The mandatory fields for outbound sending are `legalName`, `physicalAddress`, and `defaultSenderCountry` — these are appended to every outgoing message's compliance footer (CAN-SPAM § 5(a)(5), CASL § 6 sender identification). When any is `(not set)`, every send-side endpoint refuses with HTTP 412.
+The mandatory fields for outbound sending are `legalName`, `physicalAddress`, and `defaultSenderCountry`. The first two are rendered into every outgoing message's compliance footer (CAN-SPAM § 5(a)(5), CASL § 6 sender identification); `defaultSenderCountry` is workspace metadata — required, but not rendered into mail and unrelated to message language (that is the per-project `targetLanguage` setting). When any is `(not set)`, every send-side endpoint refuses with HTTP 412.
 
 **Fill the missing fields here, in this skill, before handing off.** Reaching `/outbound` only to discover the workspace is incomplete is a poor UX.
 
@@ -60,7 +60,7 @@ The mandatory fields for outbound sending are `legalName`, `physicalAddress`, an
 > "I need three things for the email compliance footer (CAN-SPAM § 5(a)(5)). Paste all of them in one go — separator/format is up to you:
 > 1. Legal name — registered business / legal name, e.g. 'Acme, Inc.' or 'Jane Doe' for a sole proprietor.
 > 2. Physical mailing address — CAN-SPAM requires a real postal address; a P.O. box or registered agent address is fine.
-> 3. Sender country — your country as an ISO 3166-1 alpha-2 code (US, CA, JP, DE, GB, …) or the country name; recorded for the compliance footer. Note: outbound currently delivers only to recipients in **US / CA / JP**, but you can send from anywhere.
+> 3. Sender country — your country as an ISO 3166-1 alpha-2 code (US, CA, JP, DE, GB, …) or the country name; recorded as workspace metadata (not shown in the mail). Note: outbound currently delivers only to recipients in **US / CA / JP**, but you can send from anywhere.
 >
 > Reply 'skip' to configure later at https://app.leadace.ai/workspace-settings ."
 

@@ -213,13 +213,12 @@
 
       <section class="space-y-4 border-t border-border pt-6">
         <div>
-          <h2 class="text-sm font-semibold text-text">Japanese footer (for recipients in Japan)</h2>
+          <h2 class="text-sm font-semibold text-text">Japanese footer (for Japanese-language projects)</h2>
           <p class="mt-1 text-xs text-text-muted">
-            Optional. When a recipient's country is Japan (set on the prospect, or inherited from
-            their organization), the default footer uses these instead of the values above — so a bilingual
-            sender shows its Japanese legal identity to Japanese customers and the English one to
-            everyone else. Leave any field blank to fall back to the value above. Recipient language
-            switches automatically by country; no other setup needed.
+            Optional. When a project's message language is Japanese (Project settings →
+            Message language), the default footer uses these instead of the values above — so a
+            bilingual sender shows its Japanese legal identity to Japanese audiences and the
+            English one everywhere else. Leave any field blank to fall back to the value above.
           </p>
         </div>
 

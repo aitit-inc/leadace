@@ -7,6 +7,7 @@
     type InquiryLandingPayload,
     type InquiryPrimaryReason,
   } from '$lib/api/inquiry';
+  import { browserLocale } from '$lib/browser-locale';
   import InquiryLandingView from '$lib/components/inquiry/InquiryLandingView.svelte';
   import Logo from '$lib/components/Logo.svelte';
   import type { PageProps } from './$types';
@@ -19,7 +20,7 @@
   let shortId = $derived(data.shortId);
 
   function chatHandler(message: string) {
-    return sendChatMessage(shortId, message);
+    return sendChatMessage(shortId, message, browserLocale());
   }
 
   async function meetingHandler() {
