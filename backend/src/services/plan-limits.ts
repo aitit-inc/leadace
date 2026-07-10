@@ -1,8 +1,9 @@
 import { z } from 'zod'
-import { eq, and, or, sql, gte } from 'drizzle-orm'
+import { eq, and, or, sql, gte, isNotNull } from 'drizzle-orm'
 import {
   tenantPlans,
   outreachLogs,
+  responses,
   sendingIdentities,
   prospects,
   inquirySessions,
@@ -426,7 +427,42 @@ export type MailboxHealth =
       cap: number
       used: number
       remaining: number
+      bounceWindowDays: number
+      sentInWindow: number
+      bounced: number
+      bounceRate: number
     }
+
+// Matches the reply-ingest attribution window: a bounce is only attributed within 30d.
+const BOUNCE_RATE_WINDOW_DAYS = 30
+
+async function countMailboxBounceWindow(
+  db: Db,
+  tenantId: TenantId,
+  identityId: SendingIdentityId,
+  now: Date,
+): Promise<{ sentInWindow: number; bounced: number }> {
+  const sinceIso = new Date(now.getTime() - BOUNCE_RATE_WINDOW_DAYS * 86_400_000).toISOString()
+  const [row] = await db
+    .select({
+      sentInWindow: sql<number>`COUNT(DISTINCT ${outreachLogs.id})::int`,
+      bounced: sql<number>`COUNT(DISTINCT ${outreachLogs.id}) FILTER (WHERE ${responses.responseType} = 'bounce')::int`,
+    })
+    .from(outreachLogs)
+    .leftJoin(
+      responses,
+      and(eq(responses.outreachLogId, outreachLogs.id), eq(responses.tenantId, outreachLogs.tenantId)),
+    )
+    .where(and(
+      eq(outreachLogs.tenantId, tenantId),
+      eq(outreachLogs.sendingIdentityId, identityId),
+      eq(outreachLogs.channel, 'email'),
+      eq(outreachLogs.status, 'sent'),
+      isNotNull(outreachLogs.messageId),
+      sql`${outreachLogs.sentAt} >= ${sinceIso}::timestamptz`,
+    ))
+  return { sentInWindow: row?.sentInWindow ?? 0, bounced: row?.bounced ?? 0 }
+}
 
 export async function getMailboxHealth(
   db: Db,
@@ -448,7 +484,10 @@ export async function getMailboxHealth(
 
   if (!mailbox) return { kind: 'no_mailbox' }
 
-  const used = await countMailboxEmailSendsToday(db, tenantId, identityId, now)
+  const [used, bounceWindow] = await Promise.all([
+    countMailboxEmailSendsToday(db, tenantId, identityId, now),
+    countMailboxBounceWindow(db, tenantId, identityId, now),
+  ])
   const status = mailboxDailyStatus(mailbox, used, DEFAULT_WARMUP, now)
   return {
     kind: 'active',
@@ -456,6 +495,13 @@ export async function getMailboxHealth(
     warmupStartedAt: mailbox.warmupStartedAt,
     dailyCapOverride: mailbox.dailyCapOverride,
     ...status,
+    bounceWindowDays: BOUNCE_RATE_WINDOW_DAYS,
+    sentInWindow: bounceWindow.sentInWindow,
+    bounced: bounceWindow.bounced,
+    bounceRate:
+      bounceWindow.sentInWindow === 0
+        ? 0
+        : Math.round((bounceWindow.bounced / bounceWindow.sentInWindow) * 1000) / 10,
   }
 }
 

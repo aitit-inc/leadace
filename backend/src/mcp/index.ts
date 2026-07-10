@@ -52,10 +52,12 @@ type Env = {
 // that the old plugin cannot tolerate (removed tool, renamed required arg,
 // changed response shape). See .claude/rules/release.md.
 const SERVER_VERSION = '1.0.0'
-// 0.7.14 hard-cuts older plugins: their onboarding never collects the new
-// targetLanguage setting, so a JP-audience project they create would silently
-// send English.
-const MIN_PLUGIN_VERSION = '0.7.14'
+// 0.7.16 warns older plugins (/leadace prepends the notice and keeps going, it
+// does not abort): the description sweep moved the "never set footerOverride
+// unprompted" guardrail out of update_project_settings and into the plugin's
+// onboarding reference, so an older plugin sees it nowhere and can overwrite the
+// compliance footer on its own initiative.
+const MIN_PLUGIN_VERSION = '0.7.16'
 
 async function extractUserId(request: Request, jwtSecret: string, supabaseUrl?: string): Promise<string | null> {
   const authHeader = request.headers.get('Authorization')
@@ -143,7 +145,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_server_version',
-    'Return the LeadAce backend MCP server version and the minimum compatible plugin version. Skills should call this first and abort with a "/plugin update" message if their plugin.json version is below minPluginVersion.',
+    'Returns { serverVersion, minPluginVersion } for the LeadAce backend MCP server.',
     {},
     async () => {
       return {
@@ -157,16 +159,16 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'report_bug',
-    'File a bug, feedback, or idea about LeadAce. The maintainer reviews these out of band on the LeadAce backend (no public issue is opened). Use freely from any skill — include what you tried, what happened, and what you expected. The optional `context` field accepts arbitrary JSON metadata (skill name, plugin version, prospect/project ids, etc.). Daily-capped per tenant; on cap exhaustion the call returns an error and the user can retry tomorrow. self-host installs collect reports in their own database (the maintainer does not see them).',
+    'File a bug, feedback, or idea about LeadAce. Daily-capped per tenant; over-cap returns an error.',
     {
       category: z.enum(BUG_REPORT_CATEGORIES)
-        .describe('"bug" = something is broken / wrong. "feedback" = working but rough / confusing. "idea" = a feature request or product suggestion.'),
+        .describe('feedback = works but rough, not broken.'),
       title: z.string().min(3).max(200)
-        .describe('One-line summary, e.g. "/check-responses crashes when no Gmail connected".'),
+        .describe('One-line summary.'),
       body: z.string().min(10).max(4000)
-        .describe('What you tried, what happened, what you expected. Include reproduction steps if you have them.'),
+        .describe('What you tried, what happened, what you expected.'),
       context: z.record(z.string(), z.unknown()).optional()
-        .describe('Optional structured metadata (any JSON object). Suggested keys: skill, pluginVersion, projectId, prospectId, errorMessage.'),
+        .describe('Suggested keys: skill, pluginVersion, projectId, prospectId, errorMessage.'),
     },
     async (input, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('POST', '/bug-reports', input, apiUrl, authHeader)
@@ -203,8 +205,8 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'setup_project',
-    'Create a new LeadAce project. Returns the auto-generated project ID. Returns an error if the plan limit is reached.',
-    { name: z.string().describe('Project name (unique per tenant)') },
+    'Create a new LeadAce project; returns the auto-generated project id. Errors if the plan project limit is reached.',
+    { name: z.string().describe('Project name (unique per tenant).') },
     async ({ name }, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('POST', '/projects', { name }, apiUrl, authHeader)
       if (!ok) {
@@ -218,8 +220,8 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'delete_project',
-    'Delete a project and its project-scoped data (project-prospect links, outreach logs, responses, documents, settings, subject variants). Prospects themselves are tenant assets and are NOT deleted — they survive for other projects and /match-prospects.',
-    { projectId: z.string().min(1).describe('Project name or ID') },
+    'Delete a project and its project-scoped data (project-prospect links, outreach logs, responses, inquiry sessions, learned send-optimization state, documents, settings, subject variants). Prospects are tenant assets and are NOT deleted.',
+    { projectId: z.string().min(1).describe('Project name or ID.') },
     async ({ projectId }, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('DELETE', `/projects/${encodeURIComponent(projectId)}`, null, apiUrl, authHeader)
       if (!ok) {
@@ -232,20 +234,20 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'add_prospects',
-    'Batch register prospects. Server-side dedup is the single source of truth for duplicate avoidance. Each skipped row comes back in skippedDetails as {name, reason} where reason ∈ "email_duplicate" | "form_url_duplicate" | "already_in_project" | "do_not_contact" | "duplicate_in_batch" | "plan_limit". Use those codes to adjust your search keywords (e.g. lots of "email_duplicate" → narrow the search; lots of "already_in_project" → cluster is exhausted). projectId is optional: omit it to save prospects as tenant-only assets (no project link). When projectId is provided, every prospect must include matchReason. Set doNotContact=true on rows the source data marks as unsubscribed/opted-out so /build-list will not re-contact them later (DNC is a one-way ratchet on overwrite — false never clears an existing flag). Pair tenant-only imports with /match-prospects to link the right ones into a project later.',
+    'Batch-register prospects; server-side dedup is authoritative. Returns inserted, skipped, and skippedDetails [{name, reason}].',
     {
-      projectId: z.string().min(1).optional().describe('Project name or ID. Omit to save prospects as tenant-only assets without linking to any project.'),
+      projectId: z.string().min(1).optional().describe('Project name or ID; omit to save prospects tenant-only (no project link).'),
       prospects: z.array(z.object({
-        organizationDomain: z.string().describe('Organization domain. Apex form preferred (e.g. example.com); raw URLs and "www." prefix are tolerated and normalized server-side.'),
+        organizationDomain: z.string().describe('Organization domain; apex preferred (example.com), but raw URLs and www. prefix are normalized server-side.'),
         organizationName: z.string(),
         organizationWebsiteUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG),
-        name: z.string().describe('Prospect name (company, school, department, etc.)'),
+        name: z.string().describe('Prospect name (company, school, department, etc.).'),
         contactName: z.string().optional(),
         department: z.string().optional(),
         overview: z.string(),
         industry: z.string().optional(),
         websiteUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG),
-        email: z.email().optional().describe('At least one contact channel required'),
+        email: z.email().optional().describe('At least one contact channel (email / contactFormUrl / snsAccounts) required.'),
         contactFormUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
         formType: z.enum(['google_forms', 'native_html', 'wordpress_cf7', 'iframe_embed', 'with_captcha']).optional(),
         snsAccounts: z.object({
@@ -256,21 +258,21 @@ function buildToolRegistry(): ToolDef[] {
         }).optional(),
         notes: z.string().optional(),
         hypothesis: z.object({
-          targetDepartment: z.string().optional().describe('Likely buyer department (e.g. "RevOps", "Sales Engineering").'),
-          targetRolePattern: z.string().optional().describe('Likely buyer role pattern (e.g. "Director of Sales Ops").'),
-          hypothesizedPain: z.array(z.string()).optional().describe('Short pain hypotheses for this prospect (bullets, ≤3 items).'),
-          valueMapping: z.array(z.string()).optional().describe('How our offering addresses each pain (bullets, same order as hypothesizedPain when paired).'),
-          timingSignals: z.array(z.string()).optional().describe('Concrete reasons NOW is a good moment (recent press, hiring, funding, signals from overview ## Recent Signals).'),
-          bestChannel: z.string().optional().describe('Suggested first channel (e.g. "personal_email", "form", "linkedin_dm").'),
-          bestKeyperson: z.string().optional().describe('Specific keyperson handle if obvious from public info (name + role).'),
-        }).optional().describe('Per-prospect targeting hypothesis. Read by the inquiry-landing chat snapshot to ground responses about the visiting org. All fields optional — partial hypothesis still helps.'),
-        doNotContact: z.boolean().optional().describe('Mark this prospect as do-not-contact (unsubscribed / opted-out). Defaults to false. On overwrite, true sets the flag but false never clears an existing one.'),
+          targetDepartment: z.string().optional().describe('Likely buyer department.'),
+          targetRolePattern: z.string().optional().describe('Likely buyer role/title pattern.'),
+          hypothesizedPain: z.array(z.string()).optional().describe('Short pain hypotheses.'),
+          valueMapping: z.array(z.string()).optional().describe('How the offering addresses each pain, in the same order as hypothesizedPain.'),
+          timingSignals: z.array(z.string()).optional().describe('Concrete reasons now is a good moment to reach out.'),
+          bestChannel: z.string().optional().describe('Suggested first channel (e.g. personal_email, form, linkedin_dm).'),
+          bestKeyperson: z.string().optional().describe('Specific keyperson if obvious (name + role).'),
+        }).optional().describe('Per-prospect targeting hypothesis.'),
+        doNotContact: z.boolean().optional().describe('Marks the prospect do-not-contact (unsubscribed/opted-out). On overwrite, true sets the flag; false never clears an existing one (one-way ratchet).'),
         matchReason: z.string().optional().describe('Why this prospect is a good target. Required when projectId is set; ignored otherwise.'),
         priority: prioritySchema.default(3),
-        discoveryStrategy: discoveryStrategySchema.optional().describe('Slug of the named discovery strategy that found this prospect (from the sales_strategy "Prospect Discovery Sources" section, e.g. "github-active-repos"). Lowercase kebab-case, ≤64 chars. Write-once provenance — /evaluate uses it to attribute reply rates to discovery strategies. Omit for user-supplied lists.'),
-        country: z.string().regex(/^[A-Z]{2}$/).optional().describe('Per-prospect country override (ISO 3166-1 alpha-2). Usually unset — the org country (with TLD inference fallback) covers the typical case. Outreach currently only delivers to US / CA / JP recipients; other codes register fine but are blocked at outreach time.'),
-        countrySource: z.enum(['manual', 'ai_inferred']).optional().describe('How the country value was determined. "manual" = operator confirmed; "ai_inferred" = LLM-derived from page content. Only meaningful when country is provided.'),
-      })).describe('Array of prospects to register (max 100)'),
+        discoveryStrategy: discoveryStrategySchema.optional().describe('Slug of the discovery strategy that found this prospect. Write-once provenance.'),
+        country: z.string().regex(/^[A-Z]{2}$/).optional().describe('Per-prospect override of the org country (ISO 3166-1 alpha-2). Codes outside the send-allowed set register fine but are blocked at outreach time.'),
+        countrySource: z.enum(['manual', 'ai_inferred']).optional().describe('Provenance of the country value; only meaningful when country is set.'),
+      })).describe('Max 100 per call.'),
     },
     async ({ projectId, prospects }, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('POST', '/prospects/batch', { projectId, prospects }, apiUrl, authHeader)
@@ -290,14 +292,14 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'check_prospect_dedup',
-    'Read-only pre-flight duplicate check. Use after candidate discovery, before paying for heavy contact retrieval: pass each candidate\'s organizationDomain (and email / contactFormUrl if surfaced incidentally), receive {kind: "fresh" | "skip", reason?} per candidate in input order. Skip reasons are the dedup-only subset of add_prospects: "email_duplicate" | "form_url_duplicate" | "already_in_project" | "do_not_contact" | "duplicate_in_batch". add_prospects also emits "plan_limit" — that is a budget signal, never emitted here. Drop kind="skip" candidates before launching contact-retrieval sub-agents; add_prospects re-runs the same dedup as a safety net. Up to 100 candidates per call.',
+    'Read-only duplicate pre-check. Returns decisions[] in input order, each {kind: \'fresh\' | \'skip\', reason?}; reasons are the dedup subset of add_prospects (no plan_limit).',
     {
-      projectId: z.string().min(1).optional().describe('Project name or ID. Omit for tenant-scope dedup only (no project-link check).'),
+      projectId: z.string().min(1).optional().describe('Project name or ID; omit for tenant-scope dedup only (no project-link check).'),
       candidates: z.array(z.object({
-        organizationDomain: z.string().describe('Organization domain. Apex form preferred (e.g. example.com); raw URLs and "www." prefix are tolerated and normalized server-side. Required.'),
+        organizationDomain: z.string().describe('Organization domain; apex preferred (example.com), but raw URLs and www. prefix are normalized server-side.'),
         email: z.email().optional(),
         contactFormUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
-      })).describe('Array of candidates to check (max 100)'),
+      })).describe('Max 100 per call.'),
     },
     async ({ projectId, candidates }, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('POST', '/prospects/check-dedup', { projectId, candidates }, apiUrl, authHeader)
@@ -319,10 +321,10 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'import_prospects_from_csv',
-    'Import prospects from a canonical CSV string. Required headers: organizationDomain, organizationName, organizationWebsiteUrl, name, overview, websiteUrl. matchReason is required only when projectId is provided. Optional headers: contactName, department, industry, email, contactFormUrl, formType, snsAccounts.x, snsAccounts.linkedin, snsAccounts.instagram, snsAccounts.facebook, notes, priority, doNotContact, country (ISO 3166-1 alpha-2; see list_country_codes), countrySource (manual | ai_inferred). At least one of email / contactFormUrl / snsAccounts.* per row. doNotContact accepts 1/true/yes/on (DNC) or 0/false/no/off (not DNC); empty cells are treated as not provided. Set it on rows the source marks as unsubscribed/opted-out so /build-list will not re-discover and contact them. On overwrite, doNotContact=true sets the flag on existing prospects; false (or column absent) never clears an existing flag (one-way ratchet). projectId is optional: omit it to save prospects as tenant-only assets (no project_prospects link is created — pair with /match-prospects to link them into a project later). dedupPolicy "skip" leaves existing prospects alone; "overwrite" updates prospect fields (matched by email or contactFormUrl) and re-links to the project. Rows that match only by organization domain are skipped as "already_in_project" even with "overwrite" — the prospect identity within that organization is ambiguous and cannot be safely updated. Existing prospects already flagged do_not_contact are always skipped (their record is preserved). Skipped rows are returned in skippedDetails as {row, name, reason} where reason ∈ "email_duplicate" | "form_url_duplicate" | "already_in_project" | "do_not_contact" | "duplicate_in_batch" | "plan_limit". Max 1000 data rows.',
+    'Import prospects from a canonical CSV string. Returns inserted, overwritten, skipped, errors, skippedDetails [{row, name, reason}], and errorDetails. dedupPolicy \'overwrite\' refreshes prospects matched by email or contactFormUrl and re-links them, but domain-only matches skip as already_in_project and do_not_contact rows are always skipped; doNotContact is a one-way ratchet on overwrite (true sets it, false/absent never clears). Max 1000 data rows.',
     {
-      projectId: z.string().min(1).optional().describe('Project name or ID. Omit to save prospects as tenant-only assets without linking to any project.'),
-      csvText: z.string().describe('Full CSV text including header row'),
+      projectId: z.string().min(1).optional().describe('Project name or ID; omit to save prospects tenant-only (no project link).'),
+      csvText: z.string().describe('Full CSV text including header row.'),
       dedupPolicy: z.enum(['skip', 'overwrite']).default('skip'),
     },
     async ({ projectId, csvText, dedupPolicy }, { apiUrl, authHeader }) => {
@@ -357,7 +359,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'list_country_codes',
-    'List the country codes LeadAce recognizes for a prospect / organization `country` field (ISO 3166-1 alpha-2). Returns { countries: [{ code, name, sendAllowed }], sendAllowed, note }; sendAllowed marks the codes outreach can currently deliver to. Any other two-letter code still stores fine but is blocked at send time. Use it to present country choices in import / registration flows instead of inventing a list.',
+    'Lists the ISO 3166-1 alpha-2 country codes LeadAce recognizes for a prospect/organization `country`. Returns { countries: [{ code, name, sendAllowed }], sendAllowed, note }; sendAllowed marks codes outreach can currently deliver to, others store but are blocked at send time.',
     {},
     async (_args, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('GET', '/country-codes', null, apiUrl, authHeader)
@@ -371,7 +373,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_outbound_targets',
-    'Get prospects due for outreach ordered by priority — new prospects plus already-contacted prospects due for a follow-up touch or a months-scale recycle. Each carries `country` (effective code = prospect override > org country > null) for pre-flight skipping against the currently-allowed US/CA/JP delivery scope, and a `cycle` object: cycle.kind is "first" | "short_cycle_followup" (a day-scale follow-up to an unanswered email — write a brief nudge with a varied subject and a fresh angle, never a resend) | "no_response" (the months-scale recycle, noResponseRecycleDays, default 90) | "rejection_followup", and cycle.touchNumber is which touch the next send is.',
+    'Prospects due for outreach (new + follow-up/recycle touches), priority-ordered; server-filters by enabled channels and deliverable country (unknown country passes unless the project sets targetCountries). Reports the reachable total and its email / formOnly / snsOnly split, the outbound mode (send|draft), remaining outreach quota, and the mailbox email cap; then the prospects as JSON, each carrying `country` and `cycle` {kind, touchNumber}.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       limit: z.number().int().min(1).max(200).default(50).describe('Max number of prospects to return'),
@@ -429,7 +431,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_mailbox_health',
-    'Read the warmup and safe-daily-cap state of the mailbox THIS PROJECT sends from. Resolves the project\'s sending identity (its assigned custom mailbox, else the connected Gmail), so the numbers match what the send path enforces — use it to explain a 403 "Mailbox daily send cap reached" for this project. Read-only. This per-mailbox EMAIL cap is a deliverability guardrail SEPARATE from the plan / billing outreach quota: it limits email sends only (form / SNS don\'t count) to protect the sending domain\'s reputation, applies on every plan and self-host, and resets at UTC midnight. Returns how far warmup has ramped (week X of N toward the steady-state cap) or the fixed daily cap override when one is set, today\'s cap / used / remaining, and any pause. Returns "no mailbox connected" when the project has no assigned mailbox and no Gmail is linked.',
+    'Warmup and daily-cap state of the mailbox this project sends from (assigned custom mailbox, else connected Gmail). This per-mailbox email cap is separate from the plan/billing outreach quota — email sends only, resets at UTC midnight. Returns the mailbox email, warmup ramp (week X of N) or fixed cap override, today\'s cap/used/remaining, any pause, and a trailing 30-day bounceRate (threaded-only lower bound). Returns a no-mailbox state when the project has no assigned mailbox and no linked Gmail.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
     },
@@ -454,6 +456,10 @@ function buildToolRegistry(): ToolDef[] {
             cap: number
             used: number
             remaining: number
+            bounceWindowDays: number
+            sentInWindow: number
+            bounced: number
+            bounceRate: number
           }
       if (h.kind === 'no_mailbox') {
         return { content: [{ type: 'text' as const, text: 'No sending mailbox connected. Connect a Gmail account at https://app.leadace.ai to enable email sends and warmup.' }] }
@@ -467,6 +473,9 @@ function buildToolRegistry(): ToolDef[] {
         `Mailbox: ${h.email}`,
         `Cap: ${warmupLine}`,
         `Today (email only): ${h.used}/${h.cap} sent, ${h.remaining} remaining — resets at UTC midnight`,
+        h.sentInWindow === 0
+          ? `Bounces (last ${h.bounceWindowDays}d): no threadable email sends yet`
+          : `Bounces (last ${h.bounceWindowDays}d): ${h.bounced}/${h.sentInWindow} = ${h.bounceRate}% (threaded-only lower bound). If elevated, review list/source quality and consider pausing this mailbox at app.leadace.ai.`,
       ]
       if (h.pausedUntil) lines.push(`⚠️ Sending PAUSED until ${h.pausedUntil}`)
       return { content: [{ type: 'text' as const, text: lines.join('\n') }] }
@@ -475,14 +484,14 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'record_outreach_with_inquiry',
-    'Pre-submit allocation for form / SNS DM channels: reserves the outreach log row (status="pre_send" in send mode, "pending_review" in draft mode) and returns finalBody with the inquiry-landing URL footer baked in (when project_settings.inquiryLandingEnabled=true). The skill submits finalBody verbatim, then resolves the row by calling update_outreach_status with "sent" on success or "failed" on failure. The prospect is flipped to "contacted" only on the "sent" transition. In draft mode the user submits manually from app.leadace.ai/drafts — no follow-up call needed. For email use send_email_and_record instead.',
+    'Reserve an outreach log row for a form / SNS DM channel before submission. Returns outreachLogId, status ("pre_send" in send mode, "pending_review" in draft mode), inquiryUrl, and finalBody — the body with the compliance footer (legal identity + opt-out line, plus an inquiry-landing URL line when inquiryLandingEnabled) always appended. The "pre_send" row must be resolved by update_outreach_status ("sent" / "failed"); a "pending_review" row needs no follow-up call. For email use send_email_and_record instead.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       prospectId: z.number().int(),
       channel: z.enum(['form', 'sns_twitter', 'sns_linkedin']),
       subject: z.string().optional(),
       body: z.string(),
-      variantId: variantIdSchema.optional().describe('Subject variant id from pick_subject_variant. Stamps outreach_logs.variant_id so per-variant reply rates are not biased to email-only sends.'),
+      variantId: variantIdSchema.optional().describe('Subject variant id from pick_subject_variant.'),
     },
     async (input, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('POST', '/outreach/record-with-inquiry', input, apiUrl, authHeader)
@@ -504,11 +513,11 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'update_outreach_status',
-    'Resolve a "pre_send" outreach log row allocated by record_outreach_with_inquiry. Call with status="sent" after the form / SNS submit succeeds — the server flips the prospect to "contacted" and confirms quota consumption. Call with status="failed" plus an errorMessage if the submit fails — the in-flight quota reservation is refunded and next_outreach_after is stamped to sentAt + noResponseRecycleDays so the prospect drops out of get_outbound_targets for that window (existing longer windows are preserved via GREATEST). Only the "pre_send" → terminal transition is accepted.',
+    'Resolve the "pre_send" outreach log row from record_outreach_with_inquiry. Both terminal transitions stamp next_outreach_after = sentAt + noResponseRecycleDays, dropping the prospect from get_outbound_targets for that window: status="sent" also flips the prospect to "contacted", confirms quota consumption, and advances the follow-up sequence; status="failed" refunds the in-flight quota reservation. Only the "pre_send" → terminal transition is accepted.',
     {
       outreachLogId: z.number().int().positive().describe('outreachLogs.id from record_outreach_with_inquiry.'),
       status: z.enum(['sent', 'failed']).describe('"sent" = submit succeeded; "failed" = submit failed.'),
-      errorMessage: z.string().min(1).max(2000).optional().describe('Required when status="failed". Reason for the submit failure (HTTP status, network error, etc.).'),
+      errorMessage: z.string().min(1).max(2000).optional().describe('Required when status="failed".'),
     },
     async ({ outreachLogId, status, errorMessage }, { apiUrl, authHeader }) => {
       if (status === 'failed' && !errorMessage) {
@@ -526,7 +535,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_tenant_settings',
-    'Get the workspace-level identity / compliance fields the user has configured. Returns a readiness status line plus legalName, physicalAddress, and defaultSenderCountry. legalName / physicalAddress / defaultSenderCountry are MANDATORY for outbound sends — when any of those is null, send_email_and_record / record_outreach_with_inquiry refuse with 412. /leadace uses this to direct the user to the Workspace settings page when fields are missing.',
+    'Returns the workspace identity/compliance fields (legalName, physicalAddress, defaultSenderCountry) plus a readiness status line; all three gate outbound: send tools refuse (412) until each is set.',
     {},
     async (_args, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('GET', '/tenant-settings', null, apiUrl, authHeader)
@@ -559,11 +568,11 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'update_tenant_settings',
-    'Update workspace-level identity / compliance fields. All fields are optional — only the keys you pass are written. legalName / physicalAddress / defaultSenderCountry are the three mandatory-for-outbound fields; setting them clears the 412 send-time refusal. defaultSenderCountry is the sender-side ISO 3166-1 alpha-2 code (workspace metadata; not rendered into outbound mail); any valid alpha-2 is accepted. It is independent from the recipient-delivery allowlist (enforced separately on prospect / organization country) and from message language (project targetLanguage). Used by /leadace to interactively fill compliance during onboarding.',
+    'Updates workspace identity/compliance fields; only the keys passed are written (merge, not replace). legalName, physicalAddress, defaultSenderCountry gate outbound: send tools refuse (412) until all are set. defaultSenderCountry is the sender\'s own country, separate from recipient targeting and message language.',
     {
       name: z.string().min(1).max(120).optional().describe('Workspace display name (internal label).'),
-      legalName: z.string().min(1).max(200).nullable().optional().describe('Registered business name shown in the email compliance footer (CAN-SPAM § 5(a)(5)).'),
-      physicalAddress: z.string().min(5).max(500).nullable().optional().describe('Postal address shown in the email compliance footer (CAN-SPAM physical address requirement).'),
+      legalName: z.string().min(1).max(200).nullable().optional().describe('Registered business name shown in the email compliance footer.'),
+      physicalAddress: z.string().min(5).max(500).nullable().optional().describe('Postal address shown in the email compliance footer.'),
       defaultSenderCountry: z.string().regex(/^[A-Z]{2}$/, 'must be ISO 3166-1 alpha-2 (e.g. US, CA, JP)').nullable().optional(),
     },
     async (patch, { apiUrl, authHeader }) => {
@@ -587,7 +596,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_compliance_status',
-    'Lightweight pre-flight check for outbound. Returns just { ready: boolean, missing: string[] } so callers can branch without parsing the full tenant settings payload. ready=false means at least one of legalName / physicalAddress / defaultSenderCountry is unset and any send_email_and_record / record_outreach_with_inquiry call will refuse with 412. Use this at the top of /outbound to bail early before spending tokens on draft generation.',
+    'Pre-flight compliance check for outbound. Reports ready or incomplete, with the unset fields. Incomplete means at least one of legalName / physicalAddress / defaultSenderCountry is missing, and send_email_and_record / record_outreach_with_inquiry then refuse with 412.',
     {},
     async (_args, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('GET', '/tenant/compliance-status', null, apiUrl, authHeader)
@@ -606,7 +615,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'list_subject_variants',
-    'List the project\'s subject-line variants (active + archived) so /leadace can detect whether seeding is needed and /evaluate can review existing rotation. Returns `{ variants: [{ variantId, subjectPattern, label, archivedAt, ... }] }` ordered by createdAt asc.',
+    'List the project\'s subject-line variants. Reports the active / archived counts, then the variants as JSON — [{ variantId, subjectPattern, label, archivedAt, … }] ordered by createdAt asc.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
     },
@@ -631,13 +640,13 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'upsert_subject_variant',
-    'Register or update a subject-line A/B variant on a project. variantId is a stable slug (e.g. "v1", "warm_intro", "signal_funded"); subjectPattern may include {{org}} / {{name}} / {{signal}} placeholders that the skill substitutes at send time. Setting archived=true retires the slug from rotation while keeping it analysable for historic outreach rows. Idempotent: re-calling with the same variantId updates the pattern / label / archived state. /leadace onboarding seeds the first 2-3 variants; /evaluate may suggest adding new ones based on response rates.',
+    'Register or update a subject-line A/B variant on a project. Idempotent by variantId — re-calling updates that variant\'s pattern / label / archived state. archived=true retires it from rotation but keeps it analysable for historic outreach rows.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
-      variantId: variantIdSchema.describe('Stable slug, max 32 chars [A-Za-z0-9_-]'),
-      subjectPattern: z.string().min(1).max(300).describe('Subject template; may use {{placeholders}}.'),
-      label: z.string().min(1).max(120).nullable().optional().describe('Optional human-readable label for /evaluate.'),
-      archived: z.boolean().optional().describe('Set true to retire the slug from rotation.'),
+      variantId: variantIdSchema,
+      subjectPattern: z.string().min(1).max(300).describe('Subject template; may embed {{placeholders}} substituted at send time.'),
+      label: z.string().min(1).max(120).nullable().optional().describe('Human-readable display label; null clears it.'),
+      archived: z.boolean().optional().describe('Omit to leave the archived state unchanged; false un-archives.'),
     },
     async (input, { apiUrl, authHeader }) => {
       const { projectId, ...body } = input
@@ -661,10 +670,10 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'pick_subject_variant',
-    'Pick an active subject-line variant for the project via a server-side weighted draw (weights are recomputed daily by run_lever_tick; an un-ticked / under-sampled project draws uniformly). Pass an explicit variantId to bypass the draw; unknown / archived ids fall through to the draw. Returns { variantId, subjectPattern, label }. For any subject-bearing send: the skill renders the pattern (substitutes {{org}} / {{name}} / {{signal}} placeholders) into the final subject and forwards variantId to send_email_and_record (email) or record_outreach_with_inquiry (a contact form that carries a subject) so outreach_logs.variant_id is stamped. NOT_FOUND when no active variants are registered — generate a one-off subject and send without variantId in that case.',
+    'Pick an active subject-line variant for the project via a server-side weighted draw. Returns the drawn variant id, its subject pattern, and label; NOT_FOUND when the project has no active variants.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
-      variantId: variantIdSchema.optional().describe('Override the weighted draw with a specific variant id.'),
+      variantId: variantIdSchema.optional().describe('A specific active variant id to bypass the weighted draw; an unknown or archived id silently falls through to the draw.'),
     },
     async (input, { apiUrl, authHeader }) => {
       const path = `/projects/${encodeURIComponent(input.projectId)}/subject-variants/pick${input.variantId ? `?variantId=${encodeURIComponent(input.variantId)}` : ''}`
@@ -687,7 +696,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'run_lever_tick',
-    'Run the daily outbound-optimization tick for the project. (1) Subject lines: measures per-variant reply rates over the reward-mature window, recomputes the weighted-draw weights pick_subject_variant reads, and archives any clearly-dominated variant (never below two active; reversible by un-archiving). (2) Channel affinity: measures (channel × coarse-industry) reply rates and recomputes the per-industry channel ranking get_outbound_targets surfaces — cells under min-sample stay on policy order, so low-volume projects are unaffected. Idempotent per UTC day — a second call the same day reports the already-recorded decision without re-applying. Call once per day from /daily-cycle after results are in. Returns the decision (subject weights, archived variants, sample counts, channel affinity by industry bucket) plus needsReplenishment: true when the subject pool has converged to the two-active floor with a dominated arm (the lever prunes/re-weights but never generates — /evaluate supplies a fresh angle).',
+    'Run the project\'s daily outbound-optimization tick: recompute the subject-variant draw weights pick_subject_variant reads (archiving dominated variants, never below two active) and the per-industry channel affinity get_outbound_targets surfaces. Idempotent per UTC day — a repeat call returns that day\'s recorded decision without re-applying. Returns weights, archived variants, per-variant samples, channelAffinity by industry bucket, and needsReplenishment (recomputed live each call, not the frozen recorded value).',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
     },
@@ -731,7 +740,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_lever_state',
-    'Inspect the outbound optimizer state for the project: current subject draw weights (null = no tick yet → uniform), the measured channel affinity per coarse-industry bucket ({} = none yet → policy order), when they were last updated, the mature sample progress per active variant, today\'s tick decision if it has run, and needsReplenishment (true when the pool has converged to the two-active floor with a dominated arm → /evaluate should supply one fresh subject angle). Read-only — use it to see whether optimization has enough data and what it last decided.',
+    'Read-only snapshot of the project\'s outbound optimizer: subject draw weights (null until the first tick → uniform), channel affinity per coarse-industry bucket ({} until measured → policy order), updatedAt, per-active-variant mature-sample progress, today\'s tick decision if it ran, and needsReplenishment.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
     },
@@ -748,7 +757,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_lever_decisions',
-    'Read the recent daily lever-tick decision history for the project (newest first; default last 30 days, override with days). Each entry is one UTC day\'s recorded decision: subject draw weights, any variants archived that day, per-variant sample counts, and the channel affinity per coarse-industry bucket. Read-only audit trail — use it to narrate how the no-control levers trended (weight shifts, archive events, channel-affinity moves) without trying to A/B or revert them. Empty until the tick has run at least once.',
+    'Read-only history of the project\'s daily lever-tick decisions, newest first. Each entry is one UTC day: subject draw weights, variants archived that day, per-variant sample counts, channel affinity per coarse-industry bucket. Empty until the tick has run at least once.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       days: z.number().int().min(1).max(365).optional().describe('Lookback window in days (default 30)'),
@@ -767,16 +776,16 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'record_outreach',
-    'Record an outreach log entry. status="sent" flips the prospect to "contacted". status="failed" REQUIRES errorMessage and stamps next_outreach_after = sentAt + noResponseRecycleDays (project setting, default 90) so the prospect drops out of get_outbound_targets for that window — covers both intentional skips (errorMessage starting with "skipped: …") and real send errors. status="pending_review" leaves the prospect unchanged but excludes it from get_outbound_targets while the draft is open. errorMessage is rejected with 400 on "sent" / "pending_review". For form / SNS DM where you intend to submit, prefer record_outreach_with_inquiry — it allocates the row pre-submit and returns finalBody with the inquiry-landing URL footer baked in.',
+    'Record an outreach log entry. status="sent" flips the prospect to "contacted" and stamps next_outreach_after = sentAt + noResponseRecycleDays so it recycles back into get_outbound_targets only after that window; status="failed" stamps the same window without marking the prospect contacted so it drops out of get_outbound_targets for it; status="pending_review" leaves the prospect unchanged but excludes it from get_outbound_targets while the draft is open. For form / SNS DM submissions, prefer record_outreach_with_inquiry.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       prospectId: z.number().int(),
       channel: z.enum(['email', 'form', 'sns_twitter', 'sns_linkedin']),
       subject: z.string().optional(),
       body: z.string(),
-      variantId: variantIdSchema.optional().describe('Subject variant id from pick_subject_variant. Stamps outreach_logs.variant_id so per-variant reply rates are not biased to email-only sends.'),
+      variantId: variantIdSchema.optional().describe('Subject variant id from pick_subject_variant.'),
       status: z.enum(['sent', 'failed', 'pending_review']).default('sent')
-        .describe('"sent" = delivered. "failed" = send error (errorMessage required). "pending_review" = draft created (outbound_mode = draft).'),
+        .describe('"sent" = delivered; "failed" = send error; "pending_review" = draft created.'),
       errorMessage: z.string().min(1).max(2000).optional()
         .describe('Required when status="failed"; rejected when status="sent" or "pending_review".'),
     },
@@ -793,16 +802,15 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'skip_prospect',
-    'Record a deliberate decision NOT to contact a prospect on this outbound run — no send is attempted. Use only for the LLM judgment calls the server cannot make: reason="bad_timing" (the prospect overview flags now as a bad moment — layoffs, wind-down, post-acquisition freeze) or reason="no_fresh_material" (a re-approach with nothing new to say). Writes a "skipped" audit row and stamps next_outreach_after = sentAt + noResponseRecycleDays so the prospect drops out of get_outbound_targets for that window (longer existing windows preserved via GREATEST). No quota is consumed and the prospect is NOT marked contacted. Do NOT use this for unsupported-country prospects — get_outbound_targets already filters those server-side.',
+    'Record a deliberate skip of a prospect on this outbound run — no send is attempted. Writes a "skipped" audit row and stamps next_outreach_after = sentAt + noResponseRecycleDays so the prospect drops out of get_outbound_targets for that window; no quota is consumed and the prospect is NOT marked contacted. Not for unsupported-country prospects — get_outbound_targets already filters those server-side.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       prospectId: z.number().int(),
       channel: z.enum(['email', 'form', 'sns_twitter', 'sns_linkedin'])
-        .describe('The channel the run was about to use. Recorded on the audit row only; no send happens.'),
-      reason: z.enum(['bad_timing', 'no_fresh_material', 'other'])
-        .describe('Structured skip reason. "bad_timing" / "no_fresh_material" are the common cases; "other" is an escape hatch.'),
+        .describe('The channel the run was about to use.'),
+      reason: z.enum(['bad_timing', 'no_fresh_material', 'other']),
       note: z.string().min(1).max(2000).optional()
-        .describe('Optional one-line context shown in the recent-outreach feed.'),
+        .describe('One-line context shown in the recent-outreach feed.'),
     },
     async (input, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('POST', '/outreach/skip', input, apiUrl, authHeader)
@@ -817,7 +825,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_gmail_status',
-    'Check whether the current user has connected their Google account (gmail.send scope) via the LeadAce web app. Returns the connected Gmail address or an indication that Gmail is not connected.',
+    'Whether the current user\'s Google account is connected (gmail.send scope), and the address it is connected as.',
     {},
     async (_args, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('GET', '/auth/google-credentials/status', null, apiUrl, authHeader)
@@ -835,7 +843,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'send_email',
-    'Send an email via the user\'s connected Gmail account WITHOUT recording an outreach log. Use for internal notifications (e.g. daily-cycle start/wrap-up emails). For prospect outreach use send_email_and_record instead.',
+    'Sends an email via the connected Gmail account without recording an outreach log; returns Gmail messageId/threadId. For prospect outreach use send_email_and_record instead.',
     {
       to: z.array(z.email()).min(1),
       subject: z.string().min(1),
@@ -869,7 +877,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'send_email_and_record',
-    'Compose and submit a prospect email + outreach log in one call. The server reads the project\'s outboundMode setting and either sends the email (mode "send") or stores a pending_review draft for the user to send from the LeadAce web app (mode "draft"). The send happens server-side whether the project\'s mailbox is a connected Gmail or a custom SMTP mailbox — call this regardless of mode / which mailbox the project uses, and do not branch on outboundMode or sending-identity type in skill logic. The send is complete when this returns.',
+    'Sends a prospect email and records the outreach log in one call; project outboundMode decides send vs a pending_review draft. Returns outreachId and whether it sent or drafted.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       prospectId: z.number().int(),
@@ -878,8 +886,8 @@ function buildToolRegistry(): ToolDef[] {
       body: z.string().min(1),
       cc: z.array(z.email()).optional(),
       bcc: z.array(z.email()).optional(),
-      inReplyTo: z.string().optional().describe('Gmail Message-Id header for threading'),
-      variantId: variantIdSchema.optional().describe('Subject variant id from pick_subject_variant. Stamps outreach_logs.variant_id so /evaluate can join reply rates per variant.'),
+      inReplyTo: z.string().optional().describe('RFC 5322 Message-Id of the message being replied to, for threading'),
+      variantId: variantIdSchema.optional().describe('Subject variant id from pick_subject_variant'),
     },
     async (input, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi(
@@ -906,12 +914,12 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'discard_drafts',
-    'Batch-delete pending_review drafts. Pass either ids (explicit list, max 200) for selective cleanup, or projectId to wipe every pending_review draft in that project. Already-sent / failed rows are silently excluded. Returns deletedIds + skippedIds (the latter only meaningful in id-list mode — ids that did not match a pending_review row in this tenant). Preview targets first with list_drafts.',
+    'Batch-delete pending_review drafts by ids, or by projectId to wipe every pending_review draft in the project. Only pending_review rows are deleted; any other status silently excluded. Returns the deleted count and any skipped ids. Preview with list_drafts.',
     {
       ids: z.array(z.number().int().positive()).min(1).max(200).optional()
-        .describe('Explicit list of outreach log ids to discard. Mutually exclusive with projectId.'),
+        .describe('Outreach log ids to discard. Mutually exclusive with projectId.'),
       projectId: z.string().min(1).optional()
-        .describe('Project name or ID. When set (and ids omitted), wipes every pending_review draft in that project. Mutually exclusive with ids.'),
+        .describe('Project name or ID. Mutually exclusive with ids.'),
     },
     async ({ ids, projectId }, { apiUrl, authHeader }) => {
       if ((ids && projectId) || (!ids && !projectId)) {
@@ -946,7 +954,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'list_drafts',
-    'List pending_review drafts for a project (newest first, paginated). Returns total and rows with a truncated bodyPreview; full review/edit/send happens at https://app.leadace.ai/drafts. Use to check pending drafts or preview a discard_drafts.',
+    'List pending_review drafts for a project, newest first. Returns total and rows with a truncated bodyPreview.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       limit: z.number().int().min(1).max(200).default(20),
@@ -990,7 +998,7 @@ function buildToolRegistry(): ToolDef[] {
       return {
         content: [{
           type: 'text' as const,
-          text: `${total} pending_review draft(s); showing ${rows.length} from offset ${offset}.\n${JSON.stringify(rows, null, 2)}`,
+          text: `${total} pending_review draft(s); showing ${rows.length} from offset ${offset}. Full review/edit/send at https://app.leadace.ai/drafts.\n${JSON.stringify(rows, null, 2)}`,
         }],
       }
     },
@@ -998,7 +1006,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'update_prospect_status',
-    'Update the status of a prospect in a project (e.g. mark as inactive, rejected).',
+    'Update a prospect\'s status within a project.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       prospectId: z.number().int(),
@@ -1022,7 +1030,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'set_prospect_priority',
-    'Set one prospect\'s outreach priority (1=highest … 5=lowest) within a project. Per-prospect override counterpart to record_evaluation\'s bulk per-industry updates: use it when a single prospect deserves a different rank than its cohort (strong buying signal, key account, explicit user instruction). Unlike record_evaluation it applies regardless of the prospect\'s status. Read the current value via list_project_prospects (any status); get_outbound_targets also returns it per reachable target.',
+    'Set one prospect\'s outreach priority (1=highest) within a project. Per-prospect override; unlike record_evaluation\'s per-industry bulk update it applies regardless of the prospect\'s status. Read the current value via list_project_prospects or get_outbound_targets.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       prospectId: z.number().int().positive(),
@@ -1046,13 +1054,13 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'update_organization',
-    'Partial-update an organization\'s name or website URL. Domain is immutable (it is the per-tenant dedup key). Use when /build-list or imports created the org with a stale name (e.g., before a rebrand) and the visible name needs correcting. organizationId is the integer PK from get_organizations / org listings, not a domain.',
+    'Partial-update an organization\'s name or website URL; domain is immutable. organizationId is the PK returned in the organizationId field of list_tenant_prospects / list_project_prospects / get_outbound_targets, not a domain.',
     {
       organizationId: z.number().int().positive(),
       patch: z.object({
         name: z.string().min(1).optional(),
         websiteUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
-      }).describe('Fields to update. At least one required.'),
+      }).describe('At least one required.'),
     },
     async ({ organizationId, patch }, { apiUrl, authHeader }) => {
       if (Object.keys(patch).length === 0) {
@@ -1071,7 +1079,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'update_prospect',
-    'Partial-update a tenant prospect\'s fields (organization-level columns: name / contactName / department / overview / industry / websiteUrl / email / contactFormUrl / formType / snsAccounts / notes / hypothesis / country / countrySource). Only the keys you pass are written; null clears a nullable field. The prospect must keep at least one contact channel (email, contactFormUrl, or any snsAccounts entry) — UNPROCESSABLE if the patch would leave none. CONFLICT when email or contactFormUrl already belongs to another prospect in the workspace. For per-project status use update_prospect_status; for per-project priority use set_prospect_priority. matchReason also lives on the project_prospects junction but is not patchable — it is set at registration / linking and rewritten only by re-importing the prospect with import_prospects (dedupPolicy="overwrite"). For DNC use set_prospect_do_not_contact.',
+    'Partial-update a tenant prospect\'s fields. UNPROCESSABLE if the patch would leave no contact channel (email, contactFormUrl, or an snsAccounts entry); CONFLICT if email or contactFormUrl already belongs to another prospect in the workspace. Changing email resets its deliverability verdict and queues a background re-check. Per-project status via update_prospect_status, priority via set_prospect_priority, DNC via set_prospect_do_not_contact.',
     {
       prospectId: z.number().int().positive(),
       patch: z.object({
@@ -1081,7 +1089,7 @@ function buildToolRegistry(): ToolDef[] {
         overview: z.string().min(1).optional(),
         industry: z.string().nullable().optional(),
         websiteUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
-        email: z.email().nullable().optional().describe('Set to null to clear; setting both email and contactFormUrl to null requires snsAccounts to be present.'),
+        email: z.email().nullable().optional().describe('Setting both email and contactFormUrl to null requires an snsAccounts entry.'),
         contactFormUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).nullable().optional(),
         formType: z.enum(['google_forms', 'native_html', 'wordpress_cf7', 'iframe_embed', 'with_captcha']).nullable().optional(),
         snsAccounts: z.object({
@@ -1102,7 +1110,7 @@ function buildToolRegistry(): ToolDef[] {
         }).nullable().optional(),
         country: z.string().regex(/^[A-Z]{2}$/, 'must be ISO 3166-1 alpha-2').nullable().optional(),
         countrySource: z.enum(['manual', 'ai_inferred']).nullable().optional(),
-      }).describe('Fields to update. Omit a key to leave it unchanged; pass null to clear (only on nullable columns).'),
+      }).describe('Omit a key to leave it unchanged; pass null to clear a nullable field.'),
     },
     async ({ prospectId, patch }, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('PATCH', `/prospects/${prospectId}`, patch, apiUrl, authHeader)
@@ -1118,10 +1126,10 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'set_prospect_do_not_contact',
-    'Toggle the do_not_contact flag on a tenant prospect. Use after /import-prospects when the source had no DNC column but you know certain rows are unsubscribed/opted-out, or for ad-hoc DNC management outside the response-recording flow. DNC prospects are excluded from /build-list re-discovery and from outbound targeting.',
+    'Set the do_not_contact flag on a tenant prospect. DNC prospects are excluded from re-discovery and outbound targeting.',
     {
       prospectId: z.number().int(),
-      doNotContact: z.boolean().describe('true to mark do-not-contact; false to clear the flag.'),
+      doNotContact: z.boolean().describe('false clears an existing flag.'),
     },
     async ({ prospectId, doNotContact }, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi(
@@ -1141,7 +1149,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_recent_outreach',
-    'Get recent outreach logs for a project. Confirmed events only (sent / failed / skipped) — pending_review drafts and pre_send rows are excluded; use list_drafts for drafts. Used by check-responses to match Gmail/SNS replies to sent messages. Each log carries the recipient identifiers (prospectName, contactName, prospectEmail, organizationDomain) so the skill can match by domain and name leads in the report without a second lookup. Each log also carries inquiry-landing aggregates: inquirySessionCount, inquiryOutcome (opened / inquired / unsubscribed / signup_clicked / lead / null — most-significant outcome ever recorded; signup_clicked is the self-serve counterpart to lead, surfaced only when the project runs in inquiryCtaType="signup"), inquiryMeetingSource (button / chat / null — only set when inquiryOutcome === "lead"), inquiryLastVisitAt — surface lead-via-landing and signup-via-landing alongside email replies, and skip reply-draft creation for outreach where the recipient already became a lead or signup via the inquiry page.',
+    'Recent outreach logs for a project. Confirmed events only (sent / failed / skipped) — pending_review drafts and pre_send rows are excluded; use list_drafts for those. Each log carries recipient identifiers (prospectName, contactName, prospectEmail, organizationDomain) and inquiry-landing aggregates (inquirySessionCount, inquiryOutcome, inquiryMeetingSource, inquiryLastVisitAt).',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       limit: z.number().int().min(1).max(200).default(100),
@@ -1164,7 +1172,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'record_response',
-    'Record a response (email reply, SNS DM, etc.) to an outreach. Updates prospect status and optionally marks do-not-contact. For rejections, pass rejectionFeedback to capture the structured reason — feature_gap notes are tracked as PMF signal; unsubscribe_request / preferred_recontact_window=never / consent.* opt-outs auto-flip do_not_contact; primary_reason wrong_timing/budget + preferred_recontact_window 3/6/12_months auto-defers (sets status="deferred" and prospects.next_outreach_after) so the prospect re-enters the outbound queue when the window passes; decision_maker_pointer with email auto-creates a new prospect (linked to every project the referring prospect is in, status="new", priority preserved) inheriting org/overview/websiteUrl/industry — pointer.name only without email updates an existing same-org contact role/department instead, returned as derivedProspects.',
+    'Record a response (email reply, SNS DM, etc.) to an outreach; updates prospect status and marks do-not-contact. do_not_contact is forced on responseType=bounce, on rejectionFeedback opt-out reasons, and when the per-project rejection cycle cap (maxReapproachCycles) is reached — the cap also drops the recontact window so a would-be deferred becomes rejected. rejectionFeedback with wrong_timing/budget plus a recontact window sets status=deferred (next_outreach_after); a decision_maker_pointer auto-creates or updates a prospect, reported back as derived prospects.',
     {
       outreachLogId: z.number().int().describe('ID of the outreach log this response is for'),
       channel: z.enum(['email', 'form', 'sns_twitter', 'sns_linkedin']),
@@ -1172,7 +1180,7 @@ function buildToolRegistry(): ToolDef[] {
       sentiment: z.enum(['positive', 'neutral', 'negative']),
       responseType: z.enum(['reply', 'auto_reply', 'bounce', 'meeting_request', 'rejection']),
       receivedAt: z.string().datetime().optional(),
-      markDoNotContact: z.boolean().default(false).describe('Set true for bounces or unsubscribes'),
+      markDoNotContact: z.boolean().default(false).describe('Manual do_not_contact flag; bounces and rejectionFeedback opt-outs force it regardless.'),
       rejectionFeedback: z.object({
         version: z.literal(1),
         primary_reason: z.enum(REJECTION_PRIMARY_REASONS),
@@ -1191,7 +1199,7 @@ function buildToolRegistry(): ToolDef[] {
         }).optional(),
         submitted_at: z.string().datetime(),
         tenant_signature: z.string().optional(),
-      }).optional().describe('Only valid when responseType="rejection". Schema: https://leadace.ai/schema/rejection-feedback-v1.json'),
+      }).optional().describe('Only valid when responseType="rejection".'),
     },
     async (input, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('POST', '/responses', input, apiUrl, authHeader)
@@ -1210,7 +1218,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_rejection_feedback_summary',
-    'Aggregate rejection_feedback. With scope="pmf" returns the PMF slice (feature_gap, already_have_solution, competitor_locked) — primary_reason distribution + feature_gap free-text notes, with total and percentages computed within the PMF subset. Used by /check-feedback. With scope="tactical" returns the non-PMF slice — primary_reason distribution + recontactWindows (per-bucket count + samples for every RejectionRecontactWindow value: "never", "3_months", "6_months", "12_months", "unspecified" — empty buckets carry {count:0,samples:[]}) + decision_maker_pointer + not_relevant notes (with industry context). Used by /evaluate to drive targeting; recontact-window prospects are auto-deferred and decision_maker_pointer rows auto-create or update prospects at record_response time, both surface here as a transparency log only. scope="all" (default) returns the unfiltered union.',
+    'Aggregate rejection_feedback for a project. Returns primaryReasonDistribution, the tactical fields recontactWindows / decisionMakerPointers / notRelevantNotes, and the pmf field feature_gap free-text notes. Read-only view — any deferral or prospect creation these rows imply happened at record_response time, not on read.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       windowDays: z.number().int().min(1).max(3650).optional().describe('Restrict to rejections received within the last N days. Omit for all-time.'),
@@ -1232,7 +1240,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_eval_data',
-    'Get evaluation statistics for a project: response rates, channel performance, sentiment breakdown, reply rate per discovery strategy (discoveryStrategyResponseRate; strategy=null bucket = prospects without recorded provenance), reply rate with vs without a fresh why-now signal at compose time (freshSignalResponseRate), and inquiry-landing outcome counts (opened / inquired / lead / signup_clicked / unsubscribed). Also returns responded message bodies and a data sufficiency check.',
+    'Evaluation statistics for a project: response rates, channel performance, sentiment breakdown, discoveryStrategyResponseRate (per discovery strategy; the null bucket is prospects without recorded provenance), freshSignalResponseRate, inquiry-landing outcome counts, respondedMessages, and a data-sufficiency check. Reply rates exclude bounces/auto-replies; discoveryStrategyResponseRate also carries bounces + bounceRate, a threaded-only lower bound.',
     { projectId: z.string().min(1).describe('Project name or ID') },
     async ({ projectId }, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('GET', `/projects/${encodeURIComponent(projectId)}/stats`, null, apiUrl, authHeader)
@@ -1248,13 +1256,13 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'record_evaluation',
-    'Apply an evaluation\'s conclusions by bulk-overriding prospect priorities by industry (only status=new prospects are affected). Returns per-industry rowsAffected. The analysis itself is reported to the user and distilled into the learnings document, not stored.',
+    'Bulk-override prospect priorities by industry; only status=new prospects are affected. Returns per-industry rowsAffected.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       priorityUpdates: z.array(z.object({
         industry: z.string().min(1),
         priority: prioritySchema,
-      })).min(1).max(50).describe('Bulk priority updates by industry (required, non-empty, max 50, one row per industry — duplicates are rejected by the API).'),
+      })).min(1).max(50).describe('Duplicate industries are rejected.'),
     },
     async (input, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('POST', '/evaluations', input, apiUrl, authHeader)
@@ -1274,7 +1282,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_document',
-    'Get the latest version of a project document (business, sales_strategy, search_notes, email_template, learnings).',
+    'Get the latest version of a project document by slug.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       slug: z.string().describe('Document slug: "business", "sales_strategy", "search_notes", "email_template", or "learnings"'),
@@ -1297,7 +1305,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'save_document',
-    'Save a new version of a project document. Appends a new version (immutable); previous versions are preserved. Use slug "email_template" to set the project-specific outreach email body template (the default base is master doc tpl_email_base); slug "learnings" is the cross-stage Learnings Log /evaluate maintains.',
+    'Save a project document by slug as a new immutable version; prior versions preserved.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       slug: z.string().describe('Document slug: "business", "sales_strategy", "search_notes", "email_template", or "learnings"'),
@@ -1341,7 +1349,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_master_document',
-    'Get a master document (shared templates, guidelines, frameworks) by slug.',
+    'Get a shared master document by slug.',
     {
       slug: z.string().describe('Master document slug (e.g. "tpl_business", "tpl_email_guidelines")'),
     },
@@ -1386,7 +1394,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'list_tenant_prospects',
-    'List existing prospects across the entire tenant (every project the user owns). Use this in /match-prospects to find prospects gathered for past projects that may fit the current project. Excludes do-not-contact prospects. excludeProjectId omits prospects already linked to that project. q is a substring match on name / overview / industry / organization name. Returns up to 1000 rows.',
+    'List existing prospects across the entire tenant, excluding do-not-contact prospects. No pagination — results beyond `limit` are truncated.',
     {
       excludeProjectId: z.string().min(1).optional()
         .describe('Project name or ID — omit prospects already linked to this project'),
@@ -1418,11 +1426,11 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'list_project_prospects',
-    'List a project\'s prospects with their per-project status, priority, and matchReason — the read counterpart to set_prospect_priority / update_prospect_status. Unlike get_outbound_targets (currently-reachable rows only), this lists prospects in ANY status (contacted, responded, deferred, rejected, ...), so use it to check current priority before/after an override on an already-contacted prospect. Sorted by priority ascending, newest first within a rank.',
+    'List a project\'s prospects with per-project status, priority, and matchReason. Unlike get_outbound_targets (reachable rows only), lists prospects in any status. Sorted by priority ascending, newest first within a rank.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       status: z.enum(prospectStatusEnum.enumValues).optional().describe('Filter by per-project status'),
-      priority: prioritySchema.optional().describe('Filter by exact priority (1-5)'),
+      priority: prioritySchema.optional().describe('Filter by exact priority'),
       q: z.string().min(1).optional().describe('Substring search on prospect name / contact name / organization name / domain'),
       limit: z.number().int().min(1).max(500).default(100),
       offset: z.number().int().min(0).default(0),
@@ -1452,7 +1460,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'link_existing_prospects_to_project',
-    'Link existing tenant prospects to a project by creating project_prospects junction rows. Does NOT create new prospects or organizations — pair with list_tenant_prospects to discover candidates first. Skips prospects flagged do_not_contact and reports prospects already linked. Use this in /match-prospects after the LLM picks targets and the user approves.',
+    'Link existing tenant prospects to a project; does NOT create new prospects or organizations. Skips prospects that are do_not_contact or not found in this tenant (per-prospect reason in skippedDetails); returns linked / alreadyLinked / skipped counts.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       links: z.array(z.object({
@@ -1491,7 +1499,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_project_settings',
-    'Get user-editable project settings (outboundMode, senderEmailAlias, senderDisplayName, senderCompanyName, senderJobTitle, unsubscribeEnabled, outboundChannels, targetCountries, ...). Returns defaults if no row exists yet. Skills should call this before strategy/build-list/outbound/daily-cycle to honor user-controlled behavior — especially outboundChannels (skip prospects whose only channel is disabled) and targetCountries (narrow discovery / exclude prospects outside the allowlist when non-empty).',
+    'Get user-editable project settings as JSON (outboundMode, sender identity, unsubscribeEnabled, footerOverride, inquiry-landing config, follow-up/recycle windows, outboundChannels, targetCountries, targetLanguage). Fields the user never set carry their column defaults; 404 when the project does not exist.',
     { projectId: z.string().min(1).describe('Project name or ID') },
     async ({ projectId }, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('GET', `/projects/${encodeURIComponent(projectId)}/settings`, null, apiUrl, authHeader)
@@ -1509,23 +1517,23 @@ function buildToolRegistry(): ToolDef[] {
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       outboundMode: z.enum(OUTBOUND_MODES).optional()
-        .describe('"send" = send immediately. "draft" = store as LeadAce drafts for review (user sends from app.leadace.ai/drafts).'),
+        .describe('"send" sends immediately; "draft" stores as reviewable LeadAce drafts instead of sending.'),
       senderEmailAlias: z.email().nullable().optional()
         .describe('Gmail Send-As alias to use as From: address. null = primary Gmail.'),
       senderDisplayName: z.string().min(1).max(200).nullable().optional()
-        .describe('Personal name shown as the email From: display name and as "From {senderDisplayName}" on the inquiry landing header.'),
+        .describe('Personal name shown as the email From: display name and on the inquiry-landing header.'),
       senderCompanyName: z.string().min(1).max(200).nullable().optional()
-        .describe('Company / brand name shown to recipients on the inquiry landing as "From {senderDisplayName} at {senderCompanyName}". Distinct from tenants.legalName (compliance footer) and tenants.name (internal workspace label). null omits the suffix.'),
+        .describe('Company / brand name shown to recipients on the inquiry landing. Distinct from the compliance-footer legal name and the internal workspace name. null omits it.'),
       senderJobTitle: z.string().min(1).max(200).nullable().optional()
-        .describe('Optional job title / role shown alongside senderDisplayName on the inquiry landing header as "From {senderDisplayName}, {senderJobTitle} at {senderCompanyName}". No-op when senderDisplayName is null.'),
+        .describe('Job title / role shown alongside senderDisplayName on the inquiry-landing header. No-op when senderDisplayName is null.'),
       unsubscribeEnabled: z.boolean().optional()
-        .describe('Attach the RFC 8058 List-Unsubscribe one-click headers to outbound email. Default false: at cold-outreach volumes the header is a bulk-mail marker (pushes mail into Gmail\'s Promotions tab); the compliance footer\'s opt-out line ships on every send regardless and carries the legal opt-out.'),
+        .describe('Attach the RFC 8058 List-Unsubscribe one-click headers to outbound email.'),
       footerOverride: z.string().trim().min(1).max(2000).nullable().optional()
-        .describe('Custom outreach footer replacing the default (legal name + physical address + reply-based opt-out line) VERBATIM on every outbound message (emails; also baked into form / SNS draft text) — include the "---" separator and the legally required disclosures yourself; the operator owns that content when set. null restores the default (rendered in the targetLanguage of the project, per-prospect-rotated wording). Mutually exclusive with inquiryLandingEnabled (400). Set only on explicit user request.'),
+        .describe('Custom footer replacing the default compliance footer VERBATIM on every outbound message (email, and form / SNS draft text) — when set, it must itself carry the "---" separator and the legally required disclosures. null restores the default. Mutually exclusive with inquiryLandingEnabled (400).'),
       inquiryLandingEnabled: z.boolean().optional()
         .describe('When true, outbound emails include an inquiry-landing URL footer that hosts a per-recipient AI chat, meeting-request button, and unsubscribe-with-reason flow.'),
       inquiryChatBrief: z.string().max(4000).nullable().optional()
-        .describe('Briefing for the inquiry-landing chat agent (offer summary, talking points, what to defer to a human). null disables chat input but keeps the rest of the landing page rendering.'),
+        .describe('Briefing for the inquiry-landing chat agent. null disables chat input but keeps the rest of the landing page rendering.'),
       inquiryOneLiner: z.string().max(140).nullable().optional()
         .describe('Single-sentence value prop shown above the chat input on the landing page.'),
       inquiryVideoUrl: z.url().max(500).refine(isHttpsUrl, HTTPS_ONLY_MSG).nullable().optional()
@@ -1533,32 +1541,32 @@ function buildToolRegistry(): ToolDef[] {
       inquiryPdfUrl: z.url().max(500).refine(isHttpsUrl, HTTPS_ONLY_MSG).nullable().optional()
         .describe('Public URL for the "download PDF" button on the landing page. https:// only.'),
       inquiryBrandColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).nullable().optional()
-        .describe('6-digit hex color (e.g. "#1f6feb") for the landing page accent.'),
+        .describe('Landing-page accent color.'),
       inquiryBrandLogoUrl: z.url().max(500).refine(isHttpsUrl, HTTPS_ONLY_MSG).nullable().optional()
         .describe('Public URL for the brand logo shown on the landing page. https:// only.'),
       inquiryDarkBackground: z.boolean().optional()
-        .describe('Landing background mode. false = light canvas (default), true = dark. The brand color stays the accent on either.'),
+        .describe('Landing background mode: false = light (default), true = dark.'),
       inquiryCtaType: z.enum(['meeting', 'signup']).optional()
-        .describe('Landing CTA mode. "meeting" (default) renders Book/Request meeting (human-sales path; inquiryCtaUrl is then an optional scheduling URL). "signup" renders a Sign up button that redirects visitors to inquiryCtaUrl (self-serve path, no human follow-up); inquiryCtaUrl is required in this mode. The two are mutually exclusive — one CTA per project.'),
+        .describe('Landing CTA mode. "meeting" (default): Book/Request meeting button, inquiryCtaUrl optional (scheduling URL). "signup": Sign up button redirecting to inquiryCtaUrl, which is required in this mode.'),
       inquiryCtaUrl: z.url().max(500).refine(isHttpsUrl, HTTPS_ONLY_MSG).nullable().optional()
-        .describe('CTA URL. For inquiryCtaType="meeting" this is an optional scheduling URL (Calendly, TimeRex, etc.) — when set, the meeting button opens it in a new tab; when null, the button is notify-only. For inquiryCtaType="signup" this is the SaaS signup page URL and is required. https:// only.'),
+        .describe('CTA URL, https:// only. For inquiryCtaType="meeting": optional scheduling URL — when null the meeting button is notify-only. For inquiryCtaType="signup": the signup page URL, required.'),
       maxReapproachCycles: z.coerce.number().int().min(1).max(10).optional()
         .describe('Hard cap on rejection cycles before forcing rejected + DNC. Default 3.'),
       unspecifiedRecontactWindowMonths: z.coerce.number().int().min(1).max(24).optional()
         .describe('Months to defer when rejection feedback preferred_recontact_window is "unspecified". Default 3.'),
       noResponseRecycleDays: z.coerce.number().int().min(7).max(365).optional()
-        .describe('Days after a sent outreach to make the prospect re-eligible if no response arrived. Default 90. Stamped via GREATEST(existing, sentAt + days) — only advances the window forward, never shortens an explicit longer window (e.g. a rejection-feedback 12_months deferral).'),
+        .describe('Days after a sent outreach before the prospect is re-eligible if no response arrived. Default 90. Only advances the re-eligibility window forward, never shortens a longer existing deferral (e.g. a rejection-feedback 12-month window).'),
       followUpSequence: z.object({
         enabled: z.boolean().optional(),
         gapDays: z.array(z.coerce.number().int().min(1).max(90)).min(1).max(5).optional(),
       }).optional()
-        .describe('Day-scale follow-up sequence for unanswered prospects (P1). gapDays = relative waits in DAYS before each next touch; default [3,7,7] yields touches at day 0 / 3 / 10 / 17 (max touches = gapDays.length + 1). Distinct from the months-scale noResponseRecycleDays (90-day recycle) and rejection re-approach windows. enabled defaults true for projects created after this shipped, false for older projects; setting enabled:false also clears any in-progress sequences. Whole-object replace — send the full override set you want, not a partial merge.'),
+        .describe('Follow-up sequence for unanswered prospects. gapDays = relative waits in DAYS before each next touch (default [3,7,7]). Whole-object replace: omitting `enabled` sets it false, disabling follow-ups AND clearing in-progress sequences — pass enabled:true explicitly to keep them on while changing cadence.'),
       outboundChannels: z.array(z.enum(OUTBOUND_CHANNELS)).optional()
-        .describe('Channels the project is allowed to use for outbound. Subset of {email, form, sns_twitter, sns_linkedin}. Default is all four. Narrow this when the operator wants to avoid less-stable browser-driven channels — skills must skip prospects whose only reachable channel is disabled. An empty array effectively pauses the project for outbound.'),
+        .describe('Channels the project is allowed to use for outbound. Default: all channels. Empty array pauses automated outbound (manual per-draft send still works).'),
       targetCountries: z.array(z.enum(ALLOWED_SEND_COUNTRIES)).optional()
-        .describe('ISO 3166-1 alpha-2 codes that further narrow the compliance-level send allowlist (currently US / CA / JP). Empty array (default) = no project-level restriction. Non-empty = explicit allowlist; /build-list focuses discovery on these countries and /outbound excludes prospects outside the set in addition to the unchanged send-time compliance gate.'),
+        .describe('Country codes that further narrow the compliance-level send allowlist. Empty array (default) = no project-level restriction; non-empty = explicit allowlist.'),
       targetLanguage: localeSchema.optional()
-        .describe('Language of this project\'s outbound messages ("en" or "ja", default "en"): the compliance footer wording / identity localization server-side, and the language skills should write subjects and bodies in. One project targets one language — split mixed-language audiences into separate projects. A content setting, not a targeting filter: independent of targetCountries, and recipient-facing web pages (inquiry landing, unsubscribe) follow the visitor\'s browser language instead.'),
+        .describe('Language of this project\'s outbound messages (default "en"): sets the compliance-footer / identity localization and the language outbound subjects and bodies are written in. Independent of targetCountries; recipient-facing web pages (inquiry landing, unsubscribe) follow the visitor\'s browser language instead.'),
     },
     async ({ projectId, ...patch }, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('PUT', `/projects/${encodeURIComponent(projectId)}/settings`, patch, apiUrl, authHeader)

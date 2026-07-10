@@ -68,3 +68,5 @@ Bump `MIN_PLUGIN_VERSION` to the just-released plugin version only when the back
 - Dropped a backwards-compat shim from a prior cycle
 
 Don't bump it for additive changes (new tool, new optional field). The point is to give old-plugin users a clear fix-it message instead of a cryptic tool error.
+
+Raising `MIN_PLUGIN_VERSION` in a feature PR means `develop` carries a MIN above `plugin.json` until the release bump catches up — that is normal. What must never reach `main` is a MIN above the `plugin.json` that `main` publishes: `/plugin update` would then fetch a plugin that still fails the gate, and the upgrade warning would never clear. The `plugin version >= MIN_PLUGIN_VERSION` job in `check.yml` enforces this on `main`-targeted PRs and `main` pushes, and only reports on `develop`. Running `release PR` with a blank version satisfies it automatically.

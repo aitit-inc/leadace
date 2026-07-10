@@ -10,7 +10,7 @@ export interface EvaluationMetrics {
   channelResponseRate: Array<{ channel: string; total: number; responses: number; rate: number }>;
   channelByIndustry: Array<{ channel: string; industry: string | null; total: number; responses: number; rate: number }>;
   variantResponseRate: Array<{ variantId: string; total: number; responses: number; rate: number; meanReward: number }>;
-  discoveryStrategyResponseRate: Array<{ strategy: string | null; total: number; responses: number; rate: number }>;
+  discoveryStrategyResponseRate: Array<{ strategy: string | null; total: number; responses: number; rate: number; bounces: number; bounceRate: number }>;
   freshSignalResponseRate: {
     withSignal: { total: number; responses: number; rate: number };
     withoutSignal: { total: number; responses: number; rate: number };

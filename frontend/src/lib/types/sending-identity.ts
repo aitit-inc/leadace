@@ -62,4 +62,8 @@ export type MailboxHealth = {
   rampWeek: number;
   rampWeeks: number;
   steadyStatePerDay: number;
+  bounceWindowDays: number;
+  sentInWindow: number;
+  bounced: number;
+  bounceRate: number;
 };

@@ -247,8 +247,8 @@ export async function getProjectStats(
                  GROUP BY r.sentiment, r.response_type`),
     rawQuery<{ priority: string | number; total: string | number; responses: string | number; rate: string | number | null }>(sql`SELECT pp.priority,
                    COUNT(DISTINCT ol.id)::int AS total,
-                   COUNT(DISTINCT r.id)::int AS responses,
-                   ROUND(COUNT(DISTINCT r.id)::numeric / NULLIF(COUNT(DISTINCT ol.id), 0) * 100, 1)::float AS rate
+                   COUNT(DISTINCT ol.id) FILTER (WHERE r.id IS NOT NULL AND r.response_type NOT IN ('bounce', 'auto_reply'))::int AS responses,
+                   ROUND(COUNT(DISTINCT ol.id) FILTER (WHERE r.id IS NOT NULL AND r.response_type NOT IN ('bounce', 'auto_reply'))::numeric / NULLIF(COUNT(DISTINCT ol.id), 0) * 100, 1)::float AS rate
                  FROM project_prospects pp
                  LEFT JOIN outreach_logs ol ON ol.project_id = pp.project_id AND ol.prospect_id = pp.prospect_id AND ol.status = ${SENT}
                  LEFT JOIN responses r ON r.outreach_log_id = ol.id
@@ -258,21 +258,24 @@ export async function getProjectStats(
     // responses is 1:N to a send (no unique on outreach_log_id), so COUNT(DISTINCT ol.id) avoids double-counting.
     rawQuery<{ channel: Channel; total: string | number; responses: string | number }>(sql`SELECT ol.channel,
                    COUNT(DISTINCT ol.id)::int AS total,
-                   COUNT(DISTINCT ol.id) FILTER (WHERE r.id IS NOT NULL)::int AS responses
+                   COUNT(DISTINCT ol.id) FILTER (WHERE r.id IS NOT NULL AND r.response_type NOT IN ('bounce', 'auto_reply'))::int AS responses
                  FROM outreach_logs ol LEFT JOIN responses r ON r.outreach_log_id = ol.id
                  WHERE ol.project_id = ${projectId} AND ol.status = ${SENT} GROUP BY ol.channel`),
     // NULLIF(TRIM(industry)): some write paths (prospect-import) don't trim, so blank/whitespace would otherwise split into separate buckets.
     rawQuery<{ channel: Channel; industry: string | null; total: string | number; responses: string | number }>(sql`SELECT ol.channel, NULLIF(TRIM(p.industry), '') AS industry,
                    COUNT(DISTINCT ol.id)::int AS total,
-                   COUNT(DISTINCT ol.id) FILTER (WHERE r.id IS NOT NULL)::int AS responses
+                   COUNT(DISTINCT ol.id) FILTER (WHERE r.id IS NOT NULL AND r.response_type NOT IN ('bounce', 'auto_reply'))::int AS responses
                  FROM outreach_logs ol
                    JOIN prospects p ON p.id = ol.prospect_id
                    LEFT JOIN responses r ON r.outreach_log_id = ol.id
                  WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}
                  GROUP BY ol.channel, NULLIF(TRIM(p.industry), '')`),
-    rawQuery<{ strategy: string | null; total: string | number; responses: string | number }>(sql`SELECT p.discovery_strategy AS strategy,
+    // Bounce denominator is threadable email sends (bounceEligible), not total: a form/SNS send can't bounce.
+    rawQuery<{ strategy: string | null; total: string | number; responses: string | number; bounces: string | number; bounceEligible: string | number }>(sql`SELECT p.discovery_strategy AS strategy,
                    COUNT(DISTINCT ol.id)::int AS total,
-                   COUNT(DISTINCT ol.id) FILTER (WHERE r.id IS NOT NULL)::int AS responses
+                   COUNT(DISTINCT ol.id) FILTER (WHERE r.id IS NOT NULL AND r.response_type NOT IN ('bounce', 'auto_reply'))::int AS responses,
+                   COUNT(DISTINCT ol.id) FILTER (WHERE r.response_type = 'bounce' AND ol.channel = 'email' AND ol.message_id IS NOT NULL)::int AS bounces,
+                   COUNT(DISTINCT ol.id) FILTER (WHERE ol.channel = 'email' AND ol.message_id IS NOT NULL)::int AS "bounceEligible"
                  FROM outreach_logs ol
                    JOIN prospects p ON p.id = ol.prospect_id
                    LEFT JOIN responses r ON r.outreach_log_id = ol.id
@@ -282,9 +285,9 @@ export async function getProjectStats(
     // always come back and no boolean parsing through the pooler.
     rawQuery<{ signalTotal: string | number; signalResponses: string | number; noSignalTotal: string | number; noSignalResponses: string | number }>(sql`SELECT
                    COUNT(DISTINCT ol.id) FILTER (WHERE ol.had_fresh_signal)::int AS "signalTotal",
-                   COUNT(DISTINCT ol.id) FILTER (WHERE ol.had_fresh_signal AND r.id IS NOT NULL)::int AS "signalResponses",
+                   COUNT(DISTINCT ol.id) FILTER (WHERE ol.had_fresh_signal AND r.id IS NOT NULL AND r.response_type NOT IN ('bounce', 'auto_reply'))::int AS "signalResponses",
                    COUNT(DISTINCT ol.id) FILTER (WHERE NOT ol.had_fresh_signal)::int AS "noSignalTotal",
-                   COUNT(DISTINCT ol.id) FILTER (WHERE NOT ol.had_fresh_signal AND r.id IS NOT NULL)::int AS "noSignalResponses"
+                   COUNT(DISTINCT ol.id) FILTER (WHERE NOT ol.had_fresh_signal AND r.id IS NOT NULL AND r.response_type NOT IN ('bounce', 'auto_reply'))::int AS "noSignalResponses"
                  FROM outreach_logs ol LEFT JOIN responses r ON r.outreach_log_id = ol.id
                  WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}`),
     rawQuery<{ id: string | number; channel: Channel; subject: string | null; body: string; sentiment: Sentiment; responseType: ResponseType }>(sql`SELECT ol.id, ol.channel, ol.subject, ol.body, r.sentiment, r.response_type AS "responseType"
@@ -388,11 +391,15 @@ export async function getProjectStats(
       .map((r) => {
         const total = Number(r.total)
         const responses = Number(r.responses)
+        const bounces = Number(r.bounces)
+        const bounceEligible = Number(r.bounceEligible)
         return {
           strategy: r.strategy,
           total,
           responses,
           rate: total === 0 ? 0 : Math.round((responses / total) * 1000) / 10,
+          bounces,
+          bounceRate: bounceEligible === 0 ? 0 : Math.round((bounces / bounceEligible) * 1000) / 10,
         }
       })
       .sort((a, b) => b.total - a.total || b.rate - a.rate),

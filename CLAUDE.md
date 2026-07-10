@@ -36,6 +36,8 @@ The plugin prioritizes **stability, reliability, controllability, and versatilit
 - Defer business-specific decisions to project configuration (stored as documents in the DB: business, sales_strategy, etc.); the plugin provides control mechanisms and visibility
 - Improve skills by increasing user control, not by enforcing specific behavior
 - MCP tool surface: liberal with read tools, conservative with write/action tools. A destructive tool needs a read counterpart so the agent can preview what it is about to touch (`list_drafts` → `discard_drafts`)
+- MCP tool descriptions ship as context on every Claude Code turn — keep them terse: what the tool does / returns and any non-obvious caveat, nothing more. Interpretation and how-to guidance belong in the skill, not the tool description
+- An MCP tool answers with a **text block, never JSON**: the handler reads the API's JSON and formats a string, so a description checked against the *service* can name fields the model never sees. Describe what the emitted string carries. Never use JSON-shape notation (`{ a, b }`, `x[]`) for a payload the handler does not `JSON.stringify` (CI: `.github/scripts/check-mcp-descriptions.mjs`), and never name a value the string does not carry — `discard_drafts` once advertised `deletedIds` while emitting only its `.length`. Naming a label that appears verbatim in the output (`legalName: …`) is prose, not a shape claim
 
 ### Design Principles
 

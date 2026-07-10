@@ -41,7 +41,7 @@ If `get_eval_data` returns a "Project not found" error, instruct the user to run
 `get_eval_data` response includes:
 - `metrics`: totalOutreach, channelCounts, responseCounts, sentimentBreakdown, priorityResponseRate, statusCounts, channelResponseRate, variantResponseRate, discoveryStrategyResponseRate, freshSignalResponseRate, inquiryOutcomeCounts
   - `variantResponseRate` / `channelResponseRate` / `priorityResponseRate` are the **measured lever surfaces**. The subject and channel levers act on them automatically (lever tick) — read them to report, do not turn them into SALES_STRATEGY edits
-  - `discoveryStrategyResponseRate`: reply rate per named discovery strategy (the provenance slug /build-list stamps at registration). The `strategy: null` bucket is prospects without recorded provenance (manual/CSV imports, referrals, pre-provenance rows) — treat it as a baseline, not a strategy. **This is the lever evaluate owns** — it drives the `## Prospect Discovery Sources` Status updates in step 4
+  - `discoveryStrategyResponseRate`: per named discovery strategy — reply rate PLUS `bounces` / `bounceRate` (bounces as a percentage of threadable email sends, 1dp — same units as `rate`). The `strategy: null` bucket is prospects without recorded provenance (manual/CSV imports, referrals, pre-provenance rows) — treat it as a baseline, not a strategy, and never demote it. **This is the lever evaluate owns** — it drives the `## Prospect Discovery Sources` Status updates in step 4. `bounceRate` is an *early* source-quality read (bounces arrive before replies): a high or rising per-strategy bounceRate means that source finds unreachable people. It is a threaded-only LOWER bound (real bounce rate is ≥ shown), so act on it when high, never read a low value as proof a source is clean
   - `freshSignalResponseRate`: `{ withSignal, withoutSignal }` reply-rate split by whether a fresh why-now org signal existed at compose time — the first measured read of whether signal-led sends convert better. Report-level observation only
   - `metrics.inquiryOutcomeCounts`: per-project session totals keyed by outcome (`opened` / `inquired` / `lead` / `signup_clicked` / `unsubscribed`). `signup_clicked` is the self-serve conversion path (project's CTA mode is `signup`, visitor clicked the Sign up button); `lead` is the human-sales conversion (meeting requested, button or chat-derived). Both `signup_clicked` and `lead` flip `project_prospects.status` to `responded`, so the prospect drops out of the outbound pool — they are different conversion axes that both belong in the "won" column
 - `respondedMessages`: all outreach bodies that received responses (with sentiment and responseType)
@@ -149,7 +149,7 @@ Save the updated document via `mcp__plugin_leadace_api__save_document` with `pro
 
 **Update discovery strategies (`## Prospect Discovery Sources` — same save as SALES_STRATEGY above):**
 Evaluate owns this section's `Status` flags the way it owns priorities — evidence-gated, per-slug:
-- **Demote**: flip a strategy to `Status: paused` when its reply rate underperforms the project's other strategies at `n ≥ minSamplePerArm` (from step 1's `get_lever_state`) across repeated cycles — never on a one-off gap
+- **Demote**: flip a strategy to `Status: paused` when its reply rate underperforms the project's other strategies at `n ≥ minSamplePerArm` (from step 1's `get_lever_state`) across repeated cycles — never on a one-off gap. Also demote on a clearly elevated `bounceRate` (source finds unreachable people — wasteful and reputation-harming) even before reply data matures, since bounces read earlier than replies
 - **Promote / keep**: outperformers stay `active`; cite the evidence in the report
 - **Hypothesize**: when fewer than ~3 strategies are active (or every measured one underperforms), add 1-2 new named strategies (slug heading + Status/How/Why per the `tpl_sales_strategy` format) derived from business / sales_strategy context and rejection feedback. New strategies start `active` with no history — that is the point: they need sends to become measurable
 - **Never rename or delete a slug** — that orphans its measured history. Pause instead
@@ -163,7 +163,7 @@ Each entry is one line: `[stage] [YYYY-MM-DD] claim — evidence: metric=<name>,
 - `[body]` — what responding messages do that non-responding ones don't (read by outbound, composition hint). Source: Message Analysis traits.
 - `[timing]` — recontact-window / cadence patterns that converted (read by outbound). Source: priority / recontact data.
 - `[channel]` — how to *use* a channel well (tone, opener), NOT which channel to pick (lever-owned). Read by outbound as color only.
-- `[discovery]` — which discovery strategies / source types yield responsive prospects (read by build-list, strategy selection). Source: `discoveryStrategyResponseRate` per-slug reply rates, fresh-signal split.
+- `[discovery]` — which discovery strategies / source types yield responsive *and reachable* prospects (read by build-list, strategy selection). Source: `discoveryStrategyResponseRate` per-slug reply rates AND bounceRate, fresh-signal split.
 
 **Write gate — all required; a claim that can't meet these is a hunch, drop it:**
 - `dataSufficiency.sufficient` is true and the stability discipline above says it is time to act.

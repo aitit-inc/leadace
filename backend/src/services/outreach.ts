@@ -1060,6 +1060,7 @@ export async function sendDraft(
         status: outreachLogs.status,
         prospectEmail: prospects.email,
         doNotContact: prospects.doNotContact,
+        emailDeliverability: prospects.emailDeliverability,
       })
       .from(outreachLogs)
       .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
@@ -1081,6 +1082,9 @@ export async function sendDraft(
   }
   if (draft.doNotContact) {
     return err('UNPROCESSABLE', 'Prospect is on do-not-contact list')
+  }
+  if (draft.emailDeliverability === UNDELIVERABLE) {
+    return err('UNPROCESSABLE', 'Recipient email domain cannot receive mail (DNS-confirmed undeliverable)')
   }
   const hostGuard = assertPublicHttpsSendHosts(ctx)
   if (!hostGuard.ok) return hostGuard

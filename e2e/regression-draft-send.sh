@@ -162,27 +162,32 @@ assert_eq "project outboundMode=draft" "$(api PUT "/api/projects/$PROJECT_ID/set
 SEED_BODY="$(jq -nc --arg pid "$PROJECT_ID" \
   --argjson uss "$(mkseed ussend US)" --argjson usm "$(mkseed usmark US)" \
   --argjson gb "$(mkseed gb GB)" --argjson dnc "$(mkseed dnc US)" --argjson noe "$(mkseed noemail US)" \
-  '{projectId:$pid, prospects:[$uss,$usm,$gb,$dnc,$noe]}')"
-assert_eq "seed inserted=5" "$(api POST /api/prospects/batch "$SEED_BODY" | jq -r '.inserted // 0')" "5"
+  --argjson dead "$(mkseed dead US)" \
+  '{projectId:$pid, prospects:[$uss,$usm,$gb,$dnc,$noe,$dead]}')"
+assert_eq "seed inserted=6" "$(api POST /api/prospects/batch "$SEED_BODY" | jq -r '.inserted // 0')" "6"
 LIST_RESP="$(api GET "/api/projects/$PROJECT_ID/prospects?limit=200")"
 pid_of() { echo "$LIST_RESP" | jq -r --arg e "contact@$RUN_TAG-$1.example" '.prospects[]? | select(.email == $e) | .prospectId' | head -1; }
-P_USS="$(pid_of ussend)"; P_USM="$(pid_of usmark)"; P_GB="$(pid_of gb)"; P_DNC="$(pid_of dnc)"; P_NOE="$(pid_of noemail)"
-[[ -n "$P_USS" && -n "$P_USM" && -n "$P_GB" && -n "$P_DNC" && -n "$P_NOE" ]] || { echo "could not resolve prospect ids" >&2; exit 1; }
-say "ids: ussend=$P_USS usmark=$P_USM gb=$P_GB dnc=$P_DNC noemail=$P_NOE"
+P_USS="$(pid_of ussend)"; P_USM="$(pid_of usmark)"; P_GB="$(pid_of gb)"; P_DNC="$(pid_of dnc)"; P_NOE="$(pid_of noemail)"; P_DEAD="$(pid_of dead)"
+[[ -n "$P_USS" && -n "$P_USM" && -n "$P_GB" && -n "$P_DNC" && -n "$P_NOE" && -n "$P_DEAD" ]] || { echo "could not resolve prospect ids" >&2; exit 1; }
+say "ids: ussend=$P_USS usmark=$P_USM gb=$P_GB dnc=$P_DNC noemail=$P_NOE dead=$P_DEAD"
 
 step "create drafts (email via send-and-record; form via record-with-inquiry) while compliant"
 D_SEND="$(mk_email_draft "$P_USS" "contact@$RUN_TAG-ussend.example")"
 D_GB="$(mk_email_draft "$P_GB" "contact@$RUN_TAG-gb.example")"
 D_DNC="$(mk_email_draft "$P_DNC" "contact@$RUN_TAG-dnc.example")"
 D_NOE="$(mk_email_draft "$P_NOE" "contact@$RUN_TAG-noemail.example")"
+D_DEAD="$(mk_email_draft "$P_DEAD" "contact@$RUN_TAG-dead.example")"
 F_MARK="$(mk_form_draft "$P_USM")"
 F_GB="$(mk_form_draft "$P_GB")"
 F_DNC="$(mk_form_draft "$P_DNC")"
-for v in D_SEND D_GB D_DNC D_NOE F_MARK F_GB F_DNC; do [[ -n "${!v}" ]] || { echo "failed to create draft $v" >&2; exit 1; }; done
-say "email: D_SEND=$D_SEND D_GB=$D_GB D_DNC=$D_DNC D_NOE=$D_NOE | form: F_MARK=$F_MARK F_GB=$F_GB F_DNC=$F_DNC"
+for v in D_SEND D_GB D_DNC D_NOE D_DEAD F_MARK F_GB F_DNC; do [[ -n "${!v}" ]] || { echo "failed to create draft $v" >&2; exit 1; }; done
+say "email: D_SEND=$D_SEND D_GB=$D_GB D_DNC=$D_DNC D_NOE=$D_NOE D_DEAD=$D_DEAD | form: F_MARK=$F_MARK F_GB=$F_GB F_DNC=$F_DNC"
 psql_local "UPDATE prospects SET email=NULL WHERE id=$P_NOE;" > /dev/null
 psql_local "UPDATE prospects SET do_not_contact=true WHERE id=$P_DNC;" > /dev/null
-say "nulled noemail email, flagged dnc do_not_contact"
+# Draft composed while deliverability was 'unknown'; stamp 'undeliverable' so
+# sendDraft's send-time backstop (added with the deliverability-gate fix) fires.
+psql_local "UPDATE prospects SET email_deliverability='undeliverable' WHERE id=$P_DEAD;" > /dev/null
+say "nulled noemail email, flagged dnc do_not_contact, stamped dead undeliverable"
 
 step "sendDraft rejection legs (all fire BEFORE the Gmail call; row stays pending_review)"
 assert_eq "sendDraft not-found → 404" "$(api_status POST /api/outreach/drafts/999999999/send)" "404"
@@ -202,6 +207,11 @@ CODE="$(api_status POST "/api/outreach/drafts/$D_DNC/send")"
 assert_eq "sendDraft DNC → 422" "$CODE" "422"
 assert_eq "  error" "$(api_body | jq -r '.error // ""')" "Prospect is on do-not-contact list"
 assert_eq "  D_DNC row untouched, P_DNC not contacted" "$(log_status "$D_DNC")/$(pp_status "$P_DNC")" "pending_review/new"
+
+CODE="$(api_status POST "/api/outreach/drafts/$D_DEAD/send")"
+assert_eq "sendDraft undeliverable → 422" "$CODE" "422"
+assert_eq "  error" "$(api_body | jq -r '.error // ""')" "Recipient email domain cannot receive mail (DNS-confirmed undeliverable)"
+assert_eq "  D_DEAD row untouched, P_DEAD not contacted" "$(log_status "$D_DEAD")/$(pp_status "$P_DEAD")" "pending_review/new"
 
 step "sendDraft re-enforces compliance + country at send time"
 api PUT /api/tenant-settings "$COMPLY_CLEAR" > /dev/null
