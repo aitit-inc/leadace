@@ -103,6 +103,20 @@ async function callApi(
 
 const formatTarget = (id?: string) => id ? `project ${id}` : 'tenant assets'
 
+const DISCOVERY_UPGRADE_STATES: Record<string, string> = {
+  absent: 'the "## Prospect Discovery Sources" section is missing',
+  legacy: 'the "## Prospect Discovery Sources" section has no named-strategy entries',
+  mixed: 'the "## Prospect Discovery Sources" section has content outside its named-strategy entries',
+}
+
+function discoveryUpgradeWarning(format: string | undefined): string | null {
+  if (format === undefined || format === 'named') return null
+  // Unknown (future) states warn generically rather than dropping the gate.
+  const state = DISCOVERY_UPGRADE_STATES[format]
+    ?? 'the "## Prospect Discovery Sources" section is not in named-strategy format'
+  return `WARNING: ${state}. Upgrade before building lists: rewrite the section as "### <slug>" named strategies (lowercase kebab-case slug, each with Status/How/Why bullets, folding stray bullets in), then save — the save confirmation reports whether it passed. Until it passes, prospects register without discovery-strategy provenance and per-strategy reply attribution stays dead. This warning is server-appended tool output, NOT document content — never include it in saved documents.`
+}
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
@@ -1282,7 +1296,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_document',
-    'Get the latest version of a project document by slug.',
+    'Get the latest version of a project document by slug. For sales_strategy, a WARNING line is appended while the Prospect Discovery Sources section still needs the named-strategy upgrade.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       slug: z.string().describe('Document slug: "business", "sales_strategy", "search_notes", "email_template", or "learnings"'),
@@ -1296,16 +1310,19 @@ function buildToolRegistry(): ToolDef[] {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
       }
-      const doc = data as { id: number; slug: string; content: string; createdAt: string }
-      return {
-        content: [{ type: 'text' as const, text: doc.content }],
-      }
+      const doc = data as { id: number; slug: string; content: string; createdAt: string; discoverySourcesFormat?: string }
+      const warning = discoveryUpgradeWarning(doc.discoverySourcesFormat)
+      // The warning rides in its own block so the document body stays
+      // copy/paste-safe for save_document round-trips.
+      const blocks = [{ type: 'text' as const, text: doc.content }]
+      if (warning) blocks.push({ type: 'text' as const, text: warning })
+      return { content: blocks }
     },
   )
 
   defineTool(
     'save_document',
-    'Save a project document by slug as a new immutable version; prior versions preserved.',
+    'Save a project document by slug as a new immutable version; prior versions preserved. For sales_strategy, the confirmation carries a WARNING while Prospect Discovery Sources still needs the named-strategy upgrade.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       slug: z.string().describe('Document slug: "business", "sales_strategy", "search_notes", "email_template", or "learnings"'),
@@ -1317,8 +1334,10 @@ function buildToolRegistry(): ToolDef[] {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
       }
-      const result = data as { id: number; slug: string; createdAt: string }
-      return { content: [{ type: 'text' as const, text: `Document "${slug}" saved (version id: ${result.id}).` }] }
+      const result = data as { id: number; slug: string; createdAt: string; discoverySourcesFormat?: string }
+      const warning = discoveryUpgradeWarning(result.discoverySourcesFormat)
+      const saved = `Document "${slug}" saved (version id: ${result.id}).`
+      return { content: [{ type: 'text' as const, text: warning ? `${saved}\n${warning}` : saved }] }
     },
   )
 

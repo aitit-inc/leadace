@@ -98,6 +98,10 @@ on, need no Claude session, and run fast:
   `priorityUpdates` touches only `status='new'` rows; per-industry `rowsAffected`.
 - `regression-rejection-cycle.sh` — rejection-cycle cap scoped per
   `(prospect,project)`; bounce / cap-reached `do_not_contact` flip.
+- `regression-bounce-stats.sh` — bounce-rate signals: eval stats exclude
+  bounces from `responses`, and both `discoveryStrategyResponseRate.bounceRate`
+  and mailbox-health's trailing-30d rate use the threadable denominator
+  (`message_id IS NOT NULL`).
 - `regression-inquiry-unsubscribe.sh` — inquiry landing unsubscribe ratchet
   (chip-less first-tap + with-chip follow-up both set DNC on the same session).
 - `regression-decision-maker-pointer.sh` — `decision_maker_pointer` derivation

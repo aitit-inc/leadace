@@ -39,6 +39,7 @@ SUITES=(
   regression-prospect-update-channel
   regression-record-evaluation-priority
   regression-rejection-cycle
+  regression-bounce-stats
   regression-inquiry-unsubscribe
   regression-decision-maker-pointer
   regression-tenant-isolation

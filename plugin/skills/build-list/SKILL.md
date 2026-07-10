@@ -97,13 +97,19 @@ repeatable discovery strategy. Select the strategies for this pass:
   pass on strategies with measured above-average reply rates, but keep at least
   one unproven strategy in rotation so attribution data accumulates across the
   portfolio (a strategy that never sends can never be promoted or demoted).
-- **Old-format or mixed section** (any prose bullets not under a `### <slug>`
-  subsection — e.g. a legacy section, or leftovers next to strategies another
-  skill appended): upgrade it once — fold those bullets plus the Target /
-  Search Keywords sections into named strategies (slug = lowercase kebab-case
-  ≤64 chars, `Status: active`, How, Why), keep existing `### <slug>` entries
-  as-is, rewrite the section in that format, and save the full document via
-  `mcp__plugin_leadace_api__save_document` (slug `sales_strategy`) before proceeding.
+- **Upgrade gate (blocking)**: the server appends a `WARNING:` line to the
+  `get_document` / `save_document` output while the section is missing,
+  old-format, or mixed (deterministic check: any bullets or subsections not
+  forming a `### <slug>` entry). The warning is tool output, not document
+  content — never include it in content you save. While it is present, do NOT run
+  Phase 1 searches or register prospects — candidates would register without
+  `discoveryStrategy` and per-strategy attribution stays dead. Upgrade first:
+  fold the stray bullets plus the Target / Search Keywords sections into named
+  strategies (slug = lowercase kebab-case ≤64 chars, `Status: active`, How,
+  Why), keep existing `### <slug>` entries as-is, and save the full document
+  via `mcp__plugin_leadace_api__save_document` (slug `sales_strategy`). The
+  save confirmation re-runs the check — if it still carries the warning, the
+  rewrite missed something; fix and save again until it passes.
 - Every candidate surfaced by a strategy belongs to exactly one — carry its slug
   through to registration (Phase 3 `discoveryStrategy`). Candidates from ad-hoc
   user instructions have no strategy; they register without the field.

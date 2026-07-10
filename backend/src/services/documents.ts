@@ -7,6 +7,10 @@ import {
   type ProjectRef,
   type TenantId,
 } from '../domain/ids'
+import {
+  detectDiscoverySourcesFormat,
+  type DiscoverySourcesFormat,
+} from '../domain/discovery-sources'
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 
@@ -52,6 +56,7 @@ export type DocumentRow = {
   slug: string
   content: string
   createdAt: Date
+  discoverySourcesFormat?: DiscoverySourcesFormat
 }
 
 export async function getDocument(
@@ -80,6 +85,9 @@ export async function getDocument(
     .limit(1)
 
   if (!doc) return err('NOT_FOUND', 'Document not found')
+  if (doc.slug === 'sales_strategy') {
+    return ok({ ...doc, discoverySourcesFormat: detectDiscoverySourcesFormat(doc.content) })
+  }
   return ok(doc)
 }
 
@@ -111,12 +119,19 @@ export async function getDocumentHistory(
   return ok({ history: rows })
 }
 
+export type SaveDocumentResult = {
+  id: number
+  slug: string
+  createdAt: Date
+  discoverySourcesFormat?: DiscoverySourcesFormat
+}
+
 export async function saveDocument(
   db: Db,
   tenantId: TenantId,
   param: DocumentParam,
   input: SaveDocumentInput,
-): Promise<ServiceResult<{ id: number; slug: string; createdAt: Date }>> {
+): Promise<ServiceResult<SaveDocumentResult>> {
   const { id: projectRef, slug } = param
   const resolved = await resolveProject(db, tenantId, projectRef)
   if (!resolved.ok) return resolved
@@ -130,5 +145,12 @@ export async function saveDocument(
       createdAt: projectDocuments.createdAt,
     })
 
-  return ok({ id: doc!.id, slug, createdAt: doc!.createdAt })
+  return ok({
+    id: doc!.id,
+    slug,
+    createdAt: doc!.createdAt,
+    ...(slug === 'sales_strategy'
+      ? { discoverySourcesFormat: detectDiscoverySourcesFormat(input.content) }
+      : {}),
+  })
 }
