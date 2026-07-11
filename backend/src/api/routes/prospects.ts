@@ -11,6 +11,7 @@ import {
   updateDoNotContactBodySchema,
   updateProspectBodySchema,
   linkSchema,
+  deleteProspectsBodySchema,
   listReachable,
   updateProspectStatus,
   updateProspectPriority,
@@ -20,6 +21,7 @@ import {
   listTenantProspects,
   linkProspects,
   updateDoNotContact,
+  deleteProspects,
 } from '../../services/prospects'
 import {
   batchSchema,
@@ -60,6 +62,11 @@ prospectsRouter.post('/prospects/import', zValidator('json', importSchema), asyn
   const { emailsToVerify, ...body } = result.value
   scheduleDeliverabilityStamp(c, emailsToVerify)
   return c.json(body)
+})
+
+prospectsRouter.post('/prospects/delete-batch', zValidator('json', deleteProspectsBodySchema), async (c) => {
+  const result = await deleteProspects(c.get('db'), c.get('tenantId'), c.req.valid('json'))
+  return result.ok ? c.json(result.value) : respondWithError(c, result)
 })
 
 prospectsRouter.post('/prospects/check-dedup', zValidator('json', checkDedupSchema), async (c) => {

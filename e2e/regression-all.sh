@@ -38,6 +38,7 @@ SUITES=(
   regression-sending-identities
   regression-prospect-update-channel
   regression-record-evaluation-priority
+  regression-prospect-delete
   regression-rejection-cycle
   regression-bounce-stats
   regression-inquiry-unsubscribe

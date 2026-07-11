@@ -23,6 +23,16 @@ allowed-tools:
   - mcp__plugin_leadace_api__update_tenant_settings
   - mcp__plugin_leadace_api__list_subject_variants
   - mcp__plugin_leadace_api__upsert_subject_variant
+  - mcp__plugin_leadace_api__list_project_prospects
+  - mcp__plugin_leadace_api__list_tenant_prospects
+  - mcp__plugin_leadace_api__list_organizations
+  - mcp__plugin_leadace_api__update_prospect
+  - mcp__plugin_leadace_api__update_prospect_status
+  - mcp__plugin_leadace_api__set_prospect_priority
+  - mcp__plugin_leadace_api__set_prospect_do_not_contact
+  - mcp__plugin_leadace_api__update_organization
+  - mcp__plugin_leadace_api__delete_prospects
+  - mcp__plugin_leadace_api__delete_organizations
 ---
 
 # LeadAce — Entry Point: Onboarding, Setup, Strategy & Routing
@@ -83,6 +93,7 @@ Examine `$0` (the user's free-form input) together with `PROJECTS` and `GMAIL`. 
 | `delegate_import` | "CSV", "file", "ファイル", "取り込み", "import" | Suggest `/import-prospects` (Step 3c) |
 | `delegate_match` | "existing prospects", "tenant assets", "プロジェクトに移動" | Suggest `/match-prospects` (Step 3c) |
 | `delegate_check_feedback` | "feedback", "PMF", "feature gap", "competitor" | Suggest `/check-feedback` (Step 3c) |
+| `data_maintenance` | Direct data operations outside the sales cycle: "delete prospects", "削除", "clean up the list", "整理", "fix this organization's name", "change status/priority of ...", "mark do-not-contact" | Data maintenance (Step 3g) |
 | `out_of_scope` | Unrelated to LeadAce (e.g., "write me a poem") | One-line reject (Step 3d) |
 
 Bias rules:
@@ -163,6 +174,30 @@ This runs the former `/strategy` flow inline: author or refine the project's `BU
 2. **Environment context**: status is live-detected, not stored. Pass the Gmail status from Step 1 (`GMAIL`) as the initial `ENV_SUMMARY`; strategy_drafting's interactive channel step (4-8) confirms channel availability with the user, so a full env re-check isn't required here.
 3. `Read` `${CLAUDE_PLUGIN_ROOT}/references/onboarding/strategy_drafting.md` and execute its full procedure (Steps 1-8) using **Mode A (Interactive Q&A)**. Pass `$0` = the resolved project name, no `$URL`. Mode A auto-detects initial vs update sub-mode (Step 3) and offers a URL fast-path (Step 4-0).
 4. Report per strategy_drafting Step 8: initial → overview of the 2 generated docs + `inquiry_chat_brief` status, guide to `/build-list` or `/daily-cycle`; update → summary of updated / added sections.
+
+#### 3g. data_maintenance — Direct Data Operations
+
+Home for prospect / organization CRUD that the sales-cycle skills never perform: field
+fixes (`update_prospect`, `update_organization`), status / priority / DNC overrides
+(`update_prospect_status`, `set_prospect_priority`, `set_prospect_do_not_contact`), and
+permanent deletion (`delete_prospects`, `delete_organizations`).
+
+**Mandatory flow for destructive or bulk operations** (deletion always; any edit
+touching more than a handful of records):
+
+1. **Preview with the read counterpart** — `list_project_prospects` /
+   `list_tenant_prospects` / `list_organizations` — and build the exact target set.
+2. **Present the plan to the user before executing**: what will be changed or deleted
+   (counts, a few representative examples), why, and that deletion is permanent.
+3. **Execute only after explicit approval.** No approval, no call.
+4. **Report the outcome faithfully**, including server-side skips with their reasons —
+   the server refuses those rows by design; do not retry around them. After
+   `delete_prospects`, offer the reported prospect-less organizations to
+   `delete_organizations`.
+
+Single-record, clearly-stated edits ("fix this org's name to X") may run directly —
+still report what changed. Never fall back to raw SQL; these tools are the supported
+surface.
 
 ### 4. Onboarding Chain (intent = onboarding)
 

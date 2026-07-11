@@ -96,6 +96,10 @@ on, need no Claude session, and run fast:
   contact-channel invariant (can't strip the last channel → 422).
 - `regression-record-evaluation-priority.sh` — `record_evaluation`
   `priorityUpdates` touches only `status='new'` rows; per-industry `rowsAffected`.
+- `regression-prospect-delete.sh` — data-maintenance delete surface:
+  `delete-batch` skips DNC / outreach-history / multi-project rows with reasons
+  and reports prospect-less orgs; org `delete-batch` refuses populated orgs;
+  status→`new` rejected (409) on sent history, allowed on audit-only rows.
 - `regression-rejection-cycle.sh` — rejection-cycle cap scoped per
   `(prospect,project)`; bounce / cap-reached `do_not_contact` flip.
 - `regression-bounce-stats.sh` — bounce-rate signals: eval stats exclude

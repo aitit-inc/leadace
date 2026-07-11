@@ -4,9 +4,11 @@ import {
   organizationIdParamSchema,
   listOrganizationsQuerySchema,
   updateOrganizationBodySchema,
+  deleteOrganizationsBodySchema,
   listOrganizations,
   getOrganization,
   updateOrganization,
+  deleteOrganizations,
 } from '../../services/organizations'
 import { respondWithError } from '../respond'
 import type { Env, Variables } from '../types'
@@ -18,6 +20,16 @@ organizationsRouter.get(
   zValidator('query', listOrganizationsQuerySchema),
   async (c) => {
     const result = await listOrganizations(c.get('db'), c.get('tenantId'), c.req.valid('query'))
+    if (!result.ok) return respondWithError(c, result)
+    return c.json(result.value)
+  },
+)
+
+organizationsRouter.post(
+  '/organizations/delete-batch',
+  zValidator('json', deleteOrganizationsBodySchema),
+  async (c) => {
+    const result = await deleteOrganizations(c.get('db'), c.get('tenantId'), c.req.valid('json'))
     if (!result.ok) return respondWithError(c, result)
     return c.json(result.value)
   },

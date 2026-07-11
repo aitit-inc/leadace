@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { eq, and, sql, desc, or, ilike, inArray, ne } from 'drizzle-orm'
+import { eq, and, sql, desc, or, ilike, inArray, ne, notExists } from 'drizzle-orm'
 import {
   organizations,
   prospects,
@@ -295,4 +295,86 @@ export async function updateOrganization(
 
   if (!updated) return err('NOT_FOUND', 'Organization not found')
   return ok({ organization: updated })
+}
+
+export const deleteOrganizationsBodySchema = z.object({
+  organizationIds: z.array(z.number().int().positive()).min(1).max(200),
+})
+export type DeleteOrganizationsBody = z.infer<typeof deleteOrganizationsBodySchema>
+
+export type OrganizationDeleteSkipReason = 'not_found' | 'has_prospects'
+
+export type DeleteOrganizationsResult = {
+  deleted: number
+  deletedIds: number[]
+  skipped: { organizationId: number; reason: OrganizationDeleteSkipReason }[]
+}
+
+// An organization with prospects is refused (the fk_prospect_org_tenant
+// RESTRICT backs this) — delete or move its prospects first.
+export async function deleteOrganizations(
+  db: Db,
+  tenantId: TenantId,
+  body: DeleteOrganizationsBody,
+): Promise<ServiceResult<DeleteOrganizationsResult>> {
+  const organizationIds = [...new Set(body.organizationIds)]
+
+  const [rows, prospectRows] = await Promise.all([
+    db
+      .select({ id: organizations.id })
+      .from(organizations)
+      .where(and(eq(organizations.tenantId, tenantId), inArray(organizations.id, organizationIds))),
+    db
+      .selectDistinct({ organizationId: prospects.organizationId })
+      .from(prospects)
+      .where(and(eq(prospects.tenantId, tenantId), inArray(prospects.organizationId, organizationIds))),
+  ])
+
+  const existing = new Set(rows.map((r) => r.id))
+  const hasProspects = new Set(prospectRows.map((r) => r.organizationId))
+  const skipped: DeleteOrganizationsResult['skipped'] = []
+  const deletableIds: number[] = []
+
+  for (const organizationId of organizationIds) {
+    if (!existing.has(organizationId)) {
+      skipped.push({ organizationId, reason: 'not_found' })
+    } else if (hasProspects.has(organizationId)) {
+      skipped.push({ organizationId, reason: 'has_prospects' })
+    } else {
+      deletableIds.push(organizationId)
+    }
+  }
+
+  // Guard re-checked inside the delete: a row changed since classification is refused, not 500'd by the FK.
+  const deletedRows =
+    deletableIds.length === 0
+      ? []
+      : await db
+          .delete(organizations)
+          .where(
+            and(
+              eq(organizations.tenantId, tenantId),
+              inArray(organizations.id, deletableIds),
+              notExists(
+                db
+                  .select({ one: sql`1` })
+                  .from(prospects)
+                  .where(
+                    and(
+                      eq(prospects.organizationId, organizations.id),
+                      eq(prospects.tenantId, organizations.tenantId),
+                    ),
+                  ),
+              ),
+            ),
+          )
+          .returning({ id: organizations.id })
+
+  const deletedIds = deletedRows.map((r) => r.id)
+  const deletedIdSet = new Set(deletedIds)
+  for (const id of deletableIds) {
+    if (!deletedIdSet.has(id)) skipped.push({ organizationId: id, reason: 'has_prospects' })
+  }
+
+  return ok({ deleted: deletedIds.length, deletedIds, skipped })
 }

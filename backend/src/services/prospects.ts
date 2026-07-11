@@ -651,6 +651,27 @@ export async function updateProspectStatus(
   if (!resolved.ok) return resolved
   const projectId = resolved.value
 
+  if (status === 'new') {
+    const [sent] = await db
+      .select({ one: sql`1` })
+      .from(outreachLogs)
+      .where(
+        and(
+          eq(outreachLogs.tenantId, tenantId),
+          eq(outreachLogs.projectId, projectId),
+          eq(outreachLogs.prospectId, prospectId),
+          eq(outreachLogs.status, 'sent'),
+        ),
+      )
+      .limit(1)
+    if (sent) {
+      return err(
+        'CONFLICT',
+        "Cannot set status to 'new': this prospect has sent outreach in this project. Use 'deferred' to schedule a re-approach instead.",
+      )
+    }
+  }
+
   const [pp] = await db
     .update(projectProspects)
     .set({ status, updatedAt: new Date() })
@@ -1094,4 +1115,148 @@ export async function updateDoNotContact(
     .where(eq(prospects.id, prospectId))
 
   return ok({ updated: true, prospectId, doNotContact })
+}
+
+export const deleteProspectsBodySchema = z.object({
+  prospectIds: z.array(prospectIdSchema).min(1).max(200),
+})
+export type DeleteProspectsBody = z.infer<typeof deleteProspectsBodySchema>
+
+export type ProspectDeleteSkipReason =
+  | 'not_found'
+  | 'do_not_contact'
+  | 'has_outreach_history'
+  | 'linked_to_multiple_projects'
+  | 'concurrently_modified'
+
+export type ProspectDeleteFlags = {
+  exists: boolean
+  doNotContact: boolean
+  hasOutreachHistory: boolean
+  projectLinkCount: number
+}
+
+// DNC rows are the suppression list; outreach rows (audit included) cascade away on delete.
+export function classifyProspectDeletion(flags: ProspectDeleteFlags): ProspectDeleteSkipReason | null {
+  if (!flags.exists) return 'not_found'
+  if (flags.doNotContact) return 'do_not_contact'
+  if (flags.hasOutreachHistory) return 'has_outreach_history'
+  if (flags.projectLinkCount > 1) return 'linked_to_multiple_projects'
+  return null
+}
+
+export type DeleteProspectsResult = {
+  deleted: number
+  deletedIds: number[]
+  skipped: { prospectId: number; reason: ProspectDeleteSkipReason }[]
+  orphanedOrganizationIds: number[]
+}
+
+export async function deleteProspects(
+  db: Db,
+  tenantId: TenantId,
+  body: DeleteProspectsBody,
+): Promise<ServiceResult<DeleteProspectsResult>> {
+  const prospectIds = [...new Set(body.prospectIds)]
+
+  const [rows, outreachRows, linkRows] = await Promise.all([
+    db
+      .select({
+        id: prospects.id,
+        doNotContact: prospects.doNotContact,
+      })
+      .from(prospects)
+      .where(and(eq(prospects.tenantId, tenantId), inArray(prospects.id, prospectIds))),
+    db
+      .selectDistinct({ prospectId: outreachLogs.prospectId })
+      .from(outreachLogs)
+      .where(and(eq(outreachLogs.tenantId, tenantId), inArray(outreachLogs.prospectId, prospectIds))),
+    db
+      .select({
+        prospectId: projectProspects.prospectId,
+        linkCount: sql<number>`COUNT(*)::int`,
+      })
+      .from(projectProspects)
+      .where(and(eq(projectProspects.tenantId, tenantId), inArray(projectProspects.prospectId, prospectIds)))
+      .groupBy(projectProspects.prospectId),
+  ])
+
+  const hasOutreach = new Set(outreachRows.map((r) => r.prospectId))
+  const linkCountById = new Map(linkRows.map((r) => [r.prospectId, r.linkCount]))
+  const byId = new Map(rows.map((r) => [r.id, r]))
+  const skipped: DeleteProspectsResult['skipped'] = []
+  const deletableIds: number[] = []
+
+  for (const prospectId of prospectIds) {
+    const row = byId.get(prospectId)
+    const reason = classifyProspectDeletion({
+      exists: row !== undefined,
+      doNotContact: row?.doNotContact ?? false,
+      hasOutreachHistory: hasOutreach.has(prospectId),
+      projectLinkCount: linkCountById.get(prospectId) ?? 0,
+    })
+    if (reason) {
+      skipped.push({ prospectId, reason })
+    } else {
+      deletableIds.push(prospectId)
+    }
+  }
+
+  // Guards re-checked inside the delete: a row changed since classification is refused, not cascaded away.
+  const deletedRows =
+    deletableIds.length === 0
+      ? []
+      : await db
+          .delete(prospects)
+          .where(
+            and(
+              eq(prospects.tenantId, tenantId),
+              inArray(prospects.id, deletableIds),
+              eq(prospects.doNotContact, false),
+              notExists(
+                db
+                  .select({ one: sql`1` })
+                  .from(outreachLogs)
+                  .where(
+                    and(
+                      eq(outreachLogs.tenantId, prospects.tenantId),
+                      eq(outreachLogs.prospectId, prospects.id),
+                    ),
+                  ),
+              ),
+              sql`(SELECT COUNT(*) FROM ${projectProspects}
+                   WHERE ${projectProspects.tenantId} = ${prospects.tenantId}
+                     AND ${projectProspects.prospectId} = ${prospects.id}) <= 1`,
+            ),
+          )
+          .returning({ id: prospects.id, organizationId: prospects.organizationId })
+
+  const deletedIds = deletedRows.map((r) => r.id)
+  const deletedIdSet = new Set(deletedIds)
+  for (const id of deletableIds) {
+    if (!deletedIdSet.has(id)) skipped.push({ prospectId: id, reason: 'concurrently_modified' })
+  }
+
+  const deletedOrgIds = [...new Set(deletedRows.map((r) => r.organizationId))]
+  let orphanedOrganizationIds: number[] = []
+  if (deletedOrgIds.length > 0) {
+    const stillPopulated = new Set(
+      (
+        await db
+          .selectDistinct({ organizationId: prospects.organizationId })
+          .from(prospects)
+          .where(
+            and(eq(prospects.tenantId, tenantId), inArray(prospects.organizationId, deletedOrgIds)),
+          )
+      ).map((r) => r.organizationId),
+    )
+    orphanedOrganizationIds = deletedOrgIds.filter((id) => !stillPopulated.has(id))
+  }
+
+  return ok({
+    deleted: deletedIds.length,
+    deletedIds,
+    skipped,
+    orphanedOrganizationIds,
+  })
 }

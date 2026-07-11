@@ -1020,7 +1020,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'update_prospect_status',
-    'Update a prospect\'s status within a project.',
+    'Update a prospect\'s status within a project. Setting \'new\' is rejected while the prospect has sent outreach in that project.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       prospectId: z.number().int(),
@@ -1088,6 +1088,110 @@ function buildToolRegistry(): ToolDef[] {
       }
       const fields = Object.keys(patch).join(', ')
       return { content: [{ type: 'text' as const, text: `Organization ${organizationId} updated. Fields: ${fields}.` }] }
+    },
+  )
+
+  defineTool(
+    'list_organizations',
+    'List tenant organizations with per-org prospect and project counts.',
+    {
+      q: z.string().optional().describe('Substring search on name / domain'),
+      limit: z.number().int().min(1).max(500).default(200),
+      offset: z.number().int().min(0).default(0),
+    },
+    async ({ q, limit, offset }, { apiUrl, authHeader }) => {
+      const params = new URLSearchParams()
+      if (q) params.set('q', q)
+      params.set('limit', String(limit))
+      params.set('offset', String(offset))
+
+      const { ok, data } = await callApi('GET', `/organizations?${params.toString()}`, null, apiUrl, authHeader)
+      if (!ok) {
+        const err = data as { error: string }
+        return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
+      }
+      const result = data as {
+        organizations: Array<{ id: number; name: string; domain: string; prospectCount: number; projectCount: number }>
+        total: number
+      }
+      if (result.organizations.length === 0) {
+        return { content: [{ type: 'text' as const, text: `0 of ${result.total} organization(s).` }] }
+      }
+      const lines = result.organizations.map(
+        (o) => `#${o.id} ${o.name} (${o.domain}) prospects=${o.prospectCount} projects=${o.projectCount}`,
+      )
+      return {
+        content: [{
+          type: 'text' as const,
+          text: `${result.organizations.length} of ${result.total} organization(s):\n${lines.join('\n')}`,
+        }],
+      }
+    },
+  )
+
+  defineTool(
+    'delete_organizations',
+    'Permanently delete organizations by id (max 200); organizations that still have prospects are skipped with a reason. Preview with list_organizations.',
+    {
+      organizationIds: z.array(z.number().int().positive()).min(1).max(200),
+    },
+    async ({ organizationIds }, { apiUrl, authHeader }) => {
+      const { ok, data } = await callApi('POST', '/organizations/delete-batch', { organizationIds }, apiUrl, authHeader)
+      if (!ok) {
+        const err = data as { error: string }
+        return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
+      }
+      const result = data as {
+        deleted: number
+        deletedIds: number[]
+        skipped: Array<{ organizationId: number; reason: string }>
+      }
+      const parts = [`Deleted ${result.deleted} organization(s).`]
+      const byReason = new Map<string, number[]>()
+      for (const s of result.skipped) {
+        const ids = byReason.get(s.reason) ?? []
+        ids.push(s.organizationId)
+        byReason.set(s.reason, ids)
+      }
+      for (const [reason, ids] of byReason) {
+        parts.push(`Skipped (${reason}): ${ids.join(', ')}`)
+      }
+      return { content: [{ type: 'text' as const, text: parts.join('\n') }] }
+    },
+  )
+
+  defineTool(
+    'delete_prospects',
+    'Permanently delete prospects by id (max 200), workspace-wide. Do-not-contact prospects, prospects with outreach history, and prospects on 2+ projects are skipped with a reason; reports organizations left with no prospects. Preview with list_project_prospects.',
+    {
+      prospectIds: z.array(z.number().int().positive()).min(1).max(200),
+    },
+    async ({ prospectIds }, { apiUrl, authHeader }) => {
+      const { ok, data } = await callApi('POST', '/prospects/delete-batch', { prospectIds }, apiUrl, authHeader)
+      if (!ok) {
+        const err = data as { error: string }
+        return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
+      }
+      const result = data as {
+        deleted: number
+        deletedIds: number[]
+        skipped: Array<{ prospectId: number; reason: string }>
+        orphanedOrganizationIds: number[]
+      }
+      const parts = [`Deleted ${result.deleted} prospect(s).`]
+      const byReason = new Map<string, number[]>()
+      for (const s of result.skipped) {
+        const ids = byReason.get(s.reason) ?? []
+        ids.push(s.prospectId)
+        byReason.set(s.reason, ids)
+      }
+      for (const [reason, ids] of byReason) {
+        parts.push(`Skipped (${reason}): ${ids.join(', ')}`)
+      }
+      if (result.orphanedOrganizationIds.length > 0) {
+        parts.push(`Organizations now left with zero prospects: ${result.orphanedOrganizationIds.join(', ')}`)
+      }
+      return { content: [{ type: 'text' as const, text: parts.join('\n') }] }
     },
   )
 
