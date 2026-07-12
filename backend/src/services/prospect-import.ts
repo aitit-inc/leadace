@@ -78,6 +78,7 @@ const prospectInputSchema = z.object({
   contactFormUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
   formType: z.enum(formTypeEnum.enumValues).optional(),
   snsAccounts: snsAccountsSchema.optional(),
+  platformUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
   notes: z.string().optional(),
   hypothesis: hypothesisSchema.optional(),
   // One-way ratchet on import: true sets/keeps DNC; false (or omitted) never clears.
@@ -88,8 +89,8 @@ const prospectInputSchema = z.object({
   // Write-once provenance; CSV import deliberately has no header for it.
   discoveryStrategy: discoveryStrategySchema.optional(),
 }).refine(
-  (p) => p.email || p.contactFormUrl || (p.snsAccounts && Object.values(p.snsAccounts).some(Boolean)),
-  { message: 'At least one contact channel (email, contactFormUrl, or snsAccounts) is required' },
+  (p) => p.email || p.contactFormUrl || p.platformUrl || (p.snsAccounts && Object.values(p.snsAccounts).some(Boolean)),
+  { message: 'At least one contact channel (email, contactFormUrl, snsAccounts, or platformUrl) is required' },
 )
 type ProspectInput = z.infer<typeof prospectInputSchema>
 
@@ -112,6 +113,7 @@ const dedupCandidateSchema = z.object({
   organizationDomain: z.string().min(1).transform(normalizeDomain),
   email: z.email().optional(),
   contactFormUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
+  platformUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
 })
 
 export const checkDedupSchema = z.object({
@@ -142,6 +144,7 @@ const ALLOWED_CSV_HEADERS = new Set<string>([
   'snsAccounts.linkedin',
   'snsAccounts.instagram',
   'snsAccounts.facebook',
+  'platformUrl',
   'notes',
   'priority',
   'doNotContact',
@@ -247,6 +250,7 @@ function prospectInsertValues(
     contactFormUrl: input.contactFormUrl ?? null,
     formType: input.formType ?? null,
     snsAccounts: (input.snsAccounts as SnsAccounts) ?? null,
+    platformUrl: input.platformUrl ?? null,
     notes: input.notes ?? null,
     hypothesis: (input.hypothesis as ProspectHypothesis) ?? null,
     ...prospectCountryPatch(input),
@@ -281,6 +285,7 @@ function prospectUpdateSet(input: ProspectInput, orgId: number, now: Date) {
     ...(input.contactFormUrl !== undefined ? { contactFormUrl: input.contactFormUrl } : {}),
     ...(input.formType !== undefined ? { formType: input.formType } : {}),
     ...(input.snsAccounts !== undefined ? { snsAccounts: input.snsAccounts as SnsAccounts } : {}),
+    ...(input.platformUrl !== undefined ? { platformUrl: input.platformUrl } : {}),
     ...(input.notes !== undefined ? { notes: input.notes } : {}),
     ...(input.hypothesis !== undefined ? { hypothesis: input.hypothesis as ProspectHypothesis } : {}),
     ...prospectCountryPatch(input),
@@ -294,7 +299,7 @@ async function buildDedupIndex(
   db: Db,
   tenantId: TenantId,
   projectId: ProjectId | undefined,
-  inputs: ReadonlyArray<Pick<ProspectInput, 'email' | 'contactFormUrl' | 'organizationDomain'>>,
+  inputs: ReadonlyArray<Pick<ProspectInput, 'email' | 'contactFormUrl' | 'platformUrl' | 'organizationDomain'>>,
 ): Promise<DedupIndex> {
   const emails = Array.from(
     new Set(inputs.map((i) => i.email).filter((v): v is string => Boolean(v))),
@@ -302,11 +307,14 @@ async function buildDedupIndex(
   const forms = Array.from(
     new Set(inputs.map((i) => i.contactFormUrl).filter((v): v is string => Boolean(v))),
   )
+  const platforms = Array.from(
+    new Set(inputs.map((i) => i.platformUrl).filter((v): v is string => Boolean(v))),
+  )
   const domains = Array.from(
     new Set(inputs.map((i) => i.organizationDomain).filter((v): v is string => Boolean(v))),
   )
 
-  const [byEmailRows, byFormRows, domainRows] = await Promise.all([
+  const [byEmailRows, byFormRows, byPlatformRows, domainRows] = await Promise.all([
     emails.length > 0
       ? db
           .select({
@@ -322,6 +330,12 @@ async function buildDedupIndex(
           .select({ id: prospects.id, contactFormUrl: prospects.contactFormUrl })
           .from(prospects)
           .where(and(eq(prospects.tenantId, tenantId), inArray(prospects.contactFormUrl, forms)))
+      : Promise.resolve([]),
+    platforms.length > 0
+      ? db
+          .select({ id: prospects.id, platformUrl: prospects.platformUrl })
+          .from(prospects)
+          .where(and(eq(prospects.tenantId, tenantId), inArray(prospects.platformUrl, platforms)))
       : Promise.resolve([]),
     projectId && domains.length > 0
       ? db
@@ -345,14 +359,20 @@ async function buildDedupIndex(
   for (const r of byFormRows) {
     if (r.contactFormUrl) byForm.set(r.contactFormUrl, { id: r.id })
   }
+  const byPlatform = new Map<string, { id: number }>()
+  for (const r of byPlatformRows) {
+    if (r.platformUrl) byPlatform.set(r.platformUrl, { id: r.id })
+  }
   const domainsInProject = new Set<string>(domainRows.map((r) => r.domain))
 
   return {
     byEmail,
     byForm,
+    byPlatform,
     domainsInProject,
     claimedEmails: new Set(),
     claimedForms: new Set(),
+    claimedPlatforms: new Set(),
     claimedDomains: new Set(),
   }
 }

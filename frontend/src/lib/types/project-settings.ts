@@ -3,7 +3,7 @@ export type OutboundMode = 'send' | 'draft';
 export type InquiryCtaType = 'meeting' | 'signup';
 
 // Keep aligned with backend OUTBOUND_CHANNELS (db/schema.ts).
-export const OUTBOUND_CHANNELS = ['email', 'form', 'sns_twitter', 'sns_linkedin'] as const;
+export const OUTBOUND_CHANNELS = ['email', 'form', 'sns_twitter', 'sns_linkedin', 'platform'] as const;
 export type OutboundChannel = (typeof OUTBOUND_CHANNELS)[number];
 
 // Keep aligned with backend ALLOWED_SEND_COUNTRIES (domain/country.ts).

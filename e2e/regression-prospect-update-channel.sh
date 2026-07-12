@@ -140,7 +140,7 @@ step "T1: email-only, strip the only channel → 422"
 CODE="$(api_status PATCH "/api/prospects/$P_EMO" '{"email":null}')"; BODY="$(api_body)"
 assert_eq "strip last channel → 422" "$CODE" "422"
 assert_eq "error = channel-required message" "$(echo "$BODY" | jq -r '.error // ""')" \
-  "At least one contact channel (email, contactFormUrl, or snsAccounts) is required"
+  "At least one contact channel (email, contactFormUrl, snsAccounts, or platformUrl) is required"
 assert_eq "DB email unchanged (UPDATE never ran)" \
   "$(psql_local "SELECT email FROM prospects WHERE id=$P_EMO;")" "contact@$EMO_DOM"
 

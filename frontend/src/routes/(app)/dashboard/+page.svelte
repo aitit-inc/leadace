@@ -72,6 +72,7 @@
     form: 'Form',
     sns_twitter: 'X/Twitter',
     sns_linkedin: 'LinkedIn',
+    platform: 'Platform',
   };
   const LEARNING_STAGE_LABELS: Record<string, string> = {
     targeting: 'Targeting',

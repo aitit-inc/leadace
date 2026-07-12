@@ -111,6 +111,14 @@ Check for DM replies from prospects contacted via SNS using claude-in-chrome. Su
 
 **If the browser extension is not connected:** Skip SNS checking, but count the number of prospects contacted via SNS that remain unconfirmed. In the results report (step 7), always report this as "**Unconfirmed SNS DMs: N**".
 
+### 4b. Check Platform Responses
+
+**Prerequisite check:** If the `recent-outreach` result from step 2 has **no `platform` channel outreach**, **skip this entire step**.
+
+For each strategy with platform outreach, fetch the project's `playbook_<discoveryStrategy>` document and follow its **Response check** section: the platform's messages page (via claude-in-chrome, logged-in profile) and any notification-email sender patterns for step 3's Gmail pass. Match replies to outreach targets the same way as SNS.
+
+**If the browser extension is not connected** (and no notification email surfaced a reply): report "**Unconfirmed platform replies: N**" in step 7.
+
 ### 5. Update Database
 
 For each response found, call `mcp__plugin_leadace_api__record_response` with:

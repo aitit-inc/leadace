@@ -26,6 +26,7 @@ export interface Prospect {
   contactFormUrl: string | null;
   formType: string | null;
   snsAccounts: SnsAccounts | null;
+  platformUrl: string | null;
   doNotContact: boolean;
   notes: string | null;
   matchReason: string;

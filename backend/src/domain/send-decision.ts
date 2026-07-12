@@ -35,6 +35,7 @@ export type CandidateChannels = {
   readonly form: boolean
   readonly sns_twitter: boolean
   readonly sns_linkedin: boolean
+  readonly platform: boolean
 }
 
 export interface SendCandidate {

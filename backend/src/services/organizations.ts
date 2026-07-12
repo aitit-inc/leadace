@@ -49,6 +49,7 @@ export type OrganizationProspectRow = {
   email: string | null
   contactFormUrl: string | null
   snsAccounts: SnsAccounts | null
+  platformUrl: string | null
   doNotContact: boolean
   notes: string | null
   createdAt: Date
@@ -169,6 +170,7 @@ export async function getOrganization(
       email: prospects.email,
       contactFormUrl: prospects.contactFormUrl,
       snsAccounts: prospects.snsAccounts,
+      platformUrl: prospects.platformUrl,
       doNotContact: prospects.doNotContact,
       notes: prospects.notes,
       createdAt: prospects.createdAt,

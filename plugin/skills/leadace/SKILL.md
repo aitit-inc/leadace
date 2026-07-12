@@ -11,6 +11,7 @@ allowed-tools:
   - mcp__plugin_leadace_api__get_server_version
   - mcp__plugin_leadace_api__list_projects
   - mcp__plugin_leadace_api__get_gmail_status
+  - mcp__plugin_leadace_api__get_mailbox_health
   - mcp__plugin_leadace_api__setup_project
   - mcp__plugin_leadace_api__get_document
   - mcp__plugin_leadace_api__list_documents
@@ -86,6 +87,7 @@ Examine `$0` (the user's free-form input) together with `PROJECTS` and `GMAIL`. 
 | `info_query` | `$0` is a question about state ("how many prospects?", "誰に送った?", "結果は?") | Inline answer (Step 3b) |
 | `run_setup` | "set up", "environment", "connection", "Gmail", "MCP", "再接続", "reconnect" | Run env-check inline (Step 3e) |
 | `run_strategy` | "strategy", "戦略", "target", "targeting", "messaging", "ターゲット", "refine strategy" | Run strategy authoring inline (Step 3f) |
+| `add_means` | A new discovery/outreach means to add: "Upwork", "クラウドソーシング", "マッチングサイト", "この手段/プラットフォームでも営業したい", "playbook" | Define a playbook-driven means inline (Step 3h) |
 | `delegate_build_list` | "list", "prospects", "more leads", "リスト追加", "もっと集めて" | Suggest `/build-list` (Step 3c) |
 | `delegate_outbound` | "send", "outreach", "送信", "送って" | Suggest `/outbound` — **always confirm before** (Step 3c, with extra caution) |
 | `delegate_daily` | "daily", "今日のサイクル", "run cycle" | Suggest `/daily-cycle` (Step 3c) |
@@ -129,6 +131,7 @@ Answer the user's question using the context already gathered (`PROJECTS`, `GMAI
 - "結果は?" / "evaluation" / "改善案" / current results → `get_eval_data` (live metrics & response rates, also visualized in the `/evaluations` and `/dashboard` Web UI; the distilled "what worked / what didn't" memory lives in the `learnings` document)
 - Project documents (business / sales_strategy / etc.) → `get_document` / `list_documents`
 - Project / tenant settings → `get_project_settings` / `get_tenant_settings`
+- Daily send cap / warmup / mailbox state → `get_mailbox_health` (read-only; cap changes are Web UI only)
 
 Keep the answer to a few lines. Do not invoke other skills.
 
@@ -198,6 +201,26 @@ touching more than a handful of records):
 Single-record, clearly-stated edits ("fix this org's name to X") may run directly —
 still report what changed. Never fall back to raw SQL; these tools are the supported
 surface.
+
+#### 3h. add_means — Define a Playbook-Driven Means
+
+For a means the built-in channels don't cover — e.g. proposing on a crowdsourcing or
+matching service. `Read` `references/workspace-conventions.md` → "Playbook documents"
+first. Outcome: a named discovery strategy + its playbook saved and the `platform`
+channel enabled — the cycle skills pick the means up with no further wiring.
+
+1. **Resolve the project** (same as 3f step 1).
+2. **Interview** for the playbook contract: platform + URL, what a good posting looks
+   like, account/login state, how proposals are submitted, rate limits / ToS, where
+   replies land. Given a platform URL, offer to research it (`fetch_url.py` /
+   WebSearch) and draft for review instead of asking everything.
+3. **Write both artifacts** (show to the user before saving): the `### <slug>` entry
+   in `## Prospect Discovery Sources` of `sales_strategy` (Status: active, How
+   references the playbook), and the `playbook_<slug>` document.
+4. **Enable the channel**: `update_project_settings` — add `"platform"` to
+   `outboundChannels`, preserving existing entries.
+5. **Report**: slug, playbook saved, channel enabled; `/evaluate` promotes/demotes it
+   like any strategy; point to `/build-list` or `/daily-cycle`.
 
 ### 4. Onboarding Chain (intent = onboarding)
 

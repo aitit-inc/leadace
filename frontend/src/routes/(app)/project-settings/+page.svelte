@@ -22,12 +22,14 @@
     form: 'Contact form',
     sns_twitter: 'X (Twitter) DM',
     sns_linkedin: 'LinkedIn DM',
+    platform: 'External platform',
   };
   const CHANNEL_HINTS: Record<OutboundChannel, string> = {
     email: 'Most stable. Default channel.',
     form: 'Browser-driven submission via claude-in-chrome. Less stable.',
     sns_twitter: 'Browser-driven DM via claude-in-chrome. Less stable; rate-limited.',
     sns_linkedin: 'Browser-driven DM via claude-in-chrome. Less stable; rate-limited.',
+    platform: 'In-platform proposals (crowdsourcing, matching sites) driven by a project playbook. Off by default.',
   };
   const COUNTRY_LABELS: Record<AllowedSendCountry, string> = {
     US: 'United States',

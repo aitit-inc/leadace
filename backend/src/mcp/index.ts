@@ -261,7 +261,7 @@ function buildToolRegistry(): ToolDef[] {
         overview: z.string(),
         industry: z.string().optional(),
         websiteUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG),
-        email: z.email().optional().describe('At least one contact channel (email / contactFormUrl / snsAccounts) required.'),
+        email: z.email().optional().describe('At least one contact channel (email / contactFormUrl / snsAccounts / platformUrl) required.'),
         contactFormUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
         formType: z.enum(['google_forms', 'native_html', 'wordpress_cf7', 'iframe_embed', 'with_captcha']).optional(),
         snsAccounts: z.object({
@@ -270,6 +270,8 @@ function buildToolRegistry(): ToolDef[] {
           instagram: z.string().optional(),
           facebook: z.string().optional(),
         }).optional(),
+        platformUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional()
+          .describe('External-platform action page (posting/listing) answered in-platform via the "platform" channel; dedup is by this URL (posting granularity).'),
         notes: z.string().optional(),
         hypothesis: z.object({
           targetDepartment: z.string().optional().describe('Likely buyer department.'),
@@ -313,6 +315,7 @@ function buildToolRegistry(): ToolDef[] {
         organizationDomain: z.string().describe('Organization domain; apex preferred (example.com), but raw URLs and www. prefix are normalized server-side.'),
         email: z.email().optional(),
         contactFormUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
+        platformUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
       })).describe('Max 100 per call.'),
     },
     async ({ projectId, candidates }, { apiUrl, authHeader }) => {
@@ -335,7 +338,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'import_prospects_from_csv',
-    'Import prospects from a canonical CSV string. Returns inserted, overwritten, skipped, errors, skippedDetails [{row, name, reason}], and errorDetails. dedupPolicy \'overwrite\' refreshes prospects matched by email or contactFormUrl and re-links them, but domain-only matches skip as already_in_project and do_not_contact rows are always skipped; doNotContact is a one-way ratchet on overwrite (true sets it, false/absent never clears). Max 1000 data rows.',
+    'Import prospects from a canonical CSV string. Returns inserted, overwritten, skipped, errors, skippedDetails [{row, name, reason}], and errorDetails. dedupPolicy \'overwrite\' refreshes prospects matched by email, contactFormUrl, or platformUrl and re-links them, but domain-only matches skip as already_in_project and do_not_contact rows are always skipped; doNotContact is a one-way ratchet on overwrite (true sets it, false/absent never clears). Max 1000 data rows.',
     {
       projectId: z.string().min(1).optional().describe('Project name or ID; omit to save prospects tenant-only (no project link).'),
       csvText: z.string().describe('Full CSV text including header row.'),
@@ -387,7 +390,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_outbound_targets',
-    'Prospects due for outreach (new + follow-up/recycle touches), priority-ordered; server-filters by enabled channels and deliverable country (unknown country passes unless the project sets targetCountries). Reports the reachable total and its email / formOnly / snsOnly split, the outbound mode (send|draft), remaining outreach quota, and the mailbox email cap; then the prospects as JSON, each carrying `country` and `cycle` {kind, touchNumber}.',
+    'Prospects due for outreach (new + follow-up/recycle touches), priority-ordered; server-filters by enabled channels and deliverable country (unknown country passes unless the project sets targetCountries). Reports the reachable total and its email / formOnly / snsOnly / platformOnly split, the outbound mode (send|draft), remaining outreach quota, and the mailbox email cap; then the prospects as JSON, each carrying `country`, `discoveryStrategy`, and `cycle` {kind, touchNumber}.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       limit: z.number().int().min(1).max(200).default(50).describe('Max number of prospects to return'),
@@ -401,7 +404,7 @@ function buildToolRegistry(): ToolDef[] {
       const result = data as {
         prospects: unknown[]
         total: number
-        byChannel: { email: number; formOnly: number; snsOnly: number }
+        byChannel: { email: number; formOnly: number; snsOnly: number; platformOnly: number }
         quota?: OutreachQuota
         // Wire shape: Date fields arrive as ISO strings through res.json().
         mailboxQuota?:
@@ -437,7 +440,7 @@ function buildToolRegistry(): ToolDef[] {
       return {
         content: [{
           type: 'text' as const,
-          text: `Total reachable: ${result.total} (email: ${result.byChannel.email}, formOnly: ${result.byChannel.formOnly}, snsOnly: ${result.byChannel.snsOnly})${modeLine}${quotaLine}${mailboxLine}${msgLine}\nReturned: ${result.prospects.length}\n${JSON.stringify(result.prospects, null, 2)}`,
+          text: `Total reachable: ${result.total} (email: ${result.byChannel.email}, formOnly: ${result.byChannel.formOnly}, snsOnly: ${result.byChannel.snsOnly}, platformOnly: ${result.byChannel.platformOnly})${modeLine}${quotaLine}${mailboxLine}${msgLine}\nReturned: ${result.prospects.length}\n${JSON.stringify(result.prospects, null, 2)}`,
         }],
       }
     },
@@ -498,11 +501,11 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'record_outreach_with_inquiry',
-    'Reserve an outreach log row for a form / SNS DM channel before submission. Returns outreachLogId, status ("pre_send" in send mode, "pending_review" in draft mode), inquiryUrl, and finalBody — the body with the compliance footer (legal identity + opt-out line, plus an inquiry-landing URL line when inquiryLandingEnabled) always appended. The "pre_send" row must be resolved by update_outreach_status ("sent" / "failed"); a "pending_review" row needs no follow-up call. For email use send_email_and_record instead.',
+    'Reserve an outreach log row for a form / SNS DM / platform channel before submission. Returns outreachLogId, status ("pre_send" in send mode, "pending_review" in draft mode), inquiryUrl, and finalBody — the body with the compliance footer (legal identity + opt-out line, plus an inquiry-landing URL line when inquiryLandingEnabled) appended; channel "platform" gets no footer (solicited in-platform message). The "pre_send" row must be resolved by update_outreach_status ("sent" / "failed"); a "pending_review" row needs no follow-up call. For email use send_email_and_record instead.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       prospectId: z.number().int(),
-      channel: z.enum(['form', 'sns_twitter', 'sns_linkedin']),
+      channel: z.enum(['form', 'sns_twitter', 'sns_linkedin', 'platform']),
       subject: z.string().optional(),
       body: z.string(),
       variantId: variantIdSchema.optional().describe('Subject variant id from pick_subject_variant.'),
@@ -794,7 +797,7 @@ function buildToolRegistry(): ToolDef[] {
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       prospectId: z.number().int(),
-      channel: z.enum(['email', 'form', 'sns_twitter', 'sns_linkedin']),
+      channel: z.enum(['email', 'form', 'sns_twitter', 'sns_linkedin', 'platform']),
       subject: z.string().optional(),
       body: z.string(),
       variantId: variantIdSchema.optional().describe('Subject variant id from pick_subject_variant.'),
@@ -820,7 +823,7 @@ function buildToolRegistry(): ToolDef[] {
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       prospectId: z.number().int(),
-      channel: z.enum(['email', 'form', 'sns_twitter', 'sns_linkedin'])
+      channel: z.enum(['email', 'form', 'sns_twitter', 'sns_linkedin', 'platform'])
         .describe('The channel the run was about to use.'),
       reason: z.enum(['bad_timing', 'no_fresh_material', 'other']),
       note: z.string().min(1).max(2000).optional()
@@ -1197,7 +1200,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'update_prospect',
-    'Partial-update a tenant prospect\'s fields. UNPROCESSABLE if the patch would leave no contact channel (email, contactFormUrl, or an snsAccounts entry); CONFLICT if email or contactFormUrl already belongs to another prospect in the workspace. Changing email resets its deliverability verdict and queues a background re-check. Per-project status via update_prospect_status, priority via set_prospect_priority, DNC via set_prospect_do_not_contact.',
+    'Partial-update a tenant prospect\'s fields. UNPROCESSABLE if the patch would leave no contact channel (email, contactFormUrl, an snsAccounts entry, or platformUrl); CONFLICT if email, contactFormUrl, or platformUrl already belongs to another prospect in the workspace. Changing email resets its deliverability verdict and queues a background re-check. Per-project status via update_prospect_status, priority via set_prospect_priority, DNC via set_prospect_do_not_contact.',
     {
       prospectId: z.number().int().positive(),
       patch: z.object({
@@ -1216,6 +1219,8 @@ function buildToolRegistry(): ToolDef[] {
           instagram: z.string().optional(),
           facebook: z.string().optional(),
         }).nullable().optional(),
+        platformUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).nullable().optional()
+          .describe('External-platform action page answered in-platform via the "platform" channel.'),
         notes: z.string().nullable().optional(),
         hypothesis: z.object({
           targetDepartment: z.string().optional(),
@@ -1293,7 +1298,7 @@ function buildToolRegistry(): ToolDef[] {
     'Record a response (email reply, SNS DM, etc.) to an outreach; updates prospect status and marks do-not-contact. do_not_contact is forced on responseType=bounce, on rejectionFeedback opt-out reasons, and when the per-project rejection cycle cap (maxReapproachCycles) is reached — the cap also drops the recontact window so a would-be deferred becomes rejected. rejectionFeedback with wrong_timing/budget plus a recontact window sets status=deferred (next_outreach_after); a decision_maker_pointer auto-creates or updates a prospect, reported back as derived prospects.',
     {
       outreachLogId: z.number().int().describe('ID of the outreach log this response is for'),
-      channel: z.enum(['email', 'form', 'sns_twitter', 'sns_linkedin']),
+      channel: z.enum(['email', 'form', 'sns_twitter', 'sns_linkedin', 'platform']),
       content: z.string().describe('Response content'),
       sentiment: z.enum(['positive', 'neutral', 'negative']),
       responseType: z.enum(['reply', 'auto_reply', 'bounce', 'meeting_request', 'rejection']),
@@ -1685,7 +1690,7 @@ function buildToolRegistry(): ToolDef[] {
       }).optional()
         .describe('Follow-up sequence for unanswered prospects. gapDays = relative waits in DAYS before each next touch (default [3,7,7]). Whole-object replace: omitting `enabled` sets it false, disabling follow-ups AND clearing in-progress sequences — pass enabled:true explicitly to keep them on while changing cadence.'),
       outboundChannels: z.array(z.enum(OUTBOUND_CHANNELS)).optional()
-        .describe('Channels the project is allowed to use for outbound. Default: all channels. Empty array pauses automated outbound (manual per-draft send still works).'),
+        .describe('Channels the project is allowed to use for outbound. Default: email, form, sns_twitter, sns_linkedin — "platform" must be enabled explicitly. Empty array pauses automated outbound (manual per-draft send still works).'),
       targetCountries: z.array(z.enum(ALLOWED_SEND_COUNTRIES)).optional()
         .describe('Country codes that further narrow the compliance-level send allowlist. Empty array (default) = no project-level restriction; non-empty = explicit allowlist.'),
       targetLanguage: localeSchema.optional()

@@ -50,13 +50,14 @@ A skill that imports existing prospect / contact lists (CSV, Excel, SQLite, plai
 | `snsAccounts.linkedin` | no\* | |
 | `snsAccounts.instagram` | no\* | |
 | `snsAccounts.facebook` | no\* | |
+| `platformUrl` | no\* | External-platform action page (posting/listing URL) contacted in-platform via the `platform` channel |
 | `notes` | no | |
 | `priority` | no | Integer 1-5, default 3 |
 | `doNotContact` | no | Boolean. `1` / `true` / `yes` / `on` (case-insensitive) → DNC; `0` / `false` / `no` / `off` → not DNC; empty cell omitted. |
 | `country` | recommended | ISO 3166-1 alpha-2 (e.g. `US`, `JP`). `list_country_codes` returns the recognized set and which are send-allowed. |
 | `countrySource` | no | `manual` or `ai_inferred`. Only meaningful with `country`. |
 
-\* At least **one** of `email`, `contactFormUrl`, or any `snsAccounts.*` is required per row.
+\* At least **one** of `email`, `contactFormUrl`, any `snsAccounts.*`, or `platformUrl` is required per row.
 \*\* Tenant-only imports may omit the `matchReason` column entirely. Linking happens later via `/match-prospects`, which writes a fresh `matchReason` per project.
 
 Maximum 1000 data rows per import. Split larger files into multiple calls.

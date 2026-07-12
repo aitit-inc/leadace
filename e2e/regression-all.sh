@@ -37,6 +37,7 @@ SUITES=(
   regression-mailbox-warmup
   regression-sending-identities
   regression-prospect-update-channel
+  regression-platform-channel
   regression-record-evaluation-priority
   regression-prospect-delete
   regression-rejection-cycle

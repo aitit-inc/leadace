@@ -54,11 +54,14 @@ export type Priority = 1 | 2 | 3 | 4 | 5
 export const prioritySchema = z.literal([1, 2, 3, 4, 5])
 export const priorityCoerceSchema = z.coerce.number().pipe(prioritySchema)
 
+// 'platform' = in-platform action at prospects.platform_url. One generic value
+// by design — per-means resolution lives in prospects.discovery_strategy.
 export const channelEnum = pgEnum('channel', [
   'email',
   'form',
   'sns_twitter',
   'sns_linkedin',
+  'platform',
 ])
 
 export type Channel = (typeof channelEnum.enumValues)[number]
@@ -136,7 +139,8 @@ export type OutboundMode = (typeof OUTBOUND_MODES)[number]
 export const outboundModeEnum = pgEnum('outbound_mode', OUTBOUND_MODES)
 
 // Mirrors channelEnum; stored as text[] in project_settings, no DB enum.
-export const OUTBOUND_CHANNELS = ['email', 'form', 'sns_twitter', 'sns_linkedin'] as const
+// 'platform' is deliberately absent from the column default below.
+export const OUTBOUND_CHANNELS = ['email', 'form', 'sns_twitter', 'sns_linkedin', 'platform'] as const
 export type OutboundChannel = (typeof OUTBOUND_CHANNELS)[number]
 
 // Outcome semantics and the responses-row write rules: design §6.3.
@@ -566,6 +570,9 @@ export const prospects = pgTable('prospects', {
   contactFormUrl: text('contact_form_url'),
   formType: formTypeEnum('form_type'),
   snsAccounts: jsonb('sns_accounts').$type<SnsAccounts>(),
+  // External-platform action page (posting/listing) reached via the 'platform'
+  // channel. Prospect granularity is the posting — same URL = duplicate.
+  platformUrl: text('platform_url'),
   doNotContact: boolean('do_not_contact').notNull().default(false),
   notes: text('notes'),
   // When set in the future, get_outbound_targets skips this prospect until the
@@ -598,6 +605,9 @@ export const prospects = pgTable('prospects', {
   uniqueIndex('idx_prospect_unique_form')
     .on(table.tenantId, table.contactFormUrl)
     .where(sql`${table.contactFormUrl} IS NOT NULL`),
+  uniqueIndex('idx_prospect_unique_platform')
+    .on(table.tenantId, table.platformUrl)
+    .where(sql`${table.platformUrl} IS NOT NULL`),
   // Required so project_prospects can declare a composite (prospect_id,
   // tenant_id) foreign key that prevents cross-tenant references at write
   // time (defense-in-depth on top of RLS).

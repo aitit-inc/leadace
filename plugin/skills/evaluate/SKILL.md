@@ -151,8 +151,8 @@ Save the updated document via `mcp__plugin_leadace_api__save_document` with `pro
 Evaluate owns this section's `Status` flags the way it owns priorities — evidence-gated, per-slug:
 - **Demote**: flip a strategy to `Status: paused` when its reply rate underperforms the project's other strategies at `n ≥ minSamplePerArm` (from step 1's `get_lever_state`) across repeated cycles — never on a one-off gap. Also demote on a clearly elevated `bounceRate` (source finds unreachable people — wasteful and reputation-harming) even before reply data matures, since bounces read earlier than replies
 - **Promote / keep**: outperformers stay `active`; cite the evidence in the report
-- **Hypothesize**: when fewer than ~3 strategies are active (or every measured one underperforms), add 1-2 new named strategies (slug heading + Status/How/Why per the `tpl_sales_strategy` format) derived from business / sales_strategy context and rejection feedback. New strategies start `active` with no history — that is the point: they need sends to become measurable
-- **Never rename or delete a slug** — that orphans its measured history. Pause instead
+- **Hypothesize**: when fewer than ~3 strategies are active (or every measured one underperforms), add 1-2 new named strategies (slug heading + Status/How/Why per the `tpl_sales_strategy` format) derived from business / sales_strategy context and rejection feedback. New strategies start `active` with no history — that is the point: they need sends to become measurable. Hypothesize search/crawl strategies only — playbook-driven means need user setup; suggest them in the report instead
+- **Never rename or delete a slug** — that orphans its measured history. Pause instead. Playbook-driven strategies get the same Status treatment; leave the playbook reference in How intact
 
 **Update the Learnings Log (the cross-stage self-improvement memory):**
 

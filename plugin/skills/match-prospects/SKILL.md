@@ -79,7 +79,7 @@ For each returned prospect, decide whether it fits the **current** project's tar
 
 Skip prospects that are clearly out of scope. Stop once `$1` (default 20) strong matches are collected — no need to score every prospect when the strategy is well-defined.
 
-If a prospect has no contact channel left (no email, no `contactFormUrl`, no `snsAccounts`), skip it — it cannot be reached via outbound. The list endpoint already excludes `do_not_contact` rows, so no manual filtering needed there.
+If a prospect has no contact channel left (no email, no `contactFormUrl`, no `snsAccounts`, no `platformUrl`), skip it — it cannot be reached via outbound. The list endpoint already excludes `do_not_contact` rows, so no manual filtering needed there.
 
 **Note on email types:** Generic addresses (`info@`, `contact@`, `sales@`, `support@`, `pr@`) are valid outreach targets and must not be excluded as a class. Named individual addresses get slightly higher priority for reply-rate reasons, but generic-only prospects should be retained when they otherwise fit the strategy — for many companies they are the only reachable channel.
 

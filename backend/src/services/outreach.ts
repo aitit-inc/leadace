@@ -144,15 +144,15 @@ export const editDraftSchema = z
   .strict()
 export type EditDraftPatch = z.infer<typeof editDraftSchema>
 
-// Skill-driven channels (form / SNS DM): the skill calls this BEFORE submit so
-// the inquiry URL footer is allocated against a real outreach_log row
-// (pre_send), then submits the returned finalBody and confirms via
-// updateOutreachStatus('sent' / 'failed').
+// Skill-driven channels (form / SNS DM / platform): the skill calls this
+// BEFORE submit to allocate the outreach_log row (pre_send), then submits the
+// returned finalBody and confirms via updateOutreachStatus('sent' / 'failed').
+// form/SNS get the compliance/inquiry footer appended; 'platform' gets none.
 export const recordOutreachWithInquirySchema = z
   .object({
     projectId: projectRefSchema,
     prospectId: prospectIdSchema,
-    channel: z.enum(['form', 'sns_twitter', 'sns_linkedin']),
+    channel: z.enum(['form', 'sns_twitter', 'sns_linkedin', 'platform']),
     subject: z.string().optional(),
     body: z.string().min(1),
     variantId: variantIdSchema.optional(),
@@ -518,15 +518,19 @@ export async function recordOutreachWithInquiry(
 
   if (!log) return err('INTERNAL_ERROR', 'Failed to allocate outreach log row')
 
-  const attachments = await buildOutreachFooter(db, tenantId, ctx, {
-    prospectId: input.prospectId,
-    outreachLogId: log.id,
-    compliance: complianceResult.value,
-    inquiryLandingEnabled: sendSettings.inquiryLandingEnabled,
-    unsubscribeEnabled: sendSettings.unsubscribeEnabled,
-    footerOverride: sendSettings.footerOverride,
-    targetLanguage: sendSettings.targetLanguage,
-  })
+  // Platform messages are solicited in-platform responses governed by the
+  // platform's ToS, not email anti-spam law — no footer, no inquiry URL.
+  const attachments = input.channel === 'platform'
+    ? { footer: '', inquiryUrl: null }
+    : await buildOutreachFooter(db, tenantId, ctx, {
+        prospectId: input.prospectId,
+        outreachLogId: log.id,
+        compliance: complianceResult.value,
+        inquiryLandingEnabled: sendSettings.inquiryLandingEnabled,
+        unsubscribeEnabled: sendSettings.unsubscribeEnabled,
+        footerOverride: sendSettings.footerOverride,
+        targetLanguage: sendSettings.targetLanguage,
+      })
   const finalBody = `${input.body}${attachments.footer}`
 
   // pending_review (form/SNS draft) is copy-pasted by the user from /drafts —
@@ -954,6 +958,7 @@ export type DraftRow = {
   prospectEmail: string | null
   prospectContactFormUrl: string | null
   prospectSnsAccounts: SnsAccounts | null
+  prospectPlatformUrl: string | null
   channel: Channel
   subject: string | null
   body: string
@@ -962,7 +967,8 @@ export type DraftRow = {
 
 export type DraftPreview = {
   footer:
-    // in_body: form/SNS drafts already carry the footer in the body.
+    // in_body: the persisted body is complete as-is — form/SNS drafts carry
+    //   the footer baked in; platform drafts have no footer by design.
     // unavailable: email draft with no footer — compliance incomplete or
     //   recipient country unsupported.
     | { kind: 'rendered'; text: string }
@@ -996,6 +1002,7 @@ export async function listDrafts(
         prospectEmail: prospects.email,
         prospectContactFormUrl: prospects.contactFormUrl,
         prospectSnsAccounts: prospects.snsAccounts,
+        prospectPlatformUrl: prospects.platformUrl,
         channel: outreachLogs.channel,
         subject: outreachLogs.subject,
         body: outreachLogs.body,

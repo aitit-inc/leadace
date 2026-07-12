@@ -1,6 +1,6 @@
 import type { SnsAccounts } from './prospects';
 
-export type Channel = 'email' | 'form' | 'sns_twitter' | 'sns_linkedin';
+export type Channel = 'email' | 'form' | 'sns_twitter' | 'sns_linkedin' | 'platform';
 
 // Mirror of backend OutreachStatus minus 'pre_send' — the endpoints that
 // surface this field (listRecentOutreach, org-detail history) exclude
@@ -30,14 +30,16 @@ export interface OutreachDraft {
   prospectEmail: string | null;
   prospectContactFormUrl: string | null;
   prospectSnsAccounts: SnsAccounts | null;
+  prospectPlatformUrl: string | null;
   channel: Channel;
   subject: string | null;
   body: string;
   createdAt: string;
 }
 
-// Mirror of backend DraftPreview. 'in_body' = form/SNS footer already in the
-// body; 'unavailable' = no footer (compliance incomplete or country unsupported).
+// Mirror of backend DraftPreview. 'in_body' = the body is complete as-is
+// (form/SNS footer baked in; platform drafts carry no footer by design);
+// 'unavailable' = no footer (compliance incomplete or country unsupported).
 export type DraftFooter =
   | { kind: 'rendered'; text: string }
   | { kind: 'in_body' }

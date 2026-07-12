@@ -123,12 +123,13 @@ Read the `total` and `byChannel` fields from the response:
 - `byChannel.email`: prospects with email
 - `byChannel.formOnly`: prospects with form only (no email)
 - `byChannel.snsOnly`: prospects with SNS only (no email or form)
+- `byChannel.platformOnly`: prospects reachable only in-platform (playbook means)
 
-**Email depletion check:** If `byChannel.email` = 0 and `byChannel.formOnly` < 5, outbound effectiveness will be very low. In this case, skip outbound and **run step 8 (build-list) first** to replenish email holders. After replenishment, re-run step 6; if email > 0, proceed to outbound. If email = 0 even after build-list, run outbound for the number of formOnly prospects (report the email depletion state to the user).
+**Email depletion check:** If `byChannel.email` = 0 and `byChannel.formOnly` + `byChannel.platformOnly` < 5, outbound effectiveness will be very low. In this case, skip outbound and **run step 8 (build-list) first** to replenish email holders. After replenishment, re-run step 6; if email > 0, proceed to outbound. If email = 0 even after build-list, run outbound for the number of formOnly/platformOnly prospects (report the email depletion state to the user).
 
 **Execution order determination:** If `total` is less than **1/3 of the specified outbound count**, run step 8 (build-list) first to replenish the list, then return to step 7 outbound.
 
-- email = 0 and formOnly < 5 -> step 8 (build-list) -> re-run step 6 -> step 7 (outbound)
+- email = 0 and formOnly + platformOnly < 5 -> step 8 (build-list) -> re-run step 6 -> step 7 (outbound)
 - total >= 1/3 of specified count -> step 7 (outbound) -> step 8 (build-list, if needed)
 - total < 1/3 of specified count -> step 8 (build-list) -> re-run step 6 -> step 7 (outbound)
 - total = 0 and build-list not yet run -> step 8 (build-list) -> re-run step 6 -> step 7 (outbound)
@@ -137,7 +138,7 @@ Read the `total` and `byChannel` fields from the response:
 
 **Determine actual outbound count:** Use `min(specified count, total from step 6)` as the actual outbound count. If total is 0 (including after step 8), skip outbound and proceed to step 9.
 
-**Form submission limit:** Cap form submissions at **5 per cycle**. Form submissions consume 10-20 tool calls each via browser operations and are the primary cause of context exhaustion. If `formOnly` from the step 6 channel breakdown exceeds 5, carry the excess over to the next cycle. No limit for prospects with email.
+**Browser-driven submission limit:** Cap form submissions and platform responses at **5 per cycle combined**. Browser-driven sends consume 10-20 tool calls each and are the primary cause of context exhaustion. If `formOnly` + `platformOnly` from the step 6 channel breakdown exceeds 5, carry the excess over to the next cycle. No limit for prospects with email.
 
 Split the outbound count into **batches of 10** and launch each as a **separate sub-agent in series**.
 
@@ -146,7 +147,7 @@ Example: 30 prospects -> 3 sub-agent launches (10 each)
 Include the following in each sub-agent's prompt:
 
 ```
-You are an outbound sales agent. Please reach out to each company on the prospect list via email, form, or SNS DM.
+You are an outbound sales agent. Please reach out to each company on the prospect list via email, form, SNS DM, or in-platform response (per its channel).
 
 ## Preparation (read in this order)
 
@@ -179,7 +180,7 @@ You are an outbound sales agent. Please reach out to each company on the prospec
 - Batch number: N
 - Count: 10 (final batch may be fewer)
 - Retrieve prospects via mcp__plugin_leadace_api__get_outbound_targets with projectId "$0" and limit 10
-- For each prospect, follow `${CLAUDE_PLUGIN_ROOT}/skills/outbound/SKILL.md`'s channel-pick + send sequence. The skill picks one MCP per channel (`send_email_and_record` for email, `record_outreach_with_inquiry` for form/SNS), uses `skip_prospect` for deliberate skips (bad timing / no fresh material), and `update_outreach_status` to resolve form/SNS rows — do **not** add an extra log call after a successful send (that path bypasses the compliance footer and would double-log). Recipient-country eligibility is filtered server-side by `get_outbound_targets`; there is no skill-side country pre-flight.
+- For each prospect, follow `${CLAUDE_PLUGIN_ROOT}/skills/outbound/SKILL.md`'s channel-pick + send sequence. The skill picks one MCP per channel (`send_email_and_record` for email, `record_outreach_with_inquiry` for form/SNS/platform), uses `skip_prospect` for deliberate skips (bad timing / no fresh material), and `update_outreach_status` to resolve form/SNS/platform rows — do **not** add an extra log call after a successful send (that path bypasses the compliance footer and would double-log). Recipient-country eligibility is filtered server-side by `get_outbound_targets`; there is no skill-side country pre-flight.
 - Return to main with **only: success count, failure count, inactive count, main failure reasons (if any), list of variantIds used**
   Example: "Success 8, Failure 1 (form submission error), Unreachable 1. Variants: v1 x 4, v2 x 3, v3 x 3"
 ```

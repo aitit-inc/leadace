@@ -338,6 +338,7 @@
       case 'form': return 'Form';
       case 'sns_twitter': return 'X (Twitter) DM';
       case 'sns_linkedin': return 'LinkedIn DM';
+      case 'platform': return 'Platform';
     }
   }
 
@@ -369,6 +370,11 @@
           href: safeHttpUrl(rawHref),
         };
       }
+      case 'platform':
+        return {
+          label: d.prospectPlatformUrl ?? '(no platform URL)',
+          href: safeHttpUrl(d.prospectPlatformUrl),
+        };
     }
   }
 

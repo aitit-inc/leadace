@@ -24,6 +24,11 @@ Two project-level inputs sit on top of this ranking; neither is restated here:
 Rank the channels a prospect is actually reachable on, then take the highest.
 One channel per prospect — never chain channels.
 
+**Exception — in-platform response.** A prospect with `platformUrl` is contacted
+in-platform (`platform` channel): its posting is an explicit request for
+responses, so it outranks every cold rung below. Execution is defined by the
+project's `playbook_<discoveryStrategy>` document.
+
 1. **Personal email** — `email` is set AND looks like a named address
    (`first.last@`, `flast@`, `f.last@`, `first@`, etc.), not a department or
    role mailbox.

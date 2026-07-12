@@ -7,9 +7,11 @@ const proj = asProjectId('proj_1')
 const emptyIndex = (): DedupIndex => ({
   byEmail: new Map(),
   byForm: new Map(),
+  byPlatform: new Map(),
   domainsInProject: new Set(),
   claimedEmails: new Set(),
   claimedForms: new Set(),
+  claimedPlatforms: new Set(),
   claimedDomains: new Set(),
 })
 
@@ -60,6 +62,20 @@ describe('resolveDedup — existing rows', () => {
     idx.domainsInProject.add('example.com')
     expect(resolveDedup(idx, undefined, candidate({ email: 'new@x.com' }))).toEqual({ kind: 'insert' })
   })
+
+  it('overwrites on an existing platform match', () => {
+    const idx = emptyIndex()
+    idx.byPlatform.set('https://p/job/1', { id: 11 })
+    expect(resolveDedup(idx, proj, candidate({ platformUrl: 'https://p/job/1' })))
+      .toEqual({ kind: 'overwrite', existingProspectId: 11, source: 'platform' })
+  })
+
+  it('platform candidate bypasses the project-domain check (posting granularity)', () => {
+    const idx = emptyIndex()
+    idx.domainsInProject.add('example.com')
+    expect(resolveDedup(idx, proj, candidate({ platformUrl: 'https://p/job/2' })))
+      .toEqual({ kind: 'insert' })
+  })
 })
 
 describe('resolveDedup — intra-batch "first wins" via claimRow', () => {
@@ -79,5 +95,22 @@ describe('resolveDedup — intra-batch "first wins" via claimRow', () => {
     claimRow(idx, proj, c)
     expect(resolveDedup(idx, proj, candidate({ email: 'y@b.com', organizationDomain: 'acme.com' })))
       .toEqual({ kind: 'skip', reason: 'duplicate_in_batch' })
+  })
+
+  it('reports the second occurrence of a platformUrl as duplicate_in_batch', () => {
+    const idx = emptyIndex()
+    const c = candidate({ platformUrl: 'https://p/job/1' })
+    expect(resolveDedup(idx, proj, c)).toEqual({ kind: 'insert' })
+    claimRow(idx, proj, c)
+    expect(resolveDedup(idx, proj, c)).toEqual({ kind: 'skip', reason: 'duplicate_in_batch' })
+  })
+
+  it('a claimed platform candidate does not block a same-domain candidate at domain granularity', () => {
+    const idx = emptyIndex()
+    claimRow(idx, proj, candidate({ platformUrl: 'https://p/job/1', organizationDomain: 'platform.com' }))
+    expect(resolveDedup(idx, proj, candidate({ platformUrl: 'https://p/job/2', organizationDomain: 'platform.com' })))
+      .toEqual({ kind: 'insert' })
+    expect(resolveDedup(idx, proj, candidate({ email: 'y@b.com', organizationDomain: 'platform.com' })))
+      .toEqual({ kind: 'insert' })
   })
 })

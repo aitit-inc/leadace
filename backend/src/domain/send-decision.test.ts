@@ -25,6 +25,7 @@ const allChannels = (): SendCandidate['channels'] => ({
   form: false,
   sns_twitter: false,
   sns_linkedin: false,
+  platform: false,
 })
 
 function candidate(over: Partial<SendCandidate> = {}): SendCandidate {
@@ -95,11 +96,11 @@ describe('reachabilityArm', () => {
 
 describe('usableChannels', () => {
   it('intersects presence with enabled channels', () => {
-    const c = candidate({ channels: { email: true, form: true, sns_twitter: false, sns_linkedin: false } })
+    const c = candidate({ channels: { email: true, form: true, sns_twitter: false, sns_linkedin: false, platform: false } })
     expect(usableChannels(c, env({ enabledChannels: new Set(['email']) }))).toEqual(['email'])
   })
   it('present-but-not-enabled yields nothing', () => {
-    const c = candidate({ channels: { email: false, form: true, sns_twitter: false, sns_linkedin: false } })
+    const c = candidate({ channels: { email: false, form: true, sns_twitter: false, sns_linkedin: false, platform: false } })
     expect(usableChannels(c, env({ enabledChannels: new Set(['email']) }))).toEqual([])
   })
 })
@@ -142,11 +143,11 @@ describe('evaluateEligibility', () => {
     })
   })
   it('no reachable channel → no_reachable_channel', () => {
-    const c = candidate({ channels: { email: false, form: false, sns_twitter: false, sns_linkedin: false } })
+    const c = candidate({ channels: { email: false, form: false, sns_twitter: false, sns_linkedin: false, platform: false } })
     expect(evaluateEligibility(c, env(), NOW)).toEqual({ eligible: false, reason: 'no_reachable_channel' })
   })
   it('email channel unusable with only email enabled → no_reachable_channel', () => {
-    const c = candidate({ channels: { email: false, form: true, sns_twitter: false, sns_linkedin: false } })
+    const c = candidate({ channels: { email: false, form: true, sns_twitter: false, sns_linkedin: false, platform: false } })
     expect(evaluateEligibility(c, env({ enabledChannels: new Set(['email']) }), NOW)).toEqual({
       eligible: false,
       reason: 'no_reachable_channel',

@@ -24,6 +24,7 @@
       case 'form': return 'Form';
       case 'sns_twitter': return 'X DM';
       case 'sns_linkedin': return 'LI DM';
+      case 'platform': return 'Platform';
     }
   }
 
@@ -224,6 +225,7 @@
 
         {#if expanded}
           {@const safeForm = safeHttpUrl(p.contactFormUrl)}
+          {@const safePlatform = safeHttpUrl(p.platformUrl)}
           {@const safeWebsite = safeHttpUrl(p.websiteUrl)}
           <div class="mx-3 mb-2 rounded bg-surface px-4 py-3 text-xs space-y-3">
             <div class="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-1">
@@ -231,6 +233,7 @@
               {#if p.industry}<p><span class="text-text-muted">Industry:</span> {p.industry}</p>{/if}
               {#if p.email}<p class="break-all"><span class="text-text-muted">Email:</span> <span class="font-mono">{p.email}</span></p>{/if}
               {#if p.contactFormUrl}<p class="break-all"><span class="text-text-muted">Form:</span> {#if safeForm}<a href={safeForm} target="_blank" rel="noopener noreferrer" class="text-accent hover:underline font-mono">{p.contactFormUrl}</a>{:else}<span class="font-mono text-text-muted">{p.contactFormUrl}</span>{/if}</p>{/if}
+              {#if p.platformUrl}<p class="break-all"><span class="text-text-muted">Platform:</span> {#if safePlatform}<a href={safePlatform} target="_blank" rel="noopener noreferrer" class="text-accent hover:underline font-mono">{p.platformUrl}</a>{:else}<span class="font-mono text-text-muted">{p.platformUrl}</span>{/if}</p>{/if}
               <p><span class="text-text-muted">Linked projects:</span> {p.projectCount}</p>
               <p><span class="text-text-muted">Website:</span> {#if safeWebsite}<a href={safeWebsite} target="_blank" rel="noopener noreferrer" class="text-accent hover:underline break-all">{p.websiteUrl}</a>{:else}<span class="font-mono text-text-muted break-all">{p.websiteUrl}</span>{/if}</p>
             </div>

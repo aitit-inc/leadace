@@ -8,6 +8,7 @@
     form: 'form',
     sns_twitter: 'x',
     sns_linkedin: 'linkedin',
+    platform: 'platform',
   };
 </script>
 

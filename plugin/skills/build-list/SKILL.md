@@ -45,13 +45,14 @@ returned vocabulary list — every prospect's `industry` field MUST be set to on
 
 Call `mcp__plugin_leadace_api__get_project_settings` with `projectId: "$0"` and capture:
 
-- **`outboundChannels`** (subset of `email | form | sns_twitter | sns_linkedin`): the channels this
-  project is allowed to use for outbound. Phase 2 contact retrieval should focus on the enabled
-  channels — e.g. if only `email` is enabled, don't spend sub-agent effort discovering form URLs
-  or SNS handles. A candidate with no contact channel matching the allowlist will be skipped at
-  /outbound, so deprioritize discovering them. An empty `outboundChannels` array means the
-  project has paused outbound entirely — stop and inform the user instead of building a list
-  that can never be reached.
+- **`outboundChannels`** (subset of `email | form | sns_twitter | sns_linkedin | platform`): the
+  channels this project is allowed to use for outbound. Phase 2 contact retrieval should focus on
+  the enabled channels — e.g. if only `email` is enabled, don't spend sub-agent effort discovering
+  form URLs or SNS handles. A candidate with no contact channel matching the allowlist will be
+  skipped at /outbound, so deprioritize discovering them. An empty `outboundChannels` array means
+  the project has paused outbound entirely — stop and inform the user instead of building a list
+  that can never be reached. `platform` is only meaningful for playbook-driven strategies (below);
+  skip those strategies when it is disabled.
 - **`targetCountries`** (array of ISO 3166-1 alpha-2 codes): when non-empty, restrict discovery
   to organizations in these countries — bias search queries with regional qualifiers, prefer
   country-specific portals, and drop candidates whose inferred country falls outside the set.
@@ -139,6 +140,15 @@ Strategies may be search-driven (WebSearch queries) or **crawl-driven** — walk
 directory, association member list, exhibitor list, or GitHub topic/org page with
 `fetch_url.py` and extracting the organization list directly. Crawl-driven strategies
 usually out-yield search on structured sources; step 4's tooling applies to both.
+
+**Playbook-driven strategies (user-defined means).** A strategy may reference a
+`playbook_<strategy-slug>` document (see workspace-conventions.md → "Playbook
+documents"). Fetch it via `get_document` and follow its Discovery section instead of
+the generic search flow. Candidates register with `platformUrl` (the posting URL —
+outreach happens there on the `platform` channel) and skip Phase 2 enrichment: the
+platform IS the contact channel. Dedup is by `platformUrl` (posting granularity).
+Playbook missing → skip the strategy and report it (playbooks are defined via
+`/leadace`).
 
 **Publicly posted addresses (legal gate):** a strategy that harvests emails published
 on the web (GitHub profiles, directory listings, etc.) is usable only within the
@@ -239,17 +249,18 @@ saves both downstream costs.
 
 Call `mcp__plugin_leadace_api__check_prospect_dedup` with:
 - `projectId`: "$0"
-- `candidates`: array of `{ organizationDomain, email?, contactFormUrl? }` —
+- `candidates`: array of `{ organizationDomain, email?, contactFormUrl?, platformUrl? }` —
   one entry per Phase 1 candidate. `organizationDomain` is the apex domain
   derived from the candidate's `website_url` (strip `www.` and path).
   Include `email` / `contactFormUrl` if Phase 1 happened to surface them
-  (rare but possible).
+  (rare but possible). For playbook candidates, always include `platformUrl`
+  — it is their dedup identity.
 
 The response is a `decisions` array in the same order as the input. Drop
 any candidate whose `kind === 'skip'`. Tally the skip reasons (`reason ∈
-already_in_project | email_duplicate | form_url_duplicate | do_not_contact
-| duplicate_in_batch`) and feed that tally into step 9 (`## Exhausted
-Keywords`) — the same threshold rule applies (≥ 70% skip in the batch =
+already_in_project | email_duplicate | form_url_duplicate |
+platform_url_duplicate | do_not_contact | duplicate_in_batch`) and feed
+that tally into step 9 (`## Exhausted Keywords`) — the same threshold rule applies (≥ 70% skip in the batch =
 exhausted angle, switch keywords for the next pass).
 
 **If most candidates are dropped here**, the search angle is exhausted; do
@@ -369,6 +380,8 @@ For each prospect, construct the object as follows:
 - `contactFormUrl`: contact form URL (optional*)
 - `formType`: one of `google_forms`, `native_html`, `wordpress_cf7`, `iframe_embed`, `with_captcha` (optional)
 - `snsAccounts`: `{ x?, linkedin?, instagram?, facebook? }` (optional*)
+- `platformUrl`: external-platform action page (posting/listing URL) a playbook-driven
+  strategy answers in-platform (optional*)
 - `matchReason`: why this prospect is a good target
 - `priority`: 1-5 (default 3)
 - `discoveryStrategy`: slug of the named strategy (step 3) that surfaced this
@@ -384,13 +397,14 @@ For each prospect, construct the object as follows:
 
   Keep each bullet to one short sentence. Skip fields when public info is too thin to fill them honestly. A partial hypothesis is fine; an invented one harms the chat AI's credibility.
 
-\* **At least one of `email`, `contactFormUrl`, or `snsAccounts` is required.** Prospects with no contact channel are rejected.
+\* **At least one of `email`, `contactFormUrl`, `snsAccounts`, or `platformUrl` is required.** Prospects with no contact channel are rejected.
 
-The server automatically deduplicates by email, contact form URL, and
-organization domain within the project. Inspect `skippedDetails` after the
-call: each entry is `{name, reason}` with `reason ∈ email_duplicate |
-form_url_duplicate | already_in_project | do_not_contact |
-duplicate_in_batch | plan_limit`. If the same `reason` clusters tightly
+The server automatically deduplicates by email, contact form URL, platform
+URL, and organization domain within the project (platform-URL candidates skip
+the org-domain check — their granularity is the posting, not the org).
+Inspect `skippedDetails` after the call: each entry is `{name, reason}` with
+`reason ∈ email_duplicate | form_url_duplicate | platform_url_duplicate |
+already_in_project | do_not_contact | duplicate_in_batch | plan_limit`. If the same `reason` clusters tightly
 (e.g. ≥ 50% of skips are `email_duplicate` from one industry), record the
 keyword in `## Exhausted Keywords` and switch angles for the next pass.
 
@@ -410,7 +424,7 @@ Call `mcp__plugin_leadace_api__get_outbound_targets` with `projectId: "$0"` and 
 
 Report the following:
 - Number of newly registered prospects / target count
-- **Reachable breakdown** (among newly registered: N with email, N with form, N SNS-only, N without contacts)
+- **Reachable breakdown** (among newly registered: N with email, N with form, N SNS-only, N platform, N without contacts)
 - Breakdown by priority
 - Number rejected as duplicates (if many, briefly describe how the search angle was changed)
 - Total project reachable remaining (from `total` field)

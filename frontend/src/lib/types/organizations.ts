@@ -27,6 +27,7 @@ export interface OrganizationProspect {
   email: string | null;
   contactFormUrl: string | null;
   snsAccounts: SnsAccounts | null;
+  platformUrl: string | null;
   doNotContact: boolean;
   notes: string | null;
   createdAt: string;

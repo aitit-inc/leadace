@@ -95,6 +95,7 @@ function channelAvailabilityClause(ch: OutboundChannel): SQL {
     case 'form': return isNotNull(prospects.contactFormUrl)
     case 'sns_twitter': return sql`${prospects.snsAccounts}->>'x' IS NOT NULL`
     case 'sns_linkedin': return sql`${prospects.snsAccounts}->>'linkedin' IS NOT NULL`
+    case 'platform': return isNotNull(prospects.platformUrl)
   }
 }
 
@@ -184,6 +185,7 @@ export const updateProspectBodySchema = z.object({
   contactFormUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).nullable().optional(),
   formType: z.enum(formTypeEnum.enumValues).nullable().optional(),
   snsAccounts: snsAccountsSchema.nullable().optional(),
+  platformUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).nullable().optional(),
   notes: z.string().nullable().optional(),
   hypothesis: hypothesisSchema.nullable().optional(),
   country: z.string().regex(/^[A-Z]{2}$/, 'must be ISO 3166-1 alpha-2').nullable().optional(),
@@ -239,6 +241,9 @@ export type ReachableProspect = {
   contactFormUrl: string | null
   formType: typeof formTypeEnum.enumValues[number] | null
   snsAccounts: SnsAccounts | null
+  platformUrl: string | null
+  // /outbound resolves playbook_<slug> for 'platform' targets from this.
+  discoveryStrategy: string | null
   notes: string | null
   matchReason: string
   priority: Priority
@@ -273,6 +278,7 @@ export type ProjectProspectRow = {
   contactFormUrl: string | null
   formType: typeof formTypeEnum.enumValues[number] | null
   snsAccounts: SnsAccounts | null
+  platformUrl: string | null
   doNotContact: boolean
   notes: string | null
   matchReason: string
@@ -297,6 +303,7 @@ export type TenantProspectRow = {
   contactFormUrl: string | null
   formType: typeof formTypeEnum.enumValues[number] | null
   snsAccounts: SnsAccounts | null
+  platformUrl: string | null
   notes: string | null
   organizationId: number
   organizationDomain: string
@@ -314,7 +321,7 @@ export async function listReachable(
 ): Promise<ServiceResult<{
   prospects: ReachableProspect[]
   total: number
-  byChannel: { email: number; formOnly: number; snsOnly: number }
+  byChannel: { email: number; formOnly: number; snsOnly: number; platformOnly: number }
   quota: Awaited<ReturnType<typeof getRemainingOutreachQuota>>
   mailboxQuota: MailboxDailyQuota
   outboundMode: OutboundMode
@@ -340,7 +347,7 @@ export async function listReachable(
     return ok({
       prospects: [],
       total: 0,
-      byChannel: { email: 0, formOnly: 0, snsOnly: 0 },
+      byChannel: { email: 0, formOnly: 0, snsOnly: 0, platformOnly: 0 },
       quota,
       mailboxQuota,
       outboundMode,
@@ -355,7 +362,7 @@ export async function listReachable(
     return ok({
       prospects: [],
       total: 0,
-      byChannel: { email: 0, formOnly: 0, snsOnly: 0 },
+      byChannel: { email: 0, formOnly: 0, snsOnly: 0, platformOnly: 0 },
       quota,
       mailboxQuota,
       outboundMode,
@@ -468,6 +475,8 @@ export async function listReachable(
         contactFormUrl: prospects.contactFormUrl,
         formType: prospects.formType,
         snsAccounts: prospects.snsAccounts,
+        platformUrl: prospects.platformUrl,
+        discoveryStrategy: prospects.discoveryStrategy,
         notes: prospects.notes,
         hypothesis: prospects.hypothesis,
         matchReason: projectProspects.matchReason,
@@ -495,6 +504,7 @@ export async function listReachable(
         email: sql<number>`COUNT(*) FILTER (WHERE ${emailUsableExpr})::int`,
         formOnly: sql<number>`COUNT(*) FILTER (WHERE NOT (${emailUsableExpr}) AND ${prospects.contactFormUrl} IS NOT NULL)::int`,
         snsOnly: sql<number>`COUNT(*) FILTER (WHERE NOT (${emailUsableExpr}) AND ${prospects.contactFormUrl} IS NULL AND ${prospects.snsAccounts} IS NOT NULL)::int`,
+        platformOnly: sql<number>`COUNT(*) FILTER (WHERE NOT (${emailUsableExpr}) AND ${prospects.contactFormUrl} IS NULL AND ${prospects.snsAccounts} IS NULL AND ${prospects.platformUrl} IS NOT NULL)::int`,
       })
       .from(projectProspects)
       .innerJoin(prospects, eq(prospects.id, projectProspects.prospectId))
@@ -507,7 +517,7 @@ export async function listReachable(
       .limit(1),
   ])
 
-  const summary = summaryRows[0] ?? { total: 0, email: 0, formOnly: 0, snsOnly: 0 }
+  const summary = summaryRows[0] ?? { total: 0, email: 0, formOnly: 0, snsOnly: 0, platformOnly: 0 }
   const channelAffinityByBucket = stateRows[0]?.channelAffinity ?? {}
 
   const prospectIds = rows.map((r) => r.prospectId)
@@ -545,6 +555,7 @@ export async function listReachable(
       email: summary.email,
       formOnly: summary.formOnly,
       snsOnly: summary.snsOnly,
+      platformOnly: summary.platformOnly,
     },
     quota,
     mailboxQuota,
@@ -735,6 +746,7 @@ const projectProspectSelection = {
   contactFormUrl: prospects.contactFormUrl,
   formType: prospects.formType,
   snsAccounts: prospects.snsAccounts,
+  platformUrl: prospects.platformUrl,
   doNotContact: prospects.doNotContact,
   notes: prospects.notes,
   matchReason: projectProspects.matchReason,
@@ -909,6 +921,7 @@ export async function listTenantProspects(
         contactFormUrl: prospects.contactFormUrl,
         formType: prospects.formType,
         snsAccounts: prospects.snsAccounts,
+        platformUrl: prospects.platformUrl,
         notes: prospects.notes,
         organizationId: prospects.organizationId,
         organizationDomain: organizations.domain,
@@ -1028,6 +1041,7 @@ export async function updateProspect(
       email: prospects.email,
       contactFormUrl: prospects.contactFormUrl,
       snsAccounts: prospects.snsAccounts,
+      platformUrl: prospects.platformUrl,
     })
     .from(prospects)
     .where(and(eq(prospects.id, prospectId), eq(prospects.tenantId, tenantId)))
@@ -1038,11 +1052,12 @@ export async function updateProspect(
   const finalEmail = patch.email !== undefined ? patch.email : existing.email
   const finalForm = patch.contactFormUrl !== undefined ? patch.contactFormUrl : existing.contactFormUrl
   const finalSns = patch.snsAccounts !== undefined ? patch.snsAccounts : existing.snsAccounts
+  const finalPlatform = patch.platformUrl !== undefined ? patch.platformUrl : existing.platformUrl
   const hasSns = finalSns && Object.values(finalSns).some(Boolean)
-  if (!finalEmail && !finalForm && !hasSns) {
+  if (!finalEmail && !finalForm && !hasSns && !finalPlatform) {
     return err(
       'UNPROCESSABLE',
-      'At least one contact channel (email, contactFormUrl, or snsAccounts) is required',
+      'At least one contact channel (email, contactFormUrl, snsAccounts, or platformUrl) is required',
     )
   }
 
@@ -1062,6 +1077,7 @@ export async function updateProspect(
     ...(patch.contactFormUrl !== undefined ? { contactFormUrl: patch.contactFormUrl } : {}),
     ...(patch.formType !== undefined ? { formType: patch.formType } : {}),
     ...(patch.snsAccounts !== undefined ? { snsAccounts: patch.snsAccounts } : {}),
+    ...(patch.platformUrl !== undefined ? { platformUrl: patch.platformUrl } : {}),
     ...(patch.notes !== undefined ? { notes: patch.notes } : {}),
     ...(patch.hypothesis !== undefined ? { hypothesis: patch.hypothesis as ProspectHypothesis | null } : {}),
     ...(patch.country !== undefined ? { country: patch.country?.toUpperCase() ?? null } : {}),
@@ -1081,7 +1097,7 @@ export async function updateProspect(
     if (e instanceof Error && (/duplicate key|unique constraint|23505/i.test(e.message))) {
       return err(
         'CONFLICT',
-        'Email or contact form URL is already used by another prospect in this workspace',
+        'Email, contact form URL, or platform URL is already used by another prospect in this workspace',
       )
     }
     throw e

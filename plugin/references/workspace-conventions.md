@@ -7,9 +7,23 @@ Common rules for all skills and sub-agents.
 All project data is stored on the server and accessed via MCP tools (`mcp__plugin_leadace_api__*`). There are no local project directories or databases.
 
 - **Structured data** (prospects, outreach logs, responses): Dedicated MCP tools (`add_prospects`, `record_outreach`, etc.)
-- **Documents** (business info, sales strategy, email template, search notes, cross-stage learnings): `get_document` / `save_document` MCP tools with slugs: `business`, `sales_strategy`, `email_template`, `search_notes`, `learnings`
+- **Documents** (business info, sales strategy, email template, search notes, cross-stage learnings): `get_document` / `save_document` MCP tools with slugs: `business`, `sales_strategy`, `email_template`, `search_notes`, `learnings`, plus per-strategy `playbook_<strategy-slug>` documents (see "Playbook documents" below)
 - **Master documents** (templates, guidelines, frameworks): `get_master_document` MCP tool with slugs like `tpl_business`, `tpl_email_guidelines`, etc. These are shared across all users and updated centrally
 - **Local files**: Only plugin SKILL.md files, local-operation references (claude-in-chrome-guide, form-filling), and scripts in `${CLAUDE_PLUGIN_ROOT}/`
+
+## Playbook documents (user-defined discovery/outreach means)
+
+A **playbook** is a project document (slug `playbook_<strategy-slug>`, 1:1 with a named discovery strategy) carrying everything platform-specific about a user-defined means — e.g. proposing on a crowdsourcing or matching service. Skills stay generic: resolve the playbook from the strategy slug and follow it; never hard-code a platform's procedure into a skill.
+
+Content contract (omit sections that don't apply):
+
+- **Prerequisites** — account, login state, browser/tool.
+- **Discovery** — where/how to find candidates and the mapping to `add_prospects` (posting/listing URL → `platformUrl`; anonymous platform clients: org = the platform, client identity on the prospect).
+- **Outreach** — how to compose and submit the in-platform response; the platform's rate limits / ToS constraints, stated explicitly.
+- **Response check** — where replies land (in-platform inbox, notification-email sender patterns).
+- **Scripts** (optional) — fenced code blocks, executed from a temp dir; never persisted as local files.
+
+Guardrails: respect the platform's ToS and rate limits; never bypass blocks, CAPTCHAs, or bot detection — a refusal ends the attempt for that run.
 
 ## Never fabricate data
 

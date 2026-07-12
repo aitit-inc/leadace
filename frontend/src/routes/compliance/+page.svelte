@@ -143,7 +143,11 @@
       <h2 class="text-base font-semibold text-text">4. Send-time footer</h2>
       <p class="mt-2">
         Every outbound message — email, web form, or social DM — has a footer appended
-        server-side at send time; the append step cannot be skipped. By default the footer
+        server-side at send time; the append step cannot be skipped. The one exception is
+        the platform channel: in-platform responses to a posting the recipient published
+        (e.g. a crowdsourcing job) are solicited messages delivered inside the platform's
+        own messaging under the platform's terms, so no email-law footer is appended.
+        By default the footer
         is the following block, assembled in the project's configured message language
         (English or Japanese); matching that language to the project's audience is the
         operator's responsibility. A workspace may replace the footer text per project; as

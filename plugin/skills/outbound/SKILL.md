@@ -35,7 +35,7 @@ allowed-tools:
 
 # Outbound - Outbound Sales Execution
 
-A skill that sequentially reaches out to prospects on the sales list via email, contact forms, and SNS DMs.
+A skill that sequentially reaches out to prospects on the sales list via email, contact forms, SNS DMs, and playbook-driven platform channels.
 
 For each prospect, sends a message via an available channel and records the result in the DB. After all processing, generates a summary report.
 
@@ -177,8 +177,8 @@ Pick **one** channel per prospect — never chain channels.
 
 Retrieve the channel ranking policy via `mcp__plugin_leadace_api__get_master_document`
 with `slug: "tpl_channel_policy"` and follow it (personal email → LinkedIn → department
-email → generic email → form → X DM, with named-vs-generic address classification). It is
-the **default** order. Apply it together with these project inputs, highest precedence first:
+email → generic email → form → X DM; a `platformUrl` prospect is handled in step 5b per
+the policy's in-platform exception). It is the **default** order. Apply it together with these project inputs, highest precedence first:
 
 - **`outboundChannels`** (from step 1) — hard filter: rank only among the channels the
   project has enabled. The candidate list is already server-filtered to enabled channels,
@@ -214,7 +214,7 @@ unaffected).
 
 To skip: do NOT send, and call `mcp__plugin_leadace_api__skip_prospect` with
 `projectId: "$0"`, `prospectId`, the `channel` you were about to use (`email` /
-`form` / `sns_linkedin` / `sns_twitter`), `reason: "bad_timing"`, and a one-line
+`form` / `sns_linkedin` / `sns_twitter` / `platform`), `reason: "bad_timing"`, and a one-line
 `note` (e.g. `"layoffs announced last week"`). The server records a `skipped`
 audit row and defers re-eligibility by the project's no-response recycle window
 (no quota consumed); then continue to the next prospect.
@@ -444,23 +444,22 @@ The server returns `{ outreachLogId, status, finalBody, inquiryUrl }`. `finalBod
 
 **If `status === 'pre_send'` (send mode):** use claude-in-chrome to deliver the DM. See `references/claude-in-chrome-guide.md` for tool reference. SNS DMs require Claude in Chrome's logged-in browser profile — other browser MCPs start from a fresh, signed-out context, so SNS is Claude-in-Chrome-only even when the user runs a different backend for forms.
 
-**Common steps:**
-1. Navigate to the SNS profile page in the browser.
-2. Open the DM / messaging UI.
-3. Type `finalBody` and send.
+**Flow:** navigate to the SNS profile page → open the DM / messaging UI → type `finalBody` → send.
 
-**For X (Twitter):**
-- Click the DM (message) icon from the profile page.
-- If recipient's DM settings are closed, sending is not possible — call `update_outreach_status` with `outreachLogId`, `status: "failed"` and `errorMessage: "X DM closed"`, then call `update_prospect_status` with `status: "inactive"`.
-
-**For LinkedIn:**
-- Click the "Message" button from the profile page.
-- DMs can only be sent to connected users. If not connected, call `update_outreach_status` with `status: "failed"` and `errorMessage: "LinkedIn not connected"`, then set the prospect to `inactive`.
-- Do not use InMail (paid feature).
+- **X (Twitter):** if the recipient's DM settings are closed, sending is not possible — call `update_outreach_status` with `outreachLogId`, `status: "failed"`, `errorMessage: "X DM closed"`, then call `update_prospect_status` with `status: "inactive"`.
+- **LinkedIn:** DMs can only be sent to connected users. If not connected, resolve as `status: "failed"` (`errorMessage: "LinkedIn not connected"`) and set the prospect to `inactive`. Do not use InMail (paid feature).
 
 **After sending:** the row is `pre_send` until you resolve it. Always call `update_outreach_status`:
 - On success → `status: "sent"`.
 - On failure (UI error, network failure, etc.) → `status: "failed"` plus a concise `errorMessage`.
+
+### 5b. Platform (playbook-driven means)
+
+For prospects whose channel is `platform` (`platformUrl` set). Read
+`${CLAUDE_PLUGIN_ROOT}/skills/outbound/references/platform-playbook.md` and follow it —
+the generic resolve-playbook → compose → `record_outreach_with_inquiry`
+(`channel: "platform"`, no compliance footer) → deliver → `update_outreach_status`
+flow and its guardrails.
 
 ### 6. Handle Inactive Prospects
 
@@ -490,7 +489,7 @@ After all prospects are processed, if successes fall short of the target count:
 
 Report the following:
 - Number of prospects approached
-- Attempts and successes per channel, success rate (Email: X successes/Y attempts (XX%), Form: X successes/Y attempts (XX%), SNS: X successes/Y attempts (XX%))
+- Attempts and successes per channel, success rate (Email: X successes/Y attempts (XX%), Form: X successes/Y attempts (XX%), SNS: X successes/Y attempts (XX%), Platform: X successes/Y attempts (XX%) — omit channels with zero attempts)
 - If `outboundMode` was `draft`, report total drafts created across all channels (Drafts: N) and remind the user to review and send them at https://app.leadace.ai/drafts
 - **Missing-tool warnings**: if any send failed because a tool was not connected (Gmail not connected → email; Claude in Chrome unavailable → form / SNS), list it and recommend connecting the tool before the next run. Especially relevant in draft mode, where these tools weren't exercised but will be needed when the user sends the drafts.
 - Number of failures and reasons
