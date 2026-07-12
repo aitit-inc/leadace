@@ -20,6 +20,7 @@ allowed-tools:
   - mcp__plugin_leadace_api__get_project_settings
   - mcp__plugin_leadace_api__update_project_settings
   - mcp__plugin_leadace_api__get_eval_data
+  - mcp__plugin_leadace_api__list_suggestions
   - mcp__plugin_leadace_api__get_tenant_settings
   - mcp__plugin_leadace_api__update_tenant_settings
   - mcp__plugin_leadace_api__list_subject_variants
@@ -87,7 +88,7 @@ Examine `$0` (the user's free-form input) together with `PROJECTS` and `GMAIL`. 
 | `info_query` | `$0` is a question about state ("how many prospects?", "誰に送った?", "結果は?") | Inline answer (Step 3b) |
 | `run_setup` | "set up", "environment", "connection", "Gmail", "MCP", "再接続", "reconnect" | Run env-check inline (Step 3e) |
 | `run_strategy` | "strategy", "戦略", "target", "targeting", "messaging", "ターゲット", "refine strategy" | Run strategy authoring inline (Step 3f) |
-| `add_means` | A new discovery/outreach means to add: "Upwork", "クラウドソーシング", "マッチングサイト", "この手段/プラットフォームでも営業したい", "playbook" | Define a playbook-driven means inline (Step 3h) |
+| `add_means` | A new discovery/outreach means to add: "Upwork", "クラウドソーシング", "マッチングサイト", "この手段/プラットフォームでも営業したい", "playbook", "add ... as an outreach means" | Define a playbook-driven means inline (Step 3h) |
 | `delegate_build_list` | "list", "prospects", "more leads", "リスト追加", "もっと集めて" | Suggest `/build-list` (Step 3c) |
 | `delegate_outbound` | "send", "outreach", "送信", "送って" | Suggest `/outbound` — **always confirm before** (Step 3c, with extra caution) |
 | `delegate_daily` | "daily", "今日のサイクル", "run cycle" | Suggest `/daily-cycle` (Step 3c) |
@@ -132,6 +133,7 @@ Answer the user's question using the context already gathered (`PROJECTS`, `GMAI
 - Project documents (business / sales_strategy / etc.) → `get_document` / `list_documents`
 - Project / tenant settings → `get_project_settings` / `get_tenant_settings`
 - Daily send cap / warmup / mailbox state → `get_mailbox_health` (read-only; cap changes are Web UI only)
+- "提案は?" / pending AI suggestions → `list_suggestions` (acting on an add-means one = Step 3h)
 
 Keep the answer to a few lines. Do not invoke other skills.
 
@@ -216,7 +218,9 @@ channel enabled — the cycle skills pick the means up with no further wiring.
    WebSearch) and draft for review instead of asking everything.
 3. **Write both artifacts** (show to the user before saving): the `### <slug>` entry
    in `## Prospect Discovery Sources` of `sales_strategy` (Status: active, How
-   references the playbook), and the `playbook_<slug>` document.
+   references the playbook), and the `playbook_<slug>` document. If an open
+   `add-means` suggestion matches (`list_suggestions`), reuse its `dedupeKey`
+   as `<slug>` so the saved playbook auto-closes it.
 4. **Enable the channel**: `update_project_settings` — add `"platform"` to
    `outboundChannels`, preserving existing entries.
 5. **Report**: slug, playbook saved, channel enabled; `/evaluate` promotes/demotes it

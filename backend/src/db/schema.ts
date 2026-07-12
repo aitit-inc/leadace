@@ -983,6 +983,38 @@ export const projectDocuments = pgTable('project_documents', {
   index('idx_doc_latest').on(table.projectId, table.slug, table.createdAt),
 ])
 
+// AI suggestions needing a user-only action (account setup, ToS, business
+// decisions) — never something the loop can do itself. `status` is user-owned:
+// recording refreshes open rows, never resurrects dismissed/done.
+export const SUGGESTION_STATUSES = ['open', 'dismissed', 'done'] as const
+export type SuggestionStatus = (typeof SUGGESTION_STATUSES)[number]
+export const suggestionStatusEnum = pgEnum('suggestion_status', SUGGESTION_STATUSES)
+
+export const suggestions = pgTable('suggestions', {
+  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  projectId: text('project_id').notNull(),
+  kind: text('kind').notNull(),
+  dedupeKey: text('dedupe_key').notNull(),
+  title: text('title').notNull(),
+  body: text('body').notNull(),
+  command: text('command').notNull(),
+  status: suggestionStatusEnum('status').notNull().default('open'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  unique('uq_suggestion_project_kind_key').on(table.projectId, table.kind, table.dedupeKey),
+  // Composite FK ties project_id + tenant_id (defense-in-depth on top of RLS).
+  foreignKey({
+    columns: [table.projectId, table.tenantId],
+    foreignColumns: [projects.id, projects.tenantId],
+    name: 'fk_suggestion_project_tenant',
+  }).onDelete('cascade'),
+  index('idx_suggestions_tenant').on(table.tenantId),
+])
+
 // Global master documents (not tenant-scoped) — populated by SaaS-side seed,
 // read by all tenants.
 export const masterDocuments = pgTable('master_documents', {

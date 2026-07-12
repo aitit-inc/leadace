@@ -13,6 +13,7 @@ allowed-tools:
   - mcp__plugin_leadace_api__list_subject_variants
   - mcp__plugin_leadace_api__upsert_subject_variant
   - mcp__plugin_leadace_api__record_evaluation
+  - mcp__plugin_leadace_api__record_suggestion
   - mcp__plugin_leadace_api__get_document
   - mcp__plugin_leadace_api__save_document
   - mcp__plugin_leadace_api__get_master_document
@@ -151,8 +152,14 @@ Save the updated document via `mcp__plugin_leadace_api__save_document` with `pro
 Evaluate owns this section's `Status` flags the way it owns priorities — evidence-gated, per-slug:
 - **Demote**: flip a strategy to `Status: paused` when its reply rate underperforms the project's other strategies at `n ≥ minSamplePerArm` (from step 1's `get_lever_state`) across repeated cycles — never on a one-off gap. Also demote on a clearly elevated `bounceRate` (source finds unreachable people — wasteful and reputation-harming) even before reply data matures, since bounces read earlier than replies
 - **Promote / keep**: outperformers stay `active`; cite the evidence in the report
-- **Hypothesize**: when fewer than ~3 strategies are active (or every measured one underperforms), add 1-2 new named strategies (slug heading + Status/How/Why per the `tpl_sales_strategy` format) derived from business / sales_strategy context and rejection feedback. New strategies start `active` with no history — that is the point: they need sends to become measurable. Hypothesize search/crawl strategies only — playbook-driven means need user setup; suggest them in the report instead
+- **Hypothesize**: when fewer than ~3 strategies are active (or every measured one underperforms), add 1-2 new named strategies (slug heading + Status/How/Why per the `tpl_sales_strategy` format) derived from business / sales_strategy context and rejection feedback. New strategies start `active` with no history — that is the point: they need sends to become measurable. Hypothesize search/crawl strategies only — playbook-driven means need user setup; propose those via the suggestion block below
 - **Never rename or delete a slug** — that orphans its measured history. Pause instead. Playbook-driven strategies get the same Status treatment; leave the playbook reference in How intact
+
+**Suggest playbook-driven means (persist + report, never self-add):**
+When a promising means needs user setup (platform account, login, ToS), don't add it to `## Prospect Discovery Sources` yourself — call `mcp__plugin_leadace_api__record_suggestion` with `projectId: "$0"`, `kind: "add-means"`, `dedupeKey` = tentative strategy slug, short `title`, `body` citing the evidence, and a `command` runnable verbatim like `/leadace <project> add <platform> as an outreach means` (working language is fine).
+- Suggest only what the user alone can do — never what this skill or the loop can do itself.
+- The server never resurrects a dismissed/done suggestion; if the confirmation says it was left untouched, drop it from next actions.
+- add_means completion closes the suggestion automatically.
 
 **Update the Learnings Log (the cross-stage self-improvement memory):**
 
@@ -203,6 +210,7 @@ Report the following directly to the user (no file output needed -- live metrics
 - **Inquiry landing conversions** (from step 1's `inquiryOutcomeCounts`): show whenever any of `lead` / `signup_clicked` / `inquired` / `unsubscribed` is non-zero. Report `lead` (meeting-request conversions) and `signup_clicked` (self-serve signup conversions) separately — they reflect different CTA modes and inform whether the project's chosen CTA is converting. Skip the section when all five outcomes are 0
 - Changes since the last cycle (what the Learnings Log added or `[retired]` in step 4, plus notable lever shifts from `get_lever_decisions`)
 - **Discovery strategy performance** (from `discoveryStrategyResponseRate` / `freshSignalResponseRate`): per-strategy sends + reply rate, any `Status` changes applied in step 4, and the with/without-signal split. Skip when no send carries a strategy slug yet
+- **Suggested new means** (from step 4): title, one-line rationale, and the copy-runnable command; note it stays on the Web UI dashboard until acted on or dismissed. Skip when none
 - Important findings from the analysis
 - List of improvements applied
 - **Tactical rejection signals** (from step 1's `get_rejection_feedback_summary`):

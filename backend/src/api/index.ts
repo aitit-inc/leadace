@@ -16,6 +16,7 @@ import { organizationsRouter } from './routes/organizations'
 import { outreachRouter } from './routes/outreach'
 import { responsesRouter } from './routes/responses'
 import { evaluationsRouter } from './routes/evaluations'
+import { suggestionsRouter } from './routes/suggestions'
 import { documentsRouter } from './routes/documents'
 import { masterDocumentsRouter } from './routes/master-documents'
 import { countryCodesRouter } from './routes/country-codes'
@@ -73,6 +74,7 @@ app.route('/api', organizationsRouter)
 app.route('/api', outreachRouter)
 app.route('/api', responsesRouter)
 app.route('/api', evaluationsRouter)
+app.route('/api', suggestionsRouter)
 app.route('/api', documentsRouter)
 app.route('/api', masterDocumentsRouter)
 app.route('/api', countryCodesRouter)

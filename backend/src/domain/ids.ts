@@ -48,11 +48,13 @@ export const variantIdSchema = z.string().regex(variantIdRegex)
 // case or hyphen variance of the same strategy ('github-' vs 'github').
 const discoveryStrategyRegex = /^[a-z0-9]+(-[a-z0-9]+)*$/
 export const discoveryStrategySchema = z.string().max(64).regex(discoveryStrategyRegex)
+export const suggestionKindSchema = z.string().max(64).regex(discoveryStrategyRegex)
 
 export const projectRefParamSchema = z.object({ id: projectRefSchema })
 export const prospectIdParamSchema = z.object({ id: coercedPositiveInt })
 export const organizationIdParamSchema = z.object({ id: coercedPositiveInt })
 export const outreachLogIdParamSchema = z.object({ id: coercedPositiveInt })
+export const suggestionIdParamSchema = z.object({ id: coercedPositiveInt })
 export const shortIdParamSchema = z.object({ shortId: shortIdSchema })
 export const sendingIdentityIdParamSchema = z.object({ id: sendingIdentityIdSchema })
 

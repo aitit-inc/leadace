@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { detectDiscoverySourcesFormat } from './discovery-sources'
+import { detectDiscoverySourcesFormat, playbookStrategySlug } from './discovery-sources'
 
 const named = (slug: string) =>
   `### ${slug}\n- Status: active\n- How: search X for Y\n- Why: good fit\n`
@@ -73,5 +73,21 @@ describe('detectDiscoverySourcesFormat', () => {
   it('parses a section that runs to end of document', () => {
     const doc = `## Prospect Discovery Sources\n${named('job-boards')}`
     expect(detectDiscoverySourcesFormat(doc)).toBe('named')
+  })
+})
+
+describe('playbookStrategySlug', () => {
+  it('extracts the strategy slug from a playbook doc slug', () => {
+    expect(playbookStrategySlug('playbook_upwork-web-dev')).toBe('upwork-web-dev')
+  })
+
+  it('returns null for non-playbook doc slugs', () => {
+    expect(playbookStrategySlug('sales_strategy')).toBeNull()
+    expect(playbookStrategySlug('learnings')).toBeNull()
+  })
+
+  it('returns null when the suffix is not a valid strategy slug', () => {
+    expect(playbookStrategySlug('playbook_')).toBeNull()
+    expect(playbookStrategySlug('playbook_Bad_Slug')).toBeNull()
   })
 })

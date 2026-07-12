@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
+  import { goto, invalidate } from '$app/navigation';
   import type { Component } from 'svelte';
   import type { PageProps } from './$types';
   import type { AttentionItem, DashboardActivityKind, FunnelStageKey } from '$lib/types/dashboard';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import SuggestionsSection from '$lib/components/dashboard/SuggestionsSection.svelte';
   import {
     Send,
     MousePointerClick,
@@ -32,6 +33,7 @@
 
   let { data }: PageProps = $props();
   let summary = $derived(data.summary);
+  let token = $derived(data.session?.access_token);
 
   const PERIODS = [
     { key: '7d', label: '7d' },
@@ -326,6 +328,14 @@
           </p>
         </div>
       </section>
+    {/if}
+
+    {#if data.suggestions.length > 0}
+      <SuggestionsSection
+        suggestions={data.suggestions}
+        {token}
+        onChanged={() => invalidate('app:suggestions')}
+      />
     {/if}
 
     <section class="grid grid-cols-2 gap-3 lg:grid-cols-4">

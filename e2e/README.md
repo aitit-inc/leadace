@@ -96,6 +96,9 @@ on, need no Claude session, and run fast:
   contact-channel invariant (can't strip the last channel → 422).
 - `regression-record-evaluation-priority.sh` — `record_evaluation`
   `priorityUpdates` touches only `status='new'` rows; per-industry `rowsAffected`.
+- `regression-suggestions.sh` — suggestions surface: record upsert refreshes an
+  open row in place, dismissed/done never resurrected, playbook save auto-resolves
+  the matching `add-means` suggestion, status/kind validation.
 - `regression-prospect-delete.sh` — data-maintenance delete surface:
   `delete-batch` skips DNC / outreach-history / multi-project rows with reasons
   and reports prospect-less orgs; org `delete-batch` refuses populated orgs;

@@ -9,10 +9,12 @@ import {
 } from '../domain/ids'
 import {
   detectDiscoverySourcesFormat,
+  playbookStrategySlug,
   type DiscoverySourcesFormat,
 } from '../domain/discovery-sources'
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
+import { resolveAddMeansSuggestion } from './suggestions'
 
 export const documentParamSchema = z.object({
   id: projectRefSchema,
@@ -144,6 +146,11 @@ export async function saveDocument(
       id: projectDocuments.id,
       createdAt: projectDocuments.createdAt,
     })
+
+  // A landed playbook completes its add-means suggestion — close it here so
+  // the plugin needs no wiring.
+  const strategySlug = playbookStrategySlug(slug)
+  if (strategySlug) await resolveAddMeansSuggestion(db, tenantId, projectId, strategySlug)
 
   return ok({
     id: doc!.id,

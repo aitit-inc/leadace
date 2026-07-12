@@ -5,9 +5,9 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import { verifyJwt, verifySupabaseJwt } from '../auth/verify-jwt'
-import { BUG_REPORT_CATEGORIES, OUTBOUND_MODES, OUTBOUND_CHANNELS, REJECTION_PRIMARY_REASONS, REJECTION_RECONTACT_WINDOWS, prospectStatusEnum, prioritySchema } from '../db/schema'
+import { BUG_REPORT_CATEGORIES, OUTBOUND_MODES, OUTBOUND_CHANNELS, REJECTION_PRIMARY_REASONS, REJECTION_RECONTACT_WINDOWS, SUGGESTION_STATUSES, prospectStatusEnum, prioritySchema } from '../db/schema'
 import { ALLOWED_SEND_COUNTRIES } from '../domain/country'
-import { discoveryStrategySchema, variantIdSchema } from '../domain/ids'
+import { discoveryStrategySchema, suggestionKindSchema, variantIdSchema } from '../domain/ids'
 import { localeSchema } from '../domain/locale'
 import type { OutreachQuota, OutreachQuotaWindow } from '../services/plan-limits'
 import {
@@ -1400,6 +1400,49 @@ function buildToolRegistry(): ToolDef[] {
           text: `Priority updates applied: ${JSON.stringify(result.priorityUpdates)}`,
         }],
       }
+    },
+  )
+
+  defineTool(
+    'record_suggestion',
+    'Persist an actionable suggestion for the user (surfaced in the Web UI dashboard). Reserve for actions only the user can perform. Upserts by kind + dedupeKey: refreshes an open suggestion, never resurrects a dismissed/done one — the confirmation reports id, status, and whether it was written or left untouched.',
+    {
+      projectId: z.string().min(1).describe('Project name or ID'),
+      kind: suggestionKindSchema.describe('Suggestion kind, lowercase kebab-case category'),
+      dedupeKey: z.string().min(1).describe('Stable dedup key within the kind'),
+      title: z.string().min(1).describe('Short headline shown in the Web UI'),
+      body: z.string().min(1).describe('Rationale and expected payoff, markdown'),
+      command: z.string().min(1).describe('Copy-runnable next action, e.g. a /leadace one-liner'),
+    },
+    async ({ projectId, ...body }, { apiUrl, authHeader }) => {
+      const { ok, data } = await callApi('POST', `/projects/${encodeURIComponent(projectId)}/suggestions`, body, apiUrl, authHeader)
+      if (!ok) {
+        const err = data as { error: string }
+        return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
+      }
+      const result = data as { id: number; status: string; written: boolean }
+      const text = result.written
+        ? `Suggestion recorded (id ${result.id}, status ${result.status}).`
+        : `Suggestion left untouched — an existing one (id ${result.id}) is ${result.status}; the user's status decision stands. Do not re-propose it.`
+      return { content: [{ type: 'text' as const, text }] }
+    },
+  )
+
+  defineTool(
+    'list_suggestions',
+    'List persisted suggestions for a project: id, kind, dedupeKey, title, body, command, status (open/dismissed/done), timestamps. Optional status filter.',
+    {
+      projectId: z.string().min(1).describe('Project name or ID'),
+      status: z.enum(SUGGESTION_STATUSES).optional().describe('Filter by status'),
+    },
+    async ({ projectId, status }, { apiUrl, authHeader }) => {
+      const qs = status ? `?status=${status}` : ''
+      const { ok, data } = await callApi('GET', `/projects/${encodeURIComponent(projectId)}/suggestions${qs}`, null, apiUrl, authHeader)
+      if (!ok) {
+        const err = data as { error: string }
+        return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
+      }
+      return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] }
     },
   )
 
