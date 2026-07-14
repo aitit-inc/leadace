@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { eq, ne, and, sql, desc, or, ilike, inArray, isNotNull, isNull, lte, notExists, type SQL } from 'drizzle-orm'
+import { eq, ne, and, sql, desc, or, ilike, inArray, notInArray, isNotNull, isNull, lte, notExists, type SQL } from 'drizzle-orm'
 import {
   organizations,
   orgSignalsGlobal,
@@ -38,7 +38,11 @@ import {
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { resolveSendingIdentityId } from '../auth/google'
-import { getOutboundMode, loadProjectOutboundAllowlist } from './project-settings'
+import { getOutboundMode, loadLeverConfig, loadProjectOutboundAllowlist } from './project-settings'
+import {
+  DEFAULT_FRESH_SIGNAL_LIFTS,
+  PRIORITY_MULTIPLIERS,
+} from '../domain/targeting-score'
 import { projectProspectInsertValues } from '../domain/project-prospect'
 import { UNDELIVERABLE } from '../domain/email-deliverability'
 import type { Edition } from '../domain/edition'
@@ -51,7 +55,7 @@ import {
 } from '../domain/ids'
 import { isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG } from '../domain/url'
 import { ALLOWED_SEND_COUNTRIES } from '../domain/country'
-import { coarseIndustry } from '../domain/coarse-industry'
+import { coarseIndustry, isKnownIndustry } from '../domain/coarse-industry'
 import type { ChannelRank } from '../domain/channel-affinity'
 
 // See get_outbound_targets / B §4.2-F.
@@ -179,7 +183,13 @@ export const updateProspectBodySchema = z.object({
   contactName: z.string().nullable().optional(),
   department: z.string().nullable().optional(),
   overview: z.string().min(1).optional(),
-  industry: z.string().nullable().optional(),
+  // Hard 400 — a single-row PATCH has no partial-success contract to keep.
+  industry: z
+    .string()
+    .trim()
+    .nullable()
+    .optional()
+    .refine((v) => v == null || isKnownIndustry(v), 'not in the tpl_industries vocabulary'),
   websiteUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
   email: z.email().nullable().optional(),
   contactFormUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).nullable().optional(),
@@ -333,7 +343,7 @@ export async function listReachable(
 
   const { limit } = query
 
-  const [quota, mailboxQuota, outboundMode, allowlist] = await Promise.all([
+  const [quota, mailboxQuota, outboundMode, allowlist, leverConfig, stateRows] = await Promise.all([
     getRemainingOutreachQuota(db, tenantId, edition),
     // Resolve runs alongside the independent queries; only the mailbox cap depends on it.
     resolveSendingIdentityId(db, { tenantId, projectId }).then((id) =>
@@ -341,6 +351,15 @@ export async function listReachable(
     ),
     getOutboundMode(db, projectId),
     loadProjectOutboundAllowlist(db, projectId),
+    loadLeverConfig(db, projectId),
+    db
+      .select({
+        channelAffinity: leverState.channelAffinity,
+        targetingLifts: leverState.targetingLifts,
+      })
+      .from(leverState)
+      .where(eq(leverState.projectId, projectId))
+      .limit(1),
   ])
 
   if (isOutreachQuotaExhausted(quota)) {
@@ -459,9 +478,22 @@ export async function listReachable(
     ),
   )
 
-  const orderingPriorityExpr = sql<number>`(${projectProspects.priority} + (CASE WHEN ${freshSignalExpr} THEN 0 ELSE 1 END))`
+  // Multiplicative score orders DESC (the additive pre-score expression was
+  // ASC); createdAt stays the ASC tiebreak.
+  const signalLifts = stateRows[0]?.targetingLifts?.freshSignal ?? DEFAULT_FRESH_SIGNAL_LIFTS
+  const orderingScoreExpr = sql<number>`(${projectProspects.orderingScore}
+    * (CASE ${projectProspects.priority}
+        WHEN 1 THEN ${PRIORITY_MULTIPLIERS[1]}::float8
+        WHEN 2 THEN ${PRIORITY_MULTIPLIERS[2]}::float8
+        WHEN 3 THEN ${PRIORITY_MULTIPLIERS[3]}::float8
+        WHEN 4 THEN ${PRIORITY_MULTIPLIERS[4]}::float8
+        ELSE ${PRIORITY_MULTIPLIERS[5]}::float8 END)
+    * (CASE WHEN ${freshSignalExpr} THEN ${signalLifts.withSignal}::float8 ELSE ${signalLifts.withoutSignal}::float8 END))`
 
-  const [rows, summaryRows, stateRows] = await Promise.all([
+  const exploreCount = Math.floor(effectiveLimit * leverConfig.explorationShare)
+  const topCount = effectiveLimit - exploreCount
+
+  const reachableSelect = () =>
     db
       .select({
         ppId: projectProspects.id,
@@ -495,9 +527,14 @@ export async function listReachable(
       .innerJoin(prospects, eq(prospects.id, projectProspects.prospectId))
       .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
       .leftJoin(orgSignalsGlobal, eq(orgSignalsGlobal.domain, organizations.domain))
-      .where(reachableCondition)
-      .orderBy(orderingPriorityExpr, projectProspects.createdAt)
-      .limit(effectiveLimit),
+
+  const [topRows, summaryRows] = await Promise.all([
+    topCount > 0
+      ? reachableSelect()
+          .where(reachableCondition)
+          .orderBy(desc(orderingScoreExpr), projectProspects.createdAt)
+          .limit(topCount)
+      : Promise.resolve([]),
     db
       .select({
         total: sql<number>`COUNT(*)::int`,
@@ -510,12 +547,21 @@ export async function listReachable(
       .innerJoin(prospects, eq(prospects.id, projectProspects.prospectId))
       .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
       .where(reachableCondition),
-    db
-      .select({ channelAffinity: leverState.channelAffinity })
-      .from(leverState)
-      .where(eq(leverState.projectId, projectId))
-      .limit(1),
   ])
+
+  // Sequential: the random draw must exclude the top picks.
+  const topIds = topRows.map((r) => r.ppId)
+  const exploreRows =
+    exploreCount > 0
+      ? await reachableSelect()
+          .where(and(
+            reachableCondition,
+            topIds.length > 0 ? notInArray(projectProspects.id, topIds) : undefined,
+          ))
+          .orderBy(sql`random()`)
+          .limit(exploreCount)
+      : []
+  const rows = [...topRows, ...exploreRows]
 
   const summary = summaryRows[0] ?? { total: 0, email: 0, formOnly: 0, snsOnly: 0, platformOnly: 0 }
   const channelAffinityByBucket = stateRows[0]?.channelAffinity ?? {}

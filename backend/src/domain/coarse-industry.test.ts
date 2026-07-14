@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { coarseIndustry, COARSE_INDUSTRIES, type CoarseIndustry } from './coarse-industry'
+import { coarseIndustry, isKnownIndustry, COARSE_INDUSTRIES, type CoarseIndustry } from './coarse-industry'
 
 describe('coarseIndustry', () => {
   it('maps a representative fine label from each section to its bucket', () => {
@@ -50,5 +50,25 @@ describe('coarseIndustry', () => {
     for (const fine of ['B2B SaaS', 'Other', 'nonsense', '']) {
       expect(set.has(coarseIndustry(fine))).toBe(true)
     }
+  })
+})
+
+describe('isKnownIndustry', () => {
+  it('accepts vocabulary values from each section and the Other catch-all', () => {
+    for (const v of ['B2B SaaS', 'FinTech', 'Manufacturing', 'Travel / Hospitality', 'Legal Services', 'Nonprofit', 'Other']) {
+      expect(isKnownIndustry(v)).toBe(true)
+    }
+  })
+
+  it('accepts surrounding whitespace but rejects case variants (exact-match vocabulary)', () => {
+    expect(isKnownIndustry('  FinTech  ')).toBe(true)
+    expect(isKnownIndustry('fintech')).toBe(false)
+    expect(isKnownIndustry('other')).toBe(false)
+  })
+
+  it('rejects free-form labels and empty strings', () => {
+    expect(isKnownIndustry('Underwater Basket Weaving')).toBe(false)
+    expect(isKnownIndustry('SaaS')).toBe(false)
+    expect(isKnownIndustry('')).toBe(false)
   })
 })

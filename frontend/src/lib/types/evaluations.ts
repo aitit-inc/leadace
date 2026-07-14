@@ -1,4 +1,5 @@
 import type { InquiryOutcome } from './inquiry';
+import type { EmployeeBand } from './organizations';
 
 export interface EvaluationMetrics {
   totalOutreach: number;
@@ -11,6 +12,10 @@ export interface EvaluationMetrics {
   channelByIndustry: Array<{ channel: string; industry: string | null; total: number; responses: number; rate: number }>;
   variantResponseRate: Array<{ variantId: string; total: number; responses: number; rate: number; meanReward: number }>;
   discoveryStrategyResponseRate: Array<{ strategy: string | null; total: number; responses: number; rate: number; bounces: number; bounceRate: number }>;
+  // Targeting observation axes (backend EvaluationMetrics): mature sends only.
+  industryResponseRate: Array<{ industry: string; total: number; responses: number; rate: number; bounces: number; bounceRate: number }>;
+  sizeResponseRate: Array<{ employeeBand: EmployeeBand; total: number; responses: number; rate: number; bounces: number; bounceRate: number }>;
+  countryResponseRate: Array<{ country: string | null; total: number; responses: number; rate: number; bounces: number; bounceRate: number }>;
   freshSignalResponseRate: {
     withSignal: { total: number; responses: number; rate: number };
     withoutSignal: { total: number; responses: number; rate: number };

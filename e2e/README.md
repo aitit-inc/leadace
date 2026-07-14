@@ -94,8 +94,14 @@ on, need no Claude session, and run fast:
   re-included) — the daily-cycle double-send guard.
 - `regression-prospect-update-channel.sh` — `PATCH /prospects/:id` post-merge
   contact-channel invariant (can't strip the last channel → 422).
-- `regression-record-evaluation-priority.sh` — `record_evaluation`
-  `priorityUpdates` touches only `status='new'` rows; per-industry `rowsAffected`.
+- `regression-targeting-attributes.sh` — closed-loop Phase A surface:
+  `employee_band` INSERT-only bootstrap + explicit PATCH, row-level industry
+  vocabulary enforcement on both write paths, and the three observation axes
+  (coarse fold / band / country precedence, mature sends only).
+- `regression-targeting-score.sh` — closed-loop Phase B surface: lever tick
+  computes targeting lifts and materializes `ordering_score`; measured-first
+  `get_outbound_targets` ordering (score x priority multiplier) and the
+  exploration share (random slots, no duplicates).
 - `regression-suggestions.sh` — suggestions surface: record upsert refreshes an
   open row in place, dismissed/done never resurrected, playbook save auto-resolves
   the matching `add-means` suggestion, status/kind validation.

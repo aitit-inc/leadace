@@ -11,7 +11,11 @@ export interface Organization {
   updatedAt: string;
 }
 
+/** Mirrors backend `db/schema.ts` EmployeeBand. */
+export type EmployeeBand = '1-10' | '11-50' | '51-200' | '201+' | 'unknown';
+
 export interface OrganizationListItem extends Organization {
+  employeeBand: EmployeeBand;
   prospectCount: number;
   projectCount: number;
 }

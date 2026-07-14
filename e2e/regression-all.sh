@@ -38,11 +38,12 @@ SUITES=(
   regression-sending-identities
   regression-prospect-update-channel
   regression-platform-channel
-  regression-record-evaluation-priority
   regression-suggestions
   regression-prospect-delete
   regression-rejection-cycle
   regression-bounce-stats
+  regression-targeting-attributes
+  regression-targeting-score
   regression-inquiry-unsubscribe
   regression-decision-maker-pointer
   regression-tenant-isolation

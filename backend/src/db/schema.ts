@@ -11,6 +11,7 @@ import {
   pgEnum,
   pgTable,
   primaryKey,
+  real,
   smallint,
   text,
   timestamp,
@@ -22,6 +23,8 @@ import type { LeverConfigPatch } from '../domain/lever-config'
 import type { FollowUpSequencePatch } from '../domain/follow-up-sequence'
 import type { Locale } from '../domain/locale'
 import type { ChannelAffinityMap, ChannelCoarseStat } from '../domain/channel-affinity'
+import type { CoarseIndustry } from '../domain/coarse-industry'
+import type { TargetingAxisStat, TargetingLifts } from '../domain/targeting-score'
 
 const bytea = customType<{ data: Uint8Array; driverData: Uint8Array }>({
   dataType() {
@@ -133,6 +136,11 @@ export const tenantRoleEnum = pgEnum('tenant_role', ['owner', 'admin', 'member']
 export const COUNTRY_SOURCES = ['tld_inferred', 'manual', 'ai_inferred'] as const
 export type CountrySource = (typeof COUNTRY_SOURCES)[number]
 export const countrySourceEnum = pgEnum('country_source', COUNTRY_SOURCES)
+
+// Bucket boundaries are write-once: changing them breaks comparability of recorded rows.
+export const EMPLOYEE_BANDS = ['1-10', '11-50', '51-200', '201+', 'unknown'] as const
+export type EmployeeBand = (typeof EMPLOYEE_BANDS)[number]
+export const employeeBandEnum = pgEnum('employee_band', EMPLOYEE_BANDS)
 
 export const OUTBOUND_MODES = ['send', 'draft'] as const
 export type OutboundMode = (typeof OUTBOUND_MODES)[number]
@@ -285,6 +293,34 @@ export type EvaluationMetrics = {
   // strategy=null bucket = sends to prospects without recorded provenance.
   discoveryStrategyResponseRate: Array<{
     strategy: string | null
+    total: number
+    responses: number
+    rate: number
+    bounces: number
+    bounceRate: number
+  }>
+  // Targeting observation axes. Unlike the axes above these count mature sends
+  // only (older than the reward window); industry is coarse buckets — fine
+  // doesn't statistically resolve at this send volume.
+  industryResponseRate: Array<{
+    industry: CoarseIndustry
+    total: number
+    responses: number
+    rate: number
+    bounces: number
+    bounceRate: number
+  }>
+  sizeResponseRate: Array<{
+    employeeBand: EmployeeBand
+    total: number
+    responses: number
+    rate: number
+    bounces: number
+    bounceRate: number
+  }>
+  // COALESCE(prospect.country, organization.country) — send-guardrail precedence.
+  countryResponseRate: Array<{
+    country: string | null
     total: number
     responses: number
     rate: number
@@ -538,6 +574,8 @@ export const organizations = pgTable('organizations', {
   // the value was set so callers can decide how much to trust it.
   country: text('country'),
   countrySource: countrySourceEnum('country_source'),
+  // INSERT-only, same convention as country; explicit changes via PATCH /organizations/:id.
+  employeeBand: employeeBandEnum('employee_band').notNull().default('unknown'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
@@ -640,6 +678,8 @@ export const projectProspects = pgTable('project_prospects', {
   // next_followup_after = no sequence in progress.
   nextFollowupAfter: timestamp('next_followup_after', { withTimezone: true }),
   followupTouches: smallint('followup_touches').notNull().default(0),
+  // Recomputed by the daily lever tick; 1.0 = neutral (new rows / no data).
+  orderingScore: real('ordering_score').notNull().default(1.0),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
@@ -754,7 +794,8 @@ export const subjectVariants = pgTable('subject_variants', {
   index('idx_subject_variants_active').on(table.projectId, table.archivedAt),
 ])
 
-// `channel` is absent on pre-P3 rows and until the project has channel data.
+// `channel` is absent on pre-P3 rows and until the project has channel data;
+// `targeting` is absent on pre-Phase-B rows.
 export type LeverDecisionPayload = {
   subject: {
     weights: Record<string, number>
@@ -764,6 +805,16 @@ export type LeverDecisionPayload = {
   channel?: {
     affinity: ChannelAffinityMap
     samples: ChannelCoarseStat[]
+  }
+  targeting?: {
+    lifts: TargetingLifts
+    samples: {
+      industry: TargetingAxisStat[]
+      employeeBand: TargetingAxisStat[]
+      country: TargetingAxisStat[]
+      discoveryStrategy: TargetingAxisStat[]
+      freshSignal: { withSignal: TargetingAxisStat; withoutSignal: TargetingAxisStat }
+    }
   }
 }
 
@@ -778,6 +829,8 @@ export const leverState = pgTable('lever_state', {
   variantWeights: jsonb('variant_weights').$type<Record<string, number>>().notNull().default({}),
   // {} = no measured preference → listReachable falls back to policy order.
   channelAffinity: jsonb('channel_affinity').$type<ChannelAffinityMap>().notNull().default({}),
+  // NULL = no tick has computed lifts yet → listReachable uses neutral defaults.
+  targetingLifts: jsonb('targeting_lifts').$type<TargetingLifts>(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   foreignKey({

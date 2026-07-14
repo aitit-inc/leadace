@@ -18,7 +18,6 @@ allowed-tools:
   - mcp__plugin_leadace_api__record_response
   - mcp__plugin_leadace_api__update_prospect_status
   - mcp__plugin_leadace_api__get_eval_data
-  - mcp__plugin_leadace_api__record_evaluation
   - mcp__plugin_leadace_api__run_lever_tick
   - mcp__plugin_leadace_api__get_document
   - mcp__plugin_leadace_api__save_document
@@ -102,7 +101,7 @@ Run every cycle.
 Include the following in the prompt:
 - Project ID: `$0`
 - Read `${CLAUDE_PLUGIN_ROOT}/skills/evaluate/SKILL.md` and follow its procedure
-- Return to main with **only a 3-line summary**. Example: "Response rate 4.2%. 2 search keywords added, priorities recalculated. Levers: subject v2 leading, email affinity in software_tech."
+- Return to main with **only a 3-line summary**. Example: "Response rate 4.2%. 2 search keywords added, 1 discovery strategy demoted. Levers: subject v2 leading, email affinity in software_tech."
 
 After receiving the summary from the sub-agent, report it to the user.
 

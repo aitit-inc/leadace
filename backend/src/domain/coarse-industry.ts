@@ -1,5 +1,6 @@
 // Buckets mirror backend/seed-content/tpl_industries.md section headers; an
-// entry added there needs one here or it silently falls into `other`.
+// entry added there needs one here or add_prospects / CSV import rejects it
+// as unknown_industry (the FINE_TO_COARSE keys are the controlled vocabulary).
 
 export const COARSE_INDUSTRIES = [
   'software_tech',
@@ -68,4 +69,27 @@ const FINE_TO_COARSE: Readonly<Record<string, CoarseIndustry>> = {
 export function coarseIndustry(industry: string | null | undefined): CoarseIndustry {
   if (!industry) return 'other'
   return FINE_TO_COARSE[industry.trim()] ?? 'other'
+}
+
+// Inverted for SQL CASE generation; 'other' has no fine members — it is the
+// ELSE branch (null, 'Other', legacy free-form labels).
+export const COARSE_TO_FINES: Readonly<Record<CoarseIndustry, readonly string[]>> = (() => {
+  const inverted: Record<CoarseIndustry, string[]> = {
+    software_tech: [],
+    vertical_tech: [],
+    hardware_industrial: [],
+    commerce_consumer: [],
+    services: [],
+    public_nonprofit: [],
+    other: [],
+  }
+  for (const [fine, coarse] of Object.entries(FINE_TO_COARSE)) inverted[coarse].push(fine)
+  return inverted
+})()
+
+// 'Other' is tpl_industries' documented catch-all — valid input, folds to 'other'.
+const KNOWN_INDUSTRIES: ReadonlySet<string> = new Set([...Object.keys(FINE_TO_COARSE), 'Other'])
+
+export function isKnownIndustry(industry: string): boolean {
+  return KNOWN_INDUSTRIES.has(industry.trim())
 }

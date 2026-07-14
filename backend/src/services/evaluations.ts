@@ -1,52 +1,26 @@
-import { z } from 'zod'
 import { sql } from 'drizzle-orm'
 import {
-  prioritySchema,
   INQUIRY_OUTCOMES,
   responseTypeEnum,
   sentimentEnum,
   type Channel,
+  type EmployeeBand,
   type EvaluationMetrics,
   type InquiryOutcome,
   type OutreachStatus,
   type ProspectStatus,
 } from '../db/schema'
 import type { Db } from '../db/connection'
-import {
-  projectRefSchema,
-  type ProjectId,
-  type ProjectRef,
-  type TenantId,
-} from '../domain/ids'
+import type { ProjectId, ProjectRef, TenantId } from '../domain/ids'
 import { replyReward } from '../domain/reward'
+import { coarseIndustry, type CoarseIndustry } from '../domain/coarse-industry'
 import { type LeverConfig } from '../domain/lever-config'
+import type { TargetingAxisStat } from '../domain/targeting-score'
 import type { VariantStat } from '../domain/subject-bandit'
 import type { ChannelFineStat } from '../domain/channel-affinity'
 import { loadLeverConfig } from './project-settings'
-import { ok, err, type ServiceResult } from './result'
+import { ok, type ServiceResult } from './result'
 import { resolveProject } from './projects'
-
-const priorityUpdateSchema = z.object({
-  industry: z.string().min(1),
-  priority: prioritySchema,
-})
-
-// `/evaluate` persists its conclusions only as per-industry prospect-priority
-// overrides — the analysis is reported to the user and distilled into the
-// `learnings` doc, not stored. priorityUpdates is required + non-empty: a run
-// with no priority changes carries no work, so the skill skips this call
-// entirely rather than sending an empty array (which the API rejects with 400).
-export const recordEvaluationSchema = z.object({
-  projectId: projectRefSchema,
-  priorityUpdates: z
-    .array(priorityUpdateSchema)
-    .min(1)
-    .max(50)
-    .refine((arr) => new Set(arr.map((x) => x.industry)).size === arr.length, {
-      message: 'priorityUpdates contains duplicate industries',
-    }),
-})
-export type RecordEvaluationInput = z.infer<typeof recordEvaluationSchema>
 
 // Through the prod transaction pooler (Supavisor, prepare:false) postgres-js
 // can't read column type OIDs, so raw db.execute returns numeric/timestamp
@@ -197,6 +171,103 @@ export async function getChannelStats(
   return Array.from(agg.values())
 }
 
+export type TargetingStats = {
+  industry: TargetingAxisStat[] // coarse-folded
+  employeeBand: TargetingAxisStat[]
+  country: TargetingAxisStat[]
+  discoveryStrategy: TargetingAxisStat[]
+  freshSignal: { withSignal: TargetingAxisStat; withoutSignal: TargetingAxisStat }
+}
+
+// Bounced sends are excluded from denominator AND rewards: for targeting a
+// bounce is source data-quality, not segment disinterest. (The message bandit
+// keeps them — variant and bounce are uncorrelated there.)
+export async function getTargetingStats(
+  db: Db,
+  projectId: ProjectId,
+  config: LeverConfig,
+  applyLookback = false,
+): Promise<TargetingStats> {
+  const SENT: OutreachStatus = 'sent'
+  const matureBefore = sql`now() - make_interval(days => ${config.rewardWindowDays})`
+  const lookbackDays =
+    applyLookback && config.rewardLookbackDays !== undefined
+      ? config.rewardWindowDays + config.rewardLookbackDays
+      : undefined
+  const forget = lookbackDays === undefined ? sql`` : sql` AND ol.sent_at >= now() - make_interval(days => ${lookbackDays})`
+  const exec = async <T extends Record<string, unknown>>(q: ReturnType<typeof sql>): Promise<T[]> =>
+    Array.from(await db.execute<T>(q)) as T[]
+
+  const notBounced = sql`NOT EXISTS (SELECT 1 FROM responses rb WHERE rb.outreach_log_id = ol.id AND rb.response_type = 'bounce')`
+
+  const axisStats = async (axisExpr: ReturnType<typeof sql>): Promise<TargetingAxisStat[]> => {
+    const [denomRows, rewardRows] = await Promise.all([
+      exec<{ value: string | null; total: string | number }>(sql`SELECT ${axisExpr} AS value, COUNT(*)::int AS total
+               FROM outreach_logs ol
+                 JOIN prospects p ON p.id = ol.prospect_id
+                 JOIN organizations o ON o.id = p.organization_id
+               WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}
+                 AND ol.sent_at < ${matureBefore}${forget} AND ${notBounced}
+               GROUP BY 1`),
+      exec<{ value: string | null; responseType: ResponseType; sentiment: Sentiment; count: string | number }>(sql`SELECT ${axisExpr} AS value, r.response_type AS "responseType", r.sentiment, COUNT(*)::int AS count
+               FROM outreach_logs ol
+                 JOIN prospects p ON p.id = ol.prospect_id
+                 JOIN organizations o ON o.id = p.organization_id
+                 JOIN responses r ON r.outreach_log_id = ol.id
+               WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}
+                 AND ol.sent_at < ${matureBefore}${forget} AND ${notBounced}
+                 AND r.response_type NOT IN ('bounce', 'auto_reply')
+               GROUP BY 1, r.response_type, r.sentiment`),
+    ])
+    const keyOf = (v: string | null): string => (v === null ? '<null>' : `v:${v}`)
+    const agg = new Map<string, TargetingAxisStat>()
+    for (const row of denomRows) {
+      agg.set(keyOf(row.value), { value: row.value, total: Number(row.total), rewardSum: 0 })
+    }
+    for (const row of rewardRows) {
+      const entry = agg.get(keyOf(row.value))
+      if (!entry) continue
+      entry.rewardSum +=
+        replyReward({ responseType: row.responseType, sentiment: row.sentiment }, config.reward) *
+        Number(row.count)
+    }
+    return Array.from(agg.values()).sort((a, b) => {
+      if (a.value === null) return b.value === null ? 0 : 1
+      if (b.value === null) return -1
+      return a.value.localeCompare(b.value)
+    })
+  }
+
+  const [industryFine, employeeBand, country, discoveryStrategy, freshSignalRaw] = await Promise.all([
+    axisStats(sql`NULLIF(TRIM(p.industry), '')`),
+    axisStats(sql`o.employee_band::text`),
+    axisStats(sql`UPPER(COALESCE(p.country, o.country))`),
+    axisStats(sql`p.discovery_strategy`),
+    axisStats(sql`CASE WHEN ol.had_fresh_signal THEN 'with' ELSE 'without' END`),
+  ])
+
+  const coarseAgg = new Map<CoarseIndustry, TargetingAxisStat>()
+  for (const stat of industryFine) {
+    const bucket = coarseIndustry(stat.value)
+    const entry = coarseAgg.get(bucket) ?? { value: bucket, total: 0, rewardSum: 0 }
+    entry.total += stat.total
+    entry.rewardSum += stat.rewardSum
+    coarseAgg.set(bucket, entry)
+  }
+
+  const EMPTY_STAT = (value: string): TargetingAxisStat => ({ value, total: 0, rewardSum: 0 })
+  return {
+    industry: Array.from(coarseAgg.values()).sort((a, b) => (a.value ?? '').localeCompare(b.value ?? '')),
+    employeeBand,
+    country,
+    discoveryStrategy,
+    freshSignal: {
+      withSignal: freshSignalRaw.find((s) => s.value === 'with') ?? EMPTY_STAT('with'),
+      withoutSignal: freshSignalRaw.find((s) => s.value === 'without') ?? EMPTY_STAT('without'),
+    },
+  }
+}
+
 export async function getProjectStats(
   db: Db,
   tenantId: TenantId,
@@ -217,6 +288,9 @@ export async function getProjectStats(
   // rolling timestamp that can straddle 31 distinct UTC dates.
   const trendSince = sql`(date_trunc('day', now() AT TIME ZONE 'UTC') - interval '29 days') AT TIME ZONE 'UTC'`
 
+  const config = await loadLeverConfig(db, projectId)
+  const matureBefore = sql`now() - make_interval(days => ${config.rewardWindowDays})`
+
   const [
     totalOutreachRows,
     channelCountsRows,
@@ -227,6 +301,9 @@ export async function getProjectStats(
     channelResponseRateRows,
     channelByIndustryRows,
     discoveryStrategyRows,
+    industryRows,
+    sizeRows,
+    countryRows,
     freshSignalRows,
     respondedMessagesRows,
     noResponseSampleRows,
@@ -281,6 +358,39 @@ export async function getProjectStats(
                    LEFT JOIN responses r ON r.outreach_log_id = ol.id
                  WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}
                  GROUP BY p.discovery_strategy`),
+    // Industry groups fine in SQL and folds to coarse in app — coarseIndustry() can't run in SQL.
+    rawQuery<{ industry: string | null; total: string | number; responses: string | number; bounces: string | number; bounceEligible: string | number }>(sql`SELECT NULLIF(TRIM(p.industry), '') AS industry,
+                   COUNT(DISTINCT ol.id)::int AS total,
+                   COUNT(DISTINCT ol.id) FILTER (WHERE r.id IS NOT NULL AND r.response_type NOT IN ('bounce', 'auto_reply'))::int AS responses,
+                   COUNT(DISTINCT ol.id) FILTER (WHERE r.response_type = 'bounce' AND ol.channel = 'email' AND ol.message_id IS NOT NULL)::int AS bounces,
+                   COUNT(DISTINCT ol.id) FILTER (WHERE ol.channel = 'email' AND ol.message_id IS NOT NULL)::int AS "bounceEligible"
+                 FROM outreach_logs ol
+                   JOIN prospects p ON p.id = ol.prospect_id
+                   LEFT JOIN responses r ON r.outreach_log_id = ol.id
+                 WHERE ol.project_id = ${projectId} AND ol.status = ${SENT} AND ol.sent_at < ${matureBefore}
+                 GROUP BY NULLIF(TRIM(p.industry), '')`),
+    rawQuery<{ employeeBand: EmployeeBand; total: string | number; responses: string | number; bounces: string | number; bounceEligible: string | number }>(sql`SELECT o.employee_band AS "employeeBand",
+                   COUNT(DISTINCT ol.id)::int AS total,
+                   COUNT(DISTINCT ol.id) FILTER (WHERE r.id IS NOT NULL AND r.response_type NOT IN ('bounce', 'auto_reply'))::int AS responses,
+                   COUNT(DISTINCT ol.id) FILTER (WHERE r.response_type = 'bounce' AND ol.channel = 'email' AND ol.message_id IS NOT NULL)::int AS bounces,
+                   COUNT(DISTINCT ol.id) FILTER (WHERE ol.channel = 'email' AND ol.message_id IS NOT NULL)::int AS "bounceEligible"
+                 FROM outreach_logs ol
+                   JOIN prospects p ON p.id = ol.prospect_id
+                   JOIN organizations o ON o.id = p.organization_id
+                   LEFT JOIN responses r ON r.outreach_log_id = ol.id
+                 WHERE ol.project_id = ${projectId} AND ol.status = ${SENT} AND ol.sent_at < ${matureBefore}
+                 GROUP BY o.employee_band`),
+    rawQuery<{ country: string | null; total: string | number; responses: string | number; bounces: string | number; bounceEligible: string | number }>(sql`SELECT COALESCE(p.country, o.country) AS country,
+                   COUNT(DISTINCT ol.id)::int AS total,
+                   COUNT(DISTINCT ol.id) FILTER (WHERE r.id IS NOT NULL AND r.response_type NOT IN ('bounce', 'auto_reply'))::int AS responses,
+                   COUNT(DISTINCT ol.id) FILTER (WHERE r.response_type = 'bounce' AND ol.channel = 'email' AND ol.message_id IS NOT NULL)::int AS bounces,
+                   COUNT(DISTINCT ol.id) FILTER (WHERE ol.channel = 'email' AND ol.message_id IS NOT NULL)::int AS "bounceEligible"
+                 FROM outreach_logs ol
+                   JOIN prospects p ON p.id = ol.prospect_id
+                   JOIN organizations o ON o.id = p.organization_id
+                   LEFT JOIN responses r ON r.outreach_log_id = ol.id
+                 WHERE ol.project_id = ${projectId} AND ol.status = ${SENT} AND ol.sent_at < ${matureBefore}
+                 GROUP BY COALESCE(p.country, o.country)`),
     // One row of FILTER aggregates, not GROUP BY had_fresh_signal: both buckets
     // always come back and no boolean parsing through the pooler.
     rawQuery<{ signalTotal: string | number; signalResponses: string | number; noSignalTotal: string | number; noSignalResponses: string | number }>(sql`SELECT
@@ -335,7 +445,6 @@ export async function getProjectStats(
     inquiryOutcomeCounts[row.outcome] = Number(row.count)
   }
 
-  const config = await loadLeverConfig(db, projectId)
   const variantStats = await getVariantStats(db, projectId, config)
   const variantResponseRate: EvaluationMetrics['variantResponseRate'] = variantStats.map((v) => ({
     variantId: v.variantId,
@@ -344,6 +453,40 @@ export async function getProjectStats(
     rate: v.total === 0 ? 0 : Math.round((v.responses / v.total) * 1000) / 10,
     meanReward: v.total === 0 ? 0 : Math.round((v.rewardSum / v.total) * 1000) / 1000,
   }))
+
+  type AxisCounts = { total: number; responses: number; bounces: number; bounceEligible: number }
+  const axisCounts = (r: {
+    total: string | number
+    responses: string | number
+    bounces: string | number
+    bounceEligible: string | number
+  }): AxisCounts => ({
+    total: Number(r.total),
+    responses: Number(r.responses),
+    bounces: Number(r.bounces),
+    bounceEligible: Number(r.bounceEligible),
+  })
+  const axisBucket = ({ total, responses, bounces, bounceEligible }: AxisCounts) => ({
+    total,
+    responses,
+    rate: total === 0 ? 0 : Math.round((responses / total) * 1000) / 10,
+    bounces,
+    bounceRate: bounceEligible === 0 ? 0 : Math.round((bounces / bounceEligible) * 1000) / 10,
+  })
+  const axisSort = (a: { total: number; rate: number }, b: { total: number; rate: number }) =>
+    b.total - a.total || b.rate - a.rate
+
+  const industryAgg = new Map<CoarseIndustry, AxisCounts>()
+  for (const row of industryRows) {
+    const key = coarseIndustry(row.industry)
+    const entry = industryAgg.get(key) ?? { total: 0, responses: 0, bounces: 0, bounceEligible: 0 }
+    const counts = axisCounts(row)
+    entry.total += counts.total
+    entry.responses += counts.responses
+    entry.bounces += counts.bounces
+    entry.bounceEligible += counts.bounceEligible
+    industryAgg.set(key, entry)
+  }
 
   const metrics: EvaluationMetrics = {
     totalOutreach,
@@ -403,6 +546,16 @@ export async function getProjectStats(
         }
       })
       .sort((a, b) => b.total - a.total || b.rate - a.rate),
+    industryResponseRate: Array.from(industryAgg, ([industry, counts]) => ({
+      industry,
+      ...axisBucket(counts),
+    })).sort(axisSort),
+    sizeResponseRate: sizeRows
+      .map((r) => ({ employeeBand: r.employeeBand, ...axisBucket(axisCounts(r)) }))
+      .sort(axisSort),
+    countryResponseRate: countryRows
+      .map((r) => ({ country: r.country, ...axisBucket(axisCounts(r)) }))
+      .sort(axisSort),
     freshSignalResponseRate: (() => {
       const row = freshSignalRows[0]
       const bucket = (total: number, responses: number) => ({
@@ -458,53 +611,3 @@ export async function getProjectStats(
   })
 }
 
-export type RecordEvaluationResult = {
-  priorityUpdates: Array<{ industry: string; rowsAffected: number }>
-}
-
-export async function recordEvaluation(
-  db: Db,
-  tenantId: TenantId,
-  input: RecordEvaluationInput,
-): Promise<ServiceResult<RecordEvaluationResult>> {
-  const resolved = await resolveProject(db, tenantId, input.projectId)
-  if (!resolved.ok) return resolved
-  const projectId = resolved.value
-
-  // Single UPDATE ... FROM (VALUES ...) so the endpoint issues one round-trip
-  // regardless of list size.
-  //
-  // Raw db.execute bypasses drizzle's column-type mappers, so two casts the
-  // builder would normally insert must be written by hand against postgres-js's
-  // text-typed bind params: `${NEW}::prospect_status` (enum column = text param
-  // has no operator) and `now()` instead of a JS Date param (postgres-js's cf
-  // build can't serialize a Date in this raw bind path).
-  const NEW: ProspectStatus = 'new'
-  const valuesList = sql.join(
-    input.priorityUpdates.map((pu) => sql`(${pu.industry}::text, ${pu.priority}::int)`),
-    sql`, `,
-  )
-  const updatedRows = Array.from(
-    await db.execute<{ industry: string }>(sql`
-      UPDATE project_prospects pp
-      SET priority = v.priority, updated_at = now()
-      FROM (VALUES ${valuesList}) AS v(industry, priority)
-      JOIN prospects p ON p.industry = v.industry
-      WHERE pp.prospect_id = p.id AND pp.project_id = ${projectId} AND pp.status = ${NEW}::prospect_status
-      RETURNING v.industry AS industry
-    `),
-  )
-  // Seed every requested industry at 0 so an industry that matched no 'new'
-  // prospect still appears in the result.
-  const counts = new Map<string, number>(input.priorityUpdates.map((pu) => [pu.industry, 0]))
-  for (const row of updatedRows) {
-    counts.set(row.industry, (counts.get(row.industry) ?? 0) + 1)
-  }
-
-  return ok({
-    priorityUpdates: input.priorityUpdates.map((pu) => ({
-      industry: pu.industry,
-      rowsAffected: counts.get(pu.industry) ?? 0,
-    })),
-  })
-}

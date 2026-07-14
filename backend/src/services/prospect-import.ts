@@ -6,9 +6,11 @@ import {
   projectProspects,
   formTypeEnum,
   prioritySchema,
+  EMPLOYEE_BANDS,
   type SnsAccounts,
   type ProspectHypothesis,
   type CountrySource,
+  type EmployeeBand,
 } from '../db/schema'
 import type { Db } from '../db/connection'
 import {
@@ -38,6 +40,7 @@ import {
   type DedupIndex,
   type DedupSkipReason,
 } from '../domain/prospect-dedup'
+import { isKnownIndustry } from '../domain/coarse-industry'
 
 const COUNTRY_CODE_REGEX = /^[A-Z]{2}$/
 
@@ -68,11 +71,12 @@ const prospectInputSchema = z.object({
   // writes that on bootstrap.
   country: z.string().regex(COUNTRY_CODE_REGEX).optional(),
   countrySource: z.enum(['manual', 'ai_inferred']).optional(),
+  employeeBand: z.enum(EMPLOYEE_BANDS).optional(),
   name: z.string().min(1),
   contactName: z.string().optional(),
   department: z.string().optional(),
   overview: z.string().min(1),
-  industry: z.string().optional(),
+  industry: z.string().trim().optional().transform((v) => (v ? v : undefined)),
   websiteUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG),
   email: z.email().optional(),
   contactFormUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
@@ -377,7 +381,16 @@ async function buildDedupIndex(
   }
 }
 
-type BatchSkipped = { name: string; reason: 'plan_limit' | DedupSkipReason }
+type BatchSkipped = {
+  name: string
+  reason: 'plan_limit' | 'unknown_industry' | DedupSkipReason
+  detail?: string
+}
+
+function unknownIndustryDetail(industry: string | undefined): string | null {
+  if (industry === undefined || isKnownIndustry(industry)) return null
+  return `industry "${industry}" is not in the tpl_industries vocabulary; use an exact value from that document (or omit)`
+}
 
 export type BatchRegisterResult = {
   inserted: number
@@ -456,6 +469,12 @@ export async function batchRegister(
     // batchRegister never overwrites; that's importCsv's dedupPolicy='overwrite'.
     if (resolution.kind === 'overwrite') {
       skipped.push({ name: input.name, reason: overwriteSourceToSkipReason(resolution.source) })
+      continue
+    }
+
+    const industryProblem = unknownIndustryDetail(input.industry)
+    if (industryProblem) {
+      skipped.push({ name: input.name, reason: 'unknown_industry', detail: industryProblem })
       continue
     }
 
@@ -621,6 +640,11 @@ export async function importCsv(
       errors.push({ row: i + 1, error: 'matchReason: required when projectId is provided' })
       continue
     }
+    const industryProblem = unknownIndustryDetail(rowInput.industry)
+    if (industryProblem) {
+      errors.push({ row: i + 1, error: industryProblem })
+      continue
+    }
     parsedRows.push({ row: i + 1, name: rowInput.name, input: rowInput })
   }
 
@@ -725,9 +749,10 @@ export async function importCsv(
   })
 }
 
-// Country is bootstrapped on initial INSERT only (caller-supplied > TLD
-// inference). ON CONFLICT keeps the existing country to avoid silent
-// overwrites; explicit updates go through PATCH /organizations/:id.
+// Country and employeeBand are bootstrapped on initial INSERT only
+// (caller-supplied > TLD inference for country). ON CONFLICT keeps the
+// existing values to avoid silent overwrites; explicit updates go through
+// PATCH /organizations/:id.
 async function upsertOrganization(
   db: Db,
   tenantId: TenantId,
@@ -737,6 +762,7 @@ async function upsertOrganization(
     organizationWebsiteUrl: string
     country?: string
     countrySource?: 'manual' | 'ai_inferred'
+    employeeBand?: EmployeeBand
   },
   now: Date,
 ): Promise<{ id: number } | null> {
@@ -750,6 +776,7 @@ async function upsertOrganization(
       websiteUrl: input.organizationWebsiteUrl,
       country: bootstrap.country,
       countrySource: bootstrap.countrySource,
+      employeeBand: input.employeeBand ?? 'unknown',
       createdAt: now,
       updatedAt: now,
     })

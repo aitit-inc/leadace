@@ -8,7 +8,14 @@ describe('leverConfigSchema', () => {
       explorationRate: 0.2,
       rewardWindowDays: 14,
       reward: { meetingRequest: 1, positiveReply: 1, neutralReply: 0.5, negativeReply: 0 },
+      priorStrength: 25,
+      explorationShare: 0.2,
     })
+  })
+
+  it('rejects an exploration share outside [0, 1] and a reward weight above 1', () => {
+    expect(() => leverConfigSchema.parse({ explorationShare: 1.5 })).toThrow()
+    expect(() => leverConfigSchema.parse({ reward: { positiveReply: 1.5 } })).toThrow()
   })
 
   it('merges a partial override with the defaults', () => {

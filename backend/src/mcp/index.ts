@@ -5,7 +5,7 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import { verifyJwt, verifySupabaseJwt } from '../auth/verify-jwt'
-import { BUG_REPORT_CATEGORIES, OUTBOUND_MODES, OUTBOUND_CHANNELS, REJECTION_PRIMARY_REASONS, REJECTION_RECONTACT_WINDOWS, SUGGESTION_STATUSES, prospectStatusEnum, prioritySchema } from '../db/schema'
+import { BUG_REPORT_CATEGORIES, EMPLOYEE_BANDS, OUTBOUND_MODES, OUTBOUND_CHANNELS, REJECTION_PRIMARY_REASONS, REJECTION_RECONTACT_WINDOWS, SUGGESTION_STATUSES, prospectStatusEnum, prioritySchema } from '../db/schema'
 import { ALLOWED_SEND_COUNTRIES } from '../domain/country'
 import { discoveryStrategySchema, suggestionKindSchema, variantIdSchema } from '../domain/ids'
 import { localeSchema } from '../domain/locale'
@@ -248,7 +248,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'add_prospects',
-    'Batch-register prospects; server-side dedup is authoritative. Returns inserted, skipped, and skippedDetails [{name, reason}].',
+    'Batch-register prospects; server-side dedup is authoritative. Returns inserted, skipped, and skippedDetails [{name, reason, detail?}]. Rows whose industry is not in the tpl_industries vocabulary are skipped (reason unknown_industry) — fix and re-register.',
     {
       projectId: z.string().min(1).optional().describe('Project name or ID; omit to save prospects tenant-only (no project link).'),
       prospects: z.array(z.object({
@@ -259,7 +259,7 @@ function buildToolRegistry(): ToolDef[] {
         contactName: z.string().optional(),
         department: z.string().optional(),
         overview: z.string(),
-        industry: z.string().optional(),
+        industry: z.string().optional().describe('Exact value from the tpl_industries vocabulary (master document); unknown values skip the row.'),
         websiteUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG),
         email: z.email().optional().describe('At least one contact channel (email / contactFormUrl / snsAccounts / platformUrl) required.'),
         contactFormUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
@@ -286,8 +286,9 @@ function buildToolRegistry(): ToolDef[] {
         matchReason: z.string().optional().describe('Why this prospect is a good target. Required when projectId is set; ignored otherwise.'),
         priority: prioritySchema.default(3),
         discoveryStrategy: discoveryStrategySchema.optional().describe('Slug of the discovery strategy that found this prospect. Write-once provenance.'),
-        country: z.string().regex(/^[A-Z]{2}$/).optional().describe('Per-prospect override of the org country (ISO 3166-1 alpha-2). Codes outside the send-allowed set register fine but are blocked at outreach time.'),
+        country: z.string().regex(/^[A-Z]{2}$/).optional().describe('Prospect country (ISO 3166-1 alpha-2). When the organization is first created it also bootstraps the org country (an existing org keeps its value, so it acts as a per-prospect override). Codes outside the send-allowed set register fine but are blocked at outreach time.'),
         countrySource: z.enum(['manual', 'ai_inferred']).optional().describe('Provenance of the country value; only meaningful when country is set.'),
+        employeeBand: z.enum(EMPLOYEE_BANDS).optional().describe('Coarse company-size band of the organization. Applied on the org\'s first registration only — a dedup-matched existing org keeps its value (change via update_organization). Omit = unknown.'),
       })).describe('Max 100 per call.'),
     },
     async ({ projectId, prospects }, { apiUrl, authHeader }) => {
@@ -390,7 +391,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_outbound_targets',
-    'Prospects due for outreach (new + follow-up/recycle touches), priority-ordered; server-filters by enabled channels and deliverable country (unknown country passes unless the project sets targetCountries). Reports the reachable total and its email / formOnly / snsOnly / platformOnly split, the outbound mode (send|draft), remaining outreach quota, and the mailbox email cap; then the prospects as JSON, each carrying `country`, `discoveryStrategy`, and `cycle` {kind, touchNumber}.',
+    'Prospects due for outreach (new + follow-up/recycle touches), ordered by the measured targeting score (x priority multiplier; a share of each batch is random exploration slots); server-filters by enabled channels and deliverable country (unknown country passes unless the project sets targetCountries). Reports the reachable total and its email / formOnly / snsOnly / platformOnly split, the outbound mode (send|draft), remaining outreach quota, and the mailbox email cap; then the prospects as JSON, each carrying `country`, `discoveryStrategy`, and `cycle` {kind, touchNumber}.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       limit: z.number().int().min(1).max(200).default(50).describe('Max number of prospects to return'),
@@ -713,7 +714,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'run_lever_tick',
-    'Run the project\'s daily outbound-optimization tick: recompute the subject-variant draw weights pick_subject_variant reads (archiving dominated variants, never below two active) and the per-industry channel affinity get_outbound_targets surfaces. Idempotent per UTC day — a repeat call returns that day\'s recorded decision without re-applying. Returns weights, archived variants, per-variant samples, channelAffinity by industry bucket, and needsReplenishment (recomputed live each call, not the frozen recorded value).',
+    'Run the project\'s daily outbound-optimization tick: recompute the subject-variant draw weights pick_subject_variant reads (archiving dominated variants, never below two active), the per-industry channel affinity get_outbound_targets surfaces, and the measured targeting lifts (industry / size / country / discovery strategy / fresh signal) that re-score the get_outbound_targets ordering. Idempotent per UTC day — a repeat call returns that day\'s recorded decision without re-applying. Returns weights, archived variants, per-variant samples, channelAffinity by industry bucket, targeting lifts, and needsReplenishment (recomputed live each call, not the frozen recorded value).',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
     },
@@ -732,6 +733,7 @@ function buildToolRegistry(): ToolDef[] {
         archived: Array<{ variantId: string }>
         samples: Array<{ variantId: string; total: number }>
         channelAffinity: Record<string, Array<{ channel: string; rate: number; total: number; responses: number }>>
+        targetingLifts: Record<string, unknown> | null
         needsReplenishment: boolean
       }
       const mature = r.samples.filter((s) => s.total >= r.minSamplePerArm).length
@@ -743,13 +745,16 @@ function buildToolRegistry(): ToolDef[] {
       const channelLine = buckets.length > 0
         ? `\nChannel affinity (${buckets.length} industry bucket(s)): ${JSON.stringify(r.channelAffinity)}`
         : '\nChannel affinity: none yet (cells under min-sample → policy order).'
+      const targetingLine = r.targetingLifts
+        ? `\nTargeting lifts: ${JSON.stringify(r.targetingLifts)}`
+        : '\nTargeting lifts: none recorded for this cycle (pre-upgrade decision).'
       const replenishLine = r.needsReplenishment
         ? '\nReplenishment: pool converged to the floor with a dominated arm — /evaluate should supply one fresh subject angle.'
         : ''
       return {
         content: [{
           type: 'text' as const,
-          text: `${head} ${mature}/${r.samples.length} variant(s) at min-sample (${r.minSamplePerArm}).${archivedLine}\nWeights: ${JSON.stringify(r.weights)}${channelLine}${replenishLine}`,
+          text: `${head} ${mature}/${r.samples.length} variant(s) at min-sample (${r.minSamplePerArm}).${archivedLine}\nWeights: ${JSON.stringify(r.weights)}${channelLine}${targetingLine}${replenishLine}`,
         }],
       }
     },
@@ -757,7 +762,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_lever_state',
-    'Read-only snapshot of the project\'s outbound optimizer: subject draw weights (null until the first tick → uniform), channel affinity per coarse-industry bucket ({} until measured → policy order), updatedAt, per-active-variant mature-sample progress, today\'s tick decision if it ran, and needsReplenishment.',
+    'Read-only snapshot of the project\'s outbound optimizer: subject draw weights (null until the first tick → uniform), channel affinity per coarse-industry bucket ({} until measured → policy order), targetingLifts (null until a tick has computed them → neutral ordering), updatedAt, per-active-variant mature-sample progress, today\'s tick decision if it ran, and needsReplenishment.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
     },
@@ -774,7 +779,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_lever_decisions',
-    'Read-only history of the project\'s daily lever-tick decisions, newest first. Each entry is one UTC day: subject draw weights, variants archived that day, per-variant sample counts, channel affinity per coarse-industry bucket. Empty until the tick has run at least once.',
+    'Read-only history of the project\'s daily lever-tick decisions, newest first. Each entry is one UTC day: subject draw weights, variants archived that day, per-variant sample counts, channel affinity per coarse-industry bucket, and targetingLifts (null on pre-upgrade entries). Empty until the tick has run at least once.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       days: z.number().int().min(1).max(365).optional().describe('Lookback window in days (default 30)'),
@@ -1047,7 +1052,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'set_prospect_priority',
-    'Set one prospect\'s outreach priority (1=highest) within a project. Per-prospect override; unlike record_evaluation\'s per-industry bulk update it applies regardless of the prospect\'s status. Read the current value via list_project_prospects or get_outbound_targets.',
+    'Set one prospect\'s outreach priority (1=highest) within a project. Per-prospect operator override applied regardless of the prospect\'s status; measured targeting outranks priority in the outbound ordering once data accrues. Read the current value via list_project_prospects or get_outbound_targets.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       prospectId: z.number().int().positive(),
@@ -1071,17 +1076,18 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'update_organization',
-    'Partial-update an organization\'s name or website URL; domain is immutable. organizationId is the PK returned in the organizationId field of list_tenant_prospects / list_project_prospects / get_outbound_targets, not a domain.',
+    'Partial-update an organization\'s name, website URL, or employeeBand; domain is immutable. organizationId is the PK returned in the organizationId field of list_tenant_prospects / list_project_prospects / get_outbound_targets, not a domain.',
     {
       organizationId: z.number().int().positive(),
       patch: z.object({
         name: z.string().min(1).optional(),
         websiteUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
+        employeeBand: z.enum(EMPLOYEE_BANDS).optional(),
       }).describe('At least one required.'),
     },
     async ({ organizationId, patch }, { apiUrl, authHeader }) => {
       if (Object.keys(patch).length === 0) {
-        return { content: [{ type: 'text' as const, text: 'Error: patch is empty (provide name and/or websiteUrl).' }], isError: true }
+        return { content: [{ type: 'text' as const, text: 'Error: patch is empty (provide name, websiteUrl, and/or employeeBand).' }], isError: true }
       }
       const { ok, data } = await callApi('PATCH', `/organizations/${organizationId}`, patch, apiUrl, authHeader)
       if (!ok) {
@@ -1096,7 +1102,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'list_organizations',
-    'List tenant organizations with per-org prospect and project counts.',
+    'List tenant organizations with employee-size band and per-org prospect and project counts.',
     {
       q: z.string().optional().describe('Substring search on name / domain'),
       limit: z.number().int().min(1).max(500).default(200),
@@ -1114,14 +1120,14 @@ function buildToolRegistry(): ToolDef[] {
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
       }
       const result = data as {
-        organizations: Array<{ id: number; name: string; domain: string; prospectCount: number; projectCount: number }>
+        organizations: Array<{ id: number; name: string; domain: string; employeeBand: string; prospectCount: number; projectCount: number }>
         total: number
       }
       if (result.organizations.length === 0) {
         return { content: [{ type: 'text' as const, text: `0 of ${result.total} organization(s).` }] }
       }
       const lines = result.organizations.map(
-        (o) => `#${o.id} ${o.name} (${o.domain}) prospects=${o.prospectCount} projects=${o.projectCount}`,
+        (o) => `#${o.id} ${o.name} (${o.domain}) size=${o.employeeBand} prospects=${o.prospectCount} projects=${o.projectCount}`,
       )
       return {
         content: [{
@@ -1208,7 +1214,7 @@ function buildToolRegistry(): ToolDef[] {
         contactName: z.string().nullable().optional(),
         department: z.string().nullable().optional(),
         overview: z.string().min(1).optional(),
-        industry: z.string().nullable().optional(),
+        industry: z.string().nullable().optional().describe('Exact value from the tpl_industries vocabulary (master document), or null to clear; other values are rejected.'),
         websiteUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
         email: z.email().nullable().optional().describe('Setting both email and contactFormUrl to null requires an snsAccounts entry.'),
         contactFormUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).nullable().optional(),
@@ -1363,7 +1369,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_eval_data',
-    'Evaluation statistics for a project: response rates, channel performance, sentiment breakdown, discoveryStrategyResponseRate (per discovery strategy; the null bucket is prospects without recorded provenance), freshSignalResponseRate, inquiry-landing outcome counts, respondedMessages, and a data-sufficiency check. Reply rates exclude bounces/auto-replies; discoveryStrategyResponseRate also carries bounces + bounceRate, a threaded-only lower bound.',
+    'Evaluation statistics for a project: response rates, channel performance, sentiment breakdown, discoveryStrategyResponseRate (per discovery strategy; the null bucket is prospects without recorded provenance), targeting observation axes (industryResponseRate by coarse bucket / sizeResponseRate by employee band / countryResponseRate — these three count mature sends only, older than the reply-maturity window), freshSignalResponseRate, inquiry-landing outcome counts, respondedMessages, and a data-sufficiency check. Reply rates exclude bounces/auto-replies; per-bucket bounces + bounceRate are a threaded-only lower bound.',
     { projectId: z.string().min(1).describe('Project name or ID') },
     async ({ projectId }, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('GET', `/projects/${encodeURIComponent(projectId)}/stats`, null, apiUrl, authHeader)
@@ -1373,32 +1379,6 @@ function buildToolRegistry(): ToolDef[] {
       }
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
-      }
-    },
-  )
-
-  defineTool(
-    'record_evaluation',
-    'Bulk-override prospect priorities by industry; only status=new prospects are affected. Returns per-industry rowsAffected.',
-    {
-      projectId: z.string().min(1).describe('Project name or ID'),
-      priorityUpdates: z.array(z.object({
-        industry: z.string().min(1),
-        priority: prioritySchema,
-      })).min(1).max(50).describe('Duplicate industries are rejected.'),
-    },
-    async (input, { apiUrl, authHeader }) => {
-      const { ok, data } = await callApi('POST', '/evaluations', input, apiUrl, authHeader)
-      if (!ok) {
-        const err = data as { error: string }
-        return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
-      }
-      const result = data as { priorityUpdates: unknown[] }
-      return {
-        content: [{
-          type: 'text' as const,
-          text: `Priority updates applied: ${JSON.stringify(result.priorityUpdates)}`,
-        }],
       }
     },
   )

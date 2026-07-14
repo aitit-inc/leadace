@@ -414,6 +414,27 @@
       "when": 1783834441379,
       "tag": "0058_clear_winter_soldier",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1783948633383,
+      "tag": "0059_kind_misty_knight",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1783951877206,
+      "tag": "0060_low_carlie_cooper",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1784029003839,
+      "tag": "0061_clamp_legacy_reward_weights",
+      "breakpoints": true
     }
   ]
 }

@@ -182,6 +182,7 @@ This phase focuses on **discovering candidates**. Contact information (email, fo
 - Industry or field
 - Department or branch name (school name for school corporations, target department for large companies)
 - Country (ISO 3166-1 alpha-2, e.g., "US", "JP", "GB")
+- Company size evidence (published employee count, capital, funding stage) — feeds `employeeBand` at registration
 - Email addresses or SNS accounts found incidentally during search (no need to look for these intentionally)
 - Organization name: the legal entity name if it differs from the prospect name (e.g., a school corporation that operates multiple schools)
 
@@ -313,7 +314,7 @@ entries; Phase 1.7 may have enriched their `overview` with signals) into
 information.
 
 Include the following in each sub-agent's prompt:
-- List of assigned candidates (name, organization_name, website_url, overview, industry, department, country, match_reason, priority)
+- List of assigned candidates (name, organization_name, website_url, overview, industry, department, country, employee_band, match_reason, priority)
 - Retrieve the contact enrichment procedure via `mcp__plugin_leadace_api__get_master_document` with `slug: "tpl_enrich_contacts"` and follow its procedure
 - Explore each candidate's official site to retrieve email addresses and contact form URLs
 - **Keyperson lookup is required**, not optional. Search the official site's
@@ -327,7 +328,7 @@ Include the following in each sub-agent's prompt:
 
 Sub-agent allowed-tools: `Bash`, `WebSearch`, `WebFetch`, `Read`, `mcp__plugin_leadace_api__get_master_document`
 
-Each object in the JSON array returned by the sub-agent includes the Phase 1 information (name, organization_name, overview, website_url, industry, department, country, match_reason, priority) plus the retrieved contacts (email, contact_form_url, form_type, sns_accounts, contact_name).
+Each object in the JSON array returned by the sub-agent includes the Phase 1 information (name, organization_name, overview, website_url, industry, department, country, employee_band, match_reason, priority) plus the retrieved contacts (email, contact_form_url, form_type, sns_accounts, contact_name).
 
 ### 6b. Re-search for Candidates Without Contact Info (only when applicable)
 
@@ -362,9 +363,9 @@ For each prospect, construct the object as follows:
   any signals, append the `## Recent Signals` section after the overview
   text within the same field.
 - `industry`: **must be one of the strings from `tpl_industries`** (the
-  vocabulary you fetched in step 1). Free-form industry strings break the
-  `/evaluate` aggregator and the timing-aware ordering. If none fit, use
-  `Other`.
+  vocabulary you fetched in step 1). The server skips rows with any other
+  value (`skippedDetails` reason `unknown_industry`) — fix the label and
+  re-register those rows. If none fit, use `Other`.
 - `country`: ISO 3166-1 alpha-2 (e.g. `US`, `CA`, `JP`). Optional in the
   payload — when omitted the server falls back to TLD inference of the
   organization domain. Set this when you have stronger evidence than the
@@ -375,6 +376,15 @@ For each prospect, construct the object as follows:
   identified a US-, CA-, or JP-only target audience, prefer those.
 - `countrySource`: optional, one of `manual` (operator confirmed) or
   `ai_inferred`. Skip this field when leaving `country` blank.
+- `employeeBand`: coarse company-size band of the organization — one of
+  `1-10`, `11-50`, `51-200`, `201+`. Primary source: a published employee
+  count (official site, LinkedIn company page, corporate registry). When
+  headcount is not published, estimate from public proxies scaled to the
+  country's norms (e.g. JP: capital ≤ ¥10M with no funding news → `1-10`;
+  US: seed-stage → `1-10`, Series A–B → `11-50`). Omit when there is no
+  honest basis (= `unknown`). Applied only when the organization is first
+  registered — an org matched by dedup keeps its existing band (change
+  explicitly via `update_organization`).
 - `websiteUrl`: the specific page URL for this prospect
 - `email`: email address (optional*)
 - `contactFormUrl`: contact form URL (optional*)
@@ -402,11 +412,14 @@ For each prospect, construct the object as follows:
 The server automatically deduplicates by email, contact form URL, platform
 URL, and organization domain within the project (platform-URL candidates skip
 the org-domain check — their granularity is the posting, not the org).
-Inspect `skippedDetails` after the call: each entry is `{name, reason}` with
+Inspect `skippedDetails` after the call: each entry is `{name, reason, detail?}` with
 `reason ∈ email_duplicate | form_url_duplicate | platform_url_duplicate |
-already_in_project | do_not_contact | duplicate_in_batch | plan_limit`. If the same `reason` clusters tightly
+already_in_project | do_not_contact | duplicate_in_batch | plan_limit |
+unknown_industry`. If the same `reason` clusters tightly
 (e.g. ≥ 50% of skips are `email_duplicate` from one industry), record the
 keyword in `## Exhausted Keywords` and switch angles for the next pass.
+`unknown_industry` rows are a labeling bug, not a dedup signal — replace the
+label with an exact `tpl_industries` value and re-register just those rows.
 
 **Difference between organizations and prospects:**
 - `organizations` = **Legal entity** unit (apex domain is PK)

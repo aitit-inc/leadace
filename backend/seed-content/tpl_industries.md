@@ -2,8 +2,9 @@
 
 Controlled list used when registering an organization with `add_prospects`.
 Pick **the closest single category** for each prospect. Keep the wording
-verbatim — `/evaluate` aggregates by exact-match on `industry`, so free-form
-labels degrade the analytics.
+verbatim — the server validates `industry` against this list and skips rows
+with any other value (`add_prospects` reason `unknown_industry`; CSV import
+row error). `/evaluate` aggregates by exact-match on `industry`.
 
 If a prospect genuinely fits none of these (e.g. a niche scientific instrument
 maker), fall back to `Other` rather than inventing a new label.

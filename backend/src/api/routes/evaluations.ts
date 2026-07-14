@@ -1,10 +1,6 @@
 import { Hono } from 'hono'
 import { zValidator } from '../zvalidator'
-import {
-  getProjectStats,
-  recordEvaluation,
-  recordEvaluationSchema,
-} from '../../services/evaluations'
+import { getProjectStats } from '../../services/evaluations'
 import { projectRefParamSchema } from '../../services/projects'
 import { respondWithError } from '../respond'
 import type { Env, Variables } from '../types'
@@ -20,9 +16,3 @@ evaluationsRouter.get(
     return c.json(result.value)
   },
 )
-
-evaluationsRouter.post('/evaluations', zValidator('json', recordEvaluationSchema), async (c) => {
-  const result = await recordEvaluation(c.get('db'), c.get('tenantId'), c.req.valid('json'))
-  if (!result.ok) return respondWithError(c, result)
-  return c.json(result.value, 201)
-})

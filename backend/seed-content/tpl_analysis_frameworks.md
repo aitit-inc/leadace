@@ -58,4 +58,4 @@ Once send data has accumulated, perform the following analyses:
 ### Actions
 - Update target definition in SALES_STRATEGY.md
 - Add/remove search keywords
-- Adjust priority scores (bulk update via `record_evaluation` MCP tool with `priorityUpdates`)
+- Selection order is lever-owned (measured targeting lifts re-score the outbound ordering daily); report segment findings, do not encode them as priority edits

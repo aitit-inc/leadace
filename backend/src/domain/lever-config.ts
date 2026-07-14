@@ -5,6 +5,8 @@ const minSamplePerArm = z.number().int().min(1)
 const explorationRate = z.number().min(0).max(1)
 const rewardWindowDays = z.number().int().min(1)
 const rewardLookbackDays = z.number().int().min(1)
+const priorStrength = z.number().min(1)
+const explorationShare = z.number().min(0).max(1)
 
 // R5 safety device: defaults make every lever behave like today until enough data accrues.
 export const leverConfigSchema = z.object({
@@ -18,6 +20,11 @@ export const leverConfigSchema = z.object({
   // cross-field invariant can be violated. Unset = all mature history.
   rewardLookbackDays: rewardLookbackDays.optional(),
   reward: rewardWeightsSchema.default(defaultRewardWeights),
+  // Shrinkage prior (pseudo-sends at the project mean) for the targeting lifts.
+  priorStrength: priorStrength.default(25),
+  // Random share of each outbound batch. 0 would make the ordering a de-facto
+  // selection gate: low-scored buckets never send again and early flukes self-seal.
+  explorationShare: explorationShare.default(0.2),
 })
 export type LeverConfig = z.infer<typeof leverConfigSchema>
 export const defaultLeverConfig: LeverConfig = leverConfigSchema.parse({})
@@ -29,5 +36,7 @@ export const leverConfigPatchSchema = z.object({
   rewardWindowDays: rewardWindowDays.optional(),
   rewardLookbackDays: rewardLookbackDays.optional(),
   reward: rewardWeightsPatchSchema.optional(),
+  priorStrength: priorStrength.optional(),
+  explorationShare: explorationShare.optional(),
 })
 export type LeverConfigPatch = z.infer<typeof leverConfigPatchSchema>

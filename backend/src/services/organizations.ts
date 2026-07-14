@@ -10,6 +10,8 @@ import {
   outreachStatusEnum,
   sentimentEnum,
   responseTypeEnum,
+  EMPLOYEE_BANDS,
+  type EmployeeBand,
   type SnsAccounts,
   type OutreachStatus,
 } from '../db/schema'
@@ -32,6 +34,7 @@ export type OrganizationListItem = {
   name: string
   domain: string
   websiteUrl: string
+  employeeBand: EmployeeBand
   createdAt: Date
   updatedAt: Date
   prospectCount: number
@@ -92,6 +95,7 @@ export const updateOrganizationBodySchema = z
   .object({
     name: z.string().min(1).optional(),
     websiteUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
+    employeeBand: z.enum(EMPLOYEE_BANDS).optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {
     message: 'At least one field is required',
@@ -120,6 +124,7 @@ export async function listOrganizations(
         name: organizations.name,
         domain: organizations.domain,
         websiteUrl: organizations.websiteUrl,
+        employeeBand: organizations.employeeBand,
         createdAt: organizations.createdAt,
         updatedAt: organizations.updatedAt,
         prospectCount: sql<number>`COUNT(DISTINCT ${prospects.id})::int`,

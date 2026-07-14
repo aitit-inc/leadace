@@ -1,0 +1,2 @@
+CREATE TYPE "public"."employee_band" AS ENUM('1-10', '11-50', '51-200', '201+', 'unknown');--> statement-breakpoint
+ALTER TABLE "organizations" ADD COLUMN "employee_band" "employee_band" DEFAULT 'unknown' NOT NULL;

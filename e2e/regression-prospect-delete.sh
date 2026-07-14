@@ -76,7 +76,7 @@ mkseed() {
   jq -nc --arg d "$dom" --arg e "contact@$dom" --arg n "P-$tag" \
     '{organizationDomain:$d, organizationName:("Org "+$d), organizationWebsiteUrl:("https://"+$d),
       country:"US", countrySource:"manual",
-      name:$n, overview:"seed", websiteUrl:("https://"+$d+"/about"), email:$e, industry:"saas", matchReason:"seed"}'
+      name:$n, overview:"seed", websiteUrl:("https://"+$d+"/about"), email:$e, industry:"B2B SaaS", matchReason:"seed"}'
 }
 
 require_jq

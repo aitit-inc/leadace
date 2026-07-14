@@ -19,10 +19,20 @@ import {
   type ChannelAffinityMap,
   type ChannelCoarseStat,
 } from '../domain/channel-affinity'
+import {
+  computeAxisLifts,
+  computeFreshSignalLifts,
+  overallMeanReward,
+  LIFT_MIN,
+  LIFT_MAX,
+  type TargetingAxisLift,
+  type TargetingLifts,
+} from '../domain/targeting-score'
+import { COARSE_TO_FINES, type CoarseIndustry } from '../domain/coarse-industry'
 import { ok, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { loadLeverConfig } from './project-settings'
-import { getVariantStats, getChannelStats } from './evaluations'
+import { getVariantStats, getChannelStats, getTargetingStats } from './evaluations'
 
 async function loadActiveVariantIds(db: Db, projectId: ProjectId): Promise<string[]> {
   const rows = await db
@@ -42,7 +52,32 @@ export type LeverTickResult = {
   samples: VariantStat[]
   channelAffinity: ChannelAffinityMap
   channelSamples: ChannelCoarseStat[]
+  // null on ran:false replays of pre-Phase-B decisions.
+  targetingLifts: TargetingLifts | null
   needsReplenishment: boolean
+}
+
+function valueLiftCase(column: ReturnType<typeof sql>, lifts: TargetingAxisLift[]): ReturnType<typeof sql> {
+  const nullLift = lifts.find((l) => l.value === null)?.lift ?? 1.0
+  const branches = lifts.filter((l): l is { value: string; lift: number } => l.value !== null)
+  const whens = branches.map((b) => sql` WHEN ${column} = ${b.value} THEN ${b.lift}::float8`)
+  return sql`(CASE WHEN ${column} IS NULL THEN ${nullLift}::float8${sql.join(whens, sql``)} ELSE 1.0 END)`
+}
+
+// ELSE carries the 'other' lift (null, 'Other', legacy labels) — must keep
+// folding exactly like coarseIndustry().
+function industryLiftCase(column: ReturnType<typeof sql>, lifts: TargetingAxisLift[]): ReturnType<typeof sql> {
+  const otherLift = lifts.find((l) => l.value === 'other')?.lift ?? 1.0
+  const whens = lifts
+    .filter((l): l is { value: string; lift: number } => l.value !== null && l.value !== 'other')
+    .flatMap((l) => {
+      const fines = COARSE_TO_FINES[l.value as CoarseIndustry] ?? []
+      if (fines.length === 0) return []
+      const list = sql.join(fines.map((f) => sql`${f}`), sql`, `)
+      return [sql` WHEN TRIM(COALESCE(${column}, '')) IN (${list}) THEN ${l.lift}::float8`]
+    })
+  if (whens.length === 0) return sql`${otherLift}::float8`
+  return sql`(CASE${sql.join(whens, sql``)} ELSE ${otherLift}::float8 END)`
 }
 
 // Idempotent on (project, UTC day): the unique audit insert is the claim, only
@@ -68,9 +103,26 @@ export async function runLeverTick(
   const channelStats = aggregateByCoarse(await getChannelStats(db, projectId, config))
   const channelAffinity = computeChannelAffinity(channelStats, config)
 
+  const targetingStats = await getTargetingStats(db, projectId, config, true)
+  // industry partitions all mature sends → its sums are the project baseline.
+  const r0 = overallMeanReward(targetingStats.industry)
+  const targetingLifts: TargetingLifts = {
+    industry: computeAxisLifts(targetingStats.industry, r0, config.priorStrength),
+    employeeBand: computeAxisLifts(targetingStats.employeeBand, r0, config.priorStrength),
+    country: computeAxisLifts(targetingStats.country, r0, config.priorStrength),
+    discoveryStrategy: computeAxisLifts(targetingStats.discoveryStrategy, r0, config.priorStrength),
+    freshSignal: computeFreshSignalLifts(
+      targetingStats.freshSignal.withSignal,
+      targetingStats.freshSignal.withoutSignal,
+      r0,
+      config.priorStrength,
+    ),
+  }
+
   const payload: LeverDecisionPayload = {
     subject: { weights: decision.weights, archived: decision.toArchive, samples: arms },
     channel: { affinity: channelAffinity, samples: channelStats },
+    targeting: { lifts: targetingLifts, samples: targetingStats },
   }
 
   // Transaction-stable now() → both uses resolve to the same UTC day (deterministic key).
@@ -97,6 +149,7 @@ export async function runLeverTick(
       samples: existing.decision.subject.samples,
       channelAffinity: existing.decision.channel?.affinity ?? {},
       channelSamples: existing.decision.channel?.samples ?? [],
+      targetingLifts: existing.decision.targeting?.lifts ?? null,
       // needsReplenishment is a live current-state signal (never persisted), not part
       // of the applied decision the fields above echo: re-derived under the current
       // config, so a mid-day config change may shift it — intended, not an idempotency
@@ -119,11 +172,25 @@ export async function runLeverTick(
   }
   await db
     .insert(leverState)
-    .values({ projectId, tenantId, variantWeights: decision.weights, channelAffinity, updatedAt: now })
+    .values({ projectId, tenantId, variantWeights: decision.weights, channelAffinity, targetingLifts, updatedAt: now })
     .onConflictDoUpdate({
       target: leverState.projectId,
-      set: { variantWeights: decision.weights, channelAffinity, updatedAt: now },
+      set: { variantWeights: decision.weights, channelAffinity, targetingLifts, updatedAt: now },
     })
+
+  // fresh_signal is deliberately absent — time-varying, applied at read time.
+  await db.execute(sql`
+    UPDATE project_prospects pp
+    SET ordering_score = LEAST(${LIFT_MAX}::float8, GREATEST(${LIFT_MIN}::float8,
+        ${industryLiftCase(sql`p.industry`, targetingLifts.industry)}
+      * ${valueLiftCase(sql`o.employee_band::text`, targetingLifts.employeeBand)}
+      * ${valueLiftCase(sql`UPPER(COALESCE(p.country, o.country))`, targetingLifts.country)}
+      * ${valueLiftCase(sql`p.discovery_strategy`, targetingLifts.discoveryStrategy)}
+    ))::real
+    FROM prospects p
+    JOIN organizations o ON o.id = p.organization_id
+    WHERE pp.prospect_id = p.id AND pp.project_id = ${projectId}
+  `)
 
   return ok({
     ran: true,
@@ -134,6 +201,7 @@ export async function runLeverTick(
     samples: arms,
     channelAffinity,
     channelSamples: channelStats,
+    targetingLifts,
     needsReplenishment: decision.needsReplenishment,
   })
 }
@@ -150,6 +218,8 @@ export type LeverStateView = {
   // null = no tick has run yet → pickSubjectVariant draws uniformly.
   weights: Record<string, number> | null
   channelAffinity: ChannelAffinityMap
+  // null = no tick has computed targeting lifts yet → neutral ordering.
+  targetingLifts: TargetingLifts | null
   updatedAt: string | null
   minSamplePerArm: number
   variants: LeverStateVariant[]
@@ -187,6 +257,7 @@ export async function getLeverStateById(
     .select({
       variantWeights: leverState.variantWeights,
       channelAffinity: leverState.channelAffinity,
+      targetingLifts: leverState.targetingLifts,
       updatedAt: leverState.updatedAt,
     })
     .from(leverState)
@@ -218,6 +289,7 @@ export async function getLeverStateById(
   return ok({
     weights,
     channelAffinity: stateRow?.channelAffinity ?? {},
+    targetingLifts: stateRow?.targetingLifts ?? null,
     updatedAt: stateRow?.updatedAt ? stateRow.updatedAt.toISOString() : null,
     minSamplePerArm: config.minSamplePerArm,
     variants,
@@ -237,6 +309,8 @@ export type LeverDecisionHistoryEntry = {
   archived: ArchiveDecision[]
   samples: VariantStat[]
   channelAffinity: ChannelAffinityMap
+  // null on pre-Phase-B decisions.
+  targetingLifts: TargetingLifts | null
 }
 
 export async function getLeverDecisionsHistory(
@@ -264,6 +338,7 @@ export async function getLeverDecisionsHistory(
     archived: r.decision.subject.archived,
     samples: r.decision.subject.samples,
     channelAffinity: r.decision.channel?.affinity ?? {},
+    targetingLifts: r.decision.targeting?.lifts ?? null,
   }))
   return ok({ decisions })
 }

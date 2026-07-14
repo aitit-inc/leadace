@@ -10,7 +10,9 @@ export function countableReply(args: { responseType: ResponseType }): boolean {
   return !NON_COUNTABLE.has(args.responseType)
 }
 
-const rewardWeight = z.number().min(0)
+// Cap 1: rewardSum is fractional successes over sends — a weight above 1
+// breaks the targeting posterior and the Beta update outright.
+const rewardWeight = z.number().min(0).max(1)
 export const rewardWeightsSchema = z.object({
   meetingRequest: rewardWeight.default(1),
   positiveReply: rewardWeight.default(1),
