@@ -3,23 +3,23 @@ import { z } from 'zod'
 import { zValidator } from '../zvalidator'
 import {
   upsertVariantBodySchema,
-  listSubjectVariants,
-  upsertSubjectVariant,
-  pickSubjectVariant,
-} from '../../services/subject-variants'
+  listMessageVariants,
+  upsertMessageVariant,
+  pickMessageVariant,
+} from '../../services/message-variants'
 import { projectRefParamSchema } from '../../services/projects'
 import { variantIdSchema } from '../../domain/ids'
 import { respondWithError } from '../respond'
 import { err } from '../../services/result'
 import type { Env, Variables } from '../types'
 
-export const subjectVariantsRouter = new Hono<{ Bindings: Env; Variables: Variables }>()
+export const messageVariantsRouter = new Hono<{ Bindings: Env; Variables: Variables }>()
 
-subjectVariantsRouter.get(
-  '/projects/:id/subject-variants',
+messageVariantsRouter.get(
+  '/projects/:id/message-variants',
   zValidator('param', projectRefParamSchema),
   async (c) => {
-    const result = await listSubjectVariants(
+    const result = await listMessageVariants(
       c.get('db'),
       c.get('tenantId'),
       c.req.valid('param').id,
@@ -29,12 +29,12 @@ subjectVariantsRouter.get(
   },
 )
 
-subjectVariantsRouter.put(
-  '/projects/:id/subject-variants',
+messageVariantsRouter.put(
+  '/projects/:id/message-variants',
   zValidator('param', projectRefParamSchema),
   zValidator('json', upsertVariantBodySchema),
   async (c) => {
-    const result = await upsertSubjectVariant(
+    const result = await upsertMessageVariant(
       c.get('db'),
       c.get('tenantId'),
       c.req.valid('param').id,
@@ -51,14 +51,14 @@ const pickQuerySchema = z.object({
 
 // POST, not GET: the pick is a weighted random draw, so each call may return a
 // different variant — a cacheable GET would be wrong.
-subjectVariantsRouter.post(
-  '/projects/:id/subject-variants/pick',
+messageVariantsRouter.post(
+  '/projects/:id/message-variants/pick',
   zValidator('param', projectRefParamSchema),
   zValidator('query', pickQuerySchema),
   async (c) => {
     const { id: projectId } = c.req.valid('param')
     const { variantId } = c.req.valid('query')
-    const result = await pickSubjectVariant(
+    const result = await pickMessageVariant(
       c.get('db'),
       c.get('tenantId'),
       projectId,
@@ -70,8 +70,8 @@ subjectVariantsRouter.post(
         c,
         err(
           'NOT_FOUND',
-          'No active subject variants',
-          'Register at least one subject variant on this project before requesting a pick.',
+          'No active message variants',
+          'Register at least one message variant on this project before requesting a pick.',
         ),
       )
     }

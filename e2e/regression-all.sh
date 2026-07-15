@@ -44,6 +44,7 @@ SUITES=(
   regression-bounce-stats
   regression-targeting-attributes
   regression-targeting-score
+  regression-levers
   regression-inquiry-unsubscribe
   regression-decision-maker-pointer
   regression-tenant-isolation

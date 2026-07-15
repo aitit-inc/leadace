@@ -5,11 +5,15 @@ describe('leverConfigSchema', () => {
   it('parses an empty object into the neutral-prior defaults', () => {
     expect(defaultLeverConfig).toEqual({
       minSamplePerArm: 30,
-      explorationRate: 0.2,
       rewardWindowDays: 14,
       reward: { meetingRequest: 1, positiveReply: 1, neutralReply: 0.5, negativeReply: 0 },
       priorStrength: 25,
       explorationShare: 0.2,
+      archiveThreshold: 0.05,
+      targetActiveArms: 3,
+      maxActiveArms: 4,
+      messageWeightFloor: 0.1,
+      stagnationTicks: 7,
     })
   })
 
@@ -21,14 +25,14 @@ describe('leverConfigSchema', () => {
   it('merges a partial override with the defaults', () => {
     const cfg = leverConfigSchema.parse({ minSamplePerArm: 50, reward: { neutralReply: 1 } })
     expect(cfg.minSamplePerArm).toBe(50)
-    expect(cfg.explorationRate).toBe(0.2)
+    expect(cfg.messageWeightFloor).toBe(0.1)
     expect(cfg.reward.neutralReply).toBe(1)
     expect(cfg.reward.meetingRequest).toBe(1)
   })
 
-  it('rejects an exploration rate outside [0, 1]', () => {
-    expect(() => leverConfigSchema.parse({ explorationRate: 1.5 })).toThrow()
-    expect(() => leverConfigSchema.parse({ explorationRate: -0.1 })).toThrow()
+  it('rejects a weight floor outside [0, 1]', () => {
+    expect(() => leverConfigSchema.parse({ messageWeightFloor: 1.5 })).toThrow()
+    expect(() => leverConfigSchema.parse({ messageWeightFloor: -0.1 })).toThrow()
   })
 
   it('rejects a non-positive minimum sample', () => {
@@ -65,7 +69,7 @@ describe('leverConfigPatchSchema (overrides-only storage)', () => {
   })
 
   it('still enforces the field constraints', () => {
-    expect(() => leverConfigPatchSchema.parse({ explorationRate: 1.5 })).toThrow()
+    expect(() => leverConfigPatchSchema.parse({ messageWeightFloor: 1.5 })).toThrow()
     expect(() => leverConfigPatchSchema.parse({ minSamplePerArm: 0 })).toThrow()
   })
 })

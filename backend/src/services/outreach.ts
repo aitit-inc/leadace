@@ -130,7 +130,7 @@ export const sendAndRecordSchema = z
       .max(998)
       .optional(),
     // This path performs no variant selection — the weighted draw happens
-    // upstream in pick_subject_variant.
+    // upstream in pick_message_variant.
     variantId: variantIdSchema.optional(),
   })
   .strict()

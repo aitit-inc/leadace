@@ -29,7 +29,7 @@ allowed-tools:
   - mcp__plugin_leadace_api__get_project_settings
   - mcp__plugin_leadace_api__get_gmail_status
   - mcp__plugin_leadace_api__get_mailbox_health
-  - mcp__plugin_leadace_api__pick_subject_variant
+  - mcp__plugin_leadace_api__pick_message_variant
   - mcp__plugin_leadace_api__get_compliance_status
 ---
 
@@ -230,25 +230,32 @@ Retrieve email guidelines via `mcp__plugin_leadace_api__get_master_document` wit
 
 Close with a light sign-off (name + optional role) drawn from the "Sender Information" section of SALES_STRATEGY.md — not a full signature block; the backend appends the compliance footer (legal name, address, unsubscribe) automatically. Sender display name and `From:` address are applied automatically by `send_email_and_record` from project settings — do not pass them as arguments.
 
-**Subject line variation (weighted draw).** Subject patterns are stored
-server-side in `subject_variants`; the server picks one per send by a
-weighted draw (favoring the better-performing variants, recomputed daily
-by the lever tick). Per send, call
-`mcp__plugin_leadace_api__pick_subject_variant` with the project id; the
-response is `{ variantId, subjectPattern, label }`. Render the subject by
-substituting `{{org}}` / `{{name}}` / `{{signal}}` placeholders the
-pattern uses, then forward the `variantId` to `send_email_and_record` so
+**Message angle variation (weighted draw).** Message angles (subject
+pattern + optional body approach) are stored server-side in
+`message_variants`; the server picks one per send by a weighted draw
+(Thompson sampling, favoring the better-performing angles, recomputed
+daily by the lever tick). Per send, call
+`mcp__plugin_leadace_api__pick_message_variant` with the project id; the
+response is `{ variantId, subjectPattern, bodyApproach, label }`. Render
+the subject by substituting `{{org}}` / `{{name}}` / `{{signal}}`
+placeholders the pattern uses. When `bodyApproach` is present, write the
+body to that brief — its structure, tone, CTA type, length, and opener
+policy govern, with `email_template` supplying the facts (what you offer,
+proof points) and the personalization rules below still applying; when
+it is null, the `email_template` skeleton is the structure as before.
+The compliance rules and the inquiry-aware CTA branch below always
+outrank the brief. Forward the `variantId` to `send_email_and_record` so
 `outreach_logs.variant_id` is stamped for per-variant reply metrics.
 The same attribution holds on any subject-bearing send: when a contact
-form carries a subject variant, pass its `variantId` to
+form carries a message variant, pass its `variantId` to
 `record_outreach_with_inquiry` too (SNS DMs have no subject, so none
 applies) — otherwise per-variant metrics skew toward email-only sends.
 
-If `pick_subject_variant` returns `NOT_FOUND` ("No active subject
-variants"), the project has no patterns registered yet — generate a
+If `pick_message_variant` returns `NOT_FOUND` ("No active message
+variants"), the project has no angles registered yet — generate a
 short one-off subject, send without `variantId`, and surface the gap in
-the run-end report so the operator can add patterns via
-`upsert_subject_variant` (or via `/leadace`'s strategy onboarding step). Do not
+the run-end report so the operator can add angles via
+`upsert_message_variant` (or via `/leadace`'s strategy onboarding step). Do not
 fabricate a SALES_STRATEGY.md "Subject Line Patterns" section; that
 content is no longer the authoritative source.
 
@@ -308,7 +315,7 @@ Having composed the body (reached only when the `email_template` exists), call `
 - `subject`: subject line (rendered from the variant's `subjectPattern`)
 - `body`: complete body including signature (no compliance footer — the
   backend appends it)
-- `variantId`: from `pick_subject_variant`; omit when no variants exist
+- `variantId`: from `pick_message_variant`; omit when no variants exist
 
 The server reads the project's `outboundMode` and which mailbox the project uses, then returns one of two outcomes. The email is sent server-side whichever mailbox the project uses — a connected Gmail or a custom SMTP mailbox — so **never branch on `outboundMode` or sending-identity type in your own logic:**
 - `{ mode: "sent", outreachId, messageId, threadId }` → the email was sent. Nothing more to do.

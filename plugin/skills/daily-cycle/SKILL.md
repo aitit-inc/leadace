@@ -101,13 +101,13 @@ Run every cycle.
 Include the following in the prompt:
 - Project ID: `$0`
 - Read `${CLAUDE_PLUGIN_ROOT}/skills/evaluate/SKILL.md` and follow its procedure
-- Return to main with **only a 3-line summary**. Example: "Response rate 4.2%. 2 search keywords added, 1 discovery strategy demoted. Levers: subject v2 leading, email affinity in software_tech."
+- Return to main with **only a 3-line summary**. Example: "Response rate 4.2%. 2 search keywords added, 1 discovery strategy demoted. Levers: angle v2 leading, email affinity in software_tech."
 
 After receiving the summary from the sub-agent, report it to the user.
 
 ### 5b. run_lever_tick (outbound optimization)
 
-Run every cycle, right after evaluate. Call `mcp__plugin_leadace_api__run_lever_tick` once with `projectId: "$0"` — a single deterministic backend call, no sub-agent. From mature reply data it recomputes (1) the server-side subject-variant draw weights (archiving any clearly-dominated variant) and (2) the per-industry channel affinity that `get_outbound_targets` surfaces. Both leave low-volume projects on their current behavior until enough data accrues. Idempotent per UTC day, so re-running the cycle is safe.
+Run every cycle, right after evaluate. Call `mcp__plugin_leadace_api__run_lever_tick` once with `projectId: "$0"` — a single deterministic backend call, no sub-agent. From mature reply data it recomputes (1) the server-side message-variant draw weights (Thompson sampling; archives a variant whose P(best) stays below the threshold at maturity, and after a sustained flat streak where every mature angle is statistically indistinguishable, rotates out the weakest — marked `reason: "stagnation"` — so the next cycle's evaluate supplies a fresh angle), (2) the per-industry channel affinity that `get_outbound_targets` surfaces, and (3) the targeting lifts behind the `get_outbound_targets` ordering. All leave low-volume projects on their current behavior until enough data accrues. Idempotent per UTC day, so re-running the cycle is safe.
 
 Report the one-line result to the user (whether it ran or was already done today, sample progress, any archived variants, channel affinity buckets).
 
@@ -169,7 +169,7 @@ You are an outbound sales agent. Please reach out to each company on the prospec
 
 ## Required Rules for Sales Policy
 
-- **Subject lines:** Subject patterns live server-side in `subject_variants`. Per send, call `mcp__plugin_leadace_api__pick_subject_variant` to draw a subject variant (the server picks by weighted draw) and forward `variantId` to `send_email_and_record` so `outreach_logs.variant_id` is stamped. If no active variants are registered, generate a one-off subject and send without `variantId`. Do not use the same subject for every prospect.
+- **Message angles:** Message angles (subject pattern + optional body approach) live server-side in `message_variants`. Per send, call `mcp__plugin_leadace_api__pick_message_variant` to draw one (the server picks by weighted draw) and forward `variantId` to `send_email_and_record` so `outreach_logs.variant_id` is stamped. If no active variants are registered, generate a one-off subject and send without `variantId`. Do not use the same subject for every prospect.
 - **Email opening:** Reference specific characteristics, industry, or initiatives of the target company. Generic greetings like "I visited your website" alone are not acceptable
 - **Full body:** Weave prospect-specific information from overview and matchReason throughout multiple parts of the email -- write in context tailored to the recipient, not template replacement. The compliance footer (legal name, address, unsubscribe) is appended server-side; do **not** include any of those in the body.
 
@@ -296,7 +296,7 @@ Include the following in the prompt:
 - Project ID: `$0`
 - Execution date and time: the datetime obtained in step 1
 - Phase summaries collected from sub-agents during this cycle (check-responses, evaluate, outbound, build-list)
-- The lever / trajectory narration from evaluate and step 5b (current response rate, which subject variant / channel affinity is leading, sample progress)
+- The lever / trajectory narration from evaluate and step 5b (current response rate, which message angle / channel affinity is leading, sample progress)
 - Any autonomous execution-order decisions taken this cycle and why (email depletion → ran build-list first; outbound success rate < 30% → aborted; form submissions capped at 5 → N carried to next cycle; total reachable 0 → outbound skipped). "None" if the cycle ran straight through.
 
 **Completion Notification Email**

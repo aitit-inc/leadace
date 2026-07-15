@@ -456,37 +456,38 @@ mcp__plugin_leadace_api__update_project_settings
 
 Tell the user once: "You can edit the brief / one-liner later in the Web UI → Inquiry page settings (sidebar). Optional landing extras (video / PDF / brand color / logo / scheduling link) can be set or updated on the same page."
 
-## Step 7.6. Seed subject-line variants (A/B weighted draw)
+## Step 7.6. Seed message-angle variants (weighted draw)
 
-`/outbound` varies subjects via `pick_subject_variant`, which reads the project's `subject_variants` table. Without any active variants registered, every send falls back to a one-off LLM-generated subject and `outreach_logs.variant_id` stays null — making the `/evaluate` reply-rate-by-variant analysis impossible. Seed 2-3 patterns here so the weighted draw has something to choose from.
+`/outbound` varies the subject and body angle via `pick_message_variant`, which reads the project's `message_variants` table. Without any active variants registered, every send falls back to a one-off LLM-generated subject and `outreach_logs.variant_id` stays null — making the `/evaluate` reply-rate-by-variant analysis impossible. Seed 4 boldly different angles here so the Thompson draw has real alternatives to weigh.
 
 **Execution scope by sub-mode:**
 - **Initial — Mode A / Mode B**: seed.
-- **Update — fill missing**: seed only if `list_subject_variants` returns 0 active variants.
-- **Update — specific sections**: seed only if the user named "subject lines" / "A/B variants" in their list.
-- **Update — pivot**: regenerate. The pivot rebuilt the positioning/messaging (and the inquiry brief, Step 7.5), so the existing patterns encode the *old* strategy yet keep getting drawn by `pick_subject_variant`. Goal: after this step the active board holds only on-strategy arms, and is **never left with zero active variants** mid-procedure. So **seed the fresh on-strategy set first (new non-colliding slugs), then archive the old active variants** (`archived: true` — reversible, keeps the old rows analysable for historic `outreach_logs`). Seeding before archiving means a failed seed leaves the old board intact instead of emptying it. Don't lean on the lever tick for this: it only prunes reply-rate-dominated arms, and a pivot is a semantic change invisible to reply rate.
+- **Update — fill missing**: seed only if `list_message_variants` returns 0 active variants.
+- **Update — specific sections**: seed only if the user named "subject lines" / "message angles" / "variants" in their list.
+- **Update — pivot**: regenerate. The pivot rebuilt the positioning/messaging (and the inquiry brief, Step 7.5), so the existing angles encode the *old* strategy yet keep getting drawn by `pick_message_variant`. **Archive the old active set first, then seed the fresh 4**: the server caps active variants (default 4), so seeding on top of the old set would be refused. The brief zero-active window is harmless — `pick_message_variant` returns NOT_FOUND and `/outbound` falls back to a one-off subject. Don't lean on the lever tick for this: it only prunes reply-rate-dominated arms, and a pivot is a semantic change invisible to reply rate.
+
+**What to generate — 4 boldly different angles:**
+- Each variant = a subject pattern (≤ 80 chars) **plus a `bodyApproach` brief** (2-5 lines: body structure, tone, CTA type, target length, opener policy). Subject and body angle travel together as one arm; `outreach_logs.variant_id` attributes both.
+- Aim the angles at genuinely different hypotheses about what moves this audience — e.g. problem-direct / proof-led / single-question / ultra-short casual. Arms should differ enough that a ~2x reply-rate gap between them is plausible. **Micro-copy variations are prohibited**: two phrasings of one idea cannot be distinguished at this send volume and waste the experiment.
+- Subject placeholders sparingly: `{{org}}` / `{{name}}` / `{{signal}}` only — the skill substitutes these at send time; never invent other placeholder names. Match `targetLanguage` and the strategy voice (read `BUSINESS.md` + `SALES_STRATEGY.md` Messaging). "Bold" means angle diversity, never exaggeration or misrepresented subjects — `EMAIL_GUIDELINES.md` still applies, and company-specific claims (pricing, exact metrics, unverified track record) stay out of subjects.
 
 **Procedure (when seeding applies):**
 
-1. Read existing variants: `mcp__plugin_leadace_api__list_subject_variants` with `projectId: "$0"`. If `active.length >= 2` and the sub-mode is anything other than the user explicitly asking for new patterns (or a pivot), skip the rest of this step. On a pivot, do **not** skip — and keep the current active set (each one's `variantId`, `subjectPattern`, `label`) in hand for the archive step (step 4) below.
-2. Generate 2-3 short subject patterns (each ≤ 80 chars) following these rules:
-   - Distinct angles, not paraphrases of one idea (e.g., warm-intro / direct-question / signal-driven). One-shot subjects only — no follow-up wording.
-   - Use placeholders sparingly: `{{org}}` for the recipient organization, `{{name}}` for the contact name, `{{signal}}` for a recent signal phrase. The skill substitutes these at send time; never invent other placeholder names.
-   - Match the project's target language (`targetLanguage` in project settings) and tone (read `BUSINESS.md` + `SALES_STRATEGY.md` Messaging section for voice).
-   - Avoid fabricating company-specific claims in the subject. Pricing, exact metrics, and unverified track record stay in the body.
-3. For each, call `mcp__plugin_leadace_api__upsert_subject_variant`:
+1. Read existing variants: `mcp__plugin_leadace_api__list_message_variants` with `projectId: "$0"`. If `active.length >= 2` and the sub-mode is anything other than the user explicitly asking for new angles (or a pivot), skip the rest of this step. On a pivot, keep the current active set (each one's `variantId`, `subjectPattern`, `label`) in hand for the archive step.
+2. **(Pivot only) Archive the old active set**: for each, call `upsert_message_variant` with its **`variantId` plus its existing `subjectPattern` echoed back unchanged** (both are required on every call — a different / empty `subjectPattern` would rewrite the historic pattern and corrupt that slug's `/evaluate` labels), and `archived: true`.
+3. Generate enough fresh angles to bring the active board to 4 (non-pivot with survivors: `4 − active.length`; pivot: 4) and upsert each:
    ```
-   mcp__plugin_leadace_api__upsert_subject_variant
+   mcp__plugin_leadace_api__upsert_message_variant
      projectId: "$0"
-     variantId: <stable slug, e.g. "v1" / "warm_intro" / "signal_driven">
+     variantId: <stable slug, e.g. "problem_direct" / "proof_led">
      subjectPattern: <pattern>
+     bodyApproach: <2-5 line angle brief>
      label: <one-phrase human label for /evaluate display>
    ```
-   Use `v1` / `v2` / `v3` for the **non-pivot** default seed (initial / fill-missing / specific-sections) unless the user explicitly names them. Idempotent — re-running with the same `variantId` updates the pattern. **Slug guardrail (pivot):** a pivot must **always** seed brand-new slugs that don't collide with any existing variantId, active *or archived* — e.g. a date-stamped `piv_20260607_a` (use today's date; slugs must match `[A-Za-z0-9_-]{1,32}`, so no `<…>` placeholders — they fail validation) — never reuse `v1/v2/v3`. Reusing a slug updates that row in place but does **not** un-archive it (archive state only changes when `archived` is passed) — so re-seeding the old `v1/v2/v3` would overwrite their patterns while leaving them archived, ending the pivot with **zero active variants** and corrupting the old slugs' historic `/evaluate` labels.
-4. **(Pivot only) Archive the old active set** held from step 1, now that the new slugs are seeded. For each, call `mcp__plugin_leadace_api__upsert_subject_variant` with its **`variantId` (the old slug being archived) plus its existing `subjectPattern` and `label` echoed back unchanged**, and `archived: true`. Both `variantId` and `subjectPattern` are **required on every call** (the schema is strict — omitting either fails validation). What you must get right: pass the **correct** `variantId` (the old slug being archived) with its **unchanged** `subjectPattern`, since a different / empty `subjectPattern` would rewrite the historic pattern and corrupt the old slug's `/evaluate` labels. Do this only after step 3's new slugs are confirmed active, so the board is never empty.
-5. List once more (`list_subject_variants`) and confirm `active.length >= 2`. If short — e.g. a new slug collided with an archived row and updated it instead of inserting — fix the slug and re-seed before exiting. On a pivot the active set should now be exactly the new on-strategy slugs (the old arms were archived in step 4); because seeding ran before archiving, the project is never left with zero active variants. Include the active variantIds in the Step 8 hand-off summary so the caller can confirm to the user.
+   Idempotent — re-calling with the same `variantId` updates that row. The server refuses (400) an upsert that would push the active count past the cap — if that happens, re-count and archive first. **Slug guardrail (pivot):** seed brand-new slugs that don't collide with any existing variantId, active *or archived* — e.g. date-stamped `piv_20260607_a` (slugs match `[A-Za-z0-9_-]{1,32}`, so no `<…>` placeholders). Reusing a slug updates that row in place but does **not** un-archive it (archive state only changes when `archived` is passed) — reusing old slugs would overwrite their patterns while leaving them archived, ending the pivot with zero active variants and corrupted historic labels.
+4. List once more (`list_message_variants`) and confirm the active set is exactly the intended slugs. If short — e.g. a new slug collided with an archived row and updated it instead of inserting — fix the slug and re-seed before exiting. Include the active variantIds in the Step 8 hand-off summary so the caller can confirm to the user.
 
-Tell the user once: "Seeded N subject variants — `/outbound` will draw across them, favoring the better performers as replies accrue (the daily lever tick auto-archives clearly-dominated ones). You can edit / archive / add more later via the Web UI or `upsert_subject_variant`."
+Tell the user once: "Seeded N message angles (subject + body approach) — `/outbound` draws across them, shifting weight toward what actually gets replies (the daily lever tick archives clear losers and flags when a fresh angle is needed). You can edit / archive / add more later via the Web UI or `upsert_message_variant`."
 
 ## Step 8. Hand-off to caller
 

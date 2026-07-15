@@ -1,18 +1,23 @@
-import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import {
   leverDecisions,
   leverState,
-  subjectVariants,
+  messageVariants,
   type LeverDecisionPayload,
 } from '../db/schema'
 import type { Db } from '../db/connection'
 import type { ProjectId, ProjectRef, TenantId } from '../domain/ids'
 import {
+  applyRotation,
   computeVariantWeights,
+  isFlatTick,
+  isStagnant,
+  seededRng,
   type ArchiveDecision,
+  type StagnationTick,
   type VariantStat,
-} from '../domain/subject-bandit'
+} from '../domain/message-bandit'
 import {
   aggregateByCoarse,
   computeChannelAffinity,
@@ -36,11 +41,59 @@ import { getVariantStats, getChannelStats, getTargetingStats } from './evaluatio
 
 async function loadActiveVariantIds(db: Db, projectId: ProjectId): Promise<string[]> {
   const rows = await db
-    .select({ variantId: subjectVariants.variantId })
-    .from(subjectVariants)
-    .where(and(eq(subjectVariants.projectId, projectId), isNull(subjectVariants.archivedAt)))
-    .orderBy(asc(subjectVariants.variantId))
+    .select({ variantId: messageVariants.variantId })
+    .from(messageVariants)
+    .where(and(eq(messageVariants.projectId, projectId), isNull(messageVariants.archivedAt)))
+    .orderBy(asc(messageVariants.variantId))
   return rows.map((r) => r.variantId)
+}
+
+// A stagnation rotation frees a slot for a fresh angle; it stays "unfulfilled"
+// until either a new variant row is created after it (evaluate seeds fresh
+// slugs, so createdAt marks that) or the active pool grows back past its
+// post-rotation size (a user un-archiving an arm refills the slot without a
+// new row — the system must not wedge on that override). A later archive can
+// flip a count-fulfilled rotation back to unfulfilled; that fails safe by
+// re-raising replenishment. While unfulfilled, no further rotation fires and
+// needsReplenishment stays raised even at targetActiveArms.
+async function hasUnfulfilledRotation(
+  db: Db,
+  projectId: ProjectId,
+  activeCount: number,
+): Promise<boolean> {
+  const [lastRotation] = await db
+    .select({ createdAt: leverDecisions.createdAt, decision: leverDecisions.decision })
+    .from(leverDecisions)
+    .where(and(
+      eq(leverDecisions.projectId, projectId),
+      sql`${leverDecisions.decision} @> ${JSON.stringify({ subject: { archived: [{ reason: 'stagnation' }] } })}::jsonb`,
+    ))
+    .orderBy(desc(leverDecisions.cycleDate))
+    .limit(1)
+  if (!lastRotation) return false
+  const postRotationCount =
+    lastRotation.decision.subject.samples.length - lastRotation.decision.subject.archived.length
+  if (activeCount > postRotationCount) return false
+  const [fresh] = await db
+    .select({ id: messageVariants.id })
+    .from(messageVariants)
+    .where(and(
+      eq(messageVariants.projectId, projectId),
+      gt(messageVariants.createdAt, lastRotation.createdAt),
+    ))
+    .limit(1)
+  return !fresh
+}
+
+async function computeNeedsReplenishment(
+  db: Db,
+  projectId: ProjectId,
+  activeCount: number,
+  config: { targetActiveArms: number; maxActiveArms: number },
+): Promise<boolean> {
+  if (activeCount < config.targetActiveArms) return true
+  if (activeCount >= config.maxActiveArms) return false
+  return hasUnfulfilledRotation(db, projectId, activeCount)
 }
 
 export type LeverTickResult = {
@@ -48,6 +101,8 @@ export type LeverTickResult = {
   cycleDate: string
   minSamplePerArm: number
   weights: Record<string, number>
+  // null on ran:false replays of pre-Phase-C decisions.
+  pBest: Record<string, number> | null
   archived: ArchiveDecision[]
   samples: VariantStat[]
   channelAffinity: ChannelAffinityMap
@@ -99,7 +154,42 @@ export async function runLeverTick(
   const arms: VariantStat[] = activeIds.map(
     (id) => statsMap.get(id) ?? { variantId: id, total: 0, responses: 0, rewardSum: 0 },
   )
-  const decision = computeVariantWeights(arms, config)
+  // One clock source: the same UTC day string seeds the Monte Carlo AND keys
+  // the audit row below, so replaying P(best) from (cycle_date, projectId) is
+  // exact even for a request that straddles UTC midnight.
+  const cycleDate = new Date().toISOString().slice(0, 10)
+  const rng = seededRng(`${cycleDate}:${projectId}`)
+  let decision = computeVariantWeights(arms, config, rng)
+
+  // Stagnation rotation: only when today has no dominance archive (an archive
+  // IS movement) and no earlier rotation is still awaiting its fresh angle.
+  if (decision.toArchive.length === 0) {
+    const todayTick: StagnationTick = {
+      variantIds: arms.map((a) => a.variantId),
+      flat: isFlatTick(arms, decision.pBest, config.minSamplePerArm),
+    }
+    if (todayTick.flat) {
+      const history = await db
+        .select({ decision: leverDecisions.decision })
+        .from(leverDecisions)
+        .where(eq(leverDecisions.projectId, projectId))
+        .orderBy(desc(leverDecisions.cycleDate))
+        .limit(config.stagnationTicks - 1)
+      const ticks: StagnationTick[] = [
+        todayTick,
+        ...history.map((h) => ({
+          variantIds: h.decision.subject.samples.map((s) => s.variantId),
+          flat:
+            h.decision.subject.archived.length === 0 &&
+            isFlatTick(h.decision.subject.samples, h.decision.subject.pBest, config.minSamplePerArm),
+        })),
+      ]
+      if (isStagnant(ticks, config.stagnationTicks) && !(await hasUnfulfilledRotation(db, projectId, arms.length))) {
+        decision = applyRotation(arms, decision, config)
+      }
+    }
+  }
+
   const channelStats = aggregateByCoarse(await getChannelStats(db, projectId, config))
   const channelAffinity = computeChannelAffinity(channelStats, config)
 
@@ -120,13 +210,11 @@ export async function runLeverTick(
   }
 
   const payload: LeverDecisionPayload = {
-    subject: { weights: decision.weights, archived: decision.toArchive, samples: arms },
+    subject: { weights: decision.weights, pBest: decision.pBest, archived: decision.toArchive, samples: arms },
     channel: { affinity: channelAffinity, samples: channelStats },
     targeting: { lifts: targetingLifts, samples: targetingStats },
   }
 
-  // Transaction-stable now() → both uses resolve to the same UTC day (deterministic key).
-  const cycleDate = sql`(now() AT TIME ZONE 'UTC')::date`
   const inserted = await db
     .insert(leverDecisions)
     .values({ tenantId, projectId, cycleDate, decision: payload })
@@ -145,16 +233,16 @@ export async function runLeverTick(
       cycleDate: existing.cycleDate,
       minSamplePerArm: config.minSamplePerArm,
       weights: existing.decision.subject.weights,
+      pBest: existing.decision.subject.pBest ?? null,
       archived: existing.decision.subject.archived,
       samples: existing.decision.subject.samples,
       channelAffinity: existing.decision.channel?.affinity ?? {},
       channelSamples: existing.decision.channel?.samples ?? [],
       targetingLifts: existing.decision.targeting?.lifts ?? null,
       // needsReplenishment is a live current-state signal (never persisted), not part
-      // of the applied decision the fields above echo: re-derived under the current
-      // config, so a mid-day config change may shift it — intended, not an idempotency
-      // break (the applied weights/archived stay fixed; /evaluate reads get_lever_state).
-      needsReplenishment: computeVariantWeights(existing.decision.subject.samples, config).needsReplenishment,
+      // of the applied decision the fields above echo — a mid-day archive or config
+      // change may shift it while the applied weights stay fixed.
+      needsReplenishment: await computeNeedsReplenishment(db, projectId, activeIds.length, config),
     })
   }
 
@@ -162,12 +250,12 @@ export async function runLeverTick(
   const archiveIds = decision.toArchive.map((a) => a.variantId)
   if (archiveIds.length > 0) {
     await db
-      .update(subjectVariants)
+      .update(messageVariants)
       .set({ archivedAt: now, updatedAt: now })
       .where(and(
-        eq(subjectVariants.projectId, projectId),
-        inArray(subjectVariants.variantId, archiveIds),
-        isNull(subjectVariants.archivedAt),
+        eq(messageVariants.projectId, projectId),
+        inArray(messageVariants.variantId, archiveIds),
+        isNull(messageVariants.archivedAt),
       ))
   }
   await db
@@ -197,12 +285,15 @@ export async function runLeverTick(
     cycleDate: inserted[0]!.cycleDate,
     minSamplePerArm: config.minSamplePerArm,
     weights: decision.weights,
+    pBest: decision.pBest,
     archived: decision.toArchive,
     samples: arms,
     channelAffinity,
     channelSamples: channelStats,
     targetingLifts,
-    needsReplenishment: decision.needsReplenishment,
+    // Today's decision row is already inserted, so a rotation applied above
+    // reads back as an unfulfilled rotation here.
+    needsReplenishment: await computeNeedsReplenishment(db, projectId, activeIds.length - archiveIds.length, config),
   })
 }
 
@@ -215,7 +306,7 @@ export type LeverStateVariant = {
 }
 
 export type LeverStateView = {
-  // null = no tick has run yet → pickSubjectVariant draws uniformly.
+  // null = no tick has run yet → pickMessageVariant draws uniformly.
   weights: Record<string, number> | null
   channelAffinity: ChannelAffinityMap
   // null = no tick has computed targeting lifts yet → neutral ordering.
@@ -224,7 +315,8 @@ export type LeverStateView = {
   minSamplePerArm: number
   variants: LeverStateVariant[]
   todaysDecision: LeverDecisionPayload | null
-  // The pool has converged to the floor with a dominated survivor → /evaluate supplies a fresh angle.
+  // Active variants below targetActiveArms, or a stagnation rotation freed a
+  // slot that is still unfilled → /evaluate supplies a fresh angle.
   needsReplenishment: boolean
 }
 
@@ -246,12 +338,10 @@ export async function getLeverStateById(
   const config = await loadLeverConfig(db, projectId)
   const activeIds = await loadActiveVariantIds(db, projectId)
   const statsMap = new Map((await getVariantStats(db, projectId, config, true)).map((s) => [s.variantId, s]))
-  // Recompute the flag live (same arms the tick uses) so /evaluate, which runs before
-  // the tick, reads the current pool state rather than yesterday's decision.
-  const arms: VariantStat[] = activeIds.map(
-    (id) => statsMap.get(id) ?? { variantId: id, total: 0, responses: 0, rewardSum: 0 },
-  )
-  const { needsReplenishment } = computeVariantWeights(arms, config)
+  // Live flag so /evaluate, which runs before the tick, reads the current pool
+  // state rather than yesterday's decision. Includes a rotation-freed slot
+  // still awaiting its fresh angle (pool at target but one arm was rotated out).
+  const needsReplenishment = await computeNeedsReplenishment(db, projectId, activeIds.length, config)
 
   const [stateRow] = await db
     .select({

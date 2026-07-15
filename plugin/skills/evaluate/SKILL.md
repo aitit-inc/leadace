@@ -10,8 +10,8 @@ allowed-tools:
   - mcp__plugin_leadace_api__get_rejection_feedback_summary
   - mcp__plugin_leadace_api__get_lever_state
   - mcp__plugin_leadace_api__get_lever_decisions
-  - mcp__plugin_leadace_api__list_subject_variants
-  - mcp__plugin_leadace_api__upsert_subject_variant
+  - mcp__plugin_leadace_api__list_message_variants
+  - mcp__plugin_leadace_api__upsert_message_variant
   - mcp__plugin_leadace_api__record_suggestion
   - mcp__plugin_leadace_api__get_document
   - mcp__plugin_leadace_api__save_document
@@ -20,7 +20,7 @@ allowed-tools:
 
 # Evaluate - PDCA Evaluation & Improvement
 
-A skill that analyzes sales activity result data, reports on performance, and applies the improvements it still owns — targeting definitions / search keywords (hypothesis generation that steers /build-list) and the discovery-strategy portfolio (`## Prospect Discovery Sources`). Messaging (subject lines), channel ranking, and the outbound selection order (measured targeting lifts × ordering score) are optimized deterministically by the daily lever tick; evaluate **reads and narrates** those, it does not rewrite them as strategy prose and it does not touch selection order.
+A skill that analyzes sales activity result data, reports on performance, and applies the improvements it still owns — targeting definitions / search keywords (hypothesis generation that steers /build-list) and the discovery-strategy portfolio (`## Prospect Discovery Sources`). Messaging (message angles), channel ranking, and the outbound selection order (measured targeting lifts × ordering score) are optimized deterministically by the daily lever tick; evaluate **reads and narrates** those, it does not rewrite them as strategy prose and it does not touch selection order.
 
 **Before starting:** `Read` `${CLAUDE_PLUGIN_ROOT}/references/workspace-conventions.md` and follow the cross-cutting conventions there (data storage, MCP error handling, document writes, output discipline).
 
@@ -33,14 +33,14 @@ A skill that analyzes sales activity result data, reports on performance, and ap
 In parallel, call:
 - `mcp__plugin_leadace_api__get_eval_data` with `projectId: "$0"`
 - `mcp__plugin_leadace_api__get_rejection_feedback_summary` with `projectId: "$0"`, `windowDays: 30`, `scope: "tactical"`
-- `mcp__plugin_leadace_api__get_lever_state` with `projectId: "$0"` — current subject draw weights, channel affinity, and per-variant maturity (read-only)
+- `mcp__plugin_leadace_api__get_lever_state` with `projectId: "$0"` — current message-variant draw weights, channel affinity, targeting lifts, and per-variant maturity (read-only)
 - `mcp__plugin_leadace_api__get_lever_decisions` with `projectId: "$0"` — the daily tick's decision history (newest first) for trend narration
 
 If `get_eval_data` returns a "Project not found" error, instruct the user to run `/leadace` first and **abort**.
 
 `get_eval_data` response includes:
 - `metrics`: totalOutreach, channelCounts, responseCounts, sentimentBreakdown, priorityResponseRate, statusCounts, channelResponseRate, variantResponseRate, discoveryStrategyResponseRate, industryResponseRate, sizeResponseRate, countryResponseRate, freshSignalResponseRate, inquiryOutcomeCounts
-  - `variantResponseRate` / `channelResponseRate` / `priorityResponseRate` are the **measured lever surfaces**. The subject and channel levers act on them automatically (lever tick) — read them to report, do not turn them into SALES_STRATEGY edits
+  - `variantResponseRate` / `channelResponseRate` / `priorityResponseRate` are the **measured lever surfaces**. The message and channel levers act on them automatically (lever tick) — read them to report, do not turn them into SALES_STRATEGY edits
   - `discoveryStrategyResponseRate`: per named discovery strategy — reply rate PLUS `bounces` / `bounceRate` (bounces as a percentage of threadable email sends, 1dp — same units as `rate`). The `strategy: null` bucket is prospects without recorded provenance (manual/CSV imports, referrals, pre-provenance rows) — treat it as a baseline, not a strategy, and never demote it. **This is the lever evaluate owns** — it drives the `## Prospect Discovery Sources` Status updates in step 4. `bounceRate` is an *early* source-quality read (bounces arrive before replies): a high or rising per-strategy bounceRate means that source finds unreachable people. It is a threaded-only LOWER bound (real bounce rate is ≥ shown), so act on it when high, never read a low value as proof a source is clean
   - `industryResponseRate` / `sizeResponseRate` / `countryResponseRate`: targeting observation axes — reply-rate splits by coarse industry bucket, organization employee band, and effective recipient country (prospect override, else org). Unlike the axes above they count **mature sends only** (older than the reply-maturity window), so fresh sends don't dilute them; each bucket also carries `bounces` / `bounceRate` with the same threaded-only caveat as `discoveryStrategyResponseRate`. Report-level observation for the Target Analysis — ground segment claims in these measured splits instead of impressions
   - `freshSignalResponseRate`: `{ withSignal, withoutSignal }` reply-rate split by whether a fresh why-now org signal existed at compose time — the first measured read of whether signal-led sends convert better. Report-level observation only
@@ -76,10 +76,10 @@ Retrieve analysis frameworks via `mcp__plugin_leadace_api__get_master_document` 
 - Response rate by priority
 - Trends by time of day and day of week (analyze from send timestamps. However, since sending timing is determined by the daily-cycle execution schedule, do not write sending time constraints in SALES_STRATEGY.md. Report analysis results as "recommended execution timing" in the report only)
 
-**Message Analysis (the subject lever applies — narrate it, don't rewrite SALES_STRATEGY; body traits feed the `[body]` Learnings Log entry):**
+**Message Analysis (the message lever applies — narrate it, don't rewrite SALES_STRATEGY; body traits feed the `[body]` Learnings Log entry):**
 - Read all outreach bodies that received responses (from `respondedMessages`) and extract common traits
 - Compare with non-response samples (from `noResponseSample`)
-- Effectiveness of subject lines (cross-reference `variantResponseRate` and the lever weights)
+- Effectiveness of message angles (cross-reference `variantResponseRate` and the lever weights)
 - Effectiveness of body length and structure
 
 These feed the Step 5 report and the `[body]` entries of the Learnings Log (step 4). Do **not** translate them into SALES_STRATEGY messaging edits — subject-line optimization is owned by the lever tick.
@@ -140,7 +140,7 @@ Before deciding on improvement actions, review the Learnings Log loaded in step 
 - Update KPI goals
 - Discovery-strategy portfolio updates (see the dedicated block below)
 
-Do **not** edit messaging (subject line / body) or channel priority here — those are optimized deterministically by the daily lever tick (subject draw weights, channel affinity). Report their measured performance in Step 5; do not encode it as prose. (Tone/sub-channel preferences a user wrote in SALES_STRATEGY stay as their authored hints; evaluate just doesn't rewrite them.)
+Do **not** edit messaging (subject line / body) or channel priority here — those are optimized deterministically by the daily lever tick (message-variant draw weights, channel affinity). Report their measured performance in Step 5; do not encode it as prose. (Tone/sub-channel preferences a user wrote in SALES_STRATEGY stay as their authored hints; evaluate just doesn't rewrite them.)
 
 Save the updated document via `mcp__plugin_leadace_api__save_document` with `projectId: "$0"`, `slug: "sales_strategy"`, and the full markdown content.
 
@@ -185,12 +185,15 @@ Save the full list via `mcp__plugin_leadace_api__save_document` with `projectId:
 
 **Boundary:** learnings *steer* downstream LLM authoring and collection; they are never deterministic selectors and never edit SALES_STRATEGY messaging or channel priority (the levers own those). Frame each as "what the data shows."
 
-**Replenish the subject-variant pool (supply candidates, never pick winners):**
-The lever tick prunes and re-weights subject variants but never *generates* new ones, so a converged pool plateaus on its least-bad seeds. Close that gap here — supply, don't select:
-- **When to act:** only when step 1's `get_lever_state` returns `needsReplenishment: true` (the optimizer has converged to the two-active floor with a dominated arm). If it is false, do nothing.
-- **Guardrails:** the same gates as every change above — skip if `dataSufficiency` is insufficient, if the stability discipline says wait, or if a previously supplied variant has not yet matured (don't stack ungrown candidates).
-- **What to produce:** read `list_subject_variants` first (so you see the active and recently-archived angles), then add **exactly one** new subject pattern that is a *genuinely distinct angle* from every active one — ≤80 chars, only `{{org}}` / `{{name}}` / `{{signal}}` placeholders, matching the SALES_STRATEGY voice, no fabricated company-specific claims. Upsert via `upsert_subject_variant` with a fresh generation-namespaced slug — `[A-Za-z0-9_-]`, ≤32 chars (e.g. `gen_20260607`); never reuse the `v1` / `v2` / `v3` seed slugs (that overwrites a live seed).
-- **Boundary (report-only intact):** this hands the bandit a new arm to *test* — it does not assert the new angle is better and does not edit SALES_STRATEGY messaging. Frame it as "an angle to test," not "a better subject."
+**Replenish the message-angle pool (supply candidates, never pick winners):**
+The lever tick prunes and re-weights message variants but never *generates* new ones. Close that gap here — supply, don't select:
+- **When to act:** only when step 1's `get_lever_state` returns `needsReplenishment: true` — active variants below the target count (usually after the tick archived a loser), or a **stagnation rotation** freed a slot that is still unfilled: when every mature angle stays statistically indistinguishable for a sustained streak, the tick rotates out the weakest (`reason: "stagnation"` on the archived entry) so a fresh angle can break the plateau. If it is false, do nothing.
+- **Guardrails:** the same gates as every change above — skip if `dataSufficiency` is insufficient, if the stability discipline says wait, or if a previously supplied variant has not yet matured (don't stack ungrown candidates). A stagnation rotation passes these by construction (every surviving arm is mature) — don't leave its slot unfilled.
+- **What to produce:** read `list_message_variants` first (so you see the active and recently-archived angles), then add **exactly one** new angle that is *the most different from every active one* — a subject pattern (≤80 chars, only `{{org}}` / `{{name}}` / `{{signal}}` placeholders) plus a `bodyApproach` brief (2-5 lines: structure / tone / CTA type / length / opener policy), matching the SALES_STRATEGY voice, no fabricated company-specific claims. Micro-copy tweaks of an existing angle are not a new arm, and after a rotation, a re-phrasing of the rotated-out angle defeats the rotation's purpose — depart from the whole set. Upsert via `upsert_message_variant` with a fresh generation-namespaced slug — `[A-Za-z0-9_-]`, ≤32 chars (e.g. `gen_20260607`); never reuse an existing slug, active or archived (that overwrites the row). The server refuses (400) an upsert past the active cap — that means the pool isn't actually short; re-read `get_lever_state`.
+- **Boundary (report-only intact):** this hands the bandit a new arm to *test* — it does not assert the new angle is better and does not edit SALES_STRATEGY messaging. Frame it as "an angle to test," not "a better message."
+
+**Escalate a slump that messaging can't fix (suggest, never self-pivot):**
+The loop's own escape hatch is the angle rotation above — use it, don't suggest it. But when the long-horizon signal says the problem is bigger than message angles — low performance **across every channel and every discovery strategy** persisting through repeated rotations and fresh angles — the remaining moves (repositioning, new targeting thesis, a full messaging reset) involve direction preferences only the user can set. Record that once via `record_suggestion`: `kind: "revisit-strategy"`, a stable `dedupeKey` naming the diagnosis (e.g. `cross-channel-slump`), `title` + `body` citing the measured evidence (per-channel and per-strategy rates, the rotation history), and a runnable `command` — `/leadace <project> refine strategy`, or `/leadace <project> reset messaging` when the evidence points at the message pool itself. Same rules as the add-means suggestions: dismissed/done is final, don't re-raise.
 
 ### 5. Results Report
 
@@ -199,7 +202,7 @@ Report the following directly to the user (no file output needed -- live metrics
 - **Inquiry landing conversions** (from step 1's `inquiryOutcomeCounts`): show whenever any of `lead` / `signup_clicked` / `inquired` / `unsubscribed` is non-zero. Report `lead` (meeting-request conversions) and `signup_clicked` (self-serve signup conversions) separately — they reflect different CTA modes and inform whether the project's chosen CTA is converting. Skip the section when all five outcomes are 0
 - Changes since the last cycle (what the Learnings Log added or `[retired]` in step 4, plus notable lever shifts from `get_lever_decisions`)
 - **Discovery strategy performance** (from `discoveryStrategyResponseRate` / `freshSignalResponseRate`): per-strategy sends + reply rate, any `Status` changes applied in step 4, and the with/without-signal split. Skip when no send carries a strategy slug yet
-- **Suggested new means** (from step 4): title, one-line rationale, and the copy-runnable command; note it stays on the Web UI dashboard until acted on or dismissed. Skip when none
+- **Suggestions recorded** (from step 4 — a new means to add, or a strategy revisit): title, one-line rationale, and the copy-runnable command; note it stays on the Web UI dashboard until acted on or dismissed. Skip when none
 - Important findings from the analysis
 - List of improvements applied
 - **Tactical rejection signals** (from step 1's `get_rejection_feedback_summary`):
@@ -208,7 +211,7 @@ Report the following directly to the user (no file output needed -- live metrics
   - **Decision-maker referrals** — list `decisionMakerPointers` rows (referring prospect → pointer name/email/role). State that auto-prospect-creation runs at record_response time (pointer with email creates a new prospect linked to the same projects; pointer with name only updates an existing same-org contact's role/department), so no manual registration is required. Omit this sub-bullet when `decisionMakerPointers` is empty
   - Skip the whole section only when tactical `total` is 0 (no tactical rejections at all)
 - **Lever observability (apply + monitor)** (from step 1's `get_lever_state` / `get_lever_decisions`): make the automatic optimization visible so it is not a black box. Narrate:
-  - **Subject, channel & targeting levers (controlled)**: which subject variants lead and their maturity (`total` vs `minSamplePerArm`), any recently archived variants, the measured `channelAffinity` per coarse-industry bucket, and the `targetingLifts` axes (industry / size / country / discovery strategy / fresh signal — the measured multipliers behind the outbound ordering) — plus how these moved across the recent ticks (the decision history is the trend). If you supplied a fresh subject angle this run (pool replenishment), name it and say the tick will trend it. Say "uniform / none yet" when there isn't enough data
+  - **Message, channel & targeting levers (controlled)**: which message angles lead (draw weights, and `pBest` — the tick's probability each angle is best — when present) and their maturity (`total` vs `minSamplePerArm`), any recently archived variants (an entry with `reason: "stagnation"` was rotated out of an undifferentiated set to make room for a fresh angle — narrate it as a rotation for freshness, not a proven loser), the measured `channelAffinity` per coarse-industry bucket, and the `targetingLifts` axes (industry / size / country / discovery strategy / fresh signal — the measured multipliers behind the outbound ordering) — plus how these moved across the recent ticks (the decision history is the trend). If you supplied a fresh angle this run (pool replenishment), name it and say the tick will trend it. Say "uniform / none yet" when there isn't enough data
   - **Timing & priority (no control arm)**: applied and monitored, never A/B-tested or auto-reverted. Priority is an operator/LLM-supplied multiplier deliberately narrower than the measured lifts; surface its monitoring view — `priorityResponseRate` and the recontact / timing signals above — and call out notable shifts for the operator to judge. Per-prospect exceptions go through `set_prospect_priority` on explicit user request, not from this skill
   - Skip lines with no data yet (fresh project)
 - Next actions to take (`/build-list` for additional exploration, `/outbound` for re-approach, etc.)

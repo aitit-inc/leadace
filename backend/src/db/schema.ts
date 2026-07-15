@@ -762,12 +762,13 @@ export const outreachLogs = pgTable('outreach_logs', {
   index('idx_outreach_variant').on(table.projectId, table.variantId, table.status),
 ])
 
-// Per-project library of subject-line variants. /outbound draws over the active
-// rows by the weights in lever_state (recomputed by run_lever_tick); /evaluate
-// joins outreachLogs.variantId to compare reply rates. Variants are append-only
-// conceptually — `archivedAt` retires a slug from the draw (the tick may set it
-// on a dominated variant) while keeping it analysable for historic outreach rows.
-export const subjectVariants = pgTable('subject_variants', {
+// Per-project library of message-angle variants (subject + body approach).
+// /outbound draws over the active rows by the weights in lever_state
+// (recomputed by run_lever_tick); /evaluate joins outreachLogs.variantId to
+// compare reply rates. Variants are append-only conceptually — `archivedAt`
+// retires a slug from the draw (the tick may set it on a dominated variant)
+// while keeping it analysable for historic outreach rows.
+export const messageVariants = pgTable('message_variants', {
   id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
   tenantId: text('tenant_id')
     .notNull()
@@ -778,28 +779,38 @@ export const subjectVariants = pgTable('subject_variants', {
   // May include {{org}} / {{name}} / {{signal}} placeholders; the LLM
   // substitutes at send time.
   subjectPattern: text('subject_pattern').notNull(),
+  // Angle brief (2-5 lines: structure / tone / CTA type / length / opener
+  // policy) the LLM writes the body from. NULL = no body directive — the
+  // email_template default skeleton alone (pre-rename variants stay valid).
+  bodyApproach: text('body_approach'),
   label: text('label'),
   archivedAt: timestamp('archived_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
-  unique('uq_subject_variant_project').on(table.projectId, table.variantId),
+  unique('uq_message_variant_project').on(table.projectId, table.variantId),
   // Composite FK ties project_id + tenant_id (defense-in-depth on top of RLS).
   foreignKey({
     columns: [table.projectId, table.tenantId],
     foreignColumns: [projects.id, projects.tenantId],
-    name: 'fk_subject_variant_project_tenant',
+    name: 'fk_message_variant_project_tenant',
   }).onDelete('cascade'),
-  index('idx_subject_variants_tenant').on(table.tenantId),
-  index('idx_subject_variants_active').on(table.projectId, table.archivedAt),
+  index('idx_message_variants_tenant').on(table.tenantId),
+  index('idx_message_variants_active').on(table.projectId, table.archivedAt),
 ])
 
 // `channel` is absent on pre-P3 rows and until the project has channel data;
-// `targeting` is absent on pre-Phase-B rows.
+// `targeting` is absent on pre-Phase-B rows. The `subject` key predates the
+// message_variants rename and stays — renaming it would only force readers
+// into old/new branching. `pBest` is absent on pre-Phase-C rows, whose
+// `archived` entries carry Wilson-era { leaderLower, armUpper } instead of pBest.
+// `reason: 'stagnation'` marks a rotation archive (absent = dominance archive);
+// hasUnfulfilledRotation queries it by jsonb containment.
 export type LeverDecisionPayload = {
   subject: {
     weights: Record<string, number>
-    archived: Array<{ variantId: string; leaderLower: number; armUpper: number; n: number }>
+    pBest?: Record<string, number>
+    archived: Array<{ variantId: string; pBest: number; n: number; reason?: 'stagnation' }>
     samples: Array<{ variantId: string; total: number; responses: number; rewardSum: number }>
   }
   channel?: {
@@ -818,9 +829,9 @@ export type LeverDecisionPayload = {
   }
 }
 
-// Subject-variant draw weights, one row per project. A separate table (not a
+// Message-variant draw weights, one row per project. A separate table (not a
 // project_settings column) so the daily tick's write never contends with the
-// settings PUT path. Missing row → pickSubjectVariant draws uniformly.
+// settings PUT path. Missing row → pickMessageVariant draws uniformly.
 export const leverState = pgTable('lever_state', {
   projectId: text('project_id').primaryKey(),
   tenantId: text('tenant_id')

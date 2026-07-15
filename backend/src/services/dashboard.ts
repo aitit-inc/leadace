@@ -28,7 +28,7 @@ import { ok, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { loadProjectOutboundAllowlist } from './project-settings'
 import { getLeverStateById } from './levers'
-import { listSubjectVariantsById } from './subject-variants'
+import { listMessageVariantsById } from './message-variants'
 import { getRejectionFeedbackSummaryById } from './responses'
 import { listRecentOutreachById } from './outreach'
 import { getTenantComplianceStatus, getOnboardingStatus } from './tenants'
@@ -211,7 +211,7 @@ export async function getDashboardSummary(
       .limit(1),
     loadProjectOutboundAllowlist(db, projectId),
     getLeverStateById(db, tenantId, projectId),
-    listSubjectVariantsById(db, tenantId, projectId),
+    listMessageVariantsById(db, tenantId, projectId),
     getRejectionFeedbackSummaryById(db, tenantId, projectId, {
       scope: 'all',
       freeTextLimit: 5,
@@ -299,11 +299,11 @@ export async function getDashboardSummary(
 }
 
 type LeverStateLike = Awaited<ReturnType<typeof getLeverStateById>> extends ServiceResult<infer T> ? T : never
-type SubjectVariantLike = { variantId: string; subjectPattern: string; label: string | null }
+type MessageVariantLike = { variantId: string; subjectPattern: string; label: string | null }
 
 function buildLearning(
   lever: LeverStateLike,
-  variants: SubjectVariantLike[],
+  variants: MessageVariantLike[],
   channelRows: { channel: Channel; total: string | number; responses: string | number }[],
   log: LearningEntry[],
 ): DashboardLearning {

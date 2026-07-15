@@ -435,6 +435,13 @@
       "when": 1784029003839,
       "tag": "0061_clamp_legacy_reward_weights",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1784031765982,
+      "tag": "0062_message_variants_rename",
+      "breakpoints": true
     }
   ]
 }

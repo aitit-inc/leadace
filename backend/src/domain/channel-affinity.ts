@@ -1,7 +1,7 @@
 import type { Channel } from '../db/schema'
 import type { LeverConfig } from './lever-config'
 import { coarseIndustry, type CoarseIndustry } from './coarse-industry'
-import { wilsonBounds } from './subject-bandit'
+import { wilsonBounds } from './message-bandit'
 
 export type ChannelFineStat = {
   channel: Channel

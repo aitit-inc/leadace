@@ -20,11 +20,12 @@ allowed-tools:
   - mcp__plugin_leadace_api__get_project_settings
   - mcp__plugin_leadace_api__update_project_settings
   - mcp__plugin_leadace_api__get_eval_data
+  - mcp__plugin_leadace_api__get_lever_state
   - mcp__plugin_leadace_api__list_suggestions
   - mcp__plugin_leadace_api__get_tenant_settings
   - mcp__plugin_leadace_api__update_tenant_settings
-  - mcp__plugin_leadace_api__list_subject_variants
-  - mcp__plugin_leadace_api__upsert_subject_variant
+  - mcp__plugin_leadace_api__list_message_variants
+  - mcp__plugin_leadace_api__upsert_message_variant
   - mcp__plugin_leadace_api__list_project_prospects
   - mcp__plugin_leadace_api__list_tenant_prospects
   - mcp__plugin_leadace_api__list_organizations
@@ -89,6 +90,8 @@ Examine `$0` (the user's free-form input) together with `PROJECTS` and `GMAIL`. 
 | `run_setup` | "set up", "environment", "connection", "Gmail", "MCP", "再接続", "reconnect" | Run env-check inline (Step 3e) |
 | `run_strategy` | "strategy", "戦略", "target", "targeting", "messaging", "ターゲット", "refine strategy" | Run strategy authoring inline (Step 3f) |
 | `add_means` | A new discovery/outreach means to add: "Upwork", "クラウドソーシング", "マッチングサイト", "この手段/プラットフォームでも営業したい", "playbook", "add ... as an outreach means" | Define a playbook-driven means inline (Step 3h) |
+| `message_reset` | Replace the whole message-angle pool: "reset messaging", "メッセージを一新", "start over with new angles", "今のメッセージ全部作り直して" | Message-pool reset (Step 3i) |
+| `message_steer` | A directional messaging request or a specific angle to try: "もっとカジュアルに", "make it more formal", "この角度を試して", "try an angle that leads with pricing" | Message-pool steer (Step 3i) |
 | `delegate_build_list` | "list", "prospects", "more leads", "リスト追加", "もっと集めて" | Suggest `/build-list` (Step 3c) |
 | `delegate_outbound` | "send", "outreach", "送信", "送って" | Suggest `/outbound` — **always confirm before** (Step 3c, with extra caution) |
 | `delegate_daily` | "daily", "今日のサイクル", "run cycle" | Suggest `/daily-cycle` (Step 3c) |
@@ -103,6 +106,7 @@ Bias rules:
 - URL + 0 projects -> `onboarding` (no ambiguity).
 - URL + ≥1 project -> ask via `AskUserQuestion`: "Use this URL to (a) create a new project, or (b) something else?" Default to `onboarding` on (a).
 - Quoted phrases like "list X" or "send to Y" -> consider the verb, not the object.
+- "Messaging" is ambiguous: a request scoped to the outbound message angles / tone / subjects -> `message_reset` or `message_steer`; reworking the strategy documents (positioning, targeting, value prop) -> `run_strategy`.
 - Ambiguous + projects exist -> `info_overview` (safe default).
 
 Hold the chosen label as `INTENT`.
@@ -226,6 +230,37 @@ channel enabled — the cycle skills pick the means up with no further wiring.
 5. **Report**: slug, playbook saved, channel enabled; `/evaluate` promotes/demotes it
    like any strategy; point to `/build-list` or `/daily-cycle`.
 
+#### 3i. message_reset / message_steer — Message-Angle Pool Operations
+
+The message-angle pool (`message_variants`) is the measured experiment surface
+`/outbound` draws from; the daily lever tick shifts weight toward what gets
+replies. These intents change *what is being tested* — they never pick winners
+(the tick does) and never rewrite an existing arm's copy (that corrupts its
+measured history; new content = new arm on a fresh slug, never a reused one).
+
+1. **Resolve the project** (same as 3f step 1), then read the current pool for
+   context: `list_message_variants` + `get_lever_state` (which angles lead, their
+   maturity).
+2. **Branch on the intent**:
+   - **Reset** (replace everything): briefly interview for the new direction —
+     what felt wrong about the current set, desired tone / positioning emphasis.
+     Then follow the pivot mechanics of
+     `${CLAUDE_PLUGIN_ROOT}/references/onboarding/strategy_drafting.md` Step 7.6:
+     archive every active variant first (echo each `subjectPattern` unchanged,
+     `archived: true`), then seed 4 boldly different angles per that step's
+     generation rules on fresh slugs (e.g. `rst_20260715_a`). Present the plan
+     (what gets archived, the 4 new angles) and get explicit approval before the
+     first write.
+   - **Steer** (add a direction): craft 1-2 new angles embodying the requested
+     direction (Step 7.6 generation rules apply: real angle, not a micro-copy
+     tweak) and upsert them on fresh slugs — they compete with the existing arms
+     on equal footing and the tick decides. If the server refuses on the active
+     cap (400), show the active arms and ask which to archive; never archive
+     silently.
+3. **Report**: the active pool after the change, and that the tick shifts weight
+   as replies mature (a reset restarts measurement — the first read is ~2 weeks
+   out).
+
 ### 4. Onboarding Chain (intent = onboarding)
 
 Goal: from "user just typed `/leadace https://example.com`" to "project + business + sales_strategy saved, ready for `/daily-cycle`".
@@ -324,7 +359,7 @@ Three tiers — daily use only needs the first two. Print under sub-headings so 
 
 | Skill | One-line purpose |
 |---|---|
-| `/leadace` | This skill — entry point: onboarding, environment setup / re-check, strategy authoring, overview, and routing. |
+| `/leadace` | This skill — entry point: onboarding, environment setup / re-check, strategy authoring, message-angle reset / steer, overview, and routing. |
 | `/daily-cycle` | The daily run: `check-responses` -> `evaluate` -> `outbound`, plus auto-`build-list` when prospects run low. |
 
 **Advanced** — direct access to the steps `/daily-cycle` runs, plus list-management entry points. (Environment setup / re-check and strategy authoring are handled by `/leadace` itself — ask it in plain language.)
@@ -334,7 +369,7 @@ Three tiers — daily use only needs the first two. Print under sub-headings so 
 | `/build-list` | Web-search-driven prospect collection based on the project's strategy; registers candidates in the DB. |
 | `/outbound` | Execute outreach (email / contact form / SNS DM) against the project's prospect list. |
 | `/check-responses` | Detect replies and scheduling notifications, record them as `responses`. |
-| `/evaluate` | Analyze response-rate data; report findings and apply targeting / keyword / discovery-portfolio updates (subject, channel & selection order are auto-optimized by the lever tick). |
+| `/evaluate` | Analyze response-rate data; report findings and apply targeting / keyword / discovery-portfolio updates (message angles, channel & selection order are auto-optimized by the lever tick). |
 | `/import-prospects` | Load prospects from a file (CSV / Excel / SQLite / text) — either as tenant assets or linked to a project. |
 | `/match-prospects` | Pull existing tenant-wide prospects into a project that fits the targeting. |
 | `/check-feedback` | PMF-oriented review of rejection feedback (Pro-tier introspection). |

@@ -52,12 +52,10 @@ type Env = {
 // that the old plugin cannot tolerate (removed tool, renamed required arg,
 // changed response shape). See .claude/rules/release.md.
 const SERVER_VERSION = '1.0.0'
-// 0.7.16 warns older plugins (/leadace prepends the notice and keeps going, it
-// does not abort): the description sweep moved the "never set footerOverride
-// unprompted" guardrail out of update_project_settings and into the plugin's
-// onboarding reference, so an older plugin sees it nowhere and can overwrite the
-// compliance footer on its own initiative.
-const MIN_PLUGIN_VERSION = '0.7.16'
+// 0.7.23: Phase B removed record_evaluation and Phase C renamed the
+// subject-variant tools to message variants (list/upsert/pick_message_variant,
+// no aliases) — an older plugin calls tools that no longer exist.
+const MIN_PLUGIN_VERSION = '0.7.23'
 
 async function extractUserId(request: Request, jwtSecret: string, supabaseUrl?: string): Promise<string | null> {
   const authHeader = request.headers.get('Authorization')
@@ -234,7 +232,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'delete_project',
-    'Delete a project and its project-scoped data (project-prospect links, outreach logs, responses, inquiry sessions, learned send-optimization state, documents, settings, subject variants). Prospects are tenant assets and are NOT deleted.',
+    'Delete a project and its project-scoped data (project-prospect links, outreach logs, responses, inquiry sessions, learned send-optimization state, documents, settings, message variants). Prospects are tenant assets and are NOT deleted.',
     { projectId: z.string().min(1).describe('Project name or ID.') },
     async ({ projectId }, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('DELETE', `/projects/${encodeURIComponent(projectId)}`, null, apiUrl, authHeader)
@@ -509,7 +507,7 @@ function buildToolRegistry(): ToolDef[] {
       channel: z.enum(['form', 'sns_twitter', 'sns_linkedin', 'platform']),
       subject: z.string().optional(),
       body: z.string(),
-      variantId: variantIdSchema.optional().describe('Subject variant id from pick_subject_variant.'),
+      variantId: variantIdSchema.optional().describe('Message variant id from pick_message_variant.'),
     },
     async (input, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('POST', '/outreach/record-with-inquiry', input, apiUrl, authHeader)
@@ -632,19 +630,19 @@ function buildToolRegistry(): ToolDef[] {
   )
 
   defineTool(
-    'list_subject_variants',
-    'List the project\'s subject-line variants. Reports the active / archived counts, then the variants as JSON — [{ variantId, subjectPattern, label, archivedAt, … }] ordered by createdAt asc.',
+    'list_message_variants',
+    'List the project\'s message-angle variants. Reports the active / archived counts, then the variants as JSON — [{ variantId, subjectPattern, bodyApproach, label, archivedAt, … }] ordered by createdAt asc.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
     },
     async ({ projectId }, { apiUrl, authHeader }) => {
-      const { ok, data } = await callApi('GET', `/projects/${encodeURIComponent(projectId)}/subject-variants`, null, apiUrl, authHeader)
+      const { ok, data } = await callApi('GET', `/projects/${encodeURIComponent(projectId)}/message-variants`, null, apiUrl, authHeader)
       if (!ok) {
         const e = data as { error: string; detail?: string }
         const msg = e.detail ? `${e.error}: ${e.detail}` : e.error
         return { content: [{ type: 'text' as const, text: `Error: ${msg}` }], isError: true }
       }
-      const result = data as { variants: Array<{ variantId: string; subjectPattern: string; label: string | null; archivedAt: string | null }> }
+      const result = data as { variants: Array<{ variantId: string; subjectPattern: string; bodyApproach: string | null; label: string | null; archivedAt: string | null }> }
       const active = result.variants.filter((v) => !v.archivedAt)
       const archived = result.variants.filter((v) => v.archivedAt)
       return {
@@ -657,12 +655,13 @@ function buildToolRegistry(): ToolDef[] {
   )
 
   defineTool(
-    'upsert_subject_variant',
-    'Register or update a subject-line A/B variant on a project. Idempotent by variantId — re-calling updates that variant\'s pattern / label / archived state. archived=true retires it from rotation but keeps it analysable for historic outreach rows.',
+    'upsert_message_variant',
+    'Register or update a message-angle variant (subject pattern + optional body approach) on a project. Idempotent by variantId — re-calling updates that variant\'s fields / archived state. archived=true retires it from rotation but keeps it analysable for historic outreach rows. Refused (400) when it would push the active count past the project\'s cap.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       variantId: variantIdSchema,
       subjectPattern: z.string().min(1).max(300).describe('Subject template; may embed {{placeholders}} substituted at send time.'),
+      bodyApproach: z.string().min(1).max(2000).nullable().optional().describe('Angle brief (2-5 lines: structure / tone / CTA type / length / opener policy) the body is written from; null clears it back to the email_template default skeleton.'),
       label: z.string().min(1).max(120).nullable().optional().describe('Human-readable display label; null clears it.'),
       archived: z.boolean().optional().describe('Omit to leave the archived state unchanged; false un-archives.'),
     },
@@ -670,7 +669,7 @@ function buildToolRegistry(): ToolDef[] {
       const { projectId, ...body } = input
       const { ok, data } = await callApi(
         'PUT',
-        `/projects/${encodeURIComponent(projectId)}/subject-variants`,
+        `/projects/${encodeURIComponent(projectId)}/message-variants`,
         body,
         apiUrl,
         authHeader,
@@ -682,31 +681,32 @@ function buildToolRegistry(): ToolDef[] {
       }
       const result = data as { variantId: string; archivedAt: Date | null }
       const status = result.archivedAt ? 'archived' : 'active'
-      return { content: [{ type: 'text' as const, text: `Subject variant ${result.variantId} saved (${status}).` }] }
+      return { content: [{ type: 'text' as const, text: `Message variant ${result.variantId} saved (${status}).` }] }
     },
   )
 
   defineTool(
-    'pick_subject_variant',
-    'Pick an active subject-line variant for the project via a server-side weighted draw. Returns the drawn variant id, its subject pattern, and label; NOT_FOUND when the project has no active variants.',
+    'pick_message_variant',
+    'Pick an active message-angle variant for the project via a server-side weighted draw. Returns the drawn variant id, its subject pattern, its body approach (line absent when the variant has none), and label; NOT_FOUND when the project has no active variants.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       variantId: variantIdSchema.optional().describe('A specific active variant id to bypass the weighted draw; an unknown or archived id silently falls through to the draw.'),
     },
     async (input, { apiUrl, authHeader }) => {
-      const path = `/projects/${encodeURIComponent(input.projectId)}/subject-variants/pick${input.variantId ? `?variantId=${encodeURIComponent(input.variantId)}` : ''}`
+      const path = `/projects/${encodeURIComponent(input.projectId)}/message-variants/pick${input.variantId ? `?variantId=${encodeURIComponent(input.variantId)}` : ''}`
       const { ok, data } = await callApi('POST', path, null, apiUrl, authHeader)
       if (!ok) {
         const e = data as { error: string; detail?: string }
         const msg = e.detail ? `${e.error}: ${e.detail}` : e.error
         return { content: [{ type: 'text' as const, text: `Error: ${msg}` }], isError: true }
       }
-      const result = data as { variantId: string; subjectPattern: string; label: string | null }
+      const result = data as { variantId: string; subjectPattern: string; bodyApproach: string | null; label: string | null }
       const labelLine = result.label ? `\nLabel: ${result.label}` : ''
+      const approachLine = result.bodyApproach ? `\nBody approach: ${result.bodyApproach}` : ''
       return {
         content: [{
           type: 'text' as const,
-          text: `Picked variant: ${result.variantId}${labelLine}\nSubject pattern: ${result.subjectPattern}`,
+          text: `Picked variant: ${result.variantId}${labelLine}\nSubject pattern: ${result.subjectPattern}${approachLine}`,
         }],
       }
     },
@@ -714,7 +714,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'run_lever_tick',
-    'Run the project\'s daily outbound-optimization tick: recompute the subject-variant draw weights pick_subject_variant reads (archiving dominated variants, never below two active), the per-industry channel affinity get_outbound_targets surfaces, and the measured targeting lifts (industry / size / country / discovery strategy / fresh signal) that re-score the get_outbound_targets ordering. Idempotent per UTC day — a repeat call returns that day\'s recorded decision without re-applying. Returns weights, archived variants, per-variant samples, channelAffinity by industry bucket, targeting lifts, and needsReplenishment (recomputed live each call, not the frozen recorded value).',
+    'Run the project\'s daily outbound-optimization tick: recompute the message-variant draw weights pick_message_variant reads (Thompson sampling over graded reward; archives variants whose P(best) stays below the threshold at maturity, never below two active), the per-industry channel affinity get_outbound_targets surfaces, and the measured targeting lifts (industry / size / country / discovery strategy / fresh signal) that re-score the get_outbound_targets ordering. After a sustained flat streak (every arm mature yet none likely best) it rotates out the weakest arm to free a slot for a fresh angle. Idempotent per UTC day — a repeat call returns that day\'s recorded decision without re-applying. Returns weights, archived variants (a stagnation rotation is marked as such), per-variant samples, channelAffinity by industry bucket, targeting lifts, and needsReplenishment (recomputed live each call, not the frozen recorded value; stays raised while a rotation-freed slot is unfilled).',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
     },
@@ -730,7 +730,7 @@ function buildToolRegistry(): ToolDef[] {
         cycleDate: string
         minSamplePerArm: number
         weights: Record<string, number>
-        archived: Array<{ variantId: string }>
+        archived: Array<{ variantId: string; reason?: string }>
         samples: Array<{ variantId: string; total: number }>
         channelAffinity: Record<string, Array<{ channel: string; rate: number; total: number; responses: number }>>
         targetingLifts: Record<string, unknown> | null
@@ -740,7 +740,9 @@ function buildToolRegistry(): ToolDef[] {
       const head = r.ran
         ? `Lever tick ran for ${r.cycleDate}.`
         : `Lever tick already ran for ${r.cycleDate} (no change).`
-      const archivedLine = r.archived.length > 0 ? ` Archived: ${r.archived.map((a) => a.variantId).join(', ')}.` : ''
+      const archivedLine = r.archived.length > 0
+        ? ` Archived: ${r.archived.map((a) => a.reason === 'stagnation' ? `${a.variantId} (stagnation rotation)` : a.variantId).join(', ')}.`
+        : ''
       const buckets = Object.keys(r.channelAffinity)
       const channelLine = buckets.length > 0
         ? `\nChannel affinity (${buckets.length} industry bucket(s)): ${JSON.stringify(r.channelAffinity)}`
@@ -749,7 +751,7 @@ function buildToolRegistry(): ToolDef[] {
         ? `\nTargeting lifts: ${JSON.stringify(r.targetingLifts)}`
         : '\nTargeting lifts: none recorded for this cycle (pre-upgrade decision).'
       const replenishLine = r.needsReplenishment
-        ? '\nReplenishment: pool converged to the floor with a dominated arm — /evaluate should supply one fresh subject angle.'
+        ? '\nReplenishment: a fresh angle is needed (pool below target, or a rotation freed a slot that is unfilled) — /evaluate should supply one.'
         : ''
       return {
         content: [{
@@ -762,7 +764,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_lever_state',
-    'Read-only snapshot of the project\'s outbound optimizer: subject draw weights (null until the first tick → uniform), channel affinity per coarse-industry bucket ({} until measured → policy order), targetingLifts (null until a tick has computed them → neutral ordering), updatedAt, per-active-variant mature-sample progress, today\'s tick decision if it ran, and needsReplenishment.',
+    'Read-only snapshot of the project\'s outbound optimizer: message-variant draw weights (null until the first tick → uniform), channel affinity per coarse-industry bucket ({} until measured → policy order), targetingLifts (null until a tick has computed them → neutral ordering), updatedAt, per-active-variant mature-sample progress, today\'s tick decision if it ran, and needsReplenishment (also true while a stagnation-rotation slot awaits its fresh angle).',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
     },
@@ -779,7 +781,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_lever_decisions',
-    'Read-only history of the project\'s daily lever-tick decisions, newest first. Each entry is one UTC day: subject draw weights, variants archived that day, per-variant sample counts, channel affinity per coarse-industry bucket, and targetingLifts (null on pre-upgrade entries). Empty until the tick has run at least once.',
+    'Read-only history of the project\'s daily lever-tick decisions, newest first. Each entry is one UTC day: message-variant draw weights, variants archived that day (reason "stagnation" marks a rotation, absent = dominated), per-variant sample counts, channel affinity per coarse-industry bucket, and targetingLifts (null on pre-upgrade entries). Empty until the tick has run at least once.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       days: z.number().int().min(1).max(365).optional().describe('Lookback window in days (default 30)'),
@@ -805,7 +807,7 @@ function buildToolRegistry(): ToolDef[] {
       channel: z.enum(['email', 'form', 'sns_twitter', 'sns_linkedin', 'platform']),
       subject: z.string().optional(),
       body: z.string(),
-      variantId: variantIdSchema.optional().describe('Subject variant id from pick_subject_variant.'),
+      variantId: variantIdSchema.optional().describe('Message variant id from pick_message_variant.'),
       status: z.enum(['sent', 'failed', 'pending_review']).default('sent')
         .describe('"sent" = delivered; "failed" = send error; "pending_review" = draft created.'),
       errorMessage: z.string().min(1).max(2000).optional()
@@ -909,7 +911,7 @@ function buildToolRegistry(): ToolDef[] {
       cc: z.array(z.email()).optional(),
       bcc: z.array(z.email()).optional(),
       inReplyTo: z.string().optional().describe('RFC 5322 Message-Id of the message being replied to, for threading'),
-      variantId: variantIdSchema.optional().describe('Subject variant id from pick_subject_variant'),
+      variantId: variantIdSchema.optional().describe('Message variant id from pick_message_variant'),
     },
     async (input, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi(
