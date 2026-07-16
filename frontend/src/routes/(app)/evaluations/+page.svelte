@@ -38,7 +38,7 @@
         <p class="text-2xl font-mono font-semibold {stats.dataSufficiency.sufficient ? 'text-success' : 'text-warning'}">
           {stats.dataSufficiency.sufficient ? 'Yes' : 'No'}
         </p>
-        <p class="text-xs text-text-muted mt-0.5">Data sufficient</p>
+        <p class="text-xs text-text-muted mt-0.5">Data sufficient · {stats.dataSufficiency.totalSent} sends</p>
       </div>
     </div>
 
@@ -81,17 +81,118 @@
       </div>
     {/if}
 
+    {#if stats.metrics.industryResponseRate.length > 0}
+      <div class="mb-6">
+        <p class="text-xs font-medium text-text-secondary mb-2">By industry · reply-matured sends</p>
+        <div class="grid grid-cols-[1fr_60px_70px_60px] md:grid-cols-[1fr_80px_80px_80px] gap-2 text-xs">
+          <span class="text-text-muted">Industry</span>
+          <span class="text-text-muted text-right">Sent</span>
+          <span class="text-text-muted text-right">Resp.</span>
+          <span class="text-text-muted text-right">Rate</span>
+          {#each stats.metrics.industryResponseRate as ind}
+            <span class="text-text truncate">{ind.industry}</span>
+            <span class="text-text-secondary text-right font-mono">{ind.total}</span>
+            <span class="text-text-secondary text-right font-mono">{ind.responses}</span>
+            <span class="text-text text-right font-mono">{pct(ind.responses, ind.total)}</span>
+          {/each}
+        </div>
+      </div>
+    {/if}
+
+    {#if stats.metrics.sizeResponseRate.length > 0}
+      <div class="mb-6">
+        <p class="text-xs font-medium text-text-secondary mb-2">By company size · reply-matured sends</p>
+        <div class="grid grid-cols-[1fr_60px_70px_60px] md:grid-cols-[1fr_80px_80px_80px] gap-2 text-xs">
+          <span class="text-text-muted">Employees</span>
+          <span class="text-text-muted text-right">Sent</span>
+          <span class="text-text-muted text-right">Resp.</span>
+          <span class="text-text-muted text-right">Rate</span>
+          {#each stats.metrics.sizeResponseRate as s}
+            <span class="text-text font-mono">{s.employeeBand}</span>
+            <span class="text-text-secondary text-right font-mono">{s.total}</span>
+            <span class="text-text-secondary text-right font-mono">{s.responses}</span>
+            <span class="text-text text-right font-mono">{pct(s.responses, s.total)}</span>
+          {/each}
+        </div>
+      </div>
+    {/if}
+
+    {#if stats.metrics.countryResponseRate.length > 0}
+      <div class="mb-6">
+        <p class="text-xs font-medium text-text-secondary mb-2">By country · reply-matured sends</p>
+        <div class="grid grid-cols-[1fr_60px_70px_60px] md:grid-cols-[1fr_80px_80px_80px] gap-2 text-xs">
+          <span class="text-text-muted">Country</span>
+          <span class="text-text-muted text-right">Sent</span>
+          <span class="text-text-muted text-right">Resp.</span>
+          <span class="text-text-muted text-right">Rate</span>
+          {#each stats.metrics.countryResponseRate as c}
+            <span class="text-text font-mono">{c.country ?? 'Unknown'}</span>
+            <span class="text-text-secondary text-right font-mono">{c.total}</span>
+            <span class="text-text-secondary text-right font-mono">{c.responses}</span>
+            <span class="text-text text-right font-mono">{pct(c.responses, c.total)}</span>
+          {/each}
+        </div>
+      </div>
+    {/if}
+
+    {#if stats.metrics.discoveryStrategyResponseRate.length > 0}
+      <div class="mb-6">
+        <p class="text-xs font-medium text-text-secondary mb-2">By discovery strategy</p>
+        <div class="grid grid-cols-[1fr_52px_52px_52px_60px] md:grid-cols-[1fr_70px_70px_70px_80px] gap-2 text-xs">
+          <span class="text-text-muted">Strategy</span>
+          <span class="text-text-muted text-right">Sent</span>
+          <span class="text-text-muted text-right">Resp.</span>
+          <span class="text-text-muted text-right">Rate</span>
+          <span class="text-text-muted text-right">Bounce</span>
+          {#each stats.metrics.discoveryStrategyResponseRate as d}
+            <span class="text-text font-mono truncate">{d.strategy ?? 'Unattributed'}</span>
+            <span class="text-text-secondary text-right font-mono">{d.total}</span>
+            <span class="text-text-secondary text-right font-mono">{d.responses}</span>
+            <span class="text-text text-right font-mono">{pct(d.responses, d.total)}</span>
+            <span class="text-text-secondary text-right font-mono">{d.bounceRate.toFixed(1)}%</span>
+          {/each}
+        </div>
+        <p class="text-[11px] text-text-muted mt-1.5">High bounce marks a dead source. Bounce % counts threaded email sends only.</p>
+      </div>
+    {/if}
+
+    {#if stats.metrics.freshSignalResponseRate.withSignal.total + stats.metrics.freshSignalResponseRate.withoutSignal.total > 0}
+      {@const fs = stats.metrics.freshSignalResponseRate}
+      <div class="mb-6">
+        <p class="text-xs font-medium text-text-secondary mb-2">Fresh signal at send time</p>
+        <div class="grid grid-cols-[1fr_60px_70px_60px] md:grid-cols-[1fr_80px_80px_80px] gap-2 text-xs">
+          <span class="text-text-muted">Outreach</span>
+          <span class="text-text-muted text-right">Sent</span>
+          <span class="text-text-muted text-right">Resp.</span>
+          <span class="text-text-muted text-right">Rate</span>
+          <span class="text-text">With signal</span>
+          <span class="text-text-secondary text-right font-mono">{fs.withSignal.total}</span>
+          <span class="text-text-secondary text-right font-mono">{fs.withSignal.responses}</span>
+          <span class="text-text text-right font-mono">{pct(fs.withSignal.responses, fs.withSignal.total)}</span>
+          <span class="text-text">Without signal</span>
+          <span class="text-text-secondary text-right font-mono">{fs.withoutSignal.total}</span>
+          <span class="text-text-secondary text-right font-mono">{fs.withoutSignal.responses}</span>
+          <span class="text-text text-right font-mono">{pct(fs.withoutSignal.responses, fs.withoutSignal.total)}</span>
+        </div>
+      </div>
+    {/if}
+
     {#if stats.metrics.variantResponseRate.length > 0}
       <div class="mb-6">
-        <p class="text-xs font-medium text-text-secondary mb-2">By subject variant · reply-matured sends</p>
-        <div class="grid grid-cols-[1fr_52px_52px_52px_60px] md:grid-cols-[1fr_70px_70px_70px_80px] gap-2 text-xs">
-          <span class="text-text-muted">Variant</span>
+        <p class="text-xs font-medium text-text-secondary mb-2">By message angle · reply-matured sends</p>
+        <div class="grid grid-cols-[1fr_56px_44px_44px_44px_60px] md:grid-cols-[1fr_80px_70px_70px_70px_80px] gap-2 text-xs">
+          <span class="text-text-muted">Angle</span>
+          <span class="text-text-muted">Status</span>
           <span class="text-text-muted text-right">Sent</span>
           <span class="text-text-muted text-right">Resp.</span>
           <span class="text-text-muted text-right">Rate</span>
           <span class="text-text-muted text-right">Reward/send</span>
           {#each stats.metrics.variantResponseRate as v}
-            <span class="text-text font-mono truncate">{v.variantId}</span>
+            <span class="min-w-0">
+              <span class="block text-text font-mono truncate">{v.variantId}</span>
+              {#if v.label}<span class="block text-text-muted truncate">{v.label}</span>{/if}
+            </span>
+            <span class={v.active ? 'text-success' : 'text-text-muted'}>{v.active ? 'Active' : 'Archived'}</span>
             <span class="text-text-secondary text-right font-mono">{v.total}</span>
             <span class="text-text-secondary text-right font-mono">{v.responses}</span>
             <span class="text-text text-right font-mono">{pct(v.responses, v.total)}</span>

@@ -282,9 +282,12 @@ export type EvaluationMetrics = {
     responses: number
     rate: number
   }>
-  // Read-only foundation for the subject bandit (charter P0); nothing selects on it yet.
+  // active=false covers archived variants and sends whose variant no longer
+  // has a registry row — either way the arm is not in play.
   variantResponseRate: Array<{
     variantId: string
+    label: string | null
+    active: boolean
     total: number
     responses: number
     rate: number

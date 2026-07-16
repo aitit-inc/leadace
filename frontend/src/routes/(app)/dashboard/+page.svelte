@@ -2,7 +2,7 @@
   import { goto, invalidate } from '$app/navigation';
   import type { Component } from 'svelte';
   import type { PageProps } from './$types';
-  import type { AttentionItem, DashboardActivityKind, FunnelStageKey } from '$lib/types/dashboard';
+  import type { AttentionItem, DashboardActivityKind, FunnelStageKey, JournalEvent } from '$lib/types/dashboard';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import SuggestionsSection from '$lib/components/dashboard/SuggestionsSection.svelte';
   import {
@@ -12,6 +12,7 @@
     Trophy,
     TrendingUp,
     TrendingDown,
+    Banknote,
     Brain,
     FlaskConical,
     MessageSquareX,
@@ -28,7 +29,6 @@
     FileWarning,
     Zap,
     Rocket,
-    ChevronRight,
   } from '@lucide/svelte';
 
   let { data }: PageProps = $props();
@@ -69,20 +69,37 @@
     engaged: 'Engaged',
     won: 'Won',
   };
-  const CHANNEL_LABELS: Record<string, string> = {
-    email: 'Email',
-    form: 'Form',
-    sns_twitter: 'X/Twitter',
-    sns_linkedin: 'LinkedIn',
-    platform: 'Platform',
-  };
   const LEARNING_STAGE_LABELS: Record<string, string> = {
     targeting: 'Targeting',
     body: 'Message',
     timing: 'Timing',
     channel: 'Channel',
+    discovery: 'Discovery',
   };
   const LEARNINGS_SHOWN = 6;
+  const JOURNAL_SHOWN = 5;
+
+  function fmtDay(day: string): string {
+    const d = new Date(`${day}T00:00:00Z`);
+    return Number.isNaN(d.getTime())
+      ? day
+      : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  }
+
+  function journalText(e: JournalEvent): { text: string; detail: string | null } {
+    if (e.kind === 'variant_added') {
+      return { text: `Started testing a new angle “${e.label ?? e.variantId}”`, detail: null };
+    }
+    if (e.kind === 'variant_archived') {
+      const name = e.label ?? e.variantId;
+      const detail =
+        e.pBest !== null && e.n !== null ? `win chance ${Math.round(e.pBest * 100)}% · ${e.n} sends` : null;
+      return e.reason === 'stagnation'
+        ? { text: `Swapped out “${name}” — results stayed flat`, detail }
+        : { text: `Retired “${name}” — a stronger angle won`, detail };
+    }
+    return { text: `Flagged for your review: ${e.title}`, detail: null };
+  }
   const FUNNEL_BAR: Record<FunnelStageKey, string> = {
     sent: 'bg-accent/85',
     reached: 'bg-accent/65',
@@ -255,6 +272,9 @@
         <p class="mt-0.5 text-sm text-text-secondary">How your AI sales rep is doing</p>
       </div>
       <div class="flex items-center gap-3">
+        {#if summary.lastCycleDate}
+          <span class="text-xs text-text-muted">Last cycle {fmtDay(summary.lastCycleDate)}</span>
+        {/if}
         {#if paused}
           <span class="inline-flex items-center gap-1.5 rounded-full bg-warning/15 px-2.5 py-1 text-xs font-medium text-warning">
             <span class="h-1.5 w-1.5 rounded-full bg-warning"></span>
@@ -280,63 +300,67 @@
       </div>
     </div>
 
-    {#if summary.attention.length > 0}
-      <section class="overflow-hidden rounded-xl border border-border bg-surface">
-        <div class="flex items-center gap-2 border-b border-border px-5 py-3">
-          <span class="flex h-6 w-6 items-center justify-center rounded-full bg-warning/15 text-warning">
-            <BellRing size={14} />
-          </span>
-          <h2 class="text-sm font-semibold text-text">Needs your attention</h2>
-          <span class="rounded-full bg-warning/15 px-2 py-0.5 text-xs font-semibold text-warning">
-            {summary.attention.length}
-          </span>
-          <span class="ml-auto hidden text-xs text-text-muted sm:inline">Things the AI can't decide for you</span>
-        </div>
-        <div class="divide-y divide-border">
-          {#each summary.attention as item}
-            {@const meta = attentionMeta(item)}
-            {@const Icon = meta.icon}
-            <div class="flex items-center gap-3 px-5 py-3">
-              <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg {TONE_CHIP[meta.tone]}">
-                <Icon size={18} />
-              </span>
-              <div class="min-w-0 flex-1">
-                <p class="text-sm font-medium text-text">{meta.title}</p>
-                <p class="truncate text-xs text-text-secondary">{meta.desc}</p>
+    <div class="space-y-3">
+      {#if summary.attention.length > 0}
+        <section class="overflow-hidden rounded-xl border border-border bg-surface">
+          <div class="flex items-center gap-2 border-b border-border px-5 py-3">
+            <span class="flex h-6 w-6 items-center justify-center rounded-full bg-warning/15 text-warning">
+              <BellRing size={14} />
+            </span>
+            <h2 class="text-sm font-semibold text-text">Needs your attention</h2>
+            <span class="rounded-full bg-warning/15 px-2 py-0.5 text-xs font-semibold text-warning">
+              {summary.attention.length}
+            </span>
+            <span class="ml-auto hidden text-xs text-text-muted sm:inline">Things the AI can't decide for you</span>
+          </div>
+          <div class="divide-y divide-border">
+            {#each summary.attention as item}
+              {@const meta = attentionMeta(item)}
+              {@const Icon = meta.icon}
+              <div class="flex items-center gap-3 px-5 py-3">
+                <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg {TONE_CHIP[meta.tone]}">
+                  <Icon size={18} />
+                </span>
+                <div class="min-w-0 flex-1">
+                  <p class="text-sm font-medium text-text">{meta.title}</p>
+                  <p class="truncate text-xs text-text-secondary">{meta.desc}</p>
+                </div>
+                <a
+                  href={meta.href}
+                  class="shrink-0 rounded-md px-3 py-1.5 text-xs font-semibold {meta.tone === 'accent'
+                    ? 'bg-accent text-white hover:bg-accent-strong'
+                    : 'border border-border bg-surface text-text hover:bg-surface-2'}"
+                >
+                  {meta.ctaLabel}
+                </a>
               </div>
-              <a
-                href={meta.href}
-                class="shrink-0 rounded-md px-3 py-1.5 text-xs font-semibold {meta.tone === 'accent'
-                  ? 'bg-accent text-white hover:bg-accent-strong'
-                  : 'border border-border bg-surface text-text hover:bg-surface-2'}"
-              >
-                {meta.ctaLabel}
-              </a>
-            </div>
-          {/each}
-        </div>
-      </section>
-    {:else}
-      <section class="flex items-center gap-4 rounded-xl border border-success/30 bg-success/10 px-5 py-5">
-        <span class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-success/20 text-success">
-          <Check size={26} />
-        </span>
-        <div>
-          <h2 class="text-base font-semibold text-text">All clear — nothing needs you</h2>
-          <p class="mt-0.5 text-sm text-text-secondary">
-            Sit back. The AI keeps approaching prospects and surfaces anything that needs you here.
-          </p>
-        </div>
-      </section>
-    {/if}
+            {/each}
+          </div>
+        </section>
+      {/if}
 
-    {#if data.suggestions.length > 0}
-      <SuggestionsSection
-        suggestions={data.suggestions}
-        {token}
-        onChanged={() => invalidate('app:suggestions')}
-      />
-    {/if}
+      {#if data.suggestions.length > 0}
+        <SuggestionsSection
+          suggestions={data.suggestions}
+          {token}
+          onChanged={() => invalidate('app:suggestions')}
+        />
+      {/if}
+
+      {#if summary.attention.length === 0 && data.suggestions.length === 0}
+        <section class="flex items-center gap-4 rounded-xl border border-success/30 bg-success/10 px-5 py-5">
+          <span class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-success/20 text-success">
+            <Check size={26} />
+          </span>
+          <div>
+            <h2 class="text-base font-semibold text-text">All clear — nothing needs you</h2>
+            <p class="mt-0.5 text-sm text-text-secondary">
+              Sit back. The AI keeps approaching prospects and surfaces anything that needs you here.
+            </p>
+          </div>
+        </section>
+      {/if}
+    </div>
 
     <section class="grid grid-cols-2 gap-3 lg:grid-cols-4">
       {#each kpis as kpi}
@@ -451,45 +475,71 @@
         <div class="rounded-xl border border-border bg-surface p-5">
           <div class="mb-3 flex items-center gap-2">
             <Brain size={16} class="text-accent" />
-            <h3 class="text-sm font-semibold text-text">What the AI is learning</h3>
+            <h3 class="text-sm font-semibold text-text">What the AI is doing</h3>
           </div>
-          {#if summary.learning.bestSubject || summary.learning.channelOrder.length > 0 || summary.learning.log.length > 0}
+          {#if summary.learning.angles.length > 0 || summary.learning.bestSubject || summary.journal.length > 0 || summary.learning.log.length > 0}
             <ul class="space-y-3 text-sm">
-              {#if summary.learning.bestSubject}
-                <li>
-                  <p class="text-xs uppercase tracking-wider text-text-muted">Best subject line</p>
-                  <p class="mt-0.5 truncate text-text" title={summary.learning.bestSubject.pattern}>
-                    "{summary.learning.bestSubject.pattern}"
-                  </p>
-                  <p class="text-xs text-success">
-                    {summary.learning.bestSubject.replyRate}% reply rate{summary.learning.bestSubject.mature ? ' · winning' : ' · still testing'}
-                  </p>
-                </li>
-              {/if}
-              {#if summary.learning.channelOrder.length > 0}
-                <li class="border-t border-border pt-3">
-                  <p class="text-xs uppercase tracking-wider text-text-muted">Best channel</p>
-                  <div class="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
-                    {#each summary.learning.channelOrder.slice(0, 3) as ch, i}
-                      {#if i > 0}<ChevronRight size={12} class="text-text-muted" />{/if}
-                      <span class="rounded bg-surface-2 px-1.5 py-0.5 {i === 0 ? 'font-medium text-text' : 'text-text-secondary'}">
-                        {CHANNEL_LABELS[ch.channel] ?? humanize(ch.channel.replace('sns_', ''))}
-                      </span>
-                    {/each}
-                  </div>
-                </li>
-              {/if}
-              <li class="border-t border-border pt-3">
-                <p class="text-xs uppercase tracking-wider text-text-muted">Status</p>
-                <p class="mt-0.5 flex items-center gap-1.5 text-text">
+              <li>
+                <p class="flex items-center gap-1.5 text-text">
                   <FlaskConical size={14} class="text-info" />
                   {#if summary.learning.state === 'optimizing'}
-                    Optimizing across {summary.learning.testing.activeVariants} subject {summary.learning.testing.activeVariants === 1 ? 'line' : 'lines'}
+                    Optimizing across {summary.learning.angles.length} message {summary.learning.angles.length === 1 ? 'angle' : 'angles'}
                   {:else}
                     Still learning — gathering data
                   {/if}
                 </p>
+                {#if summary.learning.needsNewAngle}
+                  <p class="mt-0.5 text-xs text-text-muted">Recruiting a fresh angle — the next evaluation adds one.</p>
+                {/if}
               </li>
+              {#if summary.learning.angles.length > 0}
+                <li class="border-t border-border pt-3">
+                  <p class="text-xs uppercase tracking-wider text-text-muted">Testing now</p>
+                  <ul class="mt-1.5 space-y-1">
+                    {#each summary.learning.angles as angle}
+                      <li class="flex items-baseline justify-between gap-2 text-xs">
+                        <span class="min-w-0 truncate text-text" title={angle.variantId}>
+                          {angle.label ?? angle.variantId}
+                          {#if angle.leader}<span class="ml-1 rounded bg-success/15 px-1.5 py-0.5 font-medium text-success">leading</span>{/if}
+                        </span>
+                        <span class="shrink-0 font-mono text-text-secondary">
+                          {angle.total} {angle.total === 1 ? 'send' : 'sends'} · {angle.mature ? `${angle.replyRate}%` : 'maturing'}
+                        </span>
+                      </li>
+                    {/each}
+                  </ul>
+                </li>
+              {/if}
+              {#if summary.learning.bestSubject}
+                <li class="border-t border-border pt-3">
+                  <p class="text-xs uppercase tracking-wider text-text-muted">Leading subject line</p>
+                  <p class="mt-0.5 truncate text-text" title={summary.learning.bestSubject.pattern}>
+                    "{summary.learning.bestSubject.pattern}"
+                  </p>
+                  <p class="text-xs text-success">
+                    {summary.learning.bestSubject.replyRate}% reply rate · {summary.learning.bestSubject.n} sends{summary.learning.bestSubject.mature ? ' · winning' : ' · still testing'}
+                  </p>
+                </li>
+              {/if}
+              {#if summary.journal.length > 0}
+                <li class="border-t border-border pt-3">
+                  <p class="text-xs uppercase tracking-wider text-text-muted">Recent decisions</p>
+                  <ul class="mt-1.5 space-y-1.5">
+                    {#each summary.journal.slice(0, JOURNAL_SHOWN) as event}
+                      {@const j = journalText(event)}
+                      <li class="flex gap-2 text-xs">
+                        <span class="shrink-0 font-mono text-text-muted">{fmtDay(event.date)}</span>
+                        <span class="min-w-0 break-words text-text-secondary">
+                          {j.text}{#if j.detail}{' '}<span class="text-text-muted">({j.detail})</span>{/if}
+                        </span>
+                      </li>
+                    {/each}
+                  </ul>
+                  {#if summary.journal.length > JOURNAL_SHOWN}
+                    <p class="mt-1.5 text-xs text-text-muted">+{summary.journal.length - JOURNAL_SHOWN} more in the last 30 days</p>
+                  {/if}
+                </li>
+              {/if}
               {#if summary.learning.log.length > 0}
                 <li class="border-t border-border pt-3">
                   <p class="text-xs uppercase tracking-wider text-text-muted">Learnings</p>
@@ -499,7 +549,9 @@
                         <span class="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 font-medium text-text-secondary">
                           {LEARNING_STAGE_LABELS[entry.stage] ?? humanize(entry.stage)}
                         </span>
-                        <span class="min-w-0 break-words text-text-secondary">{entry.claim}</span>
+                        <span class="min-w-0 break-words text-text-secondary">
+                          {entry.claim}{#if entry.evidence}{' '}<span class="text-text-muted">· {entry.evidence}</span>{/if}
+                        </span>
                       </li>
                     {/each}
                   </ul>
@@ -511,16 +563,19 @@
             </ul>
           {:else}
             <p class="text-sm text-text-muted">
-              Still learning. Once enough has been sent, the AI starts optimizing subject lines and channels here.
+              Still learning. Once enough has been sent, the AI starts testing message angles and reports its decisions here.
             </p>
           {/if}
         </div>
 
         <div class="rounded-xl border border-border bg-surface p-5">
-          <div class="mb-3 flex items-center gap-2">
+          <div class="mb-1 flex items-center gap-2">
             <MessageSquareX size={16} class="text-text-muted" />
-            <h3 class="text-sm font-semibold text-text">Why prospects said no</h3>
+            <h3 class="text-sm font-semibold text-text">What the market is telling you</h3>
           </div>
+          <p class="mb-3 text-xs text-text-muted">
+            From rejection replies. The AI can't fix these on its own — they're your business calls.
+          </p>
           {#if summary.rejections.total > 0}
             <div class="space-y-2">
               {#each summary.rejections.topReasons as r}
@@ -548,6 +603,28 @@
                 {#if summary.rejections.productSignal.quotes.length > 0}
                   <ul class="mt-2 space-y-1 pl-6">
                     {#each summary.rejections.productSignal.quotes as q}
+                      <li class="text-xs text-text-secondary">
+                        <span class="italic">"{q.freeText}"</span>
+                        <span class="text-text-muted">— {q.organizationName}</span>
+                      </li>
+                    {/each}
+                  </ul>
+                {/if}
+              </div>
+            {/if}
+            {#if summary.rejections.budgetSignal}
+              <div class="mt-3 rounded-lg bg-warning/10 p-2.5">
+                <div class="flex gap-2">
+                  <Banknote size={14} class="mt-0.5 shrink-0 text-warning" />
+                  <p class="text-xs text-text-secondary">
+                    <span class="font-medium text-text">Pricing signal:</span>
+                    {summary.rejections.budgetSignal.count}
+                    {summary.rejections.budgetSignal.count === 1 ? 'prospect' : 'prospects'} said the price didn't fit. Worth a pricing look.
+                  </p>
+                </div>
+                {#if summary.rejections.budgetSignal.quotes.length > 0}
+                  <ul class="mt-2 space-y-1 pl-6">
+                    {#each summary.rejections.budgetSignal.quotes as q}
                       <li class="text-xs text-text-secondary">
                         <span class="italic">"{q.freeText}"</span>
                         <span class="text-text-muted">— {q.organizationName}</span>
@@ -587,6 +664,7 @@
                     </li>
                   {/each}
                 </ul>
+                <p class="mt-1.5 text-xs text-text-muted">The AI already folds these into its targeting.</p>
               </div>
             {/if}
             {#if summary.rejections.recontactSoon}

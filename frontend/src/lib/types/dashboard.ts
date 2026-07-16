@@ -24,21 +24,45 @@ export interface DashboardTrendPoint {
   responses: number;
 }
 
-export type LearningStage = 'targeting' | 'body' | 'timing' | 'channel';
+export type LearningStage = 'targeting' | 'body' | 'timing' | 'channel' | 'discovery';
 
 export interface LearningEntry {
   stage: LearningStage;
   date: string;
   claim: string;
+  evidence: string | null;
+}
+
+export interface LearningAngle {
+  variantId: string;
+  label: string | null;
+  total: number;
+  responses: number;
+  replyRate: number;
+  mature: boolean;
+  leader: boolean;
 }
 
 export interface DashboardLearning {
-  bestSubject: { pattern: string; replyRate: number; mature: boolean } | null;
-  channelOrder: Array<{ channel: Channel; rate: number }>;
-  testing: { activeVariants: number; needsNewAngle: boolean };
+  bestSubject: { pattern: string; replyRate: number; mature: boolean; n: number } | null;
+  angles: LearningAngle[];
+  needsNewAngle: boolean;
   state: 'learning' | 'optimizing';
   log: LearningEntry[];
 }
+
+export type JournalEvent =
+  | {
+      date: string;
+      kind: 'variant_archived';
+      variantId: string;
+      label: string | null;
+      reason: 'stagnation' | 'dominated';
+      pBest: number | null;
+      n: number | null;
+    }
+  | { date: string; kind: 'variant_added'; variantId: string; label: string | null }
+  | { date: string; kind: 'strategy_escalated'; title: string };
 
 export type RejectionRecontactWindow = 'never' | '3_months' | '6_months' | '12_months' | 'unspecified';
 
@@ -67,6 +91,7 @@ export interface DashboardRejections {
   total: number;
   topReasons: Array<{ reason: string; count: number; percentage: number }>;
   productSignal: { count: number; quotes: RejectionQuote[] } | null;
+  budgetSignal: { count: number; quotes: RejectionQuote[] } | null;
   decisionMakers: DecisionMakerReferral[];
   notRelevant: NotRelevantNote[];
   recontactSoon: { window: RejectionRecontactWindow; count: number } | null;
@@ -116,6 +141,8 @@ export interface DashboardSummary {
   trend: DashboardTrendPoint[];
   replyRateTrend: { previous: number; current: number };
   learning: DashboardLearning;
+  journal: JournalEvent[];
+  lastCycleDate: string | null;
   rejections: DashboardRejections;
   recentActivity: DashboardActivityEvent[];
   attention: AttentionItem[];

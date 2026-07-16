@@ -30,6 +30,7 @@ import {
   PMF_RELEVANT_REASONS,
   FEATURE_GAP_REASON,
   NOT_RELEVANT_REASON,
+  BUDGET_REASON,
   type DecisionMakerPointer,
 } from '../domain/rejection-feedback'
 import { addMonthsUtc, nextStatusFromResponse } from '../domain/prospect-status'
@@ -515,6 +516,13 @@ export type RejectionFeedbackSummary = {
     prospectName: string
     organizationName: string
   }>
+  budgetNotes: Array<{
+    receivedAt: Date
+    freeText: string | null
+    prospectId: number
+    prospectName: string
+    organizationName: string
+  }>
   // Every bucket always present (empty: { count: 0, samples: [] }) so callers
   // iterate the five enum keys without optional-checks.
   recontactWindows: Record<RejectionRecontactWindow, RecontactWindowBucket>
@@ -621,7 +629,7 @@ export async function getRejectionFeedbackSummaryById(
     sql`, `,
   )
 
-  const [reasonRows, featureGapRows, recontactRows, decisionMakerRows, notRelevantRows] = await Promise.all([
+  const [reasonRows, featureGapRows, budgetRows, recontactRows, decisionMakerRows, notRelevantRows] = await Promise.all([
     db
       .select({
         reason: sql<string>`${responses.rejectionFeedback}->>'primary_reason'`,
@@ -648,6 +656,27 @@ export async function getRejectionFeedbackSummaryById(
         .where(and(
           ...baseConditions,
           sql`${responses.rejectionFeedback}->>'primary_reason' = ${FEATURE_GAP_REASON}`,
+        ))
+        .orderBy(desc(responses.receivedAt))
+        .limit(freeTextLimit),
+    ),
+
+    gated(scope !== 'pmf', () =>
+      db
+        .select({
+          receivedAt: responses.receivedAt,
+          freeText: sql<string | null>`${responses.rejectionFeedback}->>'free_text'`,
+          prospectId: outreachLogs.prospectId,
+          prospectName: prospects.name,
+          organizationName: organizations.name,
+        })
+        .from(responses)
+        .innerJoin(outreachLogs, eq(outreachLogs.id, responses.outreachLogId))
+        .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
+        .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
+        .where(and(
+          ...baseConditions,
+          sql`${responses.rejectionFeedback}->>'primary_reason' = ${BUDGET_REASON}`,
         ))
         .orderBy(desc(responses.receivedAt))
         .limit(freeTextLimit),
@@ -748,6 +777,13 @@ export async function getRejectionFeedbackSummaryById(
       }))
       .sort((a, b) => b.count - a.count),
     featureGapNotes: (featureGapRows ?? []).map((r) => ({
+      receivedAt: r.receivedAt,
+      freeText: r.freeText,
+      prospectId: r.prospectId,
+      prospectName: r.prospectName,
+      organizationName: r.organizationName,
+    })),
+    budgetNotes: (budgetRows ?? []).map((r) => ({
       receivedAt: r.receivedAt,
       freeText: r.freeText,
       prospectId: r.prospectId,

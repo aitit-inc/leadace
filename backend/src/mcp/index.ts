@@ -1349,7 +1349,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_rejection_feedback_summary',
-    'Aggregate rejection_feedback for a project. Returns primaryReasonDistribution, the tactical fields recontactWindows / decisionMakerPointers / notRelevantNotes, and the pmf field feature_gap free-text notes. Read-only view — any deferral or prospect creation these rows imply happened at record_response time, not on read.',
+    'Aggregate rejection_feedback for a project. Returns primaryReasonDistribution, the tactical fields recontactWindows / decisionMakerPointers / notRelevantNotes / budgetNotes (budget free-text), and the pmf field feature_gap free-text notes. Read-only view — any deferral or prospect creation these rows imply happened at record_response time, not on read.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       windowDays: z.number().int().min(1).max(3650).optional().describe('Restrict to rejections received within the last N days. Omit for all-time.'),

@@ -311,6 +311,7 @@ export async function getProjectStats(
     inquiryOutcomeRows,
     dailySentRows,
     dailyResponseRows,
+    variantMetaRows,
   ] = await Promise.all([
     rawQuery<{ totalOutreach: string | number }>(sql`SELECT COUNT(*)::int AS "totalOutreach" FROM outreach_logs WHERE project_id = ${projectId} AND status = ${SENT}`),
     // Channel mix counts confirmed activity only — exclude in-flight rows
@@ -426,6 +427,9 @@ export async function getProjectStats(
                  WHERE ol.project_id = ${projectId}
                    AND r.received_at >= ${trendSince}
                  GROUP BY day`),
+    // archived_at (not a boolean expression) so pooler string-typing can't lie; null stays null.
+    rawQuery<{ variantId: string; label: string | null; archivedAt: string | Date | null }>(sql`SELECT variant_id AS "variantId", label, archived_at AS "archivedAt"
+                 FROM message_variants WHERE project_id = ${projectId}`),
   ])
 
   const totalOutreach = Number(totalOutreachRows[0]?.totalOutreach ?? 0)
@@ -445,9 +449,14 @@ export async function getProjectStats(
     inquiryOutcomeCounts[row.outcome] = Number(row.count)
   }
 
+  const variantMeta = new Map(
+    variantMetaRows.map((r) => [r.variantId, { label: r.label, active: r.archivedAt === null }]),
+  )
   const variantStats = await getVariantStats(db, projectId, config)
   const variantResponseRate: EvaluationMetrics['variantResponseRate'] = variantStats.map((v) => ({
     variantId: v.variantId,
+    label: variantMeta.get(v.variantId)?.label ?? null,
+    active: variantMeta.get(v.variantId)?.active ?? false,
     total: v.total,
     responses: v.responses,
     rate: v.total === 0 ? 0 : Math.round((v.responses / v.total) * 1000) / 10,

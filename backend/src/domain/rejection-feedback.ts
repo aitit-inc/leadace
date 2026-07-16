@@ -39,6 +39,7 @@ export const rejectionFeedbackCommonSchema = z.object({
 // a silent 0-row SQL filter at runtime.
 export const FEATURE_GAP_REASON: RejectionPrimaryReason = 'feature_gap'
 export const NOT_RELEVANT_REASON: RejectionPrimaryReason = 'not_relevant'
+export const BUDGET_REASON: RejectionPrimaryReason = 'budget'
 
 export const PMF_RELEVANT_REASONS: readonly RejectionPrimaryReason[] = [
   'feature_gap',

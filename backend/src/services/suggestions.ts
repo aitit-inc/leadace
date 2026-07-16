@@ -7,6 +7,9 @@ import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 
 export const ADD_MEANS_SUGGESTION_KIND = 'add-means'
+// Written by /evaluate when a slump survives messaging rotations; the dashboard
+// journal reports its issuance as a decision event.
+export const REVISIT_STRATEGY_SUGGESTION_KIND = 'revisit-strategy'
 
 export const recordSuggestionBodySchema = z.object({
   kind: suggestionKindSchema,

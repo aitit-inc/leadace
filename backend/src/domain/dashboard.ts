@@ -21,17 +21,106 @@ export type DashboardTrendPoint = { date: string; sent: number; responses: numbe
 
 // Stage tags /evaluate writes into the Learnings Log, one per downstream decision a
 // skill acts on. '[retired]' is a tombstone, not a stage — readers (and parseLearnings) skip it.
-export const LEARNING_STAGES = ['targeting', 'body', 'timing', 'channel'] as const
+export const LEARNING_STAGES = ['targeting', 'body', 'timing', 'channel', 'discovery'] as const
 export type LearningStage = (typeof LEARNING_STAGES)[number]
 
-export type LearningEntry = { stage: LearningStage; date: string; claim: string }
+export type LearningEntry = { stage: LearningStage; date: string; claim: string; evidence: string | null }
+
+export type LearningAngle = {
+  variantId: string
+  label: string | null
+  total: number
+  responses: number
+  replyRate: number
+  mature: boolean
+  leader: boolean
+}
 
 export type DashboardLearning = {
-  bestSubject: { pattern: string; replyRate: number; mature: boolean } | null
-  channelOrder: { channel: Channel; rate: number }[]
-  testing: { activeVariants: number; needsNewAngle: boolean }
+  bestSubject: { pattern: string; replyRate: number; mature: boolean; n: number } | null
+  angles: LearningAngle[]
+  needsNewAngle: boolean
   state: 'learning' | 'optimizing'
   log: LearningEntry[]
+}
+
+export const JOURNAL_WINDOW_DAYS = 30
+
+export type JournalEvent =
+  | {
+      date: string
+      kind: 'variant_archived'
+      variantId: string
+      label: string | null
+      reason: 'stagnation' | 'dominated'
+      pBest: number | null
+      n: number | null
+    }
+  | { date: string; kind: 'variant_added'; variantId: string; label: string | null }
+  | { date: string; kind: 'strategy_escalated'; title: string }
+
+export type JournalDecisionDay = {
+  cycleDate: string
+  archived: Array<{ variantId: string; pBest?: number; n?: number; reason?: 'stagnation' }>
+}
+export type JournalVariantRow = { variantId: string; label: string | null; createdAt: Date | string }
+export type JournalEscalation = { title: string; createdAt: Date | string }
+
+const utcDay = (d: Date | string): string => new Date(d).toISOString().slice(0, 10)
+
+const JOURNAL_KIND_ORDER: Record<JournalEvent['kind'], number> = {
+  variant_added: 0,
+  variant_archived: 1,
+  strategy_escalated: 2,
+}
+
+// Only days where the arm set changed (or an escalation was raised) produce an
+// event — routine tick reweighting is internal state, not a decision to report.
+export function buildJournal(
+  decisions: JournalDecisionDay[],
+  variants: JournalVariantRow[],
+  escalations: JournalEscalation[],
+  windowStartDay: string,
+): JournalEvent[] {
+  const labelById = new Map(variants.map((v) => [v.variantId, v.label]))
+  const events: JournalEvent[] = []
+
+  for (const day of decisions) {
+    for (const a of day.archived) {
+      events.push({
+        date: day.cycleDate,
+        kind: 'variant_archived',
+        variantId: a.variantId,
+        label: labelById.get(a.variantId) ?? null,
+        reason: a.reason === 'stagnation' ? 'stagnation' : 'dominated',
+        // Pre-Phase-C rows carry Wilson-era fields instead of pBest/n — read null-safe.
+        pBest: typeof a.pBest === 'number' ? a.pBest : null,
+        n: typeof a.n === 'number' ? a.n : null,
+      })
+    }
+  }
+  for (const v of variants) {
+    const day = utcDay(v.createdAt)
+    if (day >= windowStartDay) {
+      events.push({ date: day, kind: 'variant_added', variantId: v.variantId, label: v.label })
+    }
+  }
+  for (const e of escalations) {
+    const day = utcDay(e.createdAt)
+    if (day >= windowStartDay) {
+      events.push({ date: day, kind: 'strategy_escalated', title: e.title })
+    }
+  }
+
+  return events.sort((a, b) => {
+    const byDate = a.date < b.date ? 1 : a.date > b.date ? -1 : 0
+    if (byDate !== 0) return byDate
+    const byKind = JOURNAL_KIND_ORDER[a.kind] - JOURNAL_KIND_ORDER[b.kind]
+    if (byKind !== 0) return byKind
+    const ak = a.kind !== 'strategy_escalated' ? a.variantId : a.title
+    const bk = b.kind !== 'strategy_escalated' ? b.variantId : b.title
+    return ak < bk ? -1 : ak > bk ? 1 : 0
+  })
 }
 
 export type RejectionQuote = {
@@ -59,6 +148,7 @@ export type DashboardRejections = {
   total: number
   topReasons: { reason: string; count: number; percentage: number }[]
   productSignal: { count: number; quotes: RejectionQuote[] } | null
+  budgetSignal: { count: number; quotes: RejectionQuote[] } | null
   decisionMakers: DecisionMakerReferral[]
   notRelevant: NotRelevantNote[]
   recontactSoon: { window: RejectionRecontactWindow; count: number } | null
@@ -108,6 +198,9 @@ export type DashboardSummary = {
   trend: DashboardTrendPoint[]
   replyRateTrend: { previous: number; current: number }
   learning: DashboardLearning
+  journal: JournalEvent[]
+  // Newest lever-tick cycle date (all-time, not window-bound); null = no tick has ever run.
+  lastCycleDate: string | null
   rejections: DashboardRejections
   recentActivity: DashboardActivityEvent[]
   attention: AttentionItem[]
@@ -182,8 +275,10 @@ export function parseLearnings(content: string | null): LearningEntry[] {
     const stage = m[1]!.toLowerCase()
     if (!LEARNING_STAGE_SET.has(stage)) continue
     const rest = m[3]!.trim()
-    const claim = rest.split(/\s*[—–-]+\s*evidence:/i)[0]!.trim()
-    out.push({ stage: stage as LearningStage, date: m[2]!, claim: claim || rest })
+    const [claimPart, ...evidenceParts] = rest.split(/\s*[—–-]+\s*evidence:\s*/i)
+    const claim = claimPart!.trim()
+    const evidence = evidenceParts.join(' ').trim() || null
+    out.push({ stage: stage as LearningStage, date: m[2]!, claim: claim || rest, evidence })
   }
   // Newest first: the doc's line order is LLM-authored and undefined, but the glance card
   // truncates to the top few — surface the most recent learnings deterministically.

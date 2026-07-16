@@ -17,13 +17,14 @@ const summary = (over: Partial<Rej> = {}): Rej => ({
   total: 0,
   primaryReasonDistribution: [],
   featureGapNotes: [],
+  budgetNotes: [],
   recontactWindows: emptyWindows(),
   decisionMakerPointers: [],
   notRelevantNotes: [],
   ...over,
 })
 
-const gapNote = (over: Partial<Rej['featureGapNotes'][number]>): Rej['featureGapNotes'][number] => ({
+const note = (over: Partial<Rej['featureGapNotes'][number]>): Rej['featureGapNotes'][number] => ({
   receivedAt: new Date(0),
   freeText: 'x',
   prospectId: 1,
@@ -62,10 +63,10 @@ describe('buildRejections', () => {
         total: 4,
         primaryReasonDistribution: [{ reason: 'feature_gap', count: 4, percentage: 100 }],
         featureGapNotes: [
-          gapNote({ freeText: 'need SSO', organizationName: 'Acme' }),
-          gapNote({ freeText: '   ', organizationName: 'Blank' }),
-          gapNote({ freeText: null, organizationName: 'Null' }),
-          gapNote({ freeText: 'API webhooks', organizationName: 'Beta' }),
+          note({ freeText: 'need SSO', organizationName: 'Acme' }),
+          note({ freeText: '   ', organizationName: 'Blank' }),
+          note({ freeText: null, organizationName: 'Null' }),
+          note({ freeText: 'API webhooks', organizationName: 'Beta' }),
         ],
       }),
     )
@@ -88,8 +89,30 @@ describe('buildRejections', () => {
     expect(r.productSignal).toBeNull()
   })
 
+  it('attaches budget quotes to budgetSignal, null when budget is absent', () => {
+    const withBudget = buildRejections(
+      summary({
+        total: 2,
+        primaryReasonDistribution: [{ reason: 'budget', count: 2, percentage: 100 }],
+        budgetNotes: [note({ freeText: 'too pricey for our team size', organizationName: 'Acme' })],
+      }),
+    )
+    expect(withBudget.budgetSignal).toEqual({
+      count: 2,
+      quotes: [{ freeText: 'too pricey for our team size', prospectName: 'P', organizationName: 'Acme' }],
+    })
+
+    const without = buildRejections(
+      summary({
+        total: 1,
+        primaryReasonDistribution: [{ reason: 'feature_gap', count: 1, percentage: 100 }],
+      }),
+    )
+    expect(without.budgetSignal).toBeNull()
+  })
+
   it('caps each qualitative slice at the display limit', () => {
-    const gaps = Array.from({ length: 6 }, (_, i) => gapNote({ freeText: `q${i}` }))
+    const gaps = Array.from({ length: 6 }, (_, i) => note({ freeText: `q${i}` }))
     const r = buildRejections(
       summary({
         total: 6,
@@ -135,6 +158,7 @@ describe('buildRejections', () => {
   it('emits empty slices and null signals when nothing qualitative is present', () => {
     const r = buildRejections(summary({ total: 0 }))
     expect(r.productSignal).toBeNull()
+    expect(r.budgetSignal).toBeNull()
     expect(r.decisionMakers).toEqual([])
     expect(r.notRelevant).toEqual([])
     expect(r.recontactSoon).toBeNull()

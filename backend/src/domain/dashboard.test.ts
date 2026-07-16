@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   buildFunnel,
+  buildJournal,
   buildTrend,
   computeDeltaPct,
   deriveAttentionItems,
@@ -114,13 +115,20 @@ describe('parseLearnings', () => {
       '[targeting] [2026-06-10] SaaS firms under 50 staff reply best — evidence: metric=replyRate, n=42',
     )
     expect(entries).toEqual([
-      { stage: 'targeting', date: '2026-06-10', claim: 'SaaS firms under 50 staff reply best' },
+      {
+        stage: 'targeting',
+        date: '2026-06-10',
+        claim: 'SaaS firms under 50 staff reply best',
+        evidence: 'metric=replyRate, n=42',
+      },
     ])
   })
 
   it('keeps the claim when no evidence tail is present', () => {
     const entries = parseLearnings('[body] [2026-06-01] short openers outperform long ones')
-    expect(entries).toEqual([{ stage: 'body', date: '2026-06-01', claim: 'short openers outperform long ones' }])
+    expect(entries).toEqual([
+      { stage: 'body', date: '2026-06-01', claim: 'short openers outperform long ones', evidence: null },
+    ])
   })
 
   it('drops [retired] tombstones and unrecognized stages', () => {
@@ -132,7 +140,26 @@ describe('parseLearnings', () => {
       ].join('\n'),
     )
     expect(entries).toEqual([
-      { stage: 'channel', date: '2026-06-02', claim: 'LinkedIn DMs land warmer when referencing a hire' },
+      {
+        stage: 'channel',
+        date: '2026-06-02',
+        claim: 'LinkedIn DMs land warmer when referencing a hire',
+        evidence: 'metric=replyRate, n=31',
+      },
+    ])
+  })
+
+  it('parses [discovery] entries', () => {
+    const entries = parseLearnings(
+      '[discovery] [2026-07-01] github-topics sources reply best — evidence: metric=replyRate, n=34',
+    )
+    expect(entries).toEqual([
+      {
+        stage: 'discovery',
+        date: '2026-07-01',
+        claim: 'github-topics sources reply best',
+        evidence: 'metric=replyRate, n=34',
+      },
     ])
   })
 
@@ -142,7 +169,9 @@ describe('parseLearnings', () => {
         '\n',
       ),
     )
-    expect(entries).toEqual([{ stage: 'timing', date: '2026-06-05', claim: '3-month recontacts convert' }])
+    expect(entries).toEqual([
+      { stage: 'timing', date: '2026-06-05', claim: '3-month recontacts convert', evidence: 'metric=meetingRate, n=12' },
+    ])
   })
 
   it('returns entries newest-first regardless of document order (so the truncated glance is deterministic)', () => {
@@ -160,6 +189,76 @@ describe('parseLearnings', () => {
     expect(parseLearnings(null)).toEqual([])
     expect(parseLearnings('')).toEqual([])
     expect(parseLearnings('\n\n')).toEqual([])
+  })
+})
+
+describe('buildJournal', () => {
+  const variants = [
+    { variantId: 'roi-focus', label: 'ROI focus', createdAt: '2026-07-10T09:00:00Z' },
+    { variantId: 'pain-first', label: null, createdAt: '2026-05-01T09:00:00Z' },
+  ]
+
+  it('maps rotation vs dominance archives and reads pre-Phase-C entries null-safe', () => {
+    const events = buildJournal(
+      [
+        {
+          cycleDate: '2026-07-14',
+          archived: [
+            { variantId: 'pain-first', pBest: 0.05, n: 42, reason: 'stagnation' },
+            { variantId: 'legacy-v1' },
+          ],
+        },
+      ],
+      variants,
+      [],
+      '2026-07-12',
+    )
+    expect(events).toEqual([
+      {
+        date: '2026-07-14',
+        kind: 'variant_archived',
+        variantId: 'legacy-v1',
+        label: null,
+        reason: 'dominated',
+        pBest: null,
+        n: null,
+      },
+      {
+        date: '2026-07-14',
+        kind: 'variant_archived',
+        variantId: 'pain-first',
+        label: null,
+        reason: 'stagnation',
+        pBest: 0.05,
+        n: 42,
+      },
+    ])
+  })
+
+  it('windows variant additions and escalations against windowStartDay', () => {
+    const events = buildJournal(
+      [],
+      variants,
+      [
+        { title: 'Revisit strategy', createdAt: '2026-07-12T00:30:00Z' },
+        { title: 'Stale escalation', createdAt: '2026-06-01T00:30:00Z' },
+      ],
+      '2026-06-16',
+    )
+    expect(events).toEqual([
+      { date: '2026-07-12', kind: 'strategy_escalated', title: 'Revisit strategy' },
+      { date: '2026-07-10', kind: 'variant_added', variantId: 'roi-focus', label: 'ROI focus' },
+    ])
+  })
+
+  it('sorts newest-first with added before archived within a day', () => {
+    const events = buildJournal(
+      [{ cycleDate: '2026-07-10', archived: [{ variantId: 'pain-first', pBest: 0.03, n: 35, reason: 'stagnation' }] }],
+      variants,
+      [],
+      '2026-06-16',
+    )
+    expect(events.map((e) => e.kind)).toEqual(['variant_added', 'variant_archived'])
   })
 })
 

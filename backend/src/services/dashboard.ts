@@ -1,12 +1,14 @@
 import { z } from 'zod'
 import { and, desc, eq, sql } from 'drizzle-orm'
-import { outreachLogs, projectDocuments, type Channel } from '../db/schema'
+import { outreachLogs, projectDocuments } from '../db/schema'
 import type { Db } from '../db/connection'
 import type { Edition } from '../domain/edition'
 import type { ProjectRef, TenantId } from '../domain/ids'
 import {
   DASHBOARD_PERIODS,
+  JOURNAL_WINDOW_DAYS,
   buildFunnel,
+  buildJournal,
   buildTrend,
   deriveAttentionItems,
   parseLearnings,
@@ -27,8 +29,9 @@ import type { RejectionRecontactWindow } from '../db/schema'
 import { ok, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { loadProjectOutboundAllowlist } from './project-settings'
-import { getLeverStateById } from './levers'
-import { listMessageVariantsById } from './message-variants'
+import { getLeverDecisionsHistory, getLeverStateById } from './levers'
+import { listMessageVariantsById, type MessageVariantRow } from './message-variants'
+import { REVISIT_STRATEGY_SUGGESTION_KIND } from './suggestions'
 import { getRejectionFeedbackSummaryById } from './responses'
 import { listRecentOutreachById } from './outreach'
 import { getTenantComplianceStatus, getOnboardingStatus } from './tenants'
@@ -87,12 +90,14 @@ export async function getDashboardSummary(
     hotLeadsRows,
     dailySentRows,
     dailyResponseRows,
-    channelRateRows,
+    lastCycleRows,
+    escalationRows,
     pendingDraftsRows,
     emailTemplateRows,
     learningsRows,
     outboundAllowlist,
     leverRes,
+    leverHistoryRes,
     variantsRes,
     rejectionRes,
     recentRes,
@@ -185,15 +190,15 @@ export async function getDashboardSummary(
       WHERE ol.project_id = ${projectId} AND r.received_at >= ${trendSinceIso}::timestamptz
         AND r.response_type NOT IN ('bounce', 'auto_reply')
       GROUP BY day`),
-    // All-time channel reply rate (no maturity gate, unlike evaluations.ts); used only to rank
-    // channels. DISTINCT keeps countable replies ≤ sends so the rate stays ≤ 100%.
-    raw<{ channel: Channel; total: string | number; responses: string | number }>(sql`
-      SELECT ol.channel AS channel,
-        COUNT(DISTINCT ol.id)::int AS total,
-        COUNT(DISTINCT ol.id) FILTER (WHERE r.id IS NOT NULL AND r.response_type NOT IN ('bounce', 'auto_reply'))::int AS responses
-      FROM outreach_logs ol LEFT JOIN responses r ON r.outreach_log_id = ol.id
-      WHERE ol.project_id = ${projectId} AND ol.status = 'sent'
-      GROUP BY ol.channel`),
+    // ::text so a direct (non-pooler) connection can't hand back a Date.
+    raw<{ last: string | null }>(sql`
+      SELECT MAX(cycle_date)::text AS last FROM lever_decisions WHERE project_id = ${projectId}`),
+    // Day-based cutoff matching the lever_decisions history window, so the
+    // journal's first UTC day is complete instead of rolling-instant-truncated.
+    raw<{ title: string; createdAt: string | Date }>(sql`
+      SELECT title, created_at AS "createdAt" FROM suggestions
+      WHERE project_id = ${projectId} AND kind = ${REVISIT_STRATEGY_SUGGESTION_KIND}
+        AND (created_at AT TIME ZONE 'UTC') >= (now() AT TIME ZONE 'UTC')::date - make_interval(days => ${JOURNAL_WINDOW_DAYS})`),
     db
       .select({ count: sql<number>`COUNT(*)::int` })
       .from(outreachLogs)
@@ -211,6 +216,7 @@ export async function getDashboardSummary(
       .limit(1),
     loadProjectOutboundAllowlist(db, projectId),
     getLeverStateById(db, tenantId, projectId),
+    getLeverDecisionsHistory(db, tenantId, projectId, JOURNAL_WINDOW_DAYS),
     listMessageVariantsById(db, tenantId, projectId),
     getRejectionFeedbackSummaryById(db, tenantId, projectId, {
       scope: 'all',
@@ -228,6 +234,7 @@ export async function getDashboardSummary(
 
   // One-by-one (not a loop) so each result narrows to its ok branch for the build below.
   if (!leverRes.ok) return leverRes
+  if (!leverHistoryRes.ok) return leverHistoryRes
   if (!variantsRes.ok) return variantsRes
   if (!rejectionRes.ok) return rejectionRes
   if (!recentRes.ok) return recentRes
@@ -257,8 +264,13 @@ export async function getDashboardSummary(
   const learning = buildLearning(
     leverRes.value,
     variantsRes.value.variants,
-    channelRateRows,
     parseLearnings(learningsRows[0]?.content ?? null),
+  )
+  const journal = buildJournal(
+    leverHistoryRes.value.decisions,
+    variantsRes.value.variants,
+    escalationRows,
+    new Date(now.getTime() - JOURNAL_WINDOW_DAYS * DAY_MS).toISOString().slice(0, 10),
   )
   const rejections = buildRejections(rejectionRes.value)
   const recentActivity = recentRes.value.logs
@@ -292,6 +304,8 @@ export async function getDashboardSummary(
       previous: Math.min(100, replyRate(Number(replyResponderRows[0]?.previous ?? 0), approached.previous)),
     },
     learning,
+    journal,
+    lastCycleDate: lastCycleRows[0]?.last ?? null,
     rejections,
     recentActivity,
     attention,
@@ -299,15 +313,13 @@ export async function getDashboardSummary(
 }
 
 type LeverStateLike = Awaited<ReturnType<typeof getLeverStateById>> extends ServiceResult<infer T> ? T : never
-type MessageVariantLike = { variantId: string; subjectPattern: string; label: string | null }
 
 function buildLearning(
   lever: LeverStateLike,
-  variants: MessageVariantLike[],
-  channelRows: { channel: Channel; total: string | number; responses: string | number }[],
+  variants: MessageVariantRow[],
   log: LearningEntry[],
 ): DashboardLearning {
-  const patternById = new Map(variants.map((v) => [v.variantId, v]))
+  const variantById = new Map(variants.map((v) => [v.variantId, v]))
 
   // Rank by bandit weight when present, else mature reply rate; skip 0-send arms (a 0-send "leader" is noise).
   const ranked = [...lever.variants].sort((a, b) => {
@@ -319,23 +331,28 @@ function buildLearning(
   const pick = ranked.find((v) => v.total > 0) ?? null
   const bestSubject = pick
     ? {
-        pattern: patternById.get(pick.variantId)?.subjectPattern ?? pick.variantId,
+        pattern: variantById.get(pick.variantId)?.subjectPattern ?? pick.variantId,
         replyRate: replyRate(pick.responses, pick.total),
         mature: pick.mature,
+        n: pick.total,
       }
     : null
 
-  const channelOrder = channelRows
-    .map((r) => ({ channel: r.channel, total: Number(r.total), responses: Number(r.responses) }))
-    .filter((r) => r.total > 0)
-    .map((r) => ({ channel: r.channel, rate: replyRate(r.responses, r.total) }))
-    .sort((a, b) => b.rate - a.rate)
+  const angles = ranked.map((v) => ({
+    variantId: v.variantId,
+    label: variantById.get(v.variantId)?.label ?? null,
+    total: v.total,
+    responses: v.responses,
+    replyRate: replyRate(v.responses, v.total),
+    mature: v.mature,
+    leader: pick !== null && v.variantId === pick.variantId,
+  }))
 
   const matureCount = lever.variants.filter((v) => v.mature).length
   return {
     bestSubject,
-    channelOrder,
-    testing: { activeVariants: lever.variants.length, needsNewAngle: lever.needsReplenishment },
+    angles,
+    needsNewAngle: lever.needsReplenishment,
     state: lever.weights && matureCount >= 2 ? 'optimizing' : 'learning',
     log,
   }
@@ -349,8 +366,22 @@ const RECONTACT_PRIORITY: RejectionRecontactWindow[] = ['3_months', '6_months', 
 
 const REJECTION_DETAIL_SHOWN = 3
 
+function quotesFrom(
+  notes: Array<{ freeText: string | null; prospectName: string; organizationName: string }>,
+): RejectionQuote[] {
+  return notes
+    .map((n) => ({
+      freeText: n.freeText?.trim() ?? '',
+      prospectName: n.prospectName,
+      organizationName: n.organizationName,
+    }))
+    .filter((q) => q.freeText.length > 0)
+    .slice(0, REJECTION_DETAIL_SHOWN)
+}
+
 export function buildRejections(rej: RejectionSummaryLike): DashboardRejections {
   const featureGap = rej.primaryReasonDistribution.find((r) => r.reason === 'feature_gap')
+  const budget = rej.primaryReasonDistribution.find((r) => r.reason === 'budget')
   let recontactSoon: DashboardRejections['recontactSoon'] = null
   for (const w of RECONTACT_PRIORITY) {
     const bucket = rej.recontactWindows[w]
@@ -359,15 +390,6 @@ export function buildRejections(rej: RejectionSummaryLike): DashboardRejections 
       break
     }
   }
-
-  const quotes: RejectionQuote[] = rej.featureGapNotes
-    .map((n) => ({
-      freeText: n.freeText?.trim() ?? '',
-      prospectName: n.prospectName,
-      organizationName: n.organizationName,
-    }))
-    .filter((q) => q.freeText.length > 0)
-    .slice(0, REJECTION_DETAIL_SHOWN)
 
   const decisionMakers: DecisionMakerReferral[] = rej.decisionMakerPointers
     .map((p) => ({
@@ -393,7 +415,12 @@ export function buildRejections(rej: RejectionSummaryLike): DashboardRejections 
   return {
     total: rej.total,
     topReasons: rej.primaryReasonDistribution.slice(0, 5),
-    productSignal: featureGap && featureGap.count > 0 ? { count: featureGap.count, quotes } : null,
+    productSignal:
+      featureGap && featureGap.count > 0
+        ? { count: featureGap.count, quotes: quotesFrom(rej.featureGapNotes) }
+        : null,
+    budgetSignal:
+      budget && budget.count > 0 ? { count: budget.count, quotes: quotesFrom(rej.budgetNotes) } : null,
     decisionMakers,
     notRelevant,
     recontactSoon,

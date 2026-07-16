@@ -10,7 +10,7 @@ export interface EvaluationMetrics {
   statusCounts: Array<{ status: string; count: number }>;
   channelResponseRate: Array<{ channel: string; total: number; responses: number; rate: number }>;
   channelByIndustry: Array<{ channel: string; industry: string | null; total: number; responses: number; rate: number }>;
-  variantResponseRate: Array<{ variantId: string; total: number; responses: number; rate: number; meanReward: number }>;
+  variantResponseRate: Array<{ variantId: string; label: string | null; active: boolean; total: number; responses: number; rate: number; meanReward: number }>;
   discoveryStrategyResponseRate: Array<{ strategy: string | null; total: number; responses: number; rate: number; bounces: number; bounceRate: number }>;
   // Targeting observation axes (backend EvaluationMetrics): mature sends only.
   industryResponseRate: Array<{ industry: string; total: number; responses: number; rate: number; bounces: number; bounceRate: number }>;
