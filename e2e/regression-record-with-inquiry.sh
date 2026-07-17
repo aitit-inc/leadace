@@ -192,8 +192,8 @@ CODE="$(api_status POST /api/outreach/record-with-inquiry "$(rwi_body "$P_US")")
 assert_eq "draft → 201" "$CODE" "201"
 assert_eq "status=pending_review" "$(echo "$BODY" | jq -r '.status // ""')" "pending_review"
 LID="$(last_log_id "$P_US")"; SID="$(token_shortid "$LID")"
-assert_eq "inquiry_tokens short_id is 8-char [A-Za-z0-9_-]" \
-  "$(echo "$SID" | grep -Eq '^[A-Za-z0-9_-]{8}$' && echo y || echo n)" "y"
+assert_eq "inquiry_tokens short_id is 22-char [A-Za-z0-9_-]" \
+  "$(echo "$SID" | grep -Eq '^[A-Za-z0-9_-]{22}$' && echo y || echo n)" "y"
 DBBODY="$(last_log_body "$LID")"
 assert_contains "persisted body carries the input core text" "$DBBODY" "$CORE_BODY"
 assert_contains "persisted body carries the footer separator" "$DBBODY" $'\n\n---\n'

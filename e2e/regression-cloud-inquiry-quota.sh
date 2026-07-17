@@ -28,9 +28,9 @@
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TS="$(date +%s)"
 EMAIL="e2e-cloud-chat-$TS@example.com"
-# short_id must match inquiryShortIdParamSchema: /^[A-Za-z0-9_-]{8}$/ (a real
-# 8-char nanoid). 6 random bytes → exactly 8 base64url chars in that alphabet.
-SHORT="$(node -e 'process.stdout.write(require("crypto").randomBytes(6).toString("base64url"))')"
+# short_id must match inquiryShortIdParamSchema: /^[A-Za-z0-9_-]{22}$/ (a real
+# 22-char nanoid). 16 random bytes → exactly 22 base64url chars in that alphabet.
+SHORT="$(node -e 'process.stdout.write(require("crypto").randomBytes(16).toString("base64url"))')"
 source "$REPO_ROOT/e2e/lib-cloud.sh"
 
 trap cloud_teardown EXIT

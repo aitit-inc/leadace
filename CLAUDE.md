@@ -78,6 +78,10 @@ Subscription is managed via Stripe. The API enforces limits based on user plan.
 
 All data is isolated by tenant. Every tenant-scoped table carries a `tenant_id` column, queries always filter on it, and RLS enforces the isolation at the DB level. See [.claude/rules/backend-architecture.md](.claude/rules/backend-architecture.md) for the schema (tables, role, middleware) and conventions (where `createDb()` is allowed to bypass RLS).
 
+## Compliance
+
+`gmail.readonly` is a Google Restricted scope: the **CASA AL1 security assessment must be renewed annually** (else readonly reply-reading is blocked). Runbook: [docs/casa.md](docs/casa.md).
+
 ## Development Rules
 
 - Language: English (both code comments and documentation)

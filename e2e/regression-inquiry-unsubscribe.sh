@@ -77,7 +77,7 @@ psql_local() { PGPASSWORD=postgres psql -h 127.0.0.1 -p 54322 -U postgres -d pos
 dnc()       { psql_local "SELECT do_not_contact FROM prospects WHERE id=$1;"; }
 rej_count() { psql_local "SELECT COUNT(*)::int FROM responses r JOIN outreach_logs o ON o.id=r.outreach_log_id WHERE o.prospect_id=$1 AND r.response_type='rejection';"; }
 all_resp()  { psql_local "SELECT COUNT(*)::int FROM responses r JOIN outreach_logs o ON o.id=r.outreach_log_id WHERE o.prospect_id=$1;"; }
-sid8()      { node -e 'process.stdout.write(require("crypto").createHash("md5").update(process.argv[1]).digest("hex").slice(0,8))' "${RUN_TAG}$1"; }
+sid()       { node -e 'process.stdout.write(require("crypto").createHash("md5").update(process.argv[1]).digest("hex").slice(0,22))' "${RUN_TAG}$1"; }
 
 mkseed() {
   local tag="$1"
@@ -152,7 +152,7 @@ pid_of() { echo "$LIST_RESP" | jq -r --arg e "contact@$RUN_TAG-$1.example" '.pro
 P_CL="$(pid_of chipless)"; P_WC="$(pid_of withchip)"; P_LD="$(pid_of lead)"
 [[ -n "$P_CL" && -n "$P_WC" && -n "$P_LD" ]] || { echo "could not resolve prospect ids" >&2; exit 1; }
 
-SID_CL="$(sid8 cl)"; SID_WC="$(sid8 wc)"; SID_LD="$(sid8 ld)"
+SID_CL="$(sid cl)"; SID_WC="$(sid wc)"; SID_LD="$(sid ld)"
 SESS_CL="$(seed_token_and_open "$P_CL" "$SID_CL")"
 SESS_WC="$(seed_token_and_open "$P_WC" "$SID_WC")"
 SESS_LD="$(seed_token_and_open "$P_LD" "$SID_LD")"

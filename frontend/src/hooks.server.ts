@@ -8,6 +8,26 @@ import {
 } from '$env/static/public';
 import { isSafeRelativePath } from '$lib/redirect';
 
+const SECURITY_HEADERS: Record<string, string> = {
+	'X-Frame-Options': 'DENY',
+	'X-Content-Type-Options': 'nosniff',
+	'Referrer-Policy': 'strict-origin-when-cross-origin',
+	'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload',
+	'Permissions-Policy': 'geolocation=(), microphone=(), camera=()',
+	'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
+};
+
+// The _headers file only reaches static assets — adapter-cloudflare serves the
+// app as a _worker.js, so SSR responses bypass it. Set the same headers here so
+// rendered pages carry them too. CSP is added separately by kit.csp.
+const securityHeaders: Handle = async ({ event, resolve }) => {
+	const response = await resolve(event);
+	for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
+		response.headers.set(name, value);
+	}
+	return response;
+};
+
 const supabase: Handle = async ({ event, resolve }) => {
 	event.locals.supabase = createServerClient(PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY, {
 		cookies: {
@@ -78,4 +98,4 @@ const authGuard: Handle = async ({ event, resolve }) => {
 	return resolve(event);
 };
 
-export const handle = sequence(supabase, authGuard);
+export const handle = sequence(securityHeaders, supabase, authGuard);

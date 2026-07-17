@@ -36,7 +36,9 @@ export async function verifyJwt(
     try {
       const jwksUrl = new URL('/auth/v1/.well-known/jwks.json', supabaseUrl)
       const JWKS = createRemoteJWKSet(jwksUrl)
-      const { payload } = await jwtVerify(token, JWKS)
+      // Issuer intentionally unpinned: a custom auth domain makes `iss`
+      // config-dependent, and a mismatch would reject every login.
+      const { payload } = await jwtVerify(token, JWKS, { algorithms: ['ES256'] })
       return decode(payload)
     } catch {
       // JWKS attempt failed; fall through to HS256 below.

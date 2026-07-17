@@ -30,7 +30,7 @@ const nonEmptyString = z.string().min(1)
 export const tenantIdSchema = nonEmptyString.transform((v): TenantId => v as TenantId)
 export const projectRefSchema = nonEmptyString.transform((v): ProjectRef => v as ProjectRef)
 export const sendingIdentityIdSchema = nonEmptyString.transform((v): SendingIdentityId => v as SendingIdentityId)
-// `ShortId` carries the inquiry-token shape invariant — 8-char [A-Za-z0-9_-].
+// `ShortId` carries the inquiry-token shape invariant — 22-char [A-Za-z0-9_-].
 // Bake the regex into the brand parser so any code holding a `ShortId` can
 // assume it matches the inquiry-token DB column.
 export const shortIdSchema = z

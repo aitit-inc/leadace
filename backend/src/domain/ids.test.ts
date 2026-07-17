@@ -36,13 +36,14 @@ describe('prospectIdParamSchema (path/query, coerced)', () => {
 })
 
 describe('shortIdSchema', () => {
-  it('accepts an 8-char [A-Za-z0-9_-] token', () => {
-    expect(shortIdSchema.safeParse('aB3_-xyz').success).toBe(true)
+  it('accepts a 22-char [A-Za-z0-9_-] token', () => {
+    expect(shortIdSchema.safeParse('aB3_-xyzaB3_-xyzaB3_-x').success).toBe(true)
   })
 
-  it('rejects wrong length or invalid characters', () => {
-    expect(shortIdSchema.safeParse('short').success).toBe(false)
-    expect(shortIdSchema.safeParse('aB3_-xy!').success).toBe(false)
+  it('rejects tokens that are not exactly 22 valid chars', () => {
+    expect(shortIdSchema.safeParse('aB3_-xyz').success).toBe(false)
+    expect(shortIdSchema.safeParse('aB3_-xyzaB3_-xyzaB3_-xy').success).toBe(false)
+    expect(shortIdSchema.safeParse('aB3_-xy!aB3_-xyzaB3_-x').success).toBe(false)
   })
 })
 
