@@ -7,6 +7,7 @@ export type ServiceErrorCode =
   | 'CONFLICT'             // 409 — state-mismatch on write
   | 'PRECONDITION_FAILED'  // 412 — e.g. Gmail not connected
   | 'UNPROCESSABLE'        // 422 — semantically invalid (DNC, missing channel)
+  | 'RATE_LIMITED'         // 429 — per-source abuse ceiling
   | 'INTERNAL_ERROR'       // 500 — non-programming failures the route
                            // can't recover from (Stripe checkout/portal create
                            // failure, etc.). Programming bugs should throw and

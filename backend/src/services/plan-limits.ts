@@ -107,7 +107,7 @@ export async function getTenantPlan(
   }
 }
 
-function startOfTodayUtc(now: Date = new Date()): Date {
+export function startOfTodayUtc(now: Date = new Date()): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
 }
 

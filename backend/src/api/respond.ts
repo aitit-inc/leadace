@@ -9,6 +9,7 @@ const STATUS_BY_CODE: Record<ServiceErrorCode, ContentfulStatusCode> = {
   CONFLICT: 409,
   PRECONDITION_FAILED: 412,
   UNPROCESSABLE: 422,
+  RATE_LIMITED: 429,
   INTERNAL_ERROR: 500,
   BAD_GATEWAY: 502,
 }

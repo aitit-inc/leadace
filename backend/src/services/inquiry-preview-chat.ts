@@ -26,6 +26,10 @@ import {
   CHAT_MAX_OUTPUT_TOKENS,
   type ChatPromptContext,
 } from './inquiry-chat'
+import {
+  takeChatRateSlot,
+  PREVIEW_CHAT_TURNS_PER_TENANT_PER_DAY,
+} from './chat-rate-limit'
 
 // Sender-side preview of the recipient inquiry chat. Stateless by design: it
 // writes nothing (no session, messages, outcome, response, DNC, status, or
@@ -101,6 +105,17 @@ export async function runInquiryPreviewChat(
     senderCompany: settings?.senderCompany ?? null,
     senderJobTitle: settings?.senderJobTitle ?? null,
   })
+
+  // The transcript-derived turn count above is client-controlled; this
+  // server-side ceiling is what actually bounds preview LLM spend.
+  const rateAllowed = await takeChatRateSlot(db, tenantId, 'preview', tenantId)
+  if (!rateAllowed) {
+    return err(
+      'RATE_LIMITED',
+      'Preview chat daily limit reached',
+      `Preview chat is limited to ${PREVIEW_CHAT_TURNS_PER_TENANT_PER_DAY} messages per day per workspace. The limit resets at UTC midnight.`,
+    )
+  }
 
   const turnNumber = userTurns + 1
   const instructions = buildSystemPrompt({ ...promptCtx, locale: input.locale }, turnNumber)

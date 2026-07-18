@@ -1029,6 +1029,25 @@ export const inquiryMessages = pgTable('inquiry_messages', {
   }).onDelete('cascade'),
 ])
 
+// Fixed-window abuse counters for the LLM-backed chat endpoints.
+// 'inquiry_link' keys by short_id; 'preview' keys by the tenant id.
+export type ChatRateScope = 'inquiry_link' | 'preview'
+
+export const chatRateWindows = pgTable('chat_rate_windows', {
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  scope: text('scope').$type<ChatRateScope>().notNull(),
+  key: text('key').notNull(),
+  windowStart: timestamp('window_start', { withTimezone: true }).notNull(),
+  used: integer('used').notNull(),
+}, (table) => [
+  primaryKey({
+    columns: [table.tenantId, table.scope, table.key, table.windowStart],
+    name: 'pk_chat_rate_windows',
+  }),
+])
+
 export const projectDocuments = pgTable('project_documents', {
   id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
   tenantId: text('tenant_id')

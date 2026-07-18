@@ -38,6 +38,7 @@ SUITES=(
   regression-cloud-limits
   regression-cloud-stripe-webhook
   regression-cloud-inquiry-quota
+  regression-cloud-inquiry-rate-limit
 )
 
 fail=0

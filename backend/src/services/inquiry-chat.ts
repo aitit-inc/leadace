@@ -20,6 +20,7 @@ import {
   isChatQuotaExhausted,
   formatChatQuotaError,
 } from './plan-limits'
+import { takeChatRateSlot } from './chat-rate-limit'
 import {
   appendInquiryMessage,
   closeSessionWithSummary,
@@ -119,6 +120,17 @@ export async function runInquiryChat(
 
   if (isChatQuotaExhausted(quota)) {
     return err('FORBIDDEN', 'Chat limit reached', formatChatQuotaError(quota))
+  }
+
+  // Keyed by short_id across sessions, so reopening a closed session (which
+  // resets the per-session turn cap) cannot multiply LLM spend.
+  const rateAllowed = await takeChatRateSlot(db, ctx.tenantId, 'inquiry_link', shortId)
+  if (!rateAllowed) {
+    return err(
+      'RATE_LIMITED',
+      'Chat message limit reached',
+      'This conversation has reached today\'s message limit. Use the "Request meeting" button, or come back tomorrow.',
+    )
   }
 
   const chatInput: OpenAIInputMessage[] = [
