@@ -89,13 +89,13 @@ assert_eq "  reachable.quota.bindingConstraint = daily" "$(echo "$REACH" | jq -r
 assert_eq "  reachable.message = daily message" "$(echo "$REACH" | jq -r '.message // ""')" \
   "Your free plan allows 5 outreach per day. Try again tomorrow or upgrade for higher limits."
 
-step "2. free lifetime cap (50) binds (daily window clear)"
+step "2. free lifetime cap (100) binds (daily window clear)"
 reset_outreach
-seed_sent 50 "NOW() - INTERVAL '2 days'"   # before today's UTC midnight → daily=0, lifetime=50
+seed_sent 100 "NOW() - INTERVAL '2 days'"  # before today's UTC midnight → daily=0, lifetime=100
 CODE="$(api_status POST /api/outreach/send-and-record "$(send_body)")"; BODY="$(api_body)"
 assert_eq "send-and-record at lifetime cap → 403" "$CODE" "403"
 assert_eq "  detail = lifetime message" "$(echo "$BODY" | jq -r '.detail // ""')" \
-  "Your free plan lifetime limit (50) is reached. Upgrade to keep sending."
+  "Your free plan lifetime limit (100) is reached. Upgrade to keep sending."
 REACH="$(api GET "/api/projects/$PROJ/prospects/reachable?limit=10")"
 assert_eq "  reachable.quota.bindingConstraint = lifetime" "$(echo "$REACH" | jq -r '.quota.bindingConstraint')" "lifetime"
 

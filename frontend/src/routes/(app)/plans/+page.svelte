@@ -43,7 +43,7 @@
       monthlyPrice: 79,
       yearlyPrice: 790,
       projects: '5 projects',
-      outreach: '10,000 outreach / month',
+      outreach: '4,000 outreach / month',
       priceIds: STRIPE_PRICES.pro,
     },
     {

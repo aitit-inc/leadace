@@ -25,12 +25,12 @@ const cappedOutreach = (over: Partial<Extract<OutreachQuota, { kind: 'capped' }>
 describe('getPlanLimits', () => {
   it('encodes the Free dual cap (daily + lifetime) and prospect cap', () => {
     expect(getPlanLimits('free')).toEqual({
-      maxProjects: 1, maxOutreachPerDay: 5, maxOutreachLifetime: 50, maxOutreachPerMonth: null, maxProspects: 500, maxSendingIdentities: 1,
+      maxProjects: 1, maxOutreachPerDay: 5, maxOutreachLifetime: 100, maxOutreachPerMonth: null, maxProspects: 500, maxSendingIdentities: 1,
     })
   })
 
   it('encodes paid monthly caps and unlimited tiers', () => {
-    expect(getPlanLimits('pro').maxOutreachPerMonth).toBe(10000)
+    expect(getPlanLimits('pro').maxOutreachPerMonth).toBe(4000)
     expect(getPlanLimits('pro').maxProjects).toBe(5)
     expect(getPlanLimits('scale')).toEqual({
       maxProjects: null, maxOutreachPerDay: null, maxOutreachLifetime: null, maxOutreachPerMonth: null, maxProspects: null, maxSendingIdentities: null,

@@ -57,7 +57,7 @@ interface PlanDef {
 
 const PLANS: PlanDef[] = [
   { tier: 'starter', name: 'Starter', description: '1 project, 1,500 outreach actions per month.', monthlyUsd: 29, yearlyUsd: 290 },
-  { tier: 'pro', name: 'Pro', description: '5 projects, 10,000 outreach actions per month.', monthlyUsd: 79, yearlyUsd: 790 },
+  { tier: 'pro', name: 'Pro', description: '5 projects, 4,000 outreach actions per month.', monthlyUsd: 79, yearlyUsd: 790 },
   { tier: 'scale', name: 'Scale', description: 'Unlimited projects and outreach actions.', monthlyUsd: 199, yearlyUsd: 1990 },
 ]
 

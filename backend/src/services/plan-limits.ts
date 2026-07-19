@@ -35,9 +35,9 @@ export interface PlanLimits {
 }
 
 const PLAN_LIMITS: Record<PlanTier, PlanLimits> = {
-  free:      { maxProjects: 1,    maxOutreachPerDay: 5,    maxOutreachLifetime: 50,   maxOutreachPerMonth: null,  maxProspects: 500,  maxSendingIdentities: 1 },
+  free:      { maxProjects: 1,    maxOutreachPerDay: 5,    maxOutreachLifetime: 100,  maxOutreachPerMonth: null,  maxProspects: 500,  maxSendingIdentities: 1 },
   starter:   { maxProjects: 1,    maxOutreachPerDay: null, maxOutreachLifetime: null, maxOutreachPerMonth: 1500,  maxProspects: null, maxSendingIdentities: 2 },
-  pro:       { maxProjects: 5,    maxOutreachPerDay: null, maxOutreachLifetime: null, maxOutreachPerMonth: 10000, maxProspects: null, maxSendingIdentities: 5 },
+  pro:       { maxProjects: 5,    maxOutreachPerDay: null, maxOutreachLifetime: null, maxOutreachPerMonth: 4000,  maxProspects: null, maxSendingIdentities: 5 },
   scale:     { maxProjects: null, maxOutreachPerDay: null, maxOutreachLifetime: null, maxOutreachPerMonth: null,  maxProspects: null, maxSendingIdentities: null },
   unlimited: { maxProjects: null, maxOutreachPerDay: null, maxOutreachLifetime: null, maxOutreachPerMonth: null,  maxProspects: null, maxSendingIdentities: null },
 }

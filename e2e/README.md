@@ -371,7 +371,7 @@ tenant. Shared helpers live in `e2e/lib-cloud.sh`.
 - `regression-cloud-quota.sh` — outreach quota binding end-to-end: free
   daily-5 (send-and-record → 403 with the daily message and NO `pre_send` row
   allocated; `record_outreach('sent')` → 403; `reachable` → empty list +
-  "try again tomorrow"), free lifetime-50, starter monthly-1500, and the
+  "try again tomorrow"), free lifetime-100, starter monthly-1500, and the
   `effectiveLimit = min(limit, remaining)` clamp on `reachable` (incl. an
   in-flight `pre_send` row counting toward used).
 - `regression-cloud-limits.sh` — `maxProjects` (free=1, pro=5 → 403 at the cap,

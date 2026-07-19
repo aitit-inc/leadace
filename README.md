@@ -111,7 +111,7 @@ modified Apache 2.0 with two additional conditions:
 
 ### Hosted service (cloud)
 
-- **Free tier:** 1 project, 500 prospects, 5 outreach actions per day (50 lifetime cap)
+- **Free tier:** 1 project, 500 prospects, 5 outreach actions per day (100 lifetime cap)
 - **Paid plans** start at $29/month. Manage your subscription from the web app.
 
 ### Self-host

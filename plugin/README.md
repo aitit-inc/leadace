@@ -95,7 +95,7 @@ Modified Apache 2.0 (no multi-tenant SaaS, frontend logo preserved), by
 SurpassOne Inc. See [LICENSE](../../LICENSE).
 
 - **Hosted (cloud) free tier:** 1 project, 500 prospects, 5 outreach
-  actions per day (50 lifetime cap).
+  actions per day (100 lifetime cap).
 - **Paid plans** start at $29/month. Manage your subscription from the web app.
 - **Self-host:** unlimited tier by default. See
   [docs/self-host.md](../../docs/self-host.md).

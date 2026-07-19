@@ -64,10 +64,13 @@ Subscription is managed via Stripe. The API enforces limits based on user plan.
 | | Free | Starter $29/mo | Pro $79/mo | Scale $199/mo |
 |---|---|---|---|---|
 | Projects | 1 | 1 | 5 | Unlimited |
-| Outreach actions | 5/day (50 lifetime cap) | 1,500/mo | 10,000/mo | Unlimited |
+| Outreach actions | 5/day (100 lifetime cap) | 1,500/mo | 4,000/mo | Unlimited |
+| Sending identities | 1 | 2 | 5 | Unlimited |
 | Prospect registration | 500 (lifetime) | — | — | — |
 
-- Free has two outreach caps: `5/day` AND `50 lifetime`. Whichever runs out first blocks send. Paid plans use a single monthly cap that resets at the Stripe `current_period_start`.
+Monthly caps derive from sending identities × ~25/day per-identity safe send rate (×30 days), rounded up to the next 500. Plans differentiate on throughput (identities, outreach volume, projects) only — insights computed from a tenant's own data are fully visible on every plan, never plan-gated.
+
+- Free has two outreach caps: `5/day` AND `100 lifetime`. Whichever runs out first blocks send. Paid plans use a single monthly cap that resets at the Stripe `current_period_start`.
 - Daily window is UTC midnight-to-midnight (no per-tenant timezone).
 - Outreach action = `record_outreach` with `status: "sent"`. Failed attempts don't count.
 - Quota enforcement: `get_outbound_targets` returns `min(requested, remainingQuota, availableTargets)` where `remainingQuota` is the smallest remaining across all applicable windows. When 0, returns empty list with a constraint-specific message ("try again tomorrow" for daily, "upgrade" for lifetime/monthly). `record_outreach` and `/outreach/send-and-record` guard as a safety net.
