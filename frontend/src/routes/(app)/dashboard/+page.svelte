@@ -2,7 +2,7 @@
   import { goto, invalidate } from '$app/navigation';
   import type { Component } from 'svelte';
   import type { PageProps } from './$types';
-  import type { AttentionItem, DashboardActivityKind, FunnelStageKey, JournalEvent } from '$lib/types/dashboard';
+  import type { AttentionItem, DashboardActivityKind, JournalEvent } from '$lib/types/dashboard';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import SuggestionsSection from '$lib/components/dashboard/SuggestionsSection.svelte';
   import {
@@ -45,30 +45,30 @@
     goto(`?period=${p}`, { replaceState: true, keepFocus: true, noScroll: true });
   }
 
-  type Kpi = {
-    label: string;
-    icon: Component;
-    value: { current: number; deltaPct: number | null };
-    sub: string;
-    highlight: boolean;
-  };
-  let kpis = $derived<Kpi[]>(
+  // One card per funnel stage: KPI count + period delta + conversion from the
+  // previous stage, linking to the /outreach drill-down for the same events.
+  // `key` indexes summary.funnel; `stage` indexes summary.kpis and is the
+  // /outreach?stage= param.
+  const STAGE_DEFS = [
+    { key: 'sent', stage: 'approached', label: 'Approached', icon: Send, sub: 'prospects contacted', prevLabel: null, highlight: false },
+    { key: 'reached', stage: 'reached', label: 'Reached', icon: MousePointerClick, sub: 'opened their page', prevLabel: 'approached', highlight: false },
+    { key: 'engaged', stage: 'engaged', label: 'Engaged', icon: MessagesSquare, sub: 'replied, chatted, or signed up', prevLabel: 'reached', highlight: false },
+    { key: 'won', stage: 'won', label: 'Won', icon: Trophy, sub: 'meetings + signups', prevLabel: 'engaged', highlight: true },
+  ] as const;
+  let stageCards = $derived(
     summary
-      ? [
-          { label: 'Approached', icon: Send, value: summary.kpis.approached, sub: 'prospects contacted', highlight: false },
-          { label: 'Reached', icon: MousePointerClick, value: summary.kpis.reached, sub: 'opened their page', highlight: false },
-          { label: 'Engaged', icon: MessagesSquare, value: summary.kpis.engaged, sub: 'replied, chatted, or signed up', highlight: false },
-          { label: 'Won', icon: Trophy, value: summary.kpis.won, sub: 'meetings + signups', highlight: true },
-        ]
+      ? STAGE_DEFS.map((def) => ({
+          ...def,
+          value: summary.kpis[def.stage],
+          conversion: summary.funnel.find((s) => s.key === def.key)?.conversionFromPrev ?? null,
+        }))
       : [],
   );
 
-  const FUNNEL_LABELS: Record<FunnelStageKey, string> = {
-    sent: 'Approached',
-    reached: 'Reached',
-    engaged: 'Engaged',
-    won: 'Won',
-  };
+  function stageHref(stage: string): string {
+    return data.period === 'all' ? `/outreach?stage=${stage}` : `/outreach?stage=${stage}&period=${data.period}`;
+  }
+
   const LEARNING_STAGE_LABELS: Record<string, string> = {
     targeting: 'Targeting',
     body: 'Message',
@@ -100,16 +100,6 @@
     }
     return { text: `Flagged for your review: ${e.title}`, detail: null };
   }
-  const FUNNEL_BAR: Record<FunnelStageKey, string> = {
-    sent: 'bg-accent/85',
-    reached: 'bg-accent/65',
-    engaged: 'bg-accent/45',
-    won: 'bg-success',
-  };
-
-  // Scale bars to the largest stage, not to "sent": a lagged open/reply can land in-period
-  // while its send was earlier, so a later stage can exceed sent.
-  let funnelMax = $derived(Math.max(1, ...(summary?.funnel ?? []).map((s) => s.count)));
   let trendMax = $derived(Math.max(1, ...(summary?.trend ?? []).map((t) => t.sent)));
   let hasTrendActivity = $derived((summary?.trend ?? []).some((t) => t.sent > 0 || t.responses > 0));
   // Reply rate is the selected-window KPI, independent of the fixed 30-day trend bars below it.
@@ -363,71 +353,46 @@
     </div>
 
     <section class="grid grid-cols-2 gap-3 lg:grid-cols-4">
-      {#each kpis as kpi}
-        {@const Icon = kpi.icon}
-        <div class="rounded-xl border p-4 {kpi.highlight ? 'border-accent/30 bg-accent/5' : 'border-border bg-surface'}">
+      {#each stageCards as card}
+        {@const Icon = card.icon}
+        <a
+          href={stageHref(card.stage)}
+          class="rounded-xl border p-4 transition-colors {card.highlight
+            ? 'border-accent/30 bg-accent/5 hover:bg-accent/10'
+            : 'border-border bg-surface hover:bg-surface-2'}"
+        >
           <div class="flex items-center justify-between">
-            <span class="text-xs font-medium uppercase tracking-wider {kpi.highlight ? 'text-accent-strong' : 'text-text-muted'}">
-              {kpi.label}
+            <span class="text-xs font-medium uppercase tracking-wider {card.highlight ? 'text-accent-strong' : 'text-text-muted'}">
+              {card.label}
             </span>
-            <Icon size={15} class={kpi.highlight ? 'text-accent' : 'text-text-muted'} />
+            <Icon size={15} class={card.highlight ? 'text-accent' : 'text-text-muted'} />
           </div>
           <div class="mt-2 flex items-baseline gap-2">
-            <span class="font-mono text-3xl font-semibold text-text">{kpi.value.current}</span>
-            {#if kpi.value.deltaPct !== null}
-              {#if kpi.value.deltaPct >= 0}
+            <span class="font-mono text-3xl font-semibold text-text">{card.value.current}</span>
+            {#if card.value.deltaPct !== null}
+              {#if card.value.deltaPct >= 0}
                 <span class="inline-flex items-center gap-0.5 text-xs font-medium text-success">
-                  <TrendingUp size={13} />{kpi.value.deltaPct}%
+                  <TrendingUp size={13} />{card.value.deltaPct}%
                 </span>
               {:else}
                 <span class="inline-flex items-center gap-0.5 text-xs font-medium text-danger">
-                  <TrendingDown size={13} />{kpi.value.deltaPct}%
+                  <TrendingDown size={13} />{card.value.deltaPct}%
                 </span>
               {/if}
             {/if}
           </div>
-          <p class="mt-1 text-xs text-text-muted">{kpi.sub}</p>
-        </div>
+          <p class="mt-1 text-xs text-text-muted">
+            {#if card.conversion !== null && card.prevLabel}
+              <span class="font-medium text-text-secondary">{card.conversion}% of {card.prevLabel}</span> ·
+            {/if}
+            {card.sub}
+          </p>
+        </a>
       {/each}
     </section>
 
     <section class="grid grid-cols-1 gap-3 lg:grid-cols-5">
       <div class="space-y-3 lg:col-span-3">
-        <div class="rounded-xl border border-border bg-surface p-5">
-          <div class="mb-4 flex items-center justify-between">
-            <h3 class="text-sm font-semibold text-text">Funnel</h3>
-            <span class="text-xs text-text-muted">selected period</span>
-          </div>
-          {#if summary.funnel.some((s) => s.count > 0)}
-            <div class="space-y-2.5">
-              {#each summary.funnel as stage}
-                <div class="flex items-center gap-3">
-                  <span class="w-20 shrink-0 text-xs {stage.key === 'won' ? 'font-medium text-text' : 'text-text-secondary'}">
-                    {FUNNEL_LABELS[stage.key]}
-                  </span>
-                  <div class="h-7 flex-1 rounded-md bg-surface-2">
-                    <div
-                      class="flex h-7 items-center rounded-md pl-2.5 text-xs font-medium text-white {FUNNEL_BAR[stage.key]} {stage.count > 0 ? 'min-w-10' : ''}"
-                      style="width: {Math.round((stage.count / funnelMax) * 100)}%"
-                    >
-                      {stage.count}
-                    </div>
-                  </div>
-                  <span class="w-10 shrink-0 text-right font-mono text-xs text-text-muted">
-                    {stage.conversionFromPrev !== null ? `${stage.conversionFromPrev}%` : ''}
-                  </span>
-                </div>
-              {/each}
-            </div>
-            <p class="mt-3 border-t border-border pt-3 text-xs text-text-muted">
-              Each step shows conversion from the one above. The job is to keep
-              <span class="text-text-secondary">Won</span> growing.
-            </p>
-          {:else}
-            <EmptyState message="No activity in this period yet." />
-          {/if}
-        </div>
-
         <div class="rounded-xl border border-border bg-surface p-5">
           <div class="mb-1 flex items-center justify-between">
             <h3 class="text-sm font-semibold text-text">Activity</h3>
@@ -467,6 +432,28 @@
             </div>
           {:else}
             <EmptyState message="No activity in the last 30 days." />
+          {/if}
+        </div>
+
+        <div class="rounded-xl border border-border bg-surface">
+          <div class="flex items-center justify-between border-b border-border px-5 py-3">
+            <h3 class="text-sm font-semibold text-text">Recent activity</h3>
+            <a href="/outreach" class="text-xs font-medium text-accent hover:text-accent-strong">View all</a>
+          </div>
+          {#if summary.recentActivity.length > 0}
+            <div class="divide-y divide-border text-sm">
+              {#each summary.recentActivity as ev}
+                {@const meta = activityMeta(ev.kind)}
+                <div class="flex items-center gap-3 px-5 py-2.5">
+                  <span class="w-16 shrink-0 text-xs text-text-muted">{timeAgo(ev.at)}</span>
+                  <span class="w-40 shrink-0 truncate text-text">{ev.prospectName}</span>
+                  <span class="rounded px-1.5 py-0.5 text-[11px] font-medium {meta.chip}">{meta.label}</span>
+                  <span class="ml-auto hidden truncate text-xs text-text-muted sm:inline">{ev.organizationDomain}</span>
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <EmptyState message="No activity yet." />
           {/if}
         </div>
       </div>
@@ -678,28 +665,6 @@
           {/if}
         </div>
       </div>
-    </section>
-
-    <section class="rounded-xl border border-border bg-surface">
-      <div class="flex items-center justify-between border-b border-border px-5 py-3">
-        <h3 class="text-sm font-semibold text-text">Recent activity</h3>
-        <a href="/outreach" class="text-xs font-medium text-accent hover:text-accent-strong">View all</a>
-      </div>
-      {#if summary.recentActivity.length > 0}
-        <div class="divide-y divide-border text-sm">
-          {#each summary.recentActivity as ev}
-            {@const meta = activityMeta(ev.kind)}
-            <div class="flex items-center gap-3 px-5 py-2.5">
-              <span class="w-16 shrink-0 text-xs text-text-muted">{timeAgo(ev.at)}</span>
-              <span class="w-40 shrink-0 truncate text-text">{ev.prospectName}</span>
-              <span class="rounded px-1.5 py-0.5 text-[11px] font-medium {meta.chip}">{meta.label}</span>
-              <span class="ml-auto hidden truncate text-xs text-text-muted sm:inline">{ev.organizationDomain}</span>
-            </div>
-          {/each}
-        </div>
-      {:else}
-        <EmptyState message="No activity yet." />
-      {/if}
     </section>
   </div>
 {:else}

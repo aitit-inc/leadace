@@ -86,6 +86,10 @@ on, need no Claude session, and run fast:
 - `regression-record-with-inquiry.sh` — `record_outreach_with_inquiry` footer
   persistence by mode (draft bakes the `/q/<shortId>` footer into the row; send
   keeps `body==input` verbatim) + send-mode DNC/country gates.
+- `regression-funnel-drilldown.sh` — dashboard funnel KPIs pinned to the
+  `/outreach/recent?stage=&period=` drill-down filter: per-stage distinct
+  prospects agree across both endpoints, period window, log-vs-prospect unit,
+  `inquiryOutcome` on list rows, 400 on invalid stage/period.
 - `regression-draft-send.sh` — `sendDraft`/`markDraftSent` preconditions +
   re-applied compliance/country at send time; `markDraftSent` happy path (no
   Gmail); `sendDraft` Gmail leg gated on `sending_identities` + override.

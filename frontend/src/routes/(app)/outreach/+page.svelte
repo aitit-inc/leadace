@@ -2,7 +2,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { listOutreachResponses } from '$lib/api/outreach';
-  import type { OutreachStatus } from '$lib/types/outreach';
+  import type { FunnelStageFilter, InquiryOutcome, OutreachStatus } from '$lib/types/outreach';
   import type { OutreachResponse } from '$lib/types/responses';
   import ChannelBadge from '$lib/components/ChannelBadge.svelte';
   import SentimentBadge from '$lib/components/SentimentBadge.svelte';
@@ -18,6 +18,21 @@
   let responsesCache = $state<Record<number, OutreachResponse[]>>({});
   let loadingResponses = $state<Record<number, boolean>>({});
 
+  let filterStage = $derived<string>(data.filters.stage);
+  let filterPeriod = $derived<string>(data.filters.period);
+
+  const STAGE_OPTIONS: { value: FunnelStageFilter; label: string }[] = [
+    { value: 'approached', label: 'Approached' },
+    { value: 'reached', label: 'Reached' },
+    { value: 'engaged', label: 'Engaged' },
+    { value: 'won', label: 'Won' },
+  ];
+  const PERIOD_OPTIONS: { value: '7d' | '30d'; label: string }[] = [
+    { value: '7d', label: 'Last 7 days' },
+    { value: '30d', label: 'Last 30 days' },
+  ];
+  let stageLabel = $derived(STAGE_OPTIONS.find((s) => s.value === filterStage)?.label ?? null);
+
   // Reset per-row expand state when the underlying list changes (page/project
   // change). The cache is intentionally kept — replies for log #N don't
   // change shape just because we paged away and came back.
@@ -26,12 +41,31 @@
     expandedId = null;
   });
 
-  function onPageChange(n: number) {
+  function updateUrl(next: { stage?: string; period?: string; page?: number }) {
     const sp = new URLSearchParams(page.url.searchParams);
-    if (n > 1) sp.set('page', String(n));
+    const stage = next.stage ?? filterStage;
+    const period = next.period ?? filterPeriod;
+    const nextPage = next.page ?? data.page;
+
+    if (stage) sp.set('stage', stage);
+    else sp.delete('stage');
+    if (period) sp.set('period', period);
+    else sp.delete('period');
+    if (next.page !== undefined && nextPage > 1) sp.set('page', String(nextPage));
     else sp.delete('page');
+
     const qs = sp.toString();
     void goto(qs ? `?${qs}` : '?', { replaceState: true, keepFocus: true, noScroll: true });
+  }
+
+  function onStageChange(e: Event) {
+    updateUrl({ stage: (e.currentTarget as HTMLSelectElement).value, page: 1 });
+  }
+  function onPeriodChange(e: Event) {
+    updateUrl({ period: (e.currentTarget as HTMLSelectElement).value, page: 1 });
+  }
+  function onPageChange(n: number) {
+    updateUrl({ page: n });
   }
 
   async function toggleExpand(logId: number) {
@@ -88,12 +122,41 @@
   function replyLabel(n: number): string {
     return n === 1 ? '1 reply' : `${n} replies`;
   }
+
+  // Labels/colors match the dashboard's Recent activity chips.
+  const INQUIRY_OUTCOME_META: Record<InquiryOutcome, { label: string; chip: string }> = {
+    opened: { label: 'Opened page', chip: 'bg-surface-2 text-text-secondary' },
+    inquired: { label: 'Chatted', chip: 'bg-info/15 text-info' },
+    unsubscribed: { label: 'Unsubscribed', chip: 'bg-danger/15 text-danger' },
+    signup_clicked: { label: 'Signed up', chip: 'bg-success/15 text-success' },
+    lead: { label: 'Meeting request', chip: 'bg-success/15 text-success' },
+  };
 </script>
 
 <h2 class="text-lg font-semibold text-text mb-4">Outreach Logs</h2>
 
+<div class="flex flex-wrap items-center gap-4 mb-4">
+  <select value={filterStage} onchange={onStageChange} class="bg-surface rounded px-2 py-1 text-xs text-text outline-none">
+    <option value="">All sends</option>
+    {#each STAGE_OPTIONS as s}
+      <option value={s.value}>{s.label}</option>
+    {/each}
+  </select>
+  <select value={filterPeriod} onchange={onPeriodChange} class="bg-surface rounded px-2 py-1 text-xs text-text outline-none">
+    <option value="">All time</option>
+    {#each PERIOD_OPTIONS as p}
+      <option value={p.value}>{p.label}</option>
+    {/each}
+  </select>
+  {#if stageLabel}
+    <p class="text-xs text-text-muted">
+      Sends whose prospect reached “{stageLabel}” — a prospect with several sends can appear more than once.
+    </p>
+  {/if}
+</div>
+
 {#if data.logs.length === 0}
-  <EmptyState message="No outreach logs yet" />
+  <EmptyState message={filterStage || filterPeriod ? 'No sends match the current filter' : 'No outreach logs yet'} />
 {:else}
   <div class="space-y-0">
     <div class="hidden md:grid grid-cols-[110px_68px_60px_190px_minmax(0,1fr)] gap-4 px-3 py-2 text-xs font-medium text-text-muted">
@@ -129,6 +192,11 @@
           {#if log.responseCount > 0}
             <span class="ml-2 text-[11px] text-success font-medium">↳ {replyLabel(log.responseCount)}</span>
           {/if}
+          {#if log.inquiryOutcome}
+            <span class="ml-2 rounded px-1.5 py-0.5 text-[11px] font-medium {INQUIRY_OUTCOME_META[log.inquiryOutcome].chip}">
+              {INQUIRY_OUTCOME_META[log.inquiryOutcome].label}
+            </span>
+          {/if}
         </span>
       </button>
 
@@ -158,6 +226,13 @@
         <p class="text-xs text-text-secondary line-clamp-2">{truncate(log.body, 120)}</p>
         {#if log.responseCount > 0 && log.latestResponseAt}
           <p class="text-[11px] text-success font-medium">↳ {replyLabel(log.responseCount)} · {formatDate(log.latestResponseAt)}</p>
+        {/if}
+        {#if log.inquiryOutcome}
+          <p>
+            <span class="rounded px-1.5 py-0.5 text-[11px] font-medium {INQUIRY_OUTCOME_META[log.inquiryOutcome].chip}">
+              {INQUIRY_OUTCOME_META[log.inquiryOutcome].label}
+            </span>
+          </p>
         {/if}
       </button>
 

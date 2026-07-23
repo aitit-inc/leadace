@@ -8,6 +8,13 @@ export type Channel = 'email' | 'form' | 'sns_twitter' | 'sns_linkedin' | 'platf
 // no-contact decision and does appear in those feeds.
 export type OutreachStatus = 'sent' | 'failed' | 'pending_review' | 'skipped';
 
+// Mirrors backend inquiryOutcomeEnum (db/schema.ts).
+export type InquiryOutcome = 'opened' | 'inquired' | 'unsubscribed' | 'signup_clicked' | 'lead';
+
+// Mirrors backend funnelStageSchema (services/outreach.ts) — the dashboard
+// KPI drill-down filter on /outreach.
+export type FunnelStageFilter = 'approached' | 'reached' | 'engaged' | 'won';
+
 export interface OutreachLog {
   id: number;
   prospectId: number;
@@ -21,6 +28,9 @@ export interface OutreachLog {
   errorMessage: string | null;
   responseCount: number;
   latestResponseAt: string | null;
+  // Most-significant inquiry-page outcome ever recorded for this send
+  // (backend RecentOutreachLog.inquiryOutcome); null = page never opened.
+  inquiryOutcome: InquiryOutcome | null;
 }
 
 export interface OutreachDraft {

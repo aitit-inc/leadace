@@ -106,6 +106,9 @@ export async function getDashboardSummary(
     gmailRes,
     planRes,
   ] = await Promise.all([
+    // The four KPI stage queries below define the funnel-stage events. They MUST stay
+    // in lockstep with funnelStageCondition in services/outreach.ts — the KPI drill-down
+    // filter over the same events (pinned by e2e/regression-funnel-drilldown.sh).
     // approached = distinct prospects contacted in the window (matches the lower funnel stages' unit)
     raw<WindowCountRow>(sql`
       SELECT
@@ -225,7 +228,7 @@ export async function getDashboardSummary(
       notRelevantLimit: 5,
       ...(windowDays !== undefined ? { windowDays } : {}),
     }),
-    listRecentOutreachById(db, tenantId, projectId, { limit: RECENT_ACTIVITY_CANDIDATES, offset: 0 }),
+    listRecentOutreachById(db, tenantId, projectId, { limit: RECENT_ACTIVITY_CANDIDATES, offset: 0, period: 'all' }),
     getTenantComplianceStatus(db, tenantId),
     getOnboardingStatus(db, tenantId),
     getCredentialsStatus(db, tenantId, userId),

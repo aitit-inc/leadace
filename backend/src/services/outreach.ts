@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { eq, and, desc, sql, inArray, notInArray, isNotNull } from 'drizzle-orm'
+import { eq, and, desc, gte, sql, inArray, notInArray, isNotNull, type SQL } from 'drizzle-orm'
 import {
   outreachLogs,
   organizations,
@@ -44,6 +44,7 @@ import {
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { UNDELIVERABLE } from '../domain/email-deliverability'
+import { DASHBOARD_PERIODS, periodToWindow } from '../domain/dashboard'
 import { requireProspect, prospectHadFreshSignal } from './prospects'
 import { allocateInquiryUrl } from './inquiry-token'
 import { loadProjectReapproachSettings, loadProjectSendSettings, loadProjectFollowUpConfig } from './project-settings'
@@ -59,9 +60,14 @@ import { buildSkipAuditBody } from '../domain/outreach-skip'
 import { isPublicHttpsUrl } from '../domain/url'
 import type { Edition } from '../domain/edition'
 
+export const funnelStageSchema = z.enum(['approached', 'reached', 'engaged', 'won'])
+export type FunnelStageFilter = z.infer<typeof funnelStageSchema>
+
 export const recentOutreachQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(100),
   offset: z.coerce.number().int().min(0).default(0),
+  stage: funnelStageSchema.optional(),
+  period: z.enum(DASHBOARD_PERIODS).default('all'),
 })
 export type RecentOutreachQuery = z.infer<typeof recentOutreachQuerySchema>
 
@@ -797,18 +803,44 @@ export async function listRecentOutreach(
   return listRecentOutreachById(db, tenantId, resolved.value, query)
 }
 
+// Funnel-stage event predicates for the dashboard drill-down filter. These MUST
+// mirror the dashboard KPI queries in services/dashboard.ts (approached / reached /
+// engaged / won): the dashboard counts distinct prospects over the same events, and
+// the number the user clicked has to agree with the list this filter produces
+// (pinned by e2e/regression-funnel-drilldown.sh).
+function funnelStageCondition(stage: FunnelStageFilter, since: Date | null): SQL {
+  const opened = since ? sql` AND s.opened_at >= ${since.toISOString()}::timestamptz` : sql``
+  const received = since ? sql` AND r.received_at >= ${since.toISOString()}::timestamptz` : sql``
+  switch (stage) {
+    case 'approached':
+      return since
+        ? sql`(${outreachLogs.status} = 'sent' AND ${outreachLogs.sentAt} >= ${since.toISOString()}::timestamptz)`
+        : sql`${outreachLogs.status} = 'sent'`
+    case 'reached':
+      return sql`EXISTS (SELECT 1 FROM inquiry_sessions s WHERE s.outreach_log_id = ${outreachLogs.id}${opened})`
+    case 'engaged':
+      return sql`(EXISTS (SELECT 1 FROM responses r WHERE r.outreach_log_id = ${outreachLogs.id} AND r.response_type NOT IN ('bounce', 'auto_reply')${received}) OR EXISTS (SELECT 1 FROM inquiry_sessions s WHERE s.outreach_log_id = ${outreachLogs.id} AND s.outcome IN ('inquired', 'lead', 'signup_clicked')${opened}))`
+    case 'won':
+      return sql`(EXISTS (SELECT 1 FROM responses r WHERE r.outreach_log_id = ${outreachLogs.id} AND r.response_type = 'meeting_request'${received}) OR EXISTS (SELECT 1 FROM inquiry_sessions s WHERE s.outreach_log_id = ${outreachLogs.id} AND s.outcome IN ('lead', 'signup_clicked')${opened}))`
+  }
+}
+
 export async function listRecentOutreachById(
   db: Db,
   tenantId: TenantId,
   projectId: ProjectId,
   query: RecentOutreachQuery,
 ): Promise<ServiceResult<{ logs: RecentOutreachLog[]; total: number }>> {
-  const { limit, offset } = query
+  const { limit, offset, stage, period } = query
+  const windowStart = period === 'all' ? null : periodToWindow(period, new Date()).curStart
 
-  const visibleStatusFilter = and(
+  const listFilter = and(
     eq(outreachLogs.projectId, projectId),
     // Spread because notInArray's typing rejects readonly inputs.
     notInArray(outreachLogs.status, [...IN_FLIGHT_OUTREACH_STATUSES]),
+    stage !== undefined ? funnelStageCondition(stage, windowStart) : undefined,
+    // A period without a stage bounds the list by send time.
+    stage === undefined && windowStart !== null ? gte(outreachLogs.sentAt, windowStart) : undefined,
   )
 
   const [logs, countRows] = await Promise.all([
@@ -835,7 +867,7 @@ export async function listRecentOutreachById(
       .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
       .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
       .leftJoin(responses, eq(responses.outreachLogId, outreachLogs.id))
-      .where(visibleStatusFilter)
+      .where(listFilter)
       .groupBy(outreachLogs.id, prospects.id, organizations.id)
       .orderBy(desc(outreachLogs.sentAt), desc(outreachLogs.id))
       .limit(limit)
@@ -843,7 +875,7 @@ export async function listRecentOutreachById(
     db
       .select({ total: sql<number>`COUNT(*)::int` })
       .from(outreachLogs)
-      .where(visibleStatusFilter),
+      .where(listFilter),
   ])
 
   // `bestOutcome` is the highest-severity outcome ever reached, not the
