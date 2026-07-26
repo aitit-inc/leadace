@@ -79,6 +79,7 @@ const prospectInputSchema = z.object({
   industry: z.string().trim().optional().transform((v) => (v ? v : undefined)),
   websiteUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG),
   email: z.email().optional(),
+  emailSourceUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
   contactFormUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
   formType: z.enum(formTypeEnum.enumValues).optional(),
   snsAccounts: snsAccountsSchema.optional(),
@@ -95,6 +96,9 @@ const prospectInputSchema = z.object({
 }).refine(
   (p) => p.email || p.contactFormUrl || p.platformUrl || (p.snsAccounts && Object.values(p.snsAccounts).some(Boolean)),
   { message: 'At least one contact channel (email, contactFormUrl, snsAccounts, or platformUrl) is required' },
+).refine(
+  (p) => !p.emailSourceUrl || p.email,
+  { message: 'emailSourceUrl describes the stored email address, so it requires email' },
 )
 type ProspectInput = z.infer<typeof prospectInputSchema>
 
@@ -251,6 +255,7 @@ function prospectInsertValues(
     industry: input.industry ?? null,
     websiteUrl: input.websiteUrl,
     email: input.email ?? null,
+    emailSourceUrl: input.emailSourceUrl ?? null,
     contactFormUrl: input.contactFormUrl ?? null,
     formType: input.formType ?? null,
     snsAccounts: (input.snsAccounts as SnsAccounts) ?? null,
@@ -284,8 +289,14 @@ function prospectUpdateSet(input: ProspectInput, orgId: number, now: Date) {
       ? {
           email: input.email,
           emailDeliverability: sql`CASE WHEN ${prospects.email} IS DISTINCT FROM ${input.email} THEN 'unknown'::email_deliverability ELSE ${prospects.emailDeliverability} END`,
+          // Provenance describes the stored address, so a changed address
+          // without a new source URL leaves no record rather than a stale one.
+          ...(input.emailSourceUrl === undefined
+            ? { emailSourceUrl: sql`CASE WHEN ${prospects.email} IS DISTINCT FROM ${input.email} THEN NULL ELSE ${prospects.emailSourceUrl} END` }
+            : {}),
         }
       : {}),
+    ...(input.emailSourceUrl !== undefined ? { emailSourceUrl: input.emailSourceUrl } : {}),
     ...(input.contactFormUrl !== undefined ? { contactFormUrl: input.contactFormUrl } : {}),
     ...(input.formType !== undefined ? { formType: input.formType } : {}),
     ...(input.snsAccounts !== undefined ? { snsAccounts: input.snsAccounts as SnsAccounts } : {}),

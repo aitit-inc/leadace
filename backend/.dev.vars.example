@@ -64,8 +64,13 @@ OPENAI_API_KEY=""
 # --- Org-signal refresh (required) ---
 # Google AI Studio key (paid tier — the free tier may train on your data).
 # Powers the daily org-signal refresh, which searches recent company events
-# via Gemini + Google Search grounding. The daily cron fails without it.
+# by reading their pages via Gemini. The daily cron fails without it.
 GEMINI_API_KEY=""
+
+# --- Send-time address verification (optional) ---
+# Reoon Email Verifier key (pay-as-you-go credits). Empty leaves only the free
+# DNS half of the check.
+REOON_API_KEY=""
 
 # --- Stripe (cloud edition only) ---
 # Required only when LEADACE_EDITION=cloud. Self-hosted ignores them and

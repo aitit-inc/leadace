@@ -1,6 +1,6 @@
 import type { EmailDeliverability } from '../db/schema'
 
-export const UNDELIVERABLE: EmailDeliverability = 'undeliverable'
+export const UNDELIVERABLE = 'undeliverable' satisfies EmailDeliverability
 
 // Re-guard before the DoH step so a malformed address never triggers a lookup.
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/

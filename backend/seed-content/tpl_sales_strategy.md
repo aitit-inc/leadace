@@ -25,11 +25,11 @@ Generate the `SALES_STRATEGY.md` document with the following structure:
 Examples:
 - Adoption: "Deployed at XX companies", "Currently piloting at X companies in beta"
 - Outcome numbers: "Generate XX leads per month", "Reduced sales workload by XX hours/week", "Reduced cost by XX%"
-- Customer testimonials: "○○ was improved" (with permission)
+- Customer testimonials: "XX was improved" (with permission)
 - Own track record: "Used in our own sales process, resulting in XX meetings booked"
-- Awards/media: "Winner of ○○ Award", "Featured in ○○"
+- Awards/media: "Winner of XX Award", "Featured in XX"
 
-※ Even at an early stage with no case studies yet, include estimated effects based on self-usage track records or feature capabilities
+Note: Even at an early stage with no case studies yet, include estimated effects based on self-usage track records or feature capabilities
 
 ## Outreach Mode
 

@@ -34,6 +34,7 @@ import {
   type DecisionMakerPointer,
 } from '../domain/rejection-feedback'
 import { addMonthsUtc, nextStatusFromResponse } from '../domain/prospect-status'
+import { UNDELIVERABLE } from '../domain/email-deliverability'
 import { projectProspectInsertValues } from '../domain/project-prospect'
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
@@ -245,7 +246,14 @@ export async function recordResponse(
   if (dncForced) {
     await db
       .update(prospects)
-      .set({ doNotContact: true, updatedAt: now })
+      .set({
+        doNotContact: true,
+        // A bounce is ground truth about the address, which until now only the
+        // registration-time DNS probe ever wrote. Recording it keeps the column
+        // honest and survives a later DNC clear on the prospect.
+        ...(input.responseType === 'bounce' ? { emailDeliverability: UNDELIVERABLE } : {}),
+        updatedAt: now,
+      })
       .where(eq(prospects.id, log.prospectId))
   }
 

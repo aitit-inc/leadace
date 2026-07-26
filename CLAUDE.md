@@ -27,7 +27,7 @@ plugin/
 
 Project-wide design docs, runbooks, and task tracking live in the top-level `docs/` directory, not under `plugin/`. Anything that is not specifically about the plugin's runtime structure (Workers, Pages, Stripe, Supabase, session-level task tracking, architecture history, etc.) belongs there.
 
-Plugin / skill authoring conventions live in [.claude/rules/plugin-development.md](.claude/rules/plugin-development.md) (auto-loaded when files under `plugin/` are touched). For fundamentals not specific to LeadAce, consult `/skill-development` and `/plugin-structure`.
+Plugin / skill authoring conventions live in [.claude/rules/plugin-development.md](.claude/rules/plugin-development.md) (auto-loaded when files under `plugin/` or `backend/seed-content/` are touched). For fundamentals not specific to LeadAce, consult `/skill-development` and `/plugin-structure`.
 
 ## Development Policy
 
@@ -87,7 +87,7 @@ All data is isolated by tenant. Every tenant-scoped table carries a `tenant_id` 
 
 ## Development Rules
 
-- Language: English (both code comments and documentation)
+- Language: English (code comments, documentation, and all plugin-read content — illustrative examples included). Non-English text appears only as **functional runtime data**: fixed match tokens (ja micro-reply tokens, sales-refusal detection strings), user-input trigger phrases, and the like — never as prose or illustration. Runtime *output* language is owned by `targetLanguage`, not by this rule
 - **Types express the spec**: design types so invalid states cannot be constructed. `any` is prohibited (see Backend TypeScript Rules). When behavior depends on a runtime check, encode it in the type (discriminated union, branded type, narrowed return) instead of leaving it implicit
 - **Don't reach for `null` / `undefined` reflexively**: each optional field multiplies the states callers must handle. Before adding one, ask: is the value truly absent sometimes, can a sensible default replace it, or should the type be split into variants where each variant has the field present? Use optionality only when absence is a real, distinct state
 - **DB columns: NOT NULL by default** — make a column nullable only when `null` is a genuinely distinct state. A nullable column tends to cascade into "what if the whole row is absent" assumptions across every reader, and that assumption is much harder to retract later than to avoid up front

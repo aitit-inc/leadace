@@ -120,7 +120,7 @@ const handler = {
           .then((summary) => {
             // Workers Logs only indexes the message string for search.
             console.log(
-              `[scheduled] org-signals refresh picked=${summary.picked} updated=${summary.updated} empty=${summary.empty} failed=${summary.failed} staleRemaining=${summary.staleRemaining}`,
+              `[scheduled] org-signals refresh picked=${summary.picked} updated=${summary.updated} empty=${summary.empty} notRetrieved=${summary.notRetrieved} failed=${summary.failed} staleRemaining=${summary.staleRemaining}`,
             )
           })
           .catch((e: unknown) => {

@@ -23,10 +23,11 @@ Stricter than the generic guidance in `/skill-development`. Source: [Skill autho
 - References are nested at most one level deep (a reference file must not reference another reference file).
 - Reference files over 300 lines need a table of contents at the top.
 
-## Write skills to the goal, not the procedure
+## Write plugin-read text to the goal, not the procedure
 
-LLMs jump capability every few months; a smarter model is likely to land soon. An over-specified, step-by-step SKILL.md ages badly — it (a) goes stale as the model outgrows the hand-holding and (b) constrains a more capable model's judgment. Author to the **expected outcome**, not the keystrokes:
+Applies to **every text the plugin consumes at runtime** — SKILL.md, `references/`, master documents (`backend/seed-content/tpl_*.md`), MCP tool descriptions — not only skills. LLMs jump capability every few months; over-specified, step-by-step text ages badly — it (a) goes stale as the model outgrows the hand-holding and (b) constrains a more capable model's judgment. And every sentence costs context on each run that loads it. Author to the **expected outcome**, not the keystrokes:
 
+- **Shortest text that fixes the contract wins.** Keep goals, completion criteria, bars, and guardrails; cut rationale, restatements, and how-to a capable model doesn't need.
 - State the **goal, completion criteria, and output contract** (the shape the skill must produce, the conditions to skip/stop) plus **rough steps** for orientation — not a fine-grained procedure.
 - Constrain the **contract** (what / format / guardrails), not the **how** (which tool calls in which order).
 - Anything that must be **consistent and reproducible** belongs in deterministic backend/MCP logic, where it does not depend on prompt precision at all (see CLAUDE.md "Separation of Responsibilities: LLM vs MCP Tools"). If you find yourself writing a precise procedure into a skill to guarantee an outcome, that outcome probably wants to move server-side.

@@ -44,6 +44,7 @@ import {
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { UNDELIVERABLE } from '../domain/email-deliverability'
+import { verifyAddressBeforeSend } from './email-verify'
 import { DASHBOARD_PERIODS, periodToWindow } from '../domain/dashboard'
 import { requireProspect, prospectHadFreshSignal } from './prospects'
 import { allocateInquiryUrl } from './inquiry-token'
@@ -188,6 +189,7 @@ export type SendContext = {
   unsubscribeSecret: string
   // E2E redirect; see `sendForIdentity`. Null in production.
   e2eRecipientOverride: string | null
+  emailVerifyApiKey: string | null
 }
 
 // The prospect's country wins over the organization's: per-prospect override
@@ -313,25 +315,36 @@ async function assertProspectContactable(
   return ok(undefined)
 }
 
-// Send-time backstop (column read, no network): listReachable already excludes
-// 'undeliverable', so this only catches a direct send bypassing the gate. Keyed
-// on the prospect's stored email, which `to` is expected to match.
+// Keyed on the prospect's stored email, which `to` is expected to match.
 async function assertEmailDeliverable(
   db: Db,
   tenantId: TenantId,
   prospectId: number,
+  verifyApiKey: string | null,
 ): Promise<ServiceResult<undefined>> {
   const [row] = await db
-    .select({ emailDeliverability: prospects.emailDeliverability })
+    .select({ email: prospects.email, emailDeliverability: prospects.emailDeliverability })
     .from(prospects)
     .where(and(eq(prospects.id, prospectId), eq(prospects.tenantId, tenantId)))
     .limit(1)
   // Missing prospect → defer to the caller's requireProspect NOT_FOUND.
   if (!row) return ok(undefined)
   if (row.emailDeliverability === UNDELIVERABLE) {
-    return err('UNPROCESSABLE', 'Recipient email domain cannot receive mail (DNS-confirmed undeliverable)')
+    return err('UNPROCESSABLE', 'Recipient email address cannot receive mail')
   }
-  return ok(undefined)
+  if (!row.email) return ok(undefined)
+
+  const verdict = await verifyAddressBeforeSend(row.email, verifyApiKey)
+  if (verdict.deliverability !== UNDELIVERABLE) return ok(undefined)
+
+  await db
+    .update(prospects)
+    .set({ emailDeliverability: UNDELIVERABLE })
+    .where(and(eq(prospects.id, prospectId), eq(prospects.tenantId, tenantId)))
+  console.warn(
+    `[deliverability] send blocked tenant=${tenantId} prospectId=${prospectId} reason=${verdict.reason}`,
+  )
+  return err('UNPROCESSABLE', `Recipient email address cannot receive mail (${verdict.reason})`)
 }
 
 export async function recordOutreach(
@@ -661,9 +674,6 @@ export async function sendAndRecord(
   const contactable = await assertProspectContactable(db, tenantId, input.prospectId)
   if (!contactable.ok) return contactable
 
-  const deliverable = await assertEmailDeliverable(db, tenantId, input.prospectId)
-  if (!deliverable.ok) return deliverable
-
   const quota = await getRemainingOutreachQuota(db, tenantId, edition)
   const quotaErr = outreachQuotaErrorIfExhausted(quota)
   if (quotaErr) return quotaErr
@@ -675,6 +685,16 @@ export async function sendAndRecord(
 
   const country = await assertProspectCountryAllowed(db, tenantId, input.prospectId)
   if (!country.ok) return country
+
+  // Last guard: it spends a verification credit, so every refusal the DB can reach
+  // has to fire before it.
+  const deliverable = await assertEmailDeliverable(
+    db,
+    tenantId,
+    input.prospectId,
+    ctx.emailVerifyApiKey,
+  )
+  if (!deliverable.ok) return deliverable
 
   // INSERT as 'pre_send' so the row counts toward quota (preventing concurrent
   // allocations from racing past the cap) and gives createInquiryToken's FK a
@@ -1099,7 +1119,6 @@ export async function sendDraft(
         status: outreachLogs.status,
         prospectEmail: prospects.email,
         doNotContact: prospects.doNotContact,
-        emailDeliverability: prospects.emailDeliverability,
       })
       .from(outreachLogs)
       .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
@@ -1121,9 +1140,6 @@ export async function sendDraft(
   }
   if (draft.doNotContact) {
     return err('UNPROCESSABLE', 'Prospect is on do-not-contact list')
-  }
-  if (draft.emailDeliverability === UNDELIVERABLE) {
-    return err('UNPROCESSABLE', 'Recipient email domain cannot receive mail (DNS-confirmed undeliverable)')
   }
   const hostGuard = assertPublicHttpsSendHosts(ctx)
   if (!hostGuard.ok) return hostGuard
@@ -1147,6 +1163,15 @@ export async function sendDraft(
   if (!complianceResult.ok) return complianceResult
   if (!countryResult.ok) return countryResult
   const compliance = complianceResult.value
+
+  // Last guard — see sendAndRecord.
+  const deliverable = await assertEmailDeliverable(
+    db,
+    tenantId,
+    draft.prospectId,
+    ctx.emailVerifyApiKey,
+  )
+  if (!deliverable.ok) return deliverable
 
   const attachments = await buildOutreachFooter(db, tenantId, ctx, {
     prospectId: draft.prospectId,

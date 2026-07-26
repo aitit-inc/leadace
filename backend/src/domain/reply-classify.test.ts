@@ -61,6 +61,36 @@ describe('detectDeterministicType', () => {
   it('leaves a free-form opt-out to the LLM', () => {
     expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\nplease remove me from your list')).toBeNull()
   })
+
+  it('flags a top-line "NOT ME" reply as micro_not_me (case-insensitive, punctuation stripped)', () => {
+    expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\nNot me.')).toBe('micro_not_me')
+  })
+
+  it('flags a top-line "担当違い" reply (with quoted history below) as micro_not_me', () => {
+    expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\n「担当違い」です\r\n\r\nOn Mon someone wrote:\r\n> hello')).toBeNull()
+    expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\n担当違い。\r\n\r\nOn Mon someone wrote:\r\n> hello')).toBe('micro_not_me')
+  })
+
+  it('flags a top-line "LATER" reply as micro_later', () => {
+    expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\nLATER')).toBe('micro_later')
+  })
+
+  it('flags a top-line "またの機会に。" reply as micro_later (fullwidth punctuation stripped)', () => {
+    expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\nまたの機会に。')).toBe('micro_later')
+  })
+
+  it('strips smart quotes and fullwidth period/comma (‘NOT ME’, 担当違い．)', () => {
+    expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\n‘NOT ME’')).toBe('micro_not_me')
+    expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\n担当違い．')).toBe('micro_not_me')
+  })
+
+  it('does not flag a sentence that merely starts with a token ("Later this week works")', () => {
+    expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\nLater this week works')).toBeNull()
+  })
+
+  it('does NOT flag a reply that only quotes the escape-hatch line from our own email', () => {
+    expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\n> Wrong person? Just reply "NOT ME". Bad timing? Reply "LATER".')).toBeNull()
+  })
 })
 
 describe('leadingUnquotedText', () => {

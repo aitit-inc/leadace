@@ -51,6 +51,31 @@ describe('recordFieldsForReply', () => {
     expect(fields.rejectionFeedback).toBeUndefined()
   })
 
+  it('maps a LATER micro-reply to a wrong_timing rejection with the unspecified recontact window', () => {
+    for (const trusted of [true, false]) {
+      const fields = recordFieldsForReply('micro_later', iso, trusted)
+      expect(fields.responseType).toBe('rejection')
+      expect(fields.markDoNotContact).toBe(false)
+      expect(fields.rejectionFeedback).toEqual({
+        version: 1,
+        primary_reason: 'wrong_timing',
+        preferred_recontact_window: 'unspecified',
+        submitted_at: iso,
+      })
+    }
+  })
+
+  it('maps a NOT ME micro-reply to a not_decision_maker rejection, no DNC', () => {
+    const fields = recordFieldsForReply('micro_not_me', iso, true)
+    expect(fields.responseType).toBe('rejection')
+    expect(fields.markDoNotContact).toBe(false)
+    expect(fields.rejectionFeedback).toEqual({
+      version: 1,
+      primary_reason: 'not_decision_maker',
+      submitted_at: iso,
+    })
+  })
+
   it('passes every other type through without forcing do-not-contact', () => {
     for (const t of ['reply', 'meeting_request', 'rejection', 'bounce', 'auto_reply'] as const) {
       const fields = recordFieldsForReply(t, iso, true)

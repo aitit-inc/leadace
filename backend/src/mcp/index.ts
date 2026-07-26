@@ -260,6 +260,7 @@ function buildToolRegistry(): ToolDef[] {
         industry: z.string().optional().describe('Exact value from the tpl_industries vocabulary (master document); unknown values skip the row.'),
         websiteUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG),
         email: z.email().optional().describe('At least one contact channel (email / contactFormUrl / snsAccounts / platformUrl) required.'),
+        emailSourceUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional().describe('Page the address was published on. Also the legal record for the published-address exemption, so it must be the page actually carrying the address, not a homepage guess. Omit when the address did not come from a public page.'),
         contactFormUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
         formType: z.enum(['google_forms', 'native_html', 'wordpress_cf7', 'iframe_embed', 'with_captcha']).optional(),
         snsAccounts: z.object({

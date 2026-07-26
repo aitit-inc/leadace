@@ -154,11 +154,16 @@ Each prospect in the targets list also carries:
   more recent dated entries — usually `recentSignals`, except for freshly
   registered prospects. Raw material for the opening line, the bad-timing
   judgment, and re-approach hooks below.
-- `hypothesis: { bestChannel, bestKeyperson }` — the build-list registrant's
-  first-touch guess at the best channel (e.g. `personal_email` / `linkedin_dm`)
-  and a named keyperson, when one was obvious. Either may be null. Use as
-  context for channel choice and addressing — a hint, not an override: the
-  `tpl_channel_policy` ranking and the country / quota gates still decide.
+- `hypothesis: { bestChannel, bestKeyperson, hypothesizedPain?, timingSignals? }`
+  — build-list's first-touch guesses, frozen at registration. `bestChannel`
+  (e.g. `personal_email` / `linkedin_dm`) and `bestKeyperson` may each be null;
+  they hint channel choice and addressing — `tpl_channel_policy` and the
+  country / quota gates still decide. `hypothesizedPain` / `timingSignals` are
+  **inferred, not observed**: use them to pick the angle and the pain you frame
+  the offer around when the prospect has no signal material. Frame them as your
+  reasoning, never as a claim about the recipient — only `recentSignals` /
+  `## Recent Signals` carry assertable facts, and only they count as "what's
+  new" in the follow-up branches below.
 - `channelAffinity: [{ channel, rate, total, responses }]` — the project's
   **measured** channel ranking for this prospect's coarse industry, best first
   (e.g. `[{channel:"form",rate:14.0,total:50,responses:7},{channel:"email",rate:8.0,total:100,responses:8}]`),
@@ -196,7 +201,7 @@ The `learnings` `[channel]` entries (step 1) are *advisory color on how to use a
 Country eligibility is no longer a skill-side concern — `get_outbound_targets` filters to
 supported recipient countries server-side (step 1).
 
-**Attempt limit per prospect:** Limit sending attempts to **a maximum of 2** per prospect (main channel + 1 fallback only when the main channel fails for a transient reason). If both fail for any reason, immediately skip and move to the next prospect. Do not waste context and tool calls lingering on a single prospect.
+**Attempt limit per prospect:** Limit sending attempts to **a maximum of 2** per prospect (main channel + 1 fallback, allowed when the main channel fails for a transient reason or when the server retires that channel for the prospect). If both fail for any reason, immediately skip and move to the next prospect. Do not waste context and tool calls lingering on a single prospect.
 
 **SNS DM caution:** SNS DMs have a lower reach rate (depends on recipient's DM settings). Channel enablement is handled by step 1's `outboundChannels`; do not re-check SALES_STRATEGY here.
 
@@ -323,7 +328,7 @@ The server reads the project's `outboundMode` and which mailbox the project uses
 
 Track the response `mode` per call for the step 8 report (sent vs. drafted counts).
 
-On a 502 `Send failed`, the outreach is still logged with `status: "failed"` and the prospect's re-eligibility is deferred by the project's no-response recycle window — do not retry manually. On a 412 `Gmail not connected` / `Gmail token revoked`, abort all email sending for this run and surface the message; the user must reconnect Gmail in the web app's Settings.
+On a 502 `Send failed`, the outreach is still logged with `status: "failed"` and the prospect's re-eligibility is deferred by the project's no-response recycle window — do not retry manually. On a 412 `Gmail not connected` / `Gmail token revoked`, abort all email sending for this run and surface the message; the user must reconnect Gmail in the web app's Settings. On a 422 `Recipient email address cannot receive mail`, nothing was sent and the server has retired the email channel for that prospect — never retry email, and use the fallback attempt on another available channel if there is one.
 
 **Notes:**
 - The body must be the complete content including the signature

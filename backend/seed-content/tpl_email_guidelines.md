@@ -57,7 +57,7 @@ A link to a low-reputation domain — above all the shared app domain that every
 
 ## Body Structure
 
-This numbered list is the maximal checklist, not a length mandate. For a cold first-touch, the link-free peer-note shape (good example under Customization Sources) is the default target: compress steps 2–4 into one or two sentences rather than expanding each to its full line count.
+This numbered list is the maximal checklist, not a length mandate. For a cold first-touch, the default target is the value-first shape (next section) when a genuine finding exists, else the link-free peer-note shape (good example under Customization Sources): compress steps 2–4 into one or two sentences rather than expanding each to its full line count.
 
 1. **Opening greeting** (1-2 lines): Use "{full name}" if the prospect's `contact_name` is in the DB, otherwise use "{organization name} Team" — using "Team" alone reads as mass outreach and is prohibited. Briefly explain why you're reaching out
 2. **Problem framing** (2-3 lines): Specifically address the challenge the recipient likely faces
@@ -65,7 +65,15 @@ This numbered list is the maximal checklist, not a length mandate. For a cold fi
 4. **Proof (optional, 1 line)**: If you have a concrete, relevant proof point — a number or a comparable customer from the "Track Record / Social Proof" section of SALES_STRATEGY.md — include one short line; specifics build credibility. If none fits naturally, skip it. A short honest ask beats forced credentials
 5. **CTA** (1 line): Present exactly one next action
 6. **Legal required disclosures**: Opt-out notice (see below)
-7. **Sign-off** (1-2 lines): Close light, in the email's language — a short sign-off (`Best,` for English; a natural Japanese close such as `よろしくお願いいたします` for Japanese) on one line, your name on the next; add your role only if it helps. No company/product line under your name — the compliance footer already shows the legal company name, and repeating it turns a light close into a marketing signature. Do **not** paste a full signature block (phone, postal address, multiple URLs): cold email closes light, and the backend appends the email footer automatically (by default: legal name, physical address, unsubscribe). Take the name/role from the "Sender Information" section of SALES_STRATEGY.md
+7. **Sign-off** (1-2 lines): Close light, in the email's language — a short sign-off on one line (`Best,` for English; the natural light close of the send language otherwise), your name on the next; add your role only if it helps. No company/product line under your name — the compliance footer already shows the legal company name, and repeating it turns a light close into a marketing signature. Do **not** paste a full signature block (phone, postal address, multiple URLs): cold email closes light, and the backend appends the email footer automatically (by default: legal name, physical address, unsubscribe). Take the name/role from the "Sender Information" section of SALES_STRATEGY.md
+
+## Value-First Body: Lead With a Finding, Not an Ask
+
+The strongest cold shape hands over finished work instead of requesting time: **finding** (one concrete, checkable observation about *this* recipient, from their public materials) → its consequence in their terms → one-sentence offer + reply hook ("I wrote up the full breakdown — reply and I'll send it").
+
+- Bar for the finding: real, specific, checkable, source named in plain words. No genuine finding → use the peer-note shape; never inflate a generic claim into one
+- The detail travels in the reply, never behind a link — replying is how the recipient collects the rest
+- A fresh signal often *is* the finding's hook
 
 ## CTA (Call to Action)
 
@@ -89,6 +97,11 @@ When the project's `inquiryCtaType` is `signup`, the recipient reaches the self-
 - Backup CTA in the body: reply only. Skip "scheduling fallback" lines like "or grab time on my calendar instead" — signup-mode projects have no scheduling link, and inviting a meeting contradicts the project's chosen CTA
 - A reply path remains valid: a recipient who replies with questions instead of signing up still belongs in the response funnel. Don't write CTAs that close the door on a reply ("just sign up and you'll see")
 
+**Micro-reply escape hatch (recommended on cold first-touch):** one line after the CTA that turns the two common "no"s into a one-word reply — e.g. "Wrong person? Just reply "NOT ME". Bad timing? Reply "LATER"."
+
+- Tokens are fixed per send language — en: `NOT ME` / `LATER`; ja: `担当違い` / `またの機会に` (functional match tokens, not translatable prose); the sentence around them is in the send language and varies every send
+- Promise only what happens: LATER → we return later; NOT ME → we stop. Not a second ask — the one-CTA rule holds
+
 ## Customization Sources
 
 - `overview`: Business overview of the prospect. Contains specific initiatives, services, and features
@@ -96,7 +109,7 @@ When the project's `inquiryCtaType` is `signup`, the recipient reaches the self-
 
 **Bad example (feels templated with only the opening changed):**
 > I noticed your initiatives in IT/game talent development and am reaching out.
-> These days, the ○○ industry is facing the challenge of △△... (identical for everyone below)
+> These days, the X industry is facing the challenge of Y... (identical for everyone below)
 
 **Good example (written to the specific recipient):**
 > I'm reaching out after seeing your robust career support program — including a joint job fair with roughly 700 companies and mock interviews.
@@ -108,6 +121,11 @@ When the project's `inquiryCtaType` is `signup`, the recipient reaches the self-
 > Worth a quick reply to compare notes?
 
 The strength is a *specific, real* observation (not "I noticed your industry faces…"), one plain sentence on the offer (not a feature list), and a reply-only CTA. Keep it ~50–70 words; the backend appends the compliance footer, so close with just a light sign-off. The connective phrasing and the CTA line are must-vary parts — never reuse this example's wording (including "Worth a quick reply?") verbatim in a real send.
+
+**Good example (value-first — finding opens, detail on reply; same must-vary rules):**
+> Hi {first name},
+> While looking at {their public artifact}, I noticed {one concrete, checkable finding}. In {their context} that usually means {consequence in their terms}.
+> We {one-sentence offer}. I put together a short breakdown of this for {company} — want it? Just reply and I'll send it over.
 
 ## Required Legal Disclosures
 
@@ -141,7 +159,7 @@ Check each email against these patterns that significantly lower response rates 
 - Body text should be **short — roughly 50–110 words** (excluding sign-off and legal disclosures); a genuine peer note is often ~50–70. Shorter, specific emails have higher response rates and a smaller content-fingerprint surface — cut anything that isn't about the recipient or one concrete point about your offer
 - One CTA per email
 - No attachments (for first contact)
-- **Default voice is casual, in the project's target language**: `targetLanguage` in project settings (`get_project_settings`; "en" or "ja") is the language of every outbound message — subject, body, and sign-off — and overrides any language phrasing in project documents. Write the way a real person emails — warm, direct, conversational, matching that language's politeness norms (English-standard casual for English; appropriately-polite natural Japanese for Japanese). No heavy signature block; close with a light sign-off in that language (`Best,` + your name for English; a natural Japanese close such as `よろしくお願いいたします` for Japanese). (The project's `email_template` document holds the body template; apply these voice rules when composing the outbound email from it. The server renders the compliance footer in the same target language.)
+- **Default voice is casual, in the project's target language**: `targetLanguage` in project settings (`get_project_settings`; "en" or "ja") is the language of every outbound message — subject, body, and sign-off — and overrides any language phrasing in project documents. Write the way a real person emails — warm, direct, conversational, matching that language's politeness norms (English-standard casual for English; appropriately-polite natural phrasing for other languages). No heavy signature block; close with a light sign-off in that language (`Best,` + your name for English; the equivalent natural close otherwise). (The project's `email_template` document holds the body template; apply these voice rules when composing the outbound email from it. The server renders the compliance footer in the same target language.)
 - Avoid classic spam-trigger words ("free", "limited", "act now")
 - **Don't name the outreach channel or its machinery inside the email.** Words like "cold email", "outreach", "sequence", "sender reputation", "deliverability", "sender infrastructure", or calling the reader a "prospect"/"lead" trip content filters (rare n-grams learned from bulk-mail tools) *and* expose the mass-send mechanics — write as if this is the one email you personally sent today. Exception: when these words are the *product's* own domain vocabulary (e.g. the offer is sales or outreach tooling), use them to describe the product — never to describe this email itself or the process that produced it
 - **Never let a placeholder or merge token ship** ("{Company}", "{First name}", a leftover "Test"/QA artifact, an unrendered field). If a personalization datum is missing, rewrite the sentence without it — a visible token is the clearest "automated blast" tell. ({Curly braces} in this document are authoring-time slots to fill with real data, never literal text to emit)

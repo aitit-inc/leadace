@@ -210,7 +210,7 @@ assert_eq "  D_DNC row untouched, P_DNC not contacted" "$(log_status "$D_DNC")/$
 
 CODE="$(api_status POST "/api/outreach/drafts/$D_DEAD/send")"
 assert_eq "sendDraft undeliverable → 422" "$CODE" "422"
-assert_eq "  error" "$(api_body | jq -r '.error // ""')" "Recipient email domain cannot receive mail (DNS-confirmed undeliverable)"
+assert_eq "  error" "$(api_body | jq -r '.error // ""')" "Recipient email address cannot receive mail"
 assert_eq "  D_DEAD row untouched, P_DEAD not contacted" "$(log_status "$D_DEAD")/$(pp_status "$P_DEAD")" "pending_review/new"
 
 step "sendDraft re-enforces compliance + country at send time"

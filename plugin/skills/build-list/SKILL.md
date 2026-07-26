@@ -159,6 +159,11 @@ AND the message relates to the recipient's business role. Skip any address whose
 source page shows a no-solicitation notice, and put the role/business relevance in
 `matchReason`.
 
+Register every publicly posted address with `emailSourceUrl` set to the page you
+actually read it off — that URL is the record of this gate having been applied, so
+a homepage guess or a search-result link does not qualify. Omit the field when the
+address came from anywhere else (CSV import, a referral, the user).
+
 ### 4. Web Search Execution
 
 Combine WebSearch and `fetch_url.py` (Jina Reader + Claude Haiku) to broadly collect prospect candidates.

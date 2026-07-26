@@ -271,7 +271,12 @@ export type ReachableProspect = {
   // Up to RECENT_SIGNALS_MAX highlights from a fresh org_signals_global
   // payload; absent when it carries none (hasFreshSignal may still be true).
   recentSignals?: string[]
-  hypothesis: { bestChannel: string | null; bestKeyperson: string | null }
+  hypothesis: {
+    bestChannel: string | null
+    bestKeyperson: string | null
+    hypothesizedPain?: string[]
+    timingSignals?: string[]
+  }
   channelAffinity: ChannelRank[]
   cycle: ReachableCycle
 }
@@ -583,6 +588,12 @@ export async function listReachable(
         hypothesis: {
           bestChannel: r.hypothesis?.bestChannel ?? null,
           bestKeyperson: r.hypothesis?.bestKeyperson ?? null,
+          ...(r.hypothesis?.hypothesizedPain?.length
+            ? { hypothesizedPain: r.hypothesis.hypothesizedPain }
+            : {}),
+          ...(r.hypothesis?.timingSignals?.length
+            ? { timingSignals: r.hypothesis.timingSignals }
+            : {}),
         },
         channelAffinity: channelAffinityByBucket[coarseIndustry(r.industry)] ?? [],
         cycle,

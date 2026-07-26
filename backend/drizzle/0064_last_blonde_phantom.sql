@@ -1,0 +1,1 @@
+ALTER TABLE "prospects" ADD COLUMN "email_source_url" text;

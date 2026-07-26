@@ -10,13 +10,14 @@
 #      that still has a contactFormUrl into the form channel (byChannel.email and
 #      byChannel.formOnly both agree).
 #
-#   2. send-and-record backstop — POST /outreach/send-and-record returns 422 for an
-#      'undeliverable' recipient (column read only, before quota), consuming no
-#      quota and writing no 'sent' row.
+#   2. send-and-record gate — POST /outreach/send-and-record returns 422 for an
+#      'undeliverable' recipient, consuming no quota and writing no 'sent' row.
 #
 # Verdicts are set directly via psql (UPDATE prospects.email_deliverability) so the
 # test does not depend on what the registration-time DoH check returns for the seed
-# domains — that path (DoH → verdict) is covered by the unit suite.
+# domains — that path (DoH → verdict) is covered by the unit suite. The stored
+# verdict short-circuits the send-time re-check and the seed domains are .example,
+# which it skips, so this suite stays offline.
 #
 # Runs against the local stack (localhost:8787 API + 54322 Postgres). Mints its own
 # JWT, creates a throwaway project, and cleans up on exit (including any tenant

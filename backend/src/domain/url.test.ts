@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isHttpsUrl, isHttpOrHttpsUrl, isPublicHttpsUrl } from './url'
+import { isHttpsUrl, isHttpOrHttpsUrl, isPublicHttpsUrl, isPublicWebUrl } from './url'
 
 describe('isHttpsUrl', () => {
   it('accepts https, case-insensitively', () => {
@@ -61,5 +61,36 @@ describe('isPublicHttpsUrl', () => {
 
   it('rejects bare single-label hosts', () => {
     expect(isPublicHttpsUrl('https://intranet')).toBe(false)
+  })
+})
+
+describe('isPublicWebUrl', () => {
+  it('accepts ordinary company sites over either scheme', () => {
+    expect(isPublicWebUrl('https://acme.com/sitemap.xml')).toBe(true)
+    expect(isPublicWebUrl('http://news.acme.co.jp/feed')).toBe(true)
+  })
+
+  it('refuses hosts that only resolve inside a network', () => {
+    expect(isPublicWebUrl('http://localhost/robots.txt')).toBe(false)
+    expect(isPublicWebUrl('http://metadata/computeMetadata/v1/')).toBe(false)
+    expect(isPublicWebUrl('http://metadata.google.internal/')).toBe(false)
+    expect(isPublicWebUrl('http://printer.local/')).toBe(false)
+  })
+
+  it('refuses IP literals outright', () => {
+    expect(isPublicWebUrl('http://169.254.169.254/latest/meta-data/')).toBe(false)
+    expect(isPublicWebUrl('http://10.0.0.5:8080/admin')).toBe(false)
+    expect(isPublicWebUrl('http://[::1]/')).toBe(false)
+    expect(isPublicWebUrl('https://93.184.216.34/')).toBe(false)
+  })
+
+  it('refuses non-web schemes', () => {
+    expect(isPublicWebUrl('file:///etc/passwd')).toBe(false)
+    expect(isPublicWebUrl('javascript:alert(1)')).toBe(false)
+    expect(isPublicWebUrl('not a url')).toBe(false)
+  })
+
+  it('reads the host from the authority, not the userinfo', () => {
+    expect(isPublicWebUrl('https://acme.com@localhost/')).toBe(false)
   })
 })

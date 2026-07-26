@@ -90,6 +90,31 @@ export function recordFieldsForReply(
       },
     }
   }
+  // No trust gate: micro tokens never directly set markDoNotContact; the
+  // rejection-cycle DNC ratchet applies identically to untrusted LLM rejections.
+  if (responseType === 'micro_later') {
+    return {
+      responseType: 'rejection',
+      markDoNotContact: false,
+      rejectionFeedback: {
+        version: 1,
+        primary_reason: 'wrong_timing',
+        preferred_recontact_window: 'unspecified',
+        submitted_at: submittedAtIso,
+      },
+    }
+  }
+  if (responseType === 'micro_not_me') {
+    return {
+      responseType: 'rejection',
+      markDoNotContact: false,
+      rejectionFeedback: {
+        version: 1,
+        primary_reason: 'not_decision_maker',
+        submitted_at: submittedAtIso,
+      },
+    }
+  }
   return { responseType, markDoNotContact: false }
 }
 
