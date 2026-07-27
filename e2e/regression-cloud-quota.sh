@@ -49,8 +49,6 @@ SEED="$(api POST /api/prospects/batch "$(jq -nc --arg pid "$PROJ" --arg ts "$TS"
   }]}')")"
 assert_eq "5 reachable prospects registered" "$(echo "$SEED" | jq -r '.inserted // 0')" "5"
 P0="$(echo "$SEED" | jq -r '.insertedIds[0]')"
-EMAIL0="$(api GET "/api/projects/$PROJ/prospects?limit=50" | jq -r --argjson id "$P0" '.prospects[]?|select(.prospectId==$id)|.email' | head -1)"
-[[ -n "$EMAIL0" ]] || { echo "could not resolve P0 email" >&2; exit 1; }
 
 reset_outreach() { psql_local "DELETE FROM outreach_logs WHERE tenant_id='$T';" > /dev/null; }
 # seed_sent <count> <sent_at_sql>  — append N counted 'sent' rows against P0.
@@ -59,8 +57,8 @@ seed_sent() {
     SELECT '$T', '$PROJ', $P0, 'email', 'e2e quota seed', 'sent', $2
     FROM generate_series(1, $1);" > /dev/null
 }
-send_body() { jq -nc --arg pid "$PROJ" --argjson prid "$P0" --arg to "$EMAIL0" \
-  '{projectId:$pid, prospectId:$prid, to:[$to], subject:"quota probe", body:"body"}'; }
+send_body() { jq -nc --arg pid "$PROJ" --argjson prid "$P0" \
+  '{projectId:$pid, prospectId:$prid, subject:"quota probe", body:"body"}'; }
 rec_body()  { jq -nc --arg pid "$PROJ" --argjson prid "$P0" \
   '{projectId:$pid, prospectId:$prid, channel:"email", subject:"quota probe", body:"body", status:"sent"}'; }
 

@@ -97,7 +97,7 @@ mkseed() {
 
 # email draft via send-and-record (draft mode → pending_review channel=email)
 mk_email_draft() { api POST /api/outreach/send-and-record \
-  "$(jq -nc --arg pid "$PROJECT_ID" --argjson prid "$1" --arg to "$2" '{projectId:$pid, prospectId:$prid, to:[$to], subject:"e2e draft", body:"e2e email draft body"}')" \
+  "$(jq -nc --arg pid "$PROJECT_ID" --argjson prid "$1" '{projectId:$pid, prospectId:$prid, subject:"e2e draft", body:"e2e email draft body"}')" \
   | jq -r '.outreachId // ""'; }
 # form draft via record-with-inquiry (draft mode → pending_review channel=form)
 mk_form_draft() { api POST /api/outreach/record-with-inquiry \
@@ -172,11 +172,11 @@ P_USS="$(pid_of ussend)"; P_USM="$(pid_of usmark)"; P_GB="$(pid_of gb)"; P_DNC="
 say "ids: ussend=$P_USS usmark=$P_USM gb=$P_GB dnc=$P_DNC noemail=$P_NOE dead=$P_DEAD"
 
 step "create drafts (email via send-and-record; form via record-with-inquiry) while compliant"
-D_SEND="$(mk_email_draft "$P_USS" "contact@$RUN_TAG-ussend.example")"
-D_GB="$(mk_email_draft "$P_GB" "contact@$RUN_TAG-gb.example")"
-D_DNC="$(mk_email_draft "$P_DNC" "contact@$RUN_TAG-dnc.example")"
-D_NOE="$(mk_email_draft "$P_NOE" "contact@$RUN_TAG-noemail.example")"
-D_DEAD="$(mk_email_draft "$P_DEAD" "contact@$RUN_TAG-dead.example")"
+D_SEND="$(mk_email_draft "$P_USS")"
+D_GB="$(mk_email_draft "$P_GB")"
+D_DNC="$(mk_email_draft "$P_DNC")"
+D_NOE="$(mk_email_draft "$P_NOE")"
+D_DEAD="$(mk_email_draft "$P_DEAD")"
 F_MARK="$(mk_form_draft "$P_USM")"
 F_GB="$(mk_form_draft "$P_GB")"
 F_DNC="$(mk_form_draft "$P_DNC")"

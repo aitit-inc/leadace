@@ -188,7 +188,7 @@ psql_local "UPDATE tenants SET legal_name='E2E Deliverability', physical_address
 
 SENT_BEFORE="$(psql_local "SELECT COUNT(*) FROM outreach_logs WHERE tenant_id='$TENANT_ID' AND status='sent';")"
 SEND_BODY="$(jq -nc --arg pid "$PROJECT_ID" --argjson prid "$DEAD_ID" \
-  '{projectId:$pid, prospectId:$prid, to:["contact@'"$RUN_TAG"'-dead.example"], subject:"e2e", body:"e2e body"}')"
+  '{projectId:$pid, prospectId:$prid, subject:"e2e", body:"e2e body"}')"
 SEND_CODE="$(api_status POST /api/outreach/send-and-record "$SEND_BODY" 2>/tmp/regression-deliv-out.$$ || true)"
 SEND_RESP="$(cat /tmp/regression-deliv-out.$$)"; rm -f /tmp/regression-deliv-out.$$
 assert_eq "send.http_status=422" "$SEND_CODE" "422"

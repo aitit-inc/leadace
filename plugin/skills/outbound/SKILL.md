@@ -5,7 +5,6 @@ argument-hint: "<project-id> [count]"
 allowed-tools:
   - Bash
   - Read
-  # claude-in-chrome handles contact-form submission and SNS DMs
   - mcp__claude-in-chrome__tabs_context_mcp
   - mcp__claude-in-chrome__tabs_create_mcp
   - mcp__claude-in-chrome__navigate
@@ -16,8 +15,6 @@ allowed-tools:
   - mcp__claude-in-chrome__computer
   - mcp__claude-in-chrome__javascript_tool
   - mcp__claude-in-chrome__read_network_requests
-  # Contact forms can also run on another browser-automation MCP the user has
-  # enabled in their own environment (e.g. Playwright); SNS DMs are Chrome-only.
   - mcp__plugin_leadace_api__get_outbound_targets
   - mcp__plugin_leadace_api__send_email_and_record
   - mcp__plugin_leadace_api__skip_prospect
@@ -39,7 +36,7 @@ A skill that sequentially reaches out to prospects on the sales list via email, 
 
 For each prospect, sends a message via an available channel and records the result in the DB. After all processing, generates a summary report.
 
-**Pace sends serially — don't parallelize.** Process prospects one at a time. Using sub-agents for sub-tasks (drafting, page / form inspection) is encouraged where it helps, but don't fan the actual sends out concurrently: parallel sends trip provider rate limits (email send APIs especially, but SNS / form automation too). A strong default, not a hard rule.
+**Pace sends serially — don't parallelize.** Sub-agents for sub-tasks (drafting, page / form inspection) are encouraged; concurrent sends are not — they trip provider rate limits. A strong default, not a hard rule.
 
 **Before starting:** `Read` `${CLAUDE_PLUGIN_ROOT}/references/workspace-conventions.md` and follow the cross-cutting conventions there (data storage, MCP error handling, document writes, output discipline).
 
@@ -51,30 +48,22 @@ For each prospect, sends a message via an available channel and records the resu
 - Approach count: `$1` (default: 30)
 
 **Compliance pre-flight (run before anything else).** Call
-`mcp__plugin_leadace_api__get_compliance_status`. If `ready: false`,
-**abort immediately** — do not load documents, do not call
-`get_outbound_targets`. Report to the user which fields are missing
-(from the `missing` array) and direct them to the URL in `fix_url`
-(e.g. `https://app.leadace.ai/workspace-settings`). Tell them to re-run
-this skill once the workspace fields are saved. Sending without these
-will fail with HTTP 412 at the send call regardless, so bailing here
-saves the token cost of draft generation.
+`mcp__plugin_leadace_api__get_compliance_status`. If `ready: false`, **abort
+immediately** — load nothing else. Report the `missing` fields, point the user at
+`fix_url` (e.g. `https://app.leadace.ai/workspace-settings`), and tell them to
+re-run once saved.
 
-Load documents via MCP:
+Load `mcp__plugin_leadace_api__get_document` (`projectId: "$0"`) for
+`slug: "business"` and `slug: "sales_strategy"`. Sections that matter:
 
-Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "business"`.
-Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "sales_strategy"`.
-
-Pay particular attention to these sections in the sales_strategy document:
-- **Outreach mode**: `precision` (deep personalization) or `volume` (template-based semi-personalization). The document always carries a concrete value — read it; do not assume a default
-- **Sales channels**: tactical preferences only (channel ordering, sub-channel preferences, tone). Channel enablement (on/off) is owned by `outboundChannels` in project settings — read below, not from this section.
-- **Messaging**: Subject line patterns and A/B test instructions if any -- follow them. The email body template itself is the `email_template` document (read at send), not this section
-- **Sender information**: the name (and optional role) for the light sign-off — not a full signature block; the backend appends the compliance footer (legal name, address, unsubscribe) automatically. Sender display name and email come from project settings, **not** from this document — the backend send path uses them automatically
+- **Outreach mode**: `precision` (deep personalization) or `volume` (template-based semi-personalization). Always carries a concrete value — read it, don't assume a default
+- **Sales channels**: tactical preferences only (ordering, sub-channel, tone). Enablement is owned by `outboundChannels` in project settings, not this section
+- **Messaging**: the "First Outreach" structure — opening hook, problem framing, solution, CTA. Subject lines are **not** sourced here; server-side `message_variants` own them (step 3). The body template itself is the `email_template` document, read at send
+- **Sender information**: the name (+ optional role) for the light sign-off — not a signature block. Display name and address come from project settings; the backend appends the compliance footer
 - **SNS messages**: SNS DM messaging policy
 
-Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "learnings"`. Apply its `[body]` / `[timing]` / `[channel]` entries as composition hints: let `[body]` shape how you open and structure the message, `[timing]` inform re-approach cadence (the step-3b judgment, not send time-of-day — see the Note below), `[channel]` color how you use the chosen channel. They are evidence-cited hints, not rules — skip the document if missing.
+Also load `slug: "learnings"`. Its `[body]` / `[timing]` / `[channel]` entries are evidence-cited composition hints, not rules — `[timing]` informs the step-3b re-approach judgment, not send time-of-day. Skip if the document is missing.
 
-**Important:** If SALES_STRATEGY.md has specific instructions on subject line variations, A/B tests, etc., always follow them. Never ignore instructions and revert to default behavior.
 **Note:** Sending timing (day of week, time of day) is not controlled by this skill.
 
 Retrieve the uncontacted prospect list and the project's send settings:
@@ -82,97 +71,75 @@ Retrieve the uncontacted prospect list and the project's send settings:
 - Call `mcp__plugin_leadace_api__get_outbound_targets` with `projectId: "$0"` and `limit: $1` (default 30).
 - Call `mcp__plugin_leadace_api__get_project_settings` with `projectId: "$0"`.
 
-The targets response includes `Outbound mode: send | draft`. **Capture this value** — it determines whether each channel actually delivers (`send`) or only stores a draft for the user to review and send manually from https://app.leadace.ai/drafts (`draft`). The draft path applies to all channels (email, form, SNS).
+The targets response includes `Outbound mode: send | draft`. **Capture this value** — it decides whether each channel actually delivers (`send`) or only stores a draft the user reviews at https://app.leadace.ai/drafts (`draft`). It applies to every channel.
 
 From the settings response, surface for body composition:
 - `targetLanguage` (`en` | `ja`) — the language of every outbound message: subject, body, and sign-off. Compose in it regardless of any language phrasing in project documents; the server renders the footer in the same language.
 - `inquiryLandingEnabled` — drives the mail template branch in step 3.
-- `inquiryCtaType` (`meeting` | `signup`) — read alongside `inquiryLandingEnabled`. Determines which backup CTA the email body carries; see step 3's "Inquiry-aware CTA branch" for the rule.
-- `inquiryChatBrief` (when non-empty) — the system-prompt fragment the
-  recipient's inquiry chat will use. Skim it so the email body can promise
-  something concrete the chat can actually deliver (e.g., if the brief
-  carries pricing FAQ, the CTA can say "ask about pricing in chat"; if it
-  doesn't, do not promise pricing answers).
-- `inquiryOneLiner` (when non-empty) — the tagline the recipient sees on
-  the landing page. Avoid contradicting it in the email subject / opener.
-- `outboundMode`, `senderEmailAlias`, `senderDisplayName` — read but do
-  not surface in body; the backend uses them. The `compliance` block
-  (legal_name / physical_address) is also tenant-level and
-  is appended by the backend at send time — never inline these in the body.
+- `inquiryCtaType` (`meeting` | `signup`) — read alongside `inquiryLandingEnabled`; see step 3's "Inquiry-aware CTA branch".
+- `inquiryChatBrief` (when non-empty) — what the recipient's inquiry chat can
+  actually answer. Promise only what the brief covers (e.g. no "ask about
+  pricing in chat" unless it carries pricing).
+- `inquiryOneLiner` (when non-empty) — the tagline the recipient sees on the landing page. Avoid contradicting it in the subject / opener.
+- `outboundMode`, `senderEmailAlias`, `senderDisplayName`, and the `compliance`
+  block (legal_name / physical_address) — the backend applies all of these at
+  send time; never inline them in the body.
 
-And surface for channel selection (apply when picking a channel in step 2):
-- **`outboundChannels`** (subset of `email | form | sns_twitter | sns_linkedin`): the channels
-  the project sends through. `get_outbound_targets` has already filtered the candidate list
-  server-side — by enabled channel **and** by supported recipient country (unknown-country
-  prospects pass through as warn-only) — so every prospect you see is reachable on an enabled
-  channel and in-scope. Use `outboundChannels` only to break ties:
-  when a prospect is reachable on more than one channel, rank only among the enabled ones (a
-  disabled channel is never picked even if the channel policy ranks it higher). If the targets
-  response came back empty with a "paused" message, outbound is off for this project — report
-  it and stop.
+And for channel selection in step 2:
+- **`outboundChannels`** (subset of `email | form | sns_twitter | sns_linkedin`): the enabled
+  channels. `get_outbound_targets` already filtered the candidates server-side by enabled
+  channel **and** supported recipient country (unknown-country prospects pass as warn-only),
+  so use this only to break ties on a multi-channel prospect — never pick a disabled channel
+  even if the policy ranks it higher. An empty response with a "paused" message means outbound
+  is off for this project: report it and stop.
 
 **Gmail live pre-flight (send mode + email enabled).** If outbound mode is `send` and `email`
-is in `outboundChannels`, call `mcp__plugin_leadace_api__get_gmail_status`. If it reports not
-connected, warn the user that email sends will be rejected at send time (HTTP 412) and they
-should connect Gmail at https://app.leadace.ai — they can still proceed with form / SNS
-prospects. This is a courtesy check (status is live, never cached); the 412 at send time is the
-authoritative guard, and draft mode needs no Gmail connection.
+is in `outboundChannels`, call `mcp__plugin_leadace_api__get_gmail_status`. If not connected,
+warn that email sends will be rejected at send time (HTTP 412) and the user should connect
+Gmail at https://app.leadace.ai — form / SNS prospects can still proceed. Courtesy check only;
+the 412 is the authoritative guard and draft mode needs no Gmail.
 
-**Mailbox email cap (warmup).** When a Gmail mailbox is connected, the targets response carries
-`Mailbox email cap (warmup): N/cap sends remaining today` — a per-mailbox safe daily limit,
-separate from the billing quota, that protects the sending domain's reputation while a new
-mailbox warms up. Treat `N` as the ceiling on **email** sends this run: send at most N emails,
-and defer any further email-only prospects to a later day rather than burn the cap — reach
-multi-channel prospects by form / SNS instead. The backend rejects email sends past the cap
-(HTTP 403), so pace to `N` rather than discovering it at send time. A `⚠️` message about the
-mailbox cap means it is already reached — skip email entirely this run. To inspect the full
-warmup state on demand — ramp progress (week X of N), today's cap/used/remaining, and any pause —
-call `mcp__plugin_leadace_api__get_mailbox_health` with `projectId: "$0"` (it reports the mailbox
-the project actually sends from); use it to explain a 403 "Mailbox daily send cap reached" to the user.
+**Mailbox email cap (warmup).** The targets response carries `Mailbox email cap (warmup):
+N/cap sends remaining today` — a per-mailbox daily limit separate from the billing quota that
+protects the sending domain's reputation. Cap **email** sends this run at `N` (the backend
+rejects the rest with HTTP 403); reach further prospects by form / SNS and defer email-only
+ones to a later day. A `⚠️` cap message means it is already reached — skip email entirely this
+run. `mcp__plugin_leadace_api__get_mailbox_health` (`projectId: "$0"`) reports the full warmup
+state — ramp week, today's cap/used/remaining, any pause — to explain a 403 to the user.
 
 Each prospect in the targets list also carries:
-- `cycle: { n, kind, touchNumber, lastOutreach, lastResponse }` — the prospect's
-  outreach history for this project. `n` is the count of confirmed sends.
-  `kind ∈ first | short_cycle_followup | no_response | rejection_followup`.
-  `touchNumber` is the position the next send occupies in the active sequence
-  (1 = first touch); for `short_cycle_followup` it is the 2nd/3rd/4th touch.
-  `lastOutreach.subject` is the most recent subject used; `lastResponse.responseType`
-  is the most recent response (rejection / reply / etc.). When that response was a
-  rejection, `lastResponse.rejectionFeedback` carries the stated objection —
-  `primaryReason` (e.g. `wrong_timing` / `budget`) and `freeText` (their own
-  words, may be null) — so a re-approach can answer the actual reason. Drives
-  tone selection in step 3 and the re-approach branch in step 3b.
-- `hasFreshSignal: boolean` — true when the org has non-empty signals
-  extracted within the last 14 days. Used by the prioritisation server-side;
-  you may surface it in the report.
-- `recentSignals?: string[]` — up to 3 dated signal highlights from the
-  server-side daily refresh (e.g. `"Raised Series B on 2026-05-20"`).
-  Present only when a fresh payload carries highlights (may be absent even
-  when `hasFreshSignal` is true). This is the **refreshed**
-  counterpart to overview's `## Recent Signals` (a registration-time
-  snapshot that never updates): when both exist, use whichever carries the
-  more recent dated entries — usually `recentSignals`, except for freshly
-  registered prospects. Raw material for the opening line, the bad-timing
-  judgment, and re-approach hooks below.
+- `cycle: { n, kind, touchNumber, lastOutreach, lastResponse }` — outreach history
+  for this project. `n` = confirmed sends; `kind ∈ first | short_cycle_followup |
+  no_response | rejection_followup`; `touchNumber` = the next send's position in the
+  active sequence (1 = first touch). `lastOutreach.subject` is the last subject used;
+  `lastResponse.responseType` the last response, and when that was a rejection,
+  `lastResponse.rejectionFeedback` carries the stated objection — `primaryReason`
+  (e.g. `wrong_timing` / `budget`) and `freeText` (their own words, may be null).
+  Drives step 3's tone and step 3b's re-approach branch.
+- `hasFreshSignal: boolean` — true when the org has non-empty signals extracted
+  within the last 14 days. Used by server-side prioritisation; you may surface it
+  in the report.
+- `recentSignals?: string[]` — up to 3 dated signal highlights from the server-side
+  daily refresh (e.g. `"Raised Series B on 2026-05-20"`); may be absent even when
+  `hasFreshSignal` is true. The refreshed counterpart to overview's `## Recent
+  Signals` (frozen at registration) — when both exist, use whichever carries the
+  more recent dated entries. Raw material for the opening line, the bad-timing
+  judgment, and the re-approach hooks below.
 - `hypothesis: { bestChannel, bestKeyperson, hypothesizedPain?, timingSignals? }`
-  — build-list's first-touch guesses, frozen at registration. `bestChannel`
-  (e.g. `personal_email` / `linkedin_dm`) and `bestKeyperson` may each be null;
-  they hint channel choice and addressing — `tpl_channel_policy` and the
-  country / quota gates still decide. `hypothesizedPain` / `timingSignals` are
-  **inferred, not observed**: use them to pick the angle and the pain you frame
-  the offer around when the prospect has no signal material. Frame them as your
-  reasoning, never as a claim about the recipient — only `recentSignals` /
-  `## Recent Signals` carry assertable facts, and only they count as "what's
-  new" in the follow-up branches below.
+  — build-list's first-touch guesses, frozen at registration; each may be null.
+  `bestChannel` / `bestKeyperson` hint channel choice and addressing, but
+  `tpl_channel_policy` and the country / quota gates still decide.
+  `hypothesizedPain` / `timingSignals` are **inferred, not observed**: use them to
+  pick the angle when the prospect has no signal material, framed as your reasoning
+  and never as a claim about the recipient. Only `recentSignals` / `## Recent
+  Signals` carry assertable facts and count as "what's new" below.
 - `channelAffinity: [{ channel, rate, total, responses }]` — the project's
-  **measured** channel ranking for this prospect's coarse industry, best first
-  (e.g. `[{channel:"form",rate:14.0,total:50,responses:7},{channel:"email",rate:8.0,total:100,responses:8}]`),
-  recomputed daily by the lever tick. The array order is the ranking; `rate` (%)
-  / `total` / `responses` are for transparency — only the order (i.e. `channel`)
-  drives selection. `[]` until that industry has enough sends per channel — most
-  projects start empty. When present it reflects what has actually worked, so it
-  takes precedence over the policy order (see step 2); still intersect it with
-  available / enabled channels.
+  **measured** channel ranking for this prospect's coarse industry, best first,
+  recomputed daily by the lever tick. Only the array order drives selection;
+  `rate` (%) / `total` / `responses` are for transparency. `[]` until the industry
+  has enough sends per channel — most projects start empty. When present it
+  overrides the policy order (step 2); still intersect it with available / enabled
+  channels.
 
 If the tool returns a "Project not found" error, instruct the user to run `/leadace` first and **abort**.
 
@@ -181,51 +148,44 @@ If the tool returns a "Project not found" error, instruct the user to run `/lead
 Pick **one** channel per prospect — never chain channels.
 
 Retrieve the channel ranking policy via `mcp__plugin_leadace_api__get_master_document`
-with `slug: "tpl_channel_policy"` and follow it (personal email → LinkedIn → department
-email → generic email → form → X DM; a `platformUrl` prospect is handled in step 5b per
-the policy's in-platform exception). It is the **default** order. Apply it together with these project inputs, highest precedence first:
+with `slug: "tpl_channel_policy"` (personal email → LinkedIn → department email → generic
+email → form → X DM; a `platformUrl` prospect goes to step 5b per the policy's in-platform
+exception). It is the **default** order. Apply these inputs, highest precedence first:
 
-- **`outboundChannels`** (from step 1) — hard filter: rank only among the channels the
-  project has enabled. The candidate list is already server-filtered to enabled channels,
-  but a multi-channel prospect may still expose a disabled channel — never pick it.
-- **SALES_STRATEGY's "Sales Channels"** section, when present: the user's explicit channel
-  ordering. It overrides the ordering (only the ordering) and wins over the inputs below.
-- **`channelAffinity`** (from step 1), when non-empty: the measured best-to-worst ranking
-  for this prospect's industry. Use it as the order — it **overrides the policy default** —
-  picking the top-ranked channel that is available and enabled; fall back to the policy
-  order for any channels it doesn't cover. Empty (the common early state) → ignore it.
+- **`outboundChannels`** (step 1) — hard filter: rank only among enabled channels. A
+  multi-channel prospect may still expose a disabled one — never pick it.
+- **SALES_STRATEGY's "Sales Channels"** section, when present: the user's explicit ordering.
+  Overrides the ordering only, and wins over the inputs below.
+- **`channelAffinity`** (step 1), when non-empty: the measured ranking for this prospect's
+  industry. Use it as the order — it **overrides the policy default** — picking the
+  top-ranked channel that is available and enabled; fall back to the policy order for
+  channels it doesn't cover. Empty (the common early state) → ignore it.
 - **`tpl_channel_policy`** default order when none of the above decide.
 
-The `learnings` `[channel]` entries (step 1) are *advisory color on how to use a channel*, never a precedence input — channel selection ranking is decided only by the inputs above.
+The `learnings` `[channel]` entries (step 1) are advisory color on *how* to use a channel, never a precedence input.
 
-Country eligibility is no longer a skill-side concern — `get_outbound_targets` filters to
-supported recipient countries server-side (step 1).
+Country eligibility is not a skill-side concern — `get_outbound_targets` already filtered to supported recipient countries (step 1).
 
 **Attempt limit per prospect:** Limit sending attempts to **a maximum of 2** per prospect (main channel + 1 fallback, allowed when the main channel fails for a transient reason or when the server retires that channel for the prospect). If both fail for any reason, immediately skip and move to the next prospect. Do not waste context and tool calls lingering on a single prospect.
 
 **SNS DM caution:** SNS DMs have a lower reach rate (depends on recipient's DM settings). Channel enablement is handled by step 1's `outboundChannels`; do not re-check SALES_STRATEGY here.
 
-**Bad-timing skip (optional, on by default).** Before composing, judge from
-what you already have on the prospect — the `overview` (including any
-`## Recent Signals`), `recentSignals`, the `hypothesis`, and the `cycle`
-context — whether now is clearly a bad moment to reach this specific
-recipient. What counts as "bad"
-depends on the recipient; representative cases are a recent negative event that
-removes or freezes the buyer (layoffs, an announced bankruptcy / wind-down, a
-leadership shake-up implying the buyer left, a post-acquisition integration
-freeze). Skip only when the signal is concrete and clearly negative — when in
-doubt, send (a neutral read is a send, so prospects with no such signal are
-unaffected).
+**Bad-timing skip (optional, on by default).** Before composing, judge from the
+material you already have (`overview` including any `## Recent Signals`,
+`recentSignals`, `hypothesis`, `cycle`) whether a concrete, clearly negative event
+makes now a bad moment for this recipient — layoffs, an announced wind-down, a
+leadership shake-up implying the buyer left, a post-acquisition freeze. When in
+doubt, send: a neutral read is a send, so prospects with no such signal are
+unaffected.
 
-To skip: do NOT send, and call `mcp__plugin_leadace_api__skip_prospect` with
+To skip: do NOT send; call `mcp__plugin_leadace_api__skip_prospect` with
 `projectId: "$0"`, `prospectId`, the `channel` you were about to use (`email` /
-`form` / `sns_linkedin` / `sns_twitter` / `platform`), `reason: "bad_timing"`, and a one-line
-`note` (e.g. `"layoffs announced last week"`). The server records a `skipped`
-audit row and defers re-eligibility by the project's no-response recycle window
-(no quota consumed); then continue to the next prospect.
+`form` / `sns_linkedin` / `sns_twitter` / `platform`), `reason: "bad_timing"`, and
+a one-line `note` (e.g. `"layoffs announced last week"`). The server records a
+`skipped` audit row and defers re-eligibility by the no-response recycle window
+(no quota consumed). Then continue to the next prospect.
 
-If the user passed an explicit override ("send anyway", "ignore timing"),
-skip the skip — they own the trade-off.
+An explicit user override ("send anyway", "ignore timing") wins — they own the trade-off.
 
 ### 3. Email Sending
 
@@ -235,78 +195,60 @@ Retrieve email guidelines via `mcp__plugin_leadace_api__get_master_document` wit
 
 Close with a light sign-off (name + optional role) drawn from the "Sender Information" section of SALES_STRATEGY.md — not a full signature block; the backend appends the compliance footer (legal name, address, unsubscribe) automatically. Sender display name and `From:` address are applied automatically by `send_email_and_record` from project settings — do not pass them as arguments.
 
-**Message angle variation (weighted draw).** Message angles (subject
-pattern + optional body approach) are stored server-side in
-`message_variants`; the server picks one per send by a weighted draw
-(Thompson sampling, favoring the better-performing angles, recomputed
-daily by the lever tick). Per send, call
-`mcp__plugin_leadace_api__pick_message_variant` with the project id; the
-response is `{ variantId, subjectPattern, bodyApproach, label }`. Render
-the subject by substituting `{{org}}` / `{{name}}` / `{{signal}}`
-placeholders the pattern uses. When `bodyApproach` is present, write the
-body to that brief — its structure, tone, CTA type, length, and opener
-policy govern, with `email_template` supplying the facts (what you offer,
-proof points) and the personalization rules below still applying; when
-it is null, the `email_template` skeleton is the structure as before.
-The compliance rules and the inquiry-aware CTA branch below always
-outrank the brief. Forward the `variantId` to `send_email_and_record` so
-`outreach_logs.variant_id` is stamped for per-variant reply metrics.
-The same attribution holds on any subject-bearing send: when a contact
-form carries a message variant, pass its `variantId` to
-`record_outreach_with_inquiry` too (SNS DMs have no subject, so none
-applies) — otherwise per-variant metrics skew toward email-only sends.
+**Message angle variation (weighted draw).** Message angles (subject pattern +
+optional body approach) live server-side in `message_variants`; the server picks
+one per send by a weighted draw (Thompson sampling, recomputed daily by the lever
+tick). Per send, call `mcp__plugin_leadace_api__pick_message_variant` with the
+project id; it reports the picked variant id and its subject pattern, plus a label
+and a body approach when the variant carries them. Render the subject by
+substituting the `{{org}}` / `{{name}}` / `{{signal}}` placeholders the pattern
+uses. When a body approach is reported, write the body to that brief — its
+structure, tone, CTA type, length, and opener policy govern, with `email_template`
+supplying the facts and the personalization rules below still applying; with none,
+the `email_template` skeleton is the structure. The compliance rules and the
+inquiry-aware CTA branch below always outrank the brief. Forward `variantId` to
+`send_email_and_record` so `outreach_logs.variant_id` is stamped for per-variant
+reply metrics — and likewise to `record_outreach_with_inquiry` when a contact form
+carries a variant (SNS DMs have no subject, so none applies), otherwise the metrics
+skew toward email-only sends.
 
-If `pick_message_variant` returns `NOT_FOUND` ("No active message
-variants"), the project has no angles registered yet — generate a
-short one-off subject, send without `variantId`, and surface the gap in
-the run-end report so the operator can add angles via
-`upsert_message_variant` (or via `/leadace`'s strategy onboarding step). Do not
-fabricate a SALES_STRATEGY.md "Subject Line Patterns" section; that
-content is no longer the authoritative source.
+If `pick_message_variant` returns `NOT_FOUND` ("No active message variants"), the
+project has no angles registered yet — generate a short one-off subject, send
+without `variantId`, and surface the gap in the run-end report so the operator can
+add angles via `upsert_message_variant` (or `/leadace`'s strategy onboarding step).
+Do not fabricate a SALES_STRATEGY.md "Subject Line Patterns" section; that content
+is not an authoritative source.
 
-**Signal-aware opening (Phase 1.5 hook).** If the prospect has signal
-material — `recentSignals`, or a `## Recent Signals` section in `overview`
-with at least one entry — the email's **first sentence** must reference the
-most recent / most relevant signal in concrete terms ("Saw the Series B
-announcement on TechCrunch last week — congrats on…", "Noticed you're
-hiring senior platform engineers in Seattle…"). When both sources exist,
-pick by entry date (both carry dates; `recentSignals` is usually fresher
-since the overview section is frozen at registration). One signal mention,
-then move to the actual ask. If neither source has an entry, do not invent
-one; open per SALES_STRATEGY's normal pattern.
+**Signal-aware opening.** If the prospect has signal material — `recentSignals`, or
+a `## Recent Signals` section in `overview` with at least one entry — the email's
+**first sentence** must reference the most recent / most relevant signal in concrete
+terms ("Saw the Series B announcement on TechCrunch last week — congrats on…").
+When both sources exist, pick by entry date. One signal mention, then move to the
+actual ask. If neither has an entry, do not invent one; open per SALES_STRATEGY's
+normal pattern.
 
-**Inquiry-aware CTA branch.** When `inquiryLandingEnabled === true`
-(captured in step 1):
-- The body's primary CTA should invite the recipient to spend ~5 minutes
-  on the inquiry-landing page ("If a 5-minute AI conversation works
-  better than scheduling a call, you can ask anything here: <inquiry URL
-  is appended automatically by the backend>"). Frame it as low-effort,
-  recipient-led, no calendar required. The landing page itself decides
-  what the secondary CTA looks like (Book/Request a meeting vs. Sign up
-  for the product) based on the project's `inquiryCtaType` — the email
-  body does not need to mention either explicitly.
-- Backup CTAs in the email body should match the project's CTA mode:
-  when `inquiryCtaType === 'meeting'`, keep the reply / scheduling-link
-  fallback; when `inquiryCtaType === 'signup'`, drop the scheduling
-  fallback and lean on reply only (a "book a call" backup contradicts
-  the self-serve framing the landing presents).
+**Inquiry-aware CTA branch.** When `inquiryLandingEnabled === true` (step 1):
+- The primary CTA invites the recipient to spend ~5 minutes on the inquiry-landing
+  page ("If a 5-minute AI conversation works better than scheduling a call, you can
+  ask anything here: <the backend appends the URL>"). Frame it as low-effort,
+  recipient-led, no calendar required. The landing page picks its own secondary CTA
+  from `inquiryCtaType` — the body needn't mention either.
+- Match the body's backup CTA to the mode: `meeting` → keep the reply / scheduling
+  fallback; `signup` → drop the scheduling fallback and lean on reply only (a "book
+  a call" backup contradicts the self-serve framing the landing presents).
 
-When `inquiryLandingEnabled === false`:
-- Use the existing reply / scheduling-link / meeting-request CTA pattern
-  per SALES_STRATEGY.md (the meeting-oriented fallback). Self-serve
-  signup is not surfaced from the email itself in this mode — promote
-  it via SALES_STRATEGY.md edits if the project's go-to-market is PLG.
+When `inquiryLandingEnabled === false`, use the reply / scheduling-link /
+meeting-request CTA pattern per SALES_STRATEGY.md. Self-serve signup is not
+surfaced from the email in this mode — promote it via SALES_STRATEGY.md edits if
+the project's go-to-market is PLG.
 
-In both branches the inquiry / unsubscribe URLs **and the compliance
-footer** (legal name, physical address) are appended by
-the backend — do **not** insert any of them in the body, and do **not**
-include a closing address block from SALES_STRATEGY.md's "Sender
-Information" beyond the human signature (name + role + sign-off).
-Duplicating the address yields a confused-looking footer. If
-`send_email_and_record` returns `412 Tenant compliance settings
-incomplete`, surface the message verbatim and tell the user to fill in
-Workspace settings at https://app.leadace.ai/workspace-settings before
-retrying.
+In both branches the backend appends the inquiry / unsubscribe URLs **and the
+compliance footer** (legal name, physical address) — never insert them in the body,
+and never carry a closing address block from "Sender Information" beyond the human
+signature (name + role + sign-off); duplicating the address yields a confused-looking
+footer. If `send_email_and_record` returns `412 Tenant compliance settings
+incomplete`, surface the message verbatim and tell the user to fill in Workspace
+settings at https://app.leadace.ai/workspace-settings before retrying.
 
 **Body personalization (vary depth by outreach mode):**
 
@@ -315,18 +257,17 @@ retrying.
 
 Having composed the body (reached only when the `email_template` exists), call `mcp__plugin_leadace_api__send_email_and_record` — the same call for both outreach modes (precision or volume):
 - `projectId: "$0"`
-- `prospectId`: the prospect's id
-- `to`: array with the recipient address
-- `subject`: subject line (rendered from the variant's `subjectPattern`)
+- `prospectId`: the prospect's id — the server sends to that prospect's stored address
+- `subject`: subject line (rendered from the variant's subject pattern)
 - `body`: complete body including signature (no compliance footer — the
   backend appends it)
 - `variantId`: from `pick_message_variant`; omit when no variants exist
 
-The server reads the project's `outboundMode` and which mailbox the project uses, then returns one of two outcomes. The email is sent server-side whichever mailbox the project uses — a connected Gmail or a custom SMTP mailbox — so **never branch on `outboundMode` or sending-identity type in your own logic:**
-- `{ mode: "sent", outreachId, messageId, threadId }` → the email was sent. Nothing more to do.
-- `{ mode: "drafted", outreachId }` → no send; stored as a `pending_review` draft for the user to review and send from https://app.leadace.ai/drafts. Drafts do not count against the outreach quota.
+The server reads the project's `outboundMode` and which mailbox the project uses, then reports one of two outcomes. The email is sent server-side whichever mailbox the project uses — a connected Gmail or a custom SMTP mailbox — so **never branch on `outboundMode` or sending-identity type in your own logic:**
+- **sent** — the email went out and the outreach was logged. Nothing more to do.
+- **drafted** — no send; stored as a `pending_review` draft for the user to review and send from https://app.leadace.ai/drafts. Drafts do not count against the outreach quota.
 
-Track the response `mode` per call for the step 8 report (sent vs. drafted counts).
+Track which outcome each call reported for the step 8 report (sent vs. drafted counts).
 
 On a 502 `Send failed`, the outreach is still logged with `status: "failed"` and the prospect's re-eligibility is deferred by the project's no-response recycle window — do not retry manually. On a 412 `Gmail not connected` / `Gmail token revoked`, abort all email sending for this run and surface the message; the user must reconnect Gmail in the web app's Settings. On a 422 `Recipient email address cannot receive mail`, nothing was sent and the server has retired the email channel for that prospect — never retry email, and use the fallback attempt on another available channel if there is one.
 
@@ -385,7 +326,7 @@ When `cycle.kind === 'rejection_followup'`:
     `lastResponse.rejectionFeedback.primaryReason` (and `freeText` if
     present) to open against the actual objection — reference it, don't
     quote verbatim — then lead with what's specifically changed since
-    (`recentSignals`, Phase 1.5 signals, product updates, pricing changes).
+    (`recentSignals`, `## Recent Signals`, product updates, pricing changes).
   - `'meeting_request'` / positive `'reply'`: unusual to be back in
     the candidate pool — only happens if the recycle window elapsed
     without a follow-up booking. Reference the earlier interest neutrally.
@@ -411,7 +352,7 @@ mcp__plugin_leadace_api__record_outreach_with_inquiry
   body: <composed body>
 ```
 
-The server reads the project's `outboundMode` and either allocates the row as `status: "pre_send"` (send mode, in-flight reservation) or `status: "pending_review"` (draft mode). When `inquiryLandingEnabled=true` the response's `finalBody` carries the inquiry-landing URL footer appended to the body — submit it verbatim. The response is `{ outreachLogId, status, finalBody, inquiryUrl }`.
+The server reads the project's `outboundMode` and either allocates the row as `status: "pre_send"` (send mode, in-flight reservation) or `status: "pending_review"` (draft mode). It reports the outreach log id, that status, an `Inquiry URL:` line when one was allocated, and the `finalBody:` to submit — which already carries the inquiry-landing URL footer when `inquiryLandingEnabled=true`. Submit it verbatim.
 
 **If `status === 'pending_review'` (draft mode):** stop here. The row is already stored for the user to review at https://app.leadace.ai/drafts. Do not open the browser, do not inspect the form, do not check `formType`. The user submits whatever form themselves; pre-screening (CAPTCHA / iframe / sales refusal notices) is irrelevant in draft mode.
 
@@ -450,7 +391,7 @@ mcp__plugin_leadace_api__record_outreach_with_inquiry
   body: <composed DM body>
 ```
 
-The server returns `{ outreachLogId, status, finalBody, inquiryUrl }`. `finalBody` already includes the inquiry-landing URL footer when the project has it enabled — submit it verbatim.
+The server reports the outreach log id, the status, an `Inquiry URL:` line when one was allocated, and the `finalBody:` — which already includes the inquiry-landing URL footer when the project has it enabled. Submit it verbatim.
 
 **If `status === 'pending_review'` (draft mode):** stop here. The DM is stored as a draft (with `finalBody`) for the user to send manually from https://app.leadace.ai/drafts. Do not open the browser or pre-check DM settings — the user finds out at send time and can mark the prospect inactive then.
 

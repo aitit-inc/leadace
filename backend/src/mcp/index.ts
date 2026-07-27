@@ -902,16 +902,12 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'send_email_and_record',
-    'Sends a prospect email and records the outreach log in one call; project outboundMode decides send vs a pending_review draft. Returns outreachId and whether it sent or drafted.',
+    'Sends a prospect email to the address stored on the prospect and records the outreach log in one call; project outboundMode decides send vs a pending_review draft. Returns outreachId and whether it sent or drafted.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       prospectId: z.number().int(),
-      to: z.array(z.email()).min(1),
       subject: z.string().min(1),
       body: z.string().min(1),
-      cc: z.array(z.email()).optional(),
-      bcc: z.array(z.email()).optional(),
-      inReplyTo: z.string().optional().describe('RFC 5322 Message-Id of the message being replied to, for threading'),
       variantId: variantIdSchema.optional().describe('Message variant id from pick_message_variant'),
     },
     async (input, { apiUrl, authHeader }) => {

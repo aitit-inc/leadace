@@ -237,8 +237,8 @@ say "prospect_us=$PROSPECT_US_ID prospect_gb=$PROSPECT_GB_ID prospect_dnc=$PROSP
 # Fabricated prospectId must be a clean 404, not a 500 from the outreach_logs FK.
 step "fabricated prospectId returns 404 (not 500)"
 BOGUS_BODY="$(jq -nc \
-  --arg pid "$PROJECT_ID" --arg eUS "$EMAIL_US" \
-  '{projectId:$pid, prospectId:999999999, to:[$eUS], subject:"bogus prospect", body:"body"}')"
+  --arg pid "$PROJECT_ID" \
+  '{projectId:$pid, prospectId:999999999, subject:"bogus prospect", body:"body"}')"
 BOGUS_CODE="$(api_status POST /api/outreach/send-and-record "$BOGUS_BODY" 2>/tmp/regression-outbound-out.$$ || true)"
 BOGUS_RESP="$(cat /tmp/regression-outbound-out.$$ 2>/dev/null || true)"; rm -f /tmp/regression-outbound-out.$$
 assert_eq "send-and-record bogus prospectId → 404" "$BOGUS_CODE" "404"
@@ -254,8 +254,7 @@ assert_eq "rejection-feedback/summary default scope → 200" "$RFS_CODE" "200"
 step "compliance gate: send-and-record returns 412 with missing fields"
 GATE_BODY="$(jq -nc \
   --arg pid "$PROJECT_ID" --argjson prid "$PROSPECT_US_ID" \
-  --arg eUS "$EMAIL_US" \
-  '{projectId:$pid, prospectId:$prid, to:[$eUS], subject:"compliance gate test", body:"body"}')"
+  '{projectId:$pid, prospectId:$prid, subject:"compliance gate test", body:"body"}')"
 
 CODE="$(api_status POST /api/outreach/send-and-record "$GATE_BODY" 2>/tmp/regression-outbound-out.$$ || true)"
 GATE_RESP="$(cat /tmp/regression-outbound-out.$$ 2>/dev/null || true)"
@@ -281,8 +280,7 @@ assert_eq "project.outboundMode=draft" "$(echo "$SET_SETTINGS" | jq -r '.outboun
 step "draft happy path: outboundMode=draft → mode='drafted'"
 DRAFT_BODY="$(jq -nc \
   --arg pid "$PROJECT_ID" --argjson prid "$PROSPECT_US_ID" \
-  --arg eUS "$EMAIL_US" \
-  '{projectId:$pid, prospectId:$prid, to:[$eUS], subject:"draft test", body:"hello from regression"}')"
+  '{projectId:$pid, prospectId:$prid, subject:"draft test", body:"hello from regression"}')"
 DRAFT_CODE="$(api_status POST /api/outreach/send-and-record "$DRAFT_BODY" 2>/tmp/regression-outbound-out.$$ || true)"
 DRAFT_RESP="$(cat /tmp/regression-outbound-out.$$)"
 rm -f /tmp/regression-outbound-out.$$
@@ -303,8 +301,7 @@ step "send mode + country=GB: 422 country guardrail"
 api PUT "/api/projects/$PROJECT_ID/settings" '{"outboundMode":"send"}' > /dev/null
 GB_BODY="$(jq -nc \
   --arg pid "$PROJECT_ID" --argjson prid "$PROSPECT_GB_ID" \
-  --arg eGB "$EMAIL_GB" \
-  '{projectId:$pid, prospectId:$prid, to:[$eGB], subject:"country test", body:"body"}')"
+  '{projectId:$pid, prospectId:$prid, subject:"country test", body:"body"}')"
 GB_CODE="$(api_status POST /api/outreach/send-and-record "$GB_BODY" 2>/tmp/regression-outbound-out.$$ || true)"
 GB_RESP="$(cat /tmp/regression-outbound-out.$$)"
 rm -f /tmp/regression-outbound-out.$$
@@ -323,8 +320,7 @@ step "send mode + do-not-contact: 422 DNC backstop"
 psql_local "UPDATE prospects SET do_not_contact = true WHERE id = $PROSPECT_DNC_ID;" > /dev/null
 DNC_BODY="$(jq -nc \
   --arg pid "$PROJECT_ID" --argjson prid "$PROSPECT_DNC_ID" \
-  --arg eDNC "$EMAIL_DNC" \
-  '{projectId:$pid, prospectId:$prid, to:[$eDNC], subject:"dnc test", body:"body"}')"
+  '{projectId:$pid, prospectId:$prid, subject:"dnc test", body:"body"}')"
 DNC_CODE="$(api_status POST /api/outreach/send-and-record "$DNC_BODY" 2>/tmp/regression-outbound-out.$$ || true)"
 DNC_RESP="$(cat /tmp/regression-outbound-out.$$)"
 rm -f /tmp/regression-outbound-out.$$
@@ -345,8 +341,7 @@ if [[ "$GMAIL_COUNT" == "0" ]]; then
 
   NO_GMAIL_BODY="$(jq -nc \
     --arg pid "$PROJECT_ID" --argjson prid "$PROSPECT_US_ID" \
-    --arg eUS "$EMAIL_US" \
-    '{projectId:$pid, prospectId:$prid, to:[$eUS], subject:"no gmail test", body:"body"}')"
+    '{projectId:$pid, prospectId:$prid, subject:"no gmail test", body:"body"}')"
 
   PRECOUNT="$(psql_local "SELECT count(*) FROM outreach_logs WHERE prospect_id = $PROSPECT_US_ID AND project_id = '$PROJECT_ID' AND status = 'sent';")"
 
@@ -377,9 +372,8 @@ else
 
     SEND_BODY="$(jq -nc \
       --arg pid "$PROJECT_ID" --argjson prid "$PROSPECT_US_ID" \
-      --arg eUS "$EMAIL_US" \
       --arg subject "regression-outbound real-send $RUN_TAG" \
-      '{projectId:$pid, prospectId:$prid, to:[$eUS], subject:$subject, body:"E2E regression real-send body. Disregard."}')"
+      '{projectId:$pid, prospectId:$prid, subject:$subject, body:"E2E regression real-send body. Disregard."}')"
 
     SEND_CODE="$(api_status POST /api/outreach/send-and-record "$SEND_BODY" 2>/tmp/regression-outbound-out.$$ || true)"
     SEND_RESP="$(cat /tmp/regression-outbound-out.$$)"

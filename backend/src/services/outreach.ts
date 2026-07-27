@@ -126,16 +126,8 @@ export const sendAndRecordSchema = z
   .object({
     projectId: projectRefSchema,
     prospectId: prospectIdSchema,
-    to: z.array(z.email()).min(1),
-    cc: z.array(z.email()).optional(),
-    bcc: z.array(z.email()).optional(),
     subject: z.string().min(1),
     body: z.string().min(1),
-    inReplyTo: z
-      .string()
-      .regex(/^<[^\r\n<>]+>$/, 'inReplyTo must be a single RFC 5322 Message-ID like <id@host>')
-      .max(998)
-      .optional(),
     // This path performs no variant selection — the weighted draw happens
     // upstream in pick_message_variant.
     variantId: variantIdSchema.optional(),
@@ -315,27 +307,25 @@ async function assertProspectContactable(
   return ok(undefined)
 }
 
-// Keyed on the prospect's stored email, which `to` is expected to match.
-async function assertEmailDeliverable(
+async function resolveDeliverableRecipient(
   db: Db,
   tenantId: TenantId,
   prospectId: number,
   verifyApiKey: string | null,
-): Promise<ServiceResult<undefined>> {
+): Promise<ServiceResult<string>> {
   const [row] = await db
     .select({ email: prospects.email, emailDeliverability: prospects.emailDeliverability })
     .from(prospects)
     .where(and(eq(prospects.id, prospectId), eq(prospects.tenantId, tenantId)))
     .limit(1)
-  // Missing prospect → defer to the caller's requireProspect NOT_FOUND.
-  if (!row) return ok(undefined)
+  if (!row) return err('NOT_FOUND', 'Prospect not found')
+  if (!row.email) return err('UNPROCESSABLE', 'Prospect has no email address')
   if (row.emailDeliverability === UNDELIVERABLE) {
     return err('UNPROCESSABLE', 'Recipient email address cannot receive mail')
   }
-  if (!row.email) return ok(undefined)
 
   const verdict = await verifyAddressBeforeSend(row.email, verifyApiKey)
-  if (verdict.deliverability !== UNDELIVERABLE) return ok(undefined)
+  if (verdict.deliverability !== UNDELIVERABLE) return ok(row.email)
 
   await db
     .update(prospects)
@@ -688,13 +678,13 @@ export async function sendAndRecord(
 
   // Last guard: it spends a verification credit, so every refusal the DB can reach
   // has to fire before it.
-  const deliverable = await assertEmailDeliverable(
+  const recipient = await resolveDeliverableRecipient(
     db,
     tenantId,
     input.prospectId,
     ctx.emailVerifyApiKey,
   )
-  if (!deliverable.ok) return deliverable
+  if (!recipient.ok) return recipient
 
   // INSERT as 'pre_send' so the row counts toward quota (preventing concurrent
   // allocations from racing past the cap) and gives createInquiryToken's FK a
@@ -740,12 +730,9 @@ export async function sendAndRecord(
     encryptionKey: ctx.encryptionKey,
     clientId: ctx.clientId,
     clientSecret: ctx.clientSecret,
-    to: input.to,
-    cc: input.cc,
-    bcc: input.bcc,
+    to: [recipient.value],
     subject: input.subject,
     body: sendBody,
-    inReplyTo: input.inReplyTo,
     extraHeaders: attachments.headers,
     senderEmailAlias: sendSettings.senderEmailAlias,
     senderDisplayName: sendSettings.senderDisplayName,
@@ -1117,7 +1104,6 @@ export async function sendDraft(
         subject: outreachLogs.subject,
         body: outreachLogs.body,
         status: outreachLogs.status,
-        prospectEmail: prospects.email,
         doNotContact: prospects.doNotContact,
       })
       .from(outreachLogs)
@@ -1134,9 +1120,6 @@ export async function sendDraft(
   }
   if (draft.channel !== 'email') {
     return err('UNPROCESSABLE', 'This draft is not an email — use mark-sent instead')
-  }
-  if (!draft.prospectEmail) {
-    return err('UNPROCESSABLE', 'Prospect has no email address')
   }
   if (draft.doNotContact) {
     return err('UNPROCESSABLE', 'Prospect is on do-not-contact list')
@@ -1165,13 +1148,13 @@ export async function sendDraft(
   const compliance = complianceResult.value
 
   // Last guard — see sendAndRecord.
-  const deliverable = await assertEmailDeliverable(
+  const recipient = await resolveDeliverableRecipient(
     db,
     tenantId,
     draft.prospectId,
     ctx.emailVerifyApiKey,
   )
-  if (!deliverable.ok) return deliverable
+  if (!recipient.ok) return recipient
 
   const attachments = await buildOutreachFooter(db, tenantId, ctx, {
     prospectId: draft.prospectId,
@@ -1190,7 +1173,7 @@ export async function sendDraft(
     encryptionKey: ctx.encryptionKey,
     clientId: ctx.clientId,
     clientSecret: ctx.clientSecret,
-    to: [draft.prospectEmail],
+    to: [recipient.value],
     subject: draft.subject ?? '',
     body: sendBody,
     extraHeaders: attachments.headers,
