@@ -19,6 +19,14 @@ outbound outreach, and iterates on strategy — all hands-free.
 
 ## Installation
 
+One line in your terminal:
+
+```bash
+claude plugin marketplace add aitit-inc/leadace && claude plugin install leadace@leadace
+```
+
+Or, from inside a running Claude Code session:
+
 ```
 /plugin marketplace add aitit-inc/leadace
 /plugin install leadace@leadace

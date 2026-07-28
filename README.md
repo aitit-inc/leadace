@@ -19,7 +19,13 @@ Website: https://leadace.ai
 
 ### Installation
 
-In Claude Code:
+One line in your terminal:
+
+```bash
+claude plugin marketplace add aitit-inc/leadace && claude plugin install leadace@leadace
+```
+
+Or, from inside a running Claude Code session:
 
 ```
 /plugin marketplace add aitit-inc/leadace

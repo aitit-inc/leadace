@@ -263,7 +263,7 @@ measured history; new content = new arm on a fresh slug, never a reused one).
 
 ### 4. Onboarding Chain (intent = onboarding)
 
-Goal: from "user just typed `/leadace https://example.com`" to "project + business + sales_strategy saved, ready for `/daily-cycle`".
+Goal: from "user just typed `/leadace https://example.com`" to "project + business + sales_strategy saved, ready for `/daily-cycle`" — asking the user exactly once, at the review in 4.2. A URL is the go-ahead, so there is no Y/N gate, and anything the chain can read, detect or default is never a question.
 
 **Initial-state-or-not handling**:
 - 0 projects -> proceed straight into the chain.
@@ -271,55 +271,40 @@ Goal: from "user just typed `/leadace https://example.com`" to "project + busine
 - ≥1 project + no URL + user said "start" -> ask for the URL via `AskUserQuestion` ("Paste your homepage URL — we'll use it to draft the strategy.").
 - 0 projects + no URL -> ask for the URL.
 
-Hold the URL as `URL`.
+Hold the URL as `URL`. Say in one line what is about to happen, then start.
 
-#### 4.1 Confirm the chain
-
-Print a 4-line preview and ask Y/N:
-
-```
-I'll set you up end-to-end:
-  1. Verify your environment (Gmail, MCP)
-  2. Create a project from this URL and draft business + sales strategy
-Then you'll run /daily-cycle <project> for the actual outreach.
-Proceed? [Y/n]
-```
-
-If N: stop, and tell the user they can re-run `/leadace <url>` anytime, or ask `/leadace` to set up the environment or draft the strategy separately.
-
-#### 4.2 Run env_check
+#### 4.1 Run env_check
 
 `Read` `${CLAUDE_PLUGIN_ROOT}/references/onboarding/env_check.md` and execute its full procedure (Steps 1-4). Pass:
 - `$0` = empty (the chain derives the project name from the URL in env_check Step 3-2)
 - `$URL` = `URL` (the homepage URL the user provided)
 
-The reference allows defaulting Gmail-MCP and Chrome-extension answers to `unsure` in chain context — apply that default here so the chain stays smooth. Mention in the final summary that the user can ask `/leadace` to re-check the environment for explicit confirmation.
+Passing `$URL` is what makes the reference run without prompting. After this you have `PROJECT_NAME` and the capability summary.
 
-After this, you have `PROJECT_NAME` and the capability summary.
-
-#### 4.3 Run strategy_drafting (Mode B)
+#### 4.2 Run strategy_drafting (Mode B)
 
 `Read` `${CLAUDE_PLUGIN_ROOT}/references/onboarding/strategy_drafting.md` and execute its full procedure (Steps 1-8) using **Mode B (URL-driven inference)**. Pass:
 - `$0` = `PROJECT_NAME`
 - `$URL` = `URL`
 
-Mode B fetches the URL with the local fetch tool, infers business / target / features / pricing / track-record from page content, then asks the user for sender info (4B-3 step 1), notification email (4B-3 step 2), and inquiry landing optional polish (4B-3 step 3 — video / PDF / brand color / logo / CTA: scheduling URL or SaaS sign up URL, all skippable). It applies sensible defaults for the rest (`outboundMode: draft`, `inquiryCtaType: meeting` notify-only when neither CTA URL is supplied, prospect-discovery sources from `tpl_targeting_guide`, response definition (1)(2)(3)).
+Mode B infers the strategy from the page, defaults everything else, and puts the whole proposal in front of the user as §4B-3's single review round before §4B-4 saves it.
 
-#### 4.4 Completion Summary
+#### 4.3 Completion Summary
 
 Print:
 
 1. **Header**: `Setup complete - <PROJECT_NAME>`
-2. **What was created**: project, `business` doc, `sales_strategy` doc, sender info + outbound channels in project settings, initial `inquiry_chat_brief`.
-3. **Capability summary** from env_check (4 lines).
-4. **Recipient delivery scope**: a one-line note that recipient delivery is currently limited to the supported countries shown during the compliance step (so the operator's targeting matches the send-time guardrail).
-5. **Defaults you can change later**: outbound mode is `draft` so nothing sends without your review; the AI inquiry chat is live on the recipient landing page (the inquiry landing defaults to enabled — toggle it off in the Web UI if you don't want recipient links to surface) — edit settings via the Web UI (Inquiry page, sidebar) or ask `/leadace` to refine the strategy / messaging.
-6. **Next steps**:
+2. **What was created**: project, `business` doc, `sales_strategy` doc, sender info + outbound channels in project settings, initial `inquiry_chat_brief`, message-angle variants.
+3. **Anything that still blocks sending** — Gmail not connected (fix: https://app.leadace.ai) or a workspace-identity field left blank in the review (fix: https://app.leadace.ai/workspace-settings). Both refuse `/outbound` and `/daily-cycle` until set. Omit the whole item when nothing is blocked.
+4. **Capability summary** from env_check, plus one line that Gmail-MCP / browser-automation were assumed `unsure` and can be re-checked by asking `/leadace`.
+5. **Recipient delivery scope**: one line that delivery is limited to the currently supported recipient countries, so the operator's targeting matches the send-time guardrail.
+6. **Defaults you can change later**: outbound mode is `draft` so nothing sends without your review; the AI inquiry chat is live on the recipient landing page (the inquiry landing defaults to enabled — toggle it off in the Web UI if you don't want recipient links to surface); landing extras (video / PDF / brand color / logo / CTA) are on the Web UI Inquiry page — or ask `/leadace` to refine the strategy / messaging.
+7. **Next steps**:
    - `/daily-cycle <project>` — runs initial prospect collection (`/build-list` is auto-triggered when the list is empty), drafts outreach, and shows you the queue.
    - `/setup-cron <project>` (optional) — schedule the daily cycle to run on its own.
-7. **Memory snippet** (Section 4.5).
+8. **Memory snippet** (Section 4.4) — optional, for the user to paste if they want it.
 
-#### 4.5 Runtime Memory Snippet
+#### 4.4 Runtime Memory Snippet
 
 Print a short snippet the user can paste into their runtime's persistent memory so future sessions know LeadAce is set up. Show the snippet for the detected `RUNTIME` only:
 

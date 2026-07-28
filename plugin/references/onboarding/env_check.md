@@ -7,7 +7,7 @@ Environment status is **live-detected, never persisted.** Gmail SaaS connectivit
 The caller (the SKILL.md that `Read`s this file) provides:
 - The user-facing framing and tone (interactive Q&A vs minimal-prompt chain)
 - An optional `$0` argument (project name)
-- An optional `$URL` (the user's homepage URL; used by `/leadace` for project naming)
+- An optional `$URL` (the user's homepage URL). Its presence means "this is the onboarding chain": it names the project (3-2) and suppresses every prompt here (2-2, 2-2b, 2-3), because the chain asks the user once, later, in one place.
 
 This procedure is authoritative — execute the steps verbatim. Tools used: `mcp__plugin_leadace_api__*`, `Read`, `AskUserQuestion`, `Bash`.
 
@@ -49,6 +49,8 @@ Use `AskUserQuestion`: "Have you connected the Gmail MCP in claude.ai? (Required
 
 ### 2-2b. Workspace identity / compliance footer (interactive fill)
 
+**Skip this step entirely when `$URL` is set** (the `/leadace` onboarding chain): the caller's strategy step reads the homepage moments later, and a registered name + postal address are usually printed on it — proposing them for confirmation beats making a first-time user type all three. The chain's single review round collects and saves them instead.
+
 Call `mcp__plugin_leadace_api__get_tenant_settings`. Hold the response as `TENANT_SETTINGS`.
 
 The mandatory fields for outbound sending are `legalName`, `physicalAddress`, and `defaultSenderCountry`. The first two are rendered into every outgoing message's compliance footer (CAN-SPAM § 5(a)(5), CASL § 6 sender identification); `defaultSenderCountry` is workspace metadata — required, but not rendered into mail and unrelated to message language (that is the per-project `targetLanguage` setting). When any is `(not set)`, every send-side endpoint refuses with HTTP 412.
@@ -80,7 +82,7 @@ Mention the recipient-delivery scope once in the completion report (the supporte
 
 Use `AskUserQuestion`: "For `/outbound` browser automation, which do you have? Claude in Chrome handles **contact forms and SNS DMs** (plus SNS reply checking in `/check-responses`); any other browser-automation MCP you've configured (e.g. Playwright) handles **contact forms only**." — options: `Claude in Chrome` / `Other browser MCP` / `neither` / `unsure`. Record as `BROWSER_AUTOMATION` (`chrome` | `other` | `none` | `unsure`; pick `chrome` if the user has both). Capability: `chrome` → form + SNS; `other` → form only; `none`/`unsure` → email only.
 
-**Caller may relax these prompts**: when invoked from `/leadace`'s onboarding chain, the caller can default to `unsure` for 2-2 and 2-3 without asking, to keep the chain flowing. The user can ask `/leadace` to re-check the environment later for explicit confirmation. State this assumption in the hand-off summary (Step 4) when applied.
+**When `$URL` is set** (the onboarding chain), 2-2 and 2-3 are not asked — record both as `unsure` and report the assumption in the Step 4 hand-off. A first run must not open with a quiz about tools the user can connect later, and `/leadace` re-checks the environment on request.
 
 ### 2-4. Local fetch toolchain (auto)
 
@@ -110,7 +112,7 @@ The script uses standard-library only (no `pip install`), so a working `python3`
 - If exactly one project exists → use it. Set `PROJECT_NAME` to that.
 - If multiple exist → ask via `AskUserQuestion` which to use, with one option per project plus `Create new`.
 - If none exist or user picks `Create new`:
-  - **If `$URL` is provided** (onboarding chain): derive a default name from the URL (`https://example.com` → `Example`). Confirm with the user in 1 line; suffix with a number if the name conflicts.
+  - **If `$URL` is provided** (onboarding chain): derive the name from the URL (`https://example.com` → `Example`) and create it without asking — state the name in one line, don't stop for approval. Suffix with a number if the name conflicts.
   - **If `$URL` is not provided**: ask the user for a project name in plain text (do not use `AskUserQuestion` for free-text input).
   - Then call `setup_project` with `name: <answer>`. Set `PROJECT_NAME`.
 
