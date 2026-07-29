@@ -8,12 +8,12 @@
 # Run `npx supabase status` to get the DB URL
 DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:54322/postgres"
 # URL of the frontend (used in outbound-email links and inquiry landing pages)
-APP_URL="http://localhost:5173"
+APP_URL="http://localhost:5273"
 
 # --- MCP Worker (required) ---
 WEB_API_URL="http://localhost:8787"
 # URL of the frontend (used by the OAuth handshake)
-FRONTEND_URL="http://localhost:5173"
+FRONTEND_URL="http://localhost:5273"
 
 # --- Shared (both workers, required) ---
 # Run `npx supabase status` to get the JWT secret and keys

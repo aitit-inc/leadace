@@ -181,12 +181,12 @@ make dev          # or: ./scripts/dev.sh
 
 | Service | URL |
 |---|---|
-| Frontend | http://localhost:5173 |
+| Frontend | http://localhost:5273 |
 | API Worker | http://localhost:8787 |
 | MCP Worker | http://localhost:8788 |
 | Supabase Studio | http://localhost:54323 |
 
-To run on different ports (e.g. 5173 is taken by another dev server), copy
+To run on different ports (e.g. one is taken by another dev server), copy
 `dev.ports.env.example` to `dev.ports.env` and set the ports there — `dev.sh`
 rewires every dependent URL (and Google sign-in keeps working). Defaults are
 unchanged when the file is absent.
@@ -206,7 +206,7 @@ npm run dev:mcp                         # MCP → http://localhost:8788  (separa
 
 cd ../frontend
 npm install
-npm run dev                             # → http://localhost:5173
+npm run dev                             # → http://localhost:5273
 ```
 </details>
 

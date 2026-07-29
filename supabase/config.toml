@@ -151,16 +151,16 @@ max_indexes = 5
 enabled = true
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
 # in emails. Matches the local frontend dev server (vite) port.
-site_url = "http://localhost:5173"
+site_url = "http://localhost:5273"
 # Post-auth redirect allow-list. The `:*` entries permit any localhost port
 # (GoTrue's `*` stops at `.`/`/`, so it matches just the port), so a custom
 # LEADACE_FRONTEND_PORT works with Google sign-in. Local dev only — the hosted
 # deploy's allow-list lives in the Supabase dashboard.
 additional_redirect_urls = [
-  "http://localhost:5173",
-  "http://localhost:5173/auth/callback",
-  "http://127.0.0.1:5173",
-  "http://127.0.0.1:5173/auth/callback",
+  "http://localhost:5273",
+  "http://localhost:5273/auth/callback",
+  "http://127.0.0.1:5273",
+  "http://127.0.0.1:5273/auth/callback",
   "http://localhost:*/auth/callback",
   "http://127.0.0.1:*/auth/callback",
 ]

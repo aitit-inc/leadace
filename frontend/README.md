@@ -14,7 +14,7 @@ loading, state, components), see
 ```sh
 cp .env.example .env       # set PUBLIC_SUPABASE_* from `supabase status`
 npm install
-npm run dev                # → http://localhost:5173
+npm run dev                # → http://localhost:5273
 ```
 
 ## Pre-release check

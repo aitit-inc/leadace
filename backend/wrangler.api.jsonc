@@ -5,7 +5,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
     "ENVIRONMENT": "development",
-    "APP_URL": "http://localhost:5173",
+    "APP_URL": "http://localhost:5273",
     // Default for local dev. Production env redeclares this as "cloud".
     // Anything other than "cloud" disables Stripe routes and resolves every
     // tenant to the 'unlimited' plan. See backend/src/domain/edition.ts.

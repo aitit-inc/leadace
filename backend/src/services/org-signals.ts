@@ -1,4 +1,4 @@
-import { sql, or, eq, isNull, lt, min, countDistinct, inArray } from 'drizzle-orm'
+import { sql, and, or, eq, isNull, lt, min, countDistinct, inArray } from 'drizzle-orm'
 import { Type, type Schema } from '@google/genai'
 import {
   organizations,
@@ -12,6 +12,7 @@ import type { Db } from '../db/connection'
 import { callGeminiUrlContext, GeminiError, type GeminiEnv } from './gemini'
 import { HIGHLIGHT_MAX_AGE_DAYS, isEmptySignals, parseOrgSignalsText } from '../domain/org-signals'
 import { isPublicWebUrl } from '../domain/url'
+import { RESERVED_NAME_SQL_PATTERN } from '../domain/email-deliverability'
 import {
   isSameSite,
   orderByEventPreference,
@@ -58,6 +59,12 @@ const staleCondition = or(
   ),
 )
 
+// Demo and test orgs are registered on purpose, so the rows stay; they are just
+// never enrichable — a reserved name resolves for nobody.
+const enrichableCondition = sql`${organizations.domain} !~ ${RESERVED_NAME_SQL_PATTERN}`
+
+const pickerCondition = and(staleCondition, enrichableCondition)
+
 type StaleOrg = { domain: string; name: string }
 
 // Ordering only, and deliberately without listReachable's timing / channel /
@@ -83,7 +90,7 @@ async function pickStaleOrgs(db: Db, limit: number): Promise<StaleOrg[]> {
     })
     .from(organizations)
     .leftJoin(orgSignalsGlobal, eq(orgSignalsGlobal.domain, organizations.domain))
-    .where(staleCondition)
+    .where(pickerCondition)
     .groupBy(organizations.domain, orgSignalsGlobal.lastAttemptAt)
     .orderBy(
       sql`bool_or(${hasContactableProspect}) DESC`,
@@ -100,7 +107,7 @@ export async function countStaleOrgDomains(db: Db): Promise<number> {
     .select({ count: countDistinct(organizations.domain) })
     .from(organizations)
     .leftJoin(orgSignalsGlobal, eq(orgSignalsGlobal.domain, organizations.domain))
-    .where(staleCondition)
+    .where(pickerCondition)
   return row?.count ?? 0
 }
 
@@ -295,7 +302,9 @@ async function readCapped(res: Response, maxBytes: number): Promise<string> {
   } finally {
     await reader.cancel()
   }
-  return out
+  // A character split across the last chunk boundary sits inside the decoder
+  // until this flush.
+  return out + decoder.decode()
 }
 
 const SIGNAL_FETCH_USER_AGENT = 'LeadAceBot/1.0 (+https://leadace.ai)'

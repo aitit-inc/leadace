@@ -135,7 +135,7 @@ When a migration adds a new tenant-scoped table, append `GRANT SELECT, INSERT, U
 
 ```bash
 make dev                   # or ./scripts/dev.sh — Supabase + migrate + seed +
-                           # API (:8787) + MCP (:8788) + frontend (:5173).
+                           # API (:8787) + MCP (:8788) + frontend (:5273).
                            # Ctrl-C stops the dev servers; `make stop` halts Supabase.
 ```
 

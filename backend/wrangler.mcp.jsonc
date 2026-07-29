@@ -5,7 +5,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
     "ENVIRONMENT": "development",
-    "FRONTEND_URL": "http://localhost:5173"
+    "FRONTEND_URL": "http://localhost:5273"
   },
   // Secrets (set via wrangler secret or .dev.vars):
   //   WEB_API_URL         (e.g. http://localhost:8787 for local dev, https://api.leadace.ai for prod)

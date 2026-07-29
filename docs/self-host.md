@@ -45,7 +45,7 @@ Set this up once before the first `npx supabase start`:
 
 1. In [Google Cloud Console → Credentials](https://console.cloud.google.com/apis/credentials),
    create an OAuth 2.0 Client ID (Application type: Web application).
-   - **Authorised JavaScript origins:** `http://localhost:5173`
+   - **Authorised JavaScript origins:** `http://localhost:5273`
    - **Authorised redirect URIs:** `http://localhost:54321/auth/v1/callback`
 2. Persist the client id / secret to your shell so the
    `[auth.external.google]` block in `supabase/config.toml` (which uses
@@ -95,7 +95,7 @@ make dev          # or: ./scripts/dev.sh
 
 It starts Supabase via the CLI if it isn't already up, runs `db:migrate` +
 the master-document seed (both idempotent), then runs all three dev servers
-(API :8787, MCP :8788, frontend :5173) with prefixed logs. Ctrl-C stops the
+(API :8787, MCP :8788, frontend :5273) with prefixed logs. Ctrl-C stops the
 dev servers; Supabase stays up for a fast restart (`make stop` halts it). On
 first run it `npm ci`s the backend / frontend deps if `node_modules` is absent.
 
@@ -104,7 +104,7 @@ won't pick it up — `supabase start` reuses the existing stopped container and
 does not re-read `config.toml`'s `env()` interpolation. Run `make stop` then
 `make dev` in the same shell to recreate it.
 
-To run the app servers on non-default ports (e.g. 5173 clashes with another
+To run the app servers on non-default ports (e.g. one clashes with another
 local stack), copy `dev.ports.env.example` to `dev.ports.env` and set
 `LEADACE_FRONTEND_PORT` / `LEADACE_API_PORT` / `LEADACE_MCP_PORT`. `dev.sh`
 derives every dependent URL from them, and `supabase/config.toml` already
@@ -137,7 +137,7 @@ npm run dev:api    # API → http://localhost:8787
 npm run dev:mcp    # MCP → http://localhost:8788  (separate terminal)
 cd ../frontend
 npm install
-npm run dev                               # → http://localhost:5173
+npm run dev                               # → http://localhost:5273
 ```
 </details>
 
@@ -183,7 +183,7 @@ Google sign-in on an offset stack additionally needs the shifted callback URL
 registered on your Google OAuth client — easier to just run the offset stack
 without sign-in, or run only one stack at the default ports when you need it.
 
-The API/MCP Workers (8787/8788) and frontend (5173) are not Supabase; to run
+The API/MCP Workers (8787/8788) and frontend (5273) are not Supabase; to run
 those alongside another stack, pass their own `--port` flags.
 
 ## Production self-deploy
@@ -210,7 +210,7 @@ of the open-source mirror, so you wire up your own:
   `wrangler deploy` (the config has no `account_id` line).
 - **Runtime vars:** edit the top-level `vars` for a real deployment —
   `APP_URL` in `wrangler.api.jsonc` and `FRONTEND_URL` in
-  `wrangler.mcp.jsonc` default to `http://localhost:5173`; point them at
+  `wrangler.mcp.jsonc` default to `http://localhost:5273`; point them at
   your frontend URL. `LEADACE_EDITION` is already `self-hosted`, which is
   what you want.
 - **Custom domain (optional):** add a `routes` block to the config or
@@ -243,7 +243,7 @@ environment. If you prefer the named-environment workflow, add your own
 3. **Authentication → URL Configuration**:
    - Site URL: `https://app.<your-domain>` (or your Pages preview URL).
    - Redirect URLs: add the same hostname plus `/auth/callback`,
-     `/auth/*`, and your local dev URL `http://localhost:5173/*` if
+     `/auth/*`, and your local dev URL `http://localhost:5273/*` if
      you're going to keep working from a laptop too.
 4. **Authentication → Providers**: enable **Google**. The shipped
    `/login` UI is Google-only — there is no email/password login UI, so
@@ -502,7 +502,7 @@ sign-in. To make it work:
 2. [APIs & Services → Credentials → OAuth client ID](https://console.cloud.google.com/apis/credentials).
    - Application type: Web application.
    - Authorised JavaScript origins: `https://app.<your-domain>`
-     (and `http://localhost:5173` for dev).
+     (and `http://localhost:5273` for dev).
    - Authorised redirect URIs:
      `https://<supabase-project-ref>.supabase.co/auth/v1/callback`.
      **Not** your `app.*.ai/auth/callback`. Supabase receives the

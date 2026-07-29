@@ -357,7 +357,7 @@ if [[ "$GMAIL_COUNT" == "0" ]]; then
 
   echo "" >&2
   echo "  → Skipped real-Gmail happy path (no sending_identities row for this tenant)." >&2
-  echo "    Connect Gmail at http://localhost:5173/account-settings and re-run to cover it." >&2
+  echo "    Connect Gmail at http://localhost:5273/account-settings and re-run to cover it." >&2
 else
   step "send mode + real Gmail: happy path against E2E_RECIPIENT_OVERRIDE"
   GMAIL_EMAIL="$(psql_local "SELECT from_email FROM sending_identities WHERE tenant_id = '$TENANT_ID' AND provider='gmail_oauth' LIMIT 1;")"

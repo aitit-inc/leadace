@@ -20,15 +20,22 @@ export type SendTimeVerdict =
   | { deliverability: 'unknown' }
   | { deliverability: 'undeliverable'; reason: string }
 
+// `unknown` blocks nothing, so an outage or a revoked key is silent unless logged.
 async function probeMailbox(email: string, apiKey: string): Promise<VerifierStatus> {
   try {
     const res = await fetch(
       `${VERIFY_URL}?email=${encodeURIComponent(email)}&key=${encodeURIComponent(apiKey)}&mode=power`,
       { signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS) },
     )
-    if (!res.ok) return 'unknown'
+    if (!res.ok) {
+      console.warn(`[deliverability] verifier rejected the request (${res.status}) — mailbox unchecked`)
+      return 'unknown'
+    }
     return verifierResponseSchema.parse(await res.json()).status
-  } catch {
+  } catch (e) {
+    console.warn(
+      `[deliverability] verifier unreachable or unreadable: ${e instanceof Error ? e.message : String(e)}`,
+    )
     return 'unknown'
   }
 }
@@ -49,7 +56,10 @@ export async function verifyAddressBeforeSend(
   if (dns === UNDELIVERABLE) {
     return { deliverability: UNDELIVERABLE, reason: 'domain does not accept mail' }
   }
-  if (!apiKey) return { deliverability: 'unknown' }
+  if (!apiKey) {
+    console.warn('[deliverability] REOON_API_KEY is not set — mailbox unchecked')
+    return { deliverability: 'unknown' }
+  }
 
   const status = await probeMailbox(email, apiKey)
   if (verifierDeliverabilityVerdict(status) !== UNDELIVERABLE) return { deliverability: 'unknown' }

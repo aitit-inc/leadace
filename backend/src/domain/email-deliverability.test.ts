@@ -5,6 +5,7 @@ import {
   domainCanReceiveMail,
   dnsDeliverabilityVerdict,
   isReservedDomain,
+  RESERVED_NAME_SQL_PATTERN,
 } from './email-deliverability'
 
 describe('isEmailSyntaxValid', () => {
@@ -34,10 +35,35 @@ describe('isReservedDomain', () => {
     expect(isReservedDomain('localhost')).toBe(true)
     expect(isReservedDomain('EXAMPLE.COM')).toBe(true)
   })
+  it('flags subdomains of a reserved name', () => {
+    expect(isReservedDomain('test004.example.com')).toBe(true)
+    expect(isReservedDomain('acme.example.org')).toBe(true)
+  })
   it('does not flag real domains', () => {
     expect(isReservedDomain('surpassone.com')).toBe(false)
     expect(isReservedDomain('example.io')).toBe(false)
+    expect(isReservedDomain('notexample.com')).toBe(false)
     expect(isReservedDomain('')).toBe(false)
+  })
+})
+
+describe('RESERVED_NAME_SQL_PATTERN', () => {
+  it('classifies the same names as isReservedDomain', () => {
+    const re = new RegExp(RESERVED_NAME_SQL_PATTERN)
+    for (const d of [
+      'example.com',
+      'test004.example.com',
+      'acme.example.org',
+      'foo.test',
+      'acme-run-123.example',
+      'localhost',
+      'surpassone.com',
+      'example.io',
+      'notexample.com',
+      'spotter',
+    ]) {
+      expect([d, re.test(d)]).toEqual([d, isReservedDomain(d)])
+    }
   })
 })
 

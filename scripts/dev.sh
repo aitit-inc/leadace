@@ -43,7 +43,7 @@ if [ -z "${SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID:-}" ]; then
 fi
 
 [ -f dev.ports.env ] && . ./dev.ports.env
-FRONTEND_PORT="${LEADACE_FRONTEND_PORT:-5173}"
+FRONTEND_PORT="${LEADACE_FRONTEND_PORT:-5273}"
 API_PORT="${LEADACE_API_PORT:-8787}"
 MCP_PORT="${LEADACE_MCP_PORT:-8788}"
 # Reject leading zeros too: the arithmetic below would read them as octal.

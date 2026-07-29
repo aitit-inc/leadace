@@ -27,7 +27,7 @@ The local stack must be running on the host:
 | Supabase Auth (54321) + Postgres (54322) | `npx supabase start` | `curl http://localhost:54321/auth/v1/health` |
 | API Worker (8787) | `cd backend && npm run dev:api` | `curl http://localhost:8787/health` |
 | MCP Worker (8788) | `cd backend && npm run dev:mcp` | `curl http://localhost:8788/.well-known/oauth-authorization-server` |
-| Frontend (5173) | `cd frontend && npm run dev` | `curl http://localhost:5173` |
+| Frontend (5273) | `cd frontend && npm run dev` | `curl http://localhost:5273` |
 | Claude CLI | (host install) | `claude --version` |
 
 `./e2e/preflight.sh` runs all five at once and prints a `FAIL:` line for any missing piece.

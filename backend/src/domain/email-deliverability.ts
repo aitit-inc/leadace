@@ -14,14 +14,26 @@ export function domainOf(email: string): string {
 
 // RFC 2606 / 6761 reserved names that can never resolve. Treated as 'unknown'
 // (not 'undeliverable') so test/example fixtures aren't dropped by the gate.
-const RESERVED_TLDS = new Set(['test', 'example', 'invalid', 'localhost'])
-const RESERVED_DOMAINS = new Set(['example.com', 'example.net', 'example.org'])
+const RESERVED_NAMES = [
+  'test',
+  'example',
+  'invalid',
+  'localhost',
+  'example.com',
+  'example.net',
+  'example.org',
+] as const
 export function isReservedDomain(domain: string): boolean {
   const d = domain.trim().toLowerCase()
   if (!d) return false
-  if (RESERVED_DOMAINS.has(d)) return true
-  return RESERVED_TLDS.has(d.split('.').pop() ?? '')
+  return RESERVED_NAMES.some((r) => d === r || d.endsWith(`.${r}`))
 }
+
+// The signal picker filters in SQL, where the predicate above cannot run.
+// Deriving from the same list is what keeps the two spellings from drifting.
+export const RESERVED_NAME_SQL_PATTERN = `(^|\\.)(${RESERVED_NAMES.map((r) =>
+  r.replace(/\./g, '\\.'),
+).join('|')})$`
 
 export type DomainRecords = { mx: string[]; a: string[]; aaaa: string[] }
 

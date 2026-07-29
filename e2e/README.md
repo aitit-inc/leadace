@@ -163,7 +163,7 @@ Restart `wrangler dev` after editing `.dev.vars` so the new env propagates.
    npx supabase start                      # Auth + Postgres
    cd backend && npm run dev:api           # → http://localhost:8787
    cd backend && npm run dev:mcp           # → http://localhost:8788
-   cd frontend && npm run dev              # → http://localhost:5173
+   cd frontend && npm run dev              # → http://localhost:5273
    ```
 
    Refer to [docs/self-host.md](../docs/self-host.md) for the full env
