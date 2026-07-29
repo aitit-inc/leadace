@@ -49,12 +49,16 @@ export function parseSitemap(xml: string): ParsedSitemap | null {
   return { kind: 'urlset', entries }
 }
 
+export function isEventPath(loc: string): boolean {
+  return EVENT_PATH.test(loc)
+}
+
 export function preferEventSitemap(locs: readonly string[]): string | undefined {
-  return locs.find((l) => EVENT_PATH.test(l)) ?? locs[0]
+  return locs.find(isEventPath) ?? locs[0]
 }
 
 export function orderByEventPreference(urls: readonly string[]): string[] {
-  return [...urls].sort((a, b) => Number(EVENT_PATH.test(b)) - Number(EVENT_PATH.test(a)))
+  return [...urls].sort((a, b) => Number(isEventPath(b)) - Number(isEventPath(a)))
 }
 
 // A sitemap is third-party input whose content we attribute to this company, so
@@ -77,7 +81,7 @@ export function selectSignalUrls(
   const pool = dated.length > 0 ? dated : usable
   return [...pool]
     .sort((a, b) => {
-      const event = Number(EVENT_PATH.test(b.loc)) - Number(EVENT_PATH.test(a.loc))
+      const event = Number(isEventPath(b.loc)) - Number(isEventPath(a.loc))
       return event !== 0 ? event : (b.lastmod ?? 0) - (a.lastmod ?? 0)
     })
     .slice(0, max)

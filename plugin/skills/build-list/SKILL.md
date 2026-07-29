@@ -141,6 +141,10 @@ directory, association member list, exhibitor list, or GitHub topic/org page wit
 `fetch_url.py` and extracting the organization list directly. Crawl-driven strategies
 usually out-yield search on structured sources; step 4's tooling applies to both.
 
+A crawl-driven source may keep publishing, or hold more than one pass can take. When
+it is worth revisiting, note in its strategy entry what lets the next pass resume;
+re-registering an org already held is dedup'd server-side.
+
 **Playbook-driven strategies (user-defined means).** A strategy may reference a
 `playbook_<strategy-slug>` document (see workspace-conventions.md → "Playbook
 documents"). Fetch it via `get_document` and follow its Discovery section instead of
@@ -279,7 +283,10 @@ effort.
 
 ## Phase 1.7: Signal Collection
 
-For each **surviving (post-Phase-1.5)** candidate, run **one** WebSearch
+A candidate a dated entry led you to already has its signal — that entry is why it is
+here. Record it below and skip the query for that candidate.
+
+For every other **surviving (post-Phase-1.5)** candidate, run **one** WebSearch
 query of the form
 `"<organization name>" press release OR funding OR hiring 2025..2026` (or
 your equivalent for the prospect's region / language). Skim the top

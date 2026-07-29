@@ -25,6 +25,7 @@ import {
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const GMAIL_SEND_URL = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send'
+const GMAIL_MESSAGES_URL = 'https://gmail.googleapis.com/gmail/v1/users/me/messages'
 
 export const GMAIL_SEND_SCOPE = 'https://www.googleapis.com/auth/gmail.send'
 
@@ -79,6 +80,26 @@ export async function sendGmailMessage(args: {
     throw new Error(`Gmail send failed (${res.status}): ${detail}`)
   }
   return (await res.json()) as { id: string; threadId: string }
+}
+
+// Gmail discards the Message-ID we put on the wire and stamps its own, which is
+// what a reply threads to. Never throws: the send already succeeded, and failing
+// it here would invite a double send.
+async function readBackRfc822MessageId(accessToken: string, id: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${GMAIL_MESSAGES_URL}/${id}?format=metadata&metadataHeaders=Message-Id`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    })
+    if (!res.ok) {
+      console.warn(`[gmail-send] Message-ID read-back failed (${res.status}); this send cannot be threaded to its replies`)
+      return null
+    }
+    const data = (await res.json()) as { payload?: { headers?: Array<{ name: string; value: string }> } }
+    return data.payload?.headers?.find((h) => h.name.toLowerCase() === 'message-id')?.value ?? null
+  } catch (e) {
+    console.warn(`[gmail-send] Message-ID read-back threw: ${e instanceof Error ? e.message : String(e)}`)
+    return null
+  }
 }
 
 // `override` is sourced from `E2E_RECIPIENT_OVERRIDE` — unset in production
@@ -427,10 +448,9 @@ export async function deleteGmailRefreshToken(
 }
 
 // messageId/threadId are the Gmail resource ids (empty for SMTP). rfc822MessageId
-// is the self-generated RFC822 Message-ID set on both arms — the threading anchor
-// persisted to outreach_logs.message_id (distinct from Gmail's resource id).
+// is the threading anchor persisted to outreach_logs.message_id.
 export type MailSendResult =
-  | { ok: true; kind: 'sent'; messageId: string; threadId: string; rfc822MessageId: string; from: string; identityId: SendingIdentityId }
+  | { ok: true; kind: 'sent'; messageId: string; threadId: string; rfc822MessageId: string | null; from: string; identityId: SendingIdentityId }
   | { ok: false; httpStatus: 412; error: 'Gmail not connected' | 'Gmail token revoked'; detail: string }
   | { ok: false; httpStatus: 502; error: 'Send failed'; detail: string; from: string }
 
@@ -503,8 +523,6 @@ export async function sendForIdentity(
     { to: args.to, cc: args.cc, bcc: args.bcc, extraHeaders: args.extraHeaders },
     args.e2eRecipientOverride,
   )
-  // Generate once and reuse across the arm switch so the value set on the wire is
-  // exactly what we return for persistence to outreach_logs.message_id.
   const rfc822MessageId = generateRfc822MessageId(sendAsEmail)
   const baseRfc822 = {
     from: fromHeader,
@@ -551,7 +569,7 @@ export async function sendForIdentity(
           kind: 'sent',
           messageId: result.id,
           threadId: result.threadId,
-          rfc822MessageId,
+          rfc822MessageId: await readBackRfc822MessageId(accessToken, result.id),
           from: sendAsEmail,
           identityId: identity.identityId,
         }
