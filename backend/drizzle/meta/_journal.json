@@ -456,6 +456,13 @@
       "when": 1784979951715,
       "tag": "0064_last_blonde_phantom",
       "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1785331935982,
+      "tag": "0065_gifted_gauntlet",
+      "breakpoints": true
     }
   ]
 }

@@ -27,8 +27,6 @@ const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const GMAIL_SEND_URL = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send'
 const GMAIL_MESSAGES_URL = 'https://gmail.googleapis.com/gmail/v1/users/me/messages'
 
-export const GMAIL_SEND_SCOPE = 'https://www.googleapis.com/auth/gmail.send'
-
 export class GoogleAuthError extends Error {
   status: number
   constructor(message: string, status: number) {
@@ -329,6 +327,7 @@ export async function saveGmailRefreshToken(
       secret = pgp_sym_encrypt(${args.refreshToken}::text, ${args.encryptionKey}),
       scope = ${args.scope},
       from_email = ${args.email},
+      auth_revoked_at = NULL,
       updated_at = now()
   `)
 }

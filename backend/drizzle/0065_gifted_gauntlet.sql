@@ -1,0 +1,1 @@
+ALTER TABLE "sending_identities" ADD COLUMN "auth_revoked_at" timestamp with time zone;

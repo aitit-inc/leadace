@@ -23,6 +23,7 @@ import { countryCodesRouter } from './routes/country-codes'
 import { billingRouter } from './routes/billing'
 import { mailboxRouter } from './routes/mailbox'
 import { sendingIdentitiesRouter } from './routes/sending-identities'
+import { alertsRouter } from './routes/alerts'
 import { authRouter } from './routes/auth'
 import { accountRouter } from './routes/account'
 import { bugReportsRouter } from './routes/bug-reports'
@@ -81,6 +82,7 @@ app.route('/api', countryCodesRouter)
 app.route('/api', billingRouter)
 app.route('/api', mailboxRouter)
 app.route('/api', sendingIdentitiesRouter)
+app.route('/api', alertsRouter)
 app.route('/api', authRouter)
 app.route('/api', accountRouter)
 app.route('/api', bugReportsRouter)
@@ -137,7 +139,7 @@ const handler = {
         runReplyIngest(db, env)
           .then((s) => {
             console.log(
-              `[scheduled] reply-ingest polled=${s.identitiesPolled} skipped=${s.identitiesSkipped} errors=${s.pollErrors} recorded=${s.recorded} deduped=${s.deduped} unattributed=${s.unattributed} recordErrors=${s.recordErrors} bouncesThreaded=${s.bouncesThreaded} bouncesUnthreaded=${s.bouncesUnthreaded}`,
+              `[scheduled] reply-ingest polled=${s.identitiesPolled} skipped=${s.identitiesSkipped} errors=${s.pollErrors} authRevoked=${s.identitiesAuthRevoked} recorded=${s.recorded} deduped=${s.deduped} unattributed=${s.unattributed} recordErrors=${s.recordErrors} bouncesThreaded=${s.bouncesThreaded} bouncesUnthreaded=${s.bouncesUnthreaded}`,
             )
           })
           .catch((e: unknown) => {

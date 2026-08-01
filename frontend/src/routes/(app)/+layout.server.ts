@@ -1,5 +1,6 @@
 import { dev } from '$app/environment';
 import { ACTIVE_PROJECT_COOKIE } from '$lib/active-project';
+import { listAlerts } from '$lib/api/alerts';
 import { getGmailStatus } from '$lib/api/auth-google';
 import { getPlan } from '$lib/api/billing';
 import { getOnboardingStatus } from '$lib/api/onboarding';
@@ -12,7 +13,14 @@ import type { LayoutServerLoad } from './$types';
 // the server can pre-render the right project on first paint, without waiting
 // for client localStorage reconciliation.
 export const load: LayoutServerLoad = async ({ fetch, locals, cookies, depends }) => {
-	depends('app:active-project', 'app:projects', 'app:plan', 'app:gmail-status', 'app:onboarding');
+	depends(
+		'app:active-project',
+		'app:projects',
+		'app:plan',
+		'app:gmail-status',
+		'app:onboarding',
+		'app:alerts',
+	);
 
 	const session = locals.session;
 	if (!session) {
@@ -26,7 +34,7 @@ export const load: LayoutServerLoad = async ({ fetch, locals, cookies, depends }
 	// and Gmail status are best-effort: a transient failure hides the relevant
 	// widget, not the whole app. Gmail status loads here so the header can show
 	// a "Gmail not connected" banner on every authenticated page.
-	const [projects, planResult, gmailStatus, mcpConnected] = await Promise.all([
+	const [projects, planResult, gmailStatus, mcpConnected, alerts] = await Promise.all([
 		listProjects(fetch, token),
 		getPlan(fetch, token).then(
 			(p) => ({ ok: true as const, plan: p }),
@@ -50,6 +58,7 @@ export const load: LayoutServerLoad = async ({ fetch, locals, cookies, depends }
 			(s) => s.mcpConnected,
 			() => true,
 		),
+		listAlerts(fetch, token).catch(() => []),
 	]);
 	const plan: PlanInfo | null = planResult.ok ? planResult.plan : null;
 	const planError: string | null = planResult.ok ? null : planResult.message;
@@ -76,5 +85,5 @@ export const load: LayoutServerLoad = async ({ fetch, locals, cookies, depends }
 		}
 	}
 
-	return { activeProjectId: next, projects, plan, planError, gmailStatus, mcpConnected };
+	return { activeProjectId: next, projects, plan, planError, gmailStatus, mcpConnected, alerts };
 };

@@ -1,8 +1,8 @@
-import { and, eq, gte, inArray, isNotNull, sql } from 'drizzle-orm'
+import { and, eq, gte, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
 import type { Db } from '../db/connection'
 import { outreachLogs, prospects, responses, sendingIdentities } from '../db/schema'
 import { asTenantId, type TenantId } from '../domain/ids'
-import { parseSendingIdentitySecret } from '../domain/sending-identity'
+import { hasReplyReadScope, parseSendingIdentitySecret } from '../domain/sending-identity'
 import {
   attributeReply,
   bounceMatchesFinalRecipient,
@@ -11,7 +11,7 @@ import {
   type OutreachCandidate,
 } from '../domain/reply'
 import { detectDeterministicType, leadingUnquotedText, type DeterministicType } from '../domain/reply-classify'
-import { refreshGoogleAccessToken } from '../auth/google'
+import { GoogleAuthError, refreshGoogleAccessToken } from '../auth/google'
 import { pollGmailInbox } from './gmail-poll'
 import { pollImapInbox } from './imap-poll'
 import { classifyReply, type ReplyClassification } from './reply-classify'
@@ -24,7 +24,6 @@ type ReplyIngestEnv = {
   GEMINI_API_KEY: string
 }
 
-const GMAIL_READONLY_SCOPE = 'gmail.readonly'
 // A fixed lookback re-polled every run + dedup by source_message_id, NOT a
 // last_polled_at cursor: provider SEARCH is only date-granular, so a cursor would
 // drop a reply still unattributed or whose record failed once the UTC day rolled.
@@ -53,6 +52,7 @@ export type ReplyIngestSummary = {
   // generated, so it is dropped (the recall A trades for spoof-safety).
   bouncesThreaded: number
   bouncesUnthreaded: number
+  identitiesAuthRevoked: number
 }
 
 type IdentityRow = {
@@ -174,26 +174,61 @@ async function alreadyRecorded(
   return new Set(rows.flatMap((r) => (r.id ? [r.id] : [])))
 }
 
+type CaptureResult =
+  | { ok: true; replies: CapturedReply[] }
+  | { ok: false; detail: string; authRevoked: boolean }
+
 async function capture(
   identity: IdentityRow,
   env: ReplyIngestEnv,
   since: Date,
   secretText: string,
-): Promise<{ ok: true; replies: CapturedReply[] } | { ok: false; detail: string }> {
+): Promise<CaptureResult> {
   const secret = parseSendingIdentitySecret(identity.provider, secretText)
   if (secret.provider === 'smtp_imap') {
-    return pollImapInbox(
+    const polled = await pollImapInbox(
       { host: secret.imapHost, port: secret.imapPort, username: secret.username, appPassword: secret.appPassword },
       since,
       MAX_MESSAGES_PER_POLL,
     )
+    return polled.ok ? polled : { ...polled, authRevoked: false }
   }
-  const accessToken = await refreshGoogleAccessToken(
-    secret.refreshToken,
-    env.GOOGLE_CLIENT_ID,
-    env.GOOGLE_CLIENT_SECRET,
-  )
-  return pollGmailInbox(accessToken, since, MAX_MESSAGES_PER_POLL)
+  let accessToken: string
+  try {
+    accessToken = await refreshGoogleAccessToken(
+      secret.refreshToken,
+      env.GOOGLE_CLIENT_ID,
+      env.GOOGLE_CLIENT_SECRET,
+    )
+  } catch (e) {
+    // 400/401 = the token is dead; 5xx and network failures must stay transient.
+    if (e instanceof GoogleAuthError && (e.status === 400 || e.status === 401)) {
+      return { ok: false, detail: e.message, authRevoked: true }
+    }
+    throw e
+  }
+  const polled = await pollGmailInbox(accessToken, since, MAX_MESSAGES_PER_POLL)
+  return polled.ok ? polled : { ...polled, authRevoked: false }
+}
+
+async function markAuthRevokedIfUnset(db: Db, tenantId: TenantId, identityId: string): Promise<void> {
+  await db
+    .update(sendingIdentities)
+    .set({ authRevokedAt: new Date() })
+    .where(
+      and(
+        eq(sendingIdentities.tenantId, tenantId),
+        eq(sendingIdentities.identityId, identityId),
+        isNull(sendingIdentities.authRevokedAt),
+      ),
+    )
+}
+
+async function markPollSucceeded(db: Db, tenantId: TenantId, identityId: string): Promise<void> {
+  await db
+    .update(sendingIdentities)
+    .set({ lastPolledAt: new Date(), authRevokedAt: null })
+    .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.identityId, identityId)))
 }
 
 async function ingestIdentity(
@@ -203,7 +238,7 @@ async function ingestIdentity(
   summary: ReplyIngestSummary,
 ): Promise<void> {
   const tenantId = asTenantId(identity.tenant_id)
-  if (identity.provider === 'gmail_oauth' && !(identity.scope ?? '').includes(GMAIL_READONLY_SCOPE)) {
+  if (identity.provider === 'gmail_oauth' && !hasReplyReadScope(identity.scope)) {
     summary.identitiesSkipped++
     return
   }
@@ -226,7 +261,11 @@ async function ingestIdentity(
   const polled = await capture(identity, env, since, secretRow.secret)
   if (!polled.ok) {
     summary.pollErrors++
-    console.error(`[reply-ingest] poll failed identity=${identity.identity_id} provider=${identity.provider}: ${polled.detail}`)
+    if (polled.authRevoked) {
+      summary.identitiesAuthRevoked++
+      await markAuthRevokedIfUnset(db, tenantId, identity.identity_id)
+    }
+    console.error(`[reply-ingest] poll failed identity=${identity.identity_id} provider=${identity.provider} authRevoked=${polled.authRevoked}: ${polled.detail}`)
     return
   }
   summary.identitiesPolled++
@@ -240,8 +279,7 @@ async function ingestIdentity(
     .map((c) => ({ captured: c, reply: toInboundReply(c) }))
     .flatMap((x) => (x.reply ? [{ captured: x.captured, reply: x.reply }] : []))
   if (inbound.length === 0) {
-    await db.update(sendingIdentities).set({ lastPolledAt: new Date() })
-      .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.identityId, identity.identity_id)))
+    await markPollSucceeded(db, tenantId, identity.identity_id)
     return
   }
 
@@ -325,8 +363,7 @@ async function ingestIdentity(
     }
   }
 
-  await db.update(sendingIdentities).set({ lastPolledAt: new Date() })
-    .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.identityId, identity.identity_id)))
+  await markPollSucceeded(db, tenantId, identity.identity_id)
 }
 
 export async function runReplyIngest(db: Db, env: ReplyIngestEnv): Promise<ReplyIngestSummary> {
@@ -340,6 +377,7 @@ export async function runReplyIngest(db: Db, env: ReplyIngestEnv): Promise<Reply
     recordErrors: 0,
     bouncesThreaded: 0,
     bouncesUnthreaded: 0,
+    identitiesAuthRevoked: 0,
   }
 
   const identities = await db.execute<IdentityRow>(sql`

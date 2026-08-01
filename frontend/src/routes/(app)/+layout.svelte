@@ -4,6 +4,7 @@
   import ProjectCreateDialog from '$lib/components/ProjectCreateDialog.svelte';
   import Logo from '$lib/components/Logo.svelte';
   import AccountMenu from '$lib/components/AccountMenu.svelte';
+  import AlertBell from '$lib/components/AlertBell.svelte';
   import {
     LayoutDashboard,
     Users,
@@ -160,6 +161,7 @@
       <div class="min-w-0 flex-1">
         <ProjectSwitcher projects={data.projects} activeProjectId={data.activeProjectId} />
       </div>
+      <AlertBell alerts={data.alerts} />
     </header>
 
     {#if !data.mcpConnected && page.url.pathname !== '/onboarding' && page.url.pathname !== '/dashboard'}

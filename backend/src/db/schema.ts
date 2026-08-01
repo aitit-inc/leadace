@@ -400,6 +400,9 @@ export const sendingIdentities = pgTable('sending_identities', {
   pausedUntil: timestamp('paused_until', { withTimezone: true }),
   // Observability only — NOT a poll cursor (the poll re-searches a fixed window).
   lastPolledAt: timestamp('last_polled_at', { withTimezone: true }),
+  // The send path deletes the row instead — the unattended poll must not destroy
+  // a credential nobody is watching.
+  authRevokedAt: timestamp('auth_revoked_at', { withTimezone: true }),
   grantedAt: timestamp('granted_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [

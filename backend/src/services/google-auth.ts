@@ -1,7 +1,6 @@
 import { z } from 'zod'
 import { and, eq } from 'drizzle-orm'
 import {
-  GMAIL_SEND_SCOPE,
   GoogleAuthError,
   applyE2eRedirect,
   buildRfc822,
@@ -10,6 +9,7 @@ import {
   saveGmailRefreshToken,
   sendGmailMessage,
 } from '../auth/google'
+import { GMAIL_SEND_SCOPE } from '../domain/sending-identity'
 import { sendingIdentities } from '../db/schema'
 import type { Db } from '../db/connection'
 import type { TenantId } from '../domain/ids'

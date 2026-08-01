@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-// Single source of truth for the Google OAuth scopes we request and for the
-// callback's persisted-scope fallback.
+// The Google OAuth scopes we request, and the callback's persisted-scope fallback.
+// These exact strings must match backend domain/sending-identity.ts.
 //
 // gmail.send (Sensitive) sends outbound mail, incl. from a verified Send-As
 // alias, so we avoid the Restricted gmail.settings.* scopes. gmail.readonly

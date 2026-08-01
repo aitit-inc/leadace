@@ -172,7 +172,9 @@
       identities={data.sendingIdentities}
       planTier={data.plan?.plan}
       {token}
-      onChanged={() => invalidate('app:sending-identities')}
+      onChanged={async () => {
+        await Promise.all([invalidate('app:sending-identities'), invalidate('app:alerts')]);
+      }}
     />
   </div>
 </section>

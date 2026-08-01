@@ -1,6 +1,13 @@
 import { z } from 'zod'
 import type { SendingIdentityProvider } from '../db/schema'
 
+export const GMAIL_SEND_SCOPE = 'https://www.googleapis.com/auth/gmail.send'
+export const GMAIL_READONLY_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly'
+
+export function hasReplyReadScope(scope: string | null): boolean {
+  return (scope ?? '').split(/\s+/).includes(GMAIL_READONLY_SCOPE)
+}
+
 // smtp_imap connection params, stored as an encrypted JSON payload in `secret`.
 export const smtpImapSecretPayloadSchema = z.object({
   smtpHost: z.string().min(1),
