@@ -124,7 +124,6 @@ export type AttentionItem =
   | { kind: 'compliance_incomplete'; missing: string[] }
   | { kind: 'gmail_disconnected' }
   | { kind: 'no_outbound_channels' }
-  | { kind: 'email_template_missing' }
   | { kind: 'quota_exhausted'; constraint: QuotaConstraint }
   | { kind: 'hot_leads'; count: number }
   | { kind: 'outreach_drafts'; count: number };

@@ -44,19 +44,6 @@ export function saveDocument(
   });
 }
 
-export function getMasterDocument(
-  slug: string,
-  fetchFn: RequestFetch = fetch,
-  token?: string,
-): Promise<{ slug: string; content: string }> {
-  return request<{ slug: string; content: string }>(fetchFn, {
-    method: 'GET',
-    path: `/master-documents/${slug}`,
-    auth: 'required',
-    token,
-  });
-}
-
 export type ListDocumentHistoryParams = {
   limit?: number;
 };

@@ -154,10 +154,8 @@ You are an outbound sales agent. Please reach out to each company on the prospec
    - Call mcp__plugin_leadace_api__get_document with projectId "$0" and slug "business"
    - Call mcp__plugin_leadace_api__get_document with projectId "$0" and slug "sales_strategy"
    Understand:
-   - Outreach mode (precision / volume) — the document always carries a concrete value; read it, do not assume a default
    - SALES_STRATEGY "Sales Channels" section: tactical preferences only (ordering, tone, sub-channel preferences). Channel enablement is owned by `outboundChannels` in project settings (applied in outbound/SKILL.md step 1).
-   - Subject line pattern variations (if A/B test instructions exist, follow them)
-   - Email messaging hints (First Outreach approach). The body template itself is the `email_template` document, retrieved in the outbound step (outbound/SKILL.md) — not in SALES_STRATEGY.md
+   - Email messaging hints (First Outreach approach: what to emphasize, what never to claim). There is no stored body template — each body is written per recipient in the outbound step (outbound/SKILL.md)
    - Sender information: signature block only (sender display name + email live in project settings and are applied automatically by `send_email` / `send_email_and_record`)
    - SNS messaging policy
 

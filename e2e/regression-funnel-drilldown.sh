@@ -70,6 +70,7 @@ api_status_only() {
 }
 
 require_jq() { command -v jq >/dev/null 2>&1 || { echo "need jq on PATH" >&2; exit 1; }; }
+require_openssl() { command -v openssl >/dev/null 2>&1 || { echo "need openssl on PATH (fixture bodies must be unique per call)" >&2; exit 1; }; }
 psql_local() { PGPASSWORD=postgres psql -h 127.0.0.1 -p 54322 -U postgres -d postgres -tAc "$1"; }
 
 last_log_id()   { psql_local "SELECT id FROM outreach_logs WHERE prospect_id=$1 AND project_id='$PROJECT_ID' ORDER BY id DESC LIMIT 1;"; }
@@ -97,6 +98,7 @@ record_response() {
 }
 
 require_jq
+require_openssl
 TOKEN="$("$REPO_ROOT/e2e/mint-jwt.sh")"
 [[ -n "$TOKEN" ]] || { echo "failed to mint JWT" >&2; exit 1; }
 
@@ -175,7 +177,8 @@ psql_local "UPDATE outreach_logs SET sent_at = now() - interval '60 days' WHERE 
 # P_INQ: sent via record-with-inquiry (allocates the token), then a session
 # with outcome 'inquired' → reached + engaged.
 api POST /api/outreach/record-with-inquiry "$(jq -nc --arg pid "$PROJECT_ID" --argjson prid "$P_INQ" \
-  '{projectId:$pid, prospectId:$prid, channel:"form", subject:"e2e funnel", body:"e2e funnel body"}')" > /dev/null
+  --arg b "e2e funnel body $(openssl rand -hex 32)" \
+  '{projectId:$pid, prospectId:$prid, channel:"form", subject:"e2e funnel", body:$b}')" > /dev/null
 LID_INQ="$(last_log_id "$P_INQ")"
 api PATCH "/api/outreach/$LID_INQ/status" '{"status":"sent"}' > /dev/null
 SID_INQ="$(token_shortid "$LID_INQ")"

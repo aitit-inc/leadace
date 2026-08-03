@@ -76,6 +76,7 @@ api_status() {
 api_body() { cat "$API_OUT"; }
 
 require_jq() { command -v jq >/dev/null 2>&1 || { echo "need jq on PATH" >&2; exit 1; }; }
+require_openssl() { command -v openssl >/dev/null 2>&1 || { echo "need openssl on PATH (fixture bodies must be unique per call)" >&2; exit 1; }; }
 psql_local() { PGPASSWORD=postgres psql -h 127.0.0.1 -p 54322 -U postgres -d postgres -tAc "$1"; }
 
 log_status() { psql_local "SELECT status FROM outreach_logs WHERE id=$1;"; }
@@ -95,16 +96,21 @@ mkseed() {
 }
 
 
+# Every body reaching a pre-send path must be mutually dissimilar: the content
+# check refuses a near-duplicate of any recent body in the tenant, including
+# bodies left behind by an earlier run.
+new_body() { printf 'e2e %s draft body %s' "$1" "$(openssl rand -hex 32)"; }
 # email draft via send-and-record (draft mode → pending_review channel=email)
 mk_email_draft() { api POST /api/outreach/send-and-record \
-  "$(jq -nc --arg pid "$PROJECT_ID" --argjson prid "$1" '{projectId:$pid, prospectId:$prid, subject:"e2e draft", body:"e2e email draft body"}')" \
+  "$(jq -nc --arg pid "$PROJECT_ID" --argjson prid "$1" --arg b "$(new_body email)" '{projectId:$pid, prospectId:$prid, subject:"e2e draft", body:$b}')" \
   | jq -r '.outreachId // ""'; }
 # form draft via record-with-inquiry (draft mode → pending_review channel=form)
 mk_form_draft() { api POST /api/outreach/record-with-inquiry \
-  "$(jq -nc --arg pid "$PROJECT_ID" --argjson prid "$1" '{projectId:$pid, prospectId:$prid, channel:"form", body:"e2e form draft"}')" \
+  "$(jq -nc --arg pid "$PROJECT_ID" --argjson prid "$1" --arg b "$(new_body form)" '{projectId:$pid, prospectId:$prid, channel:"form", body:$b}')" \
   | jq -r '.outreachLogId // ""'; }
 
 require_jq
+require_openssl
 API_OUT="$(mktemp)"
 TOKEN="$("$REPO_ROOT/e2e/mint-jwt.sh")"
 [[ -n "$TOKEN" ]] || { echo "failed to mint JWT" >&2; exit 1; }

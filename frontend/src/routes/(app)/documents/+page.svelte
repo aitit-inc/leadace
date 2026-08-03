@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invalidate } from '$app/navigation';
-  import { getDocument, listDocumentHistory, saveDocument, getMasterDocument } from '$lib/api/documents';
+  import { getDocument, listDocumentHistory, saveDocument } from '$lib/api/documents';
   import type { DocumentVersion } from '$lib/types/documents';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import type { PageProps } from './$types';
@@ -9,22 +9,11 @@
     business: 'Business',
     sales_strategy: 'Sales Strategy',
     search_notes: 'Search Notes',
-    email_template: 'Email Template',
     learnings: 'Learnings Log',
   };
 
-  // email_template is the outbound body template; surface it as editable even before the doc exists.
-  const ALWAYS_EDITABLE = ['email_template'];
-
   let { data }: PageProps = $props();
   let token = $derived(data.session?.access_token);
-
-  let displayedDocs = $derived<Array<{ slug: string; updatedAt: string | null }>>([
-    ...data.documents,
-    ...ALWAYS_EDITABLE.filter((s) => !data.documents.some((d) => d.slug === s)).map(
-      (slug) => ({ slug, updatedAt: null as string | null }),
-    ),
-  ]);
 
   let selectedSlug = $state<string | null>(null);
   let currentDoc = $state<DocumentVersion | null>(null);
@@ -88,16 +77,6 @@
     saveError = null;
   }
 
-  async function loadDefault() {
-    saveError = null;
-    try {
-      const def = await getMasterDocument('tpl_email_base', fetch, token);
-      draft = def.content;
-    } catch {
-      saveError = 'Could not load the default template.';
-    }
-  }
-
   async function save() {
     if (!data.activeProjectId || !selectedSlug || !draft.trim() || saving) return;
     saving = true;
@@ -128,7 +107,6 @@
     return SLUG_LABELS[slug] ?? slug;
   }
 
-  let isEditable = $derived(selectedSlug !== null && ALWAYS_EDITABLE.includes(selectedSlug));
 </script>
 
 <h2 class="text-lg font-semibold text-text mb-6">Documents</h2>
@@ -139,7 +117,7 @@
   <div class="flex flex-col md:flex-row gap-4 md:gap-6">
     <div class="md:w-48 md:shrink-0">
       <div class="flex flex-wrap gap-2 md:flex-col md:gap-1">
-        {#each displayedDocs as doc}
+        {#each data.documents as doc}
           <button
             onclick={() => selectDoc(doc.slug)}
             class="text-left px-3 py-2 rounded text-sm transition-colors md:w-full
@@ -165,11 +143,6 @@
         <div class="mb-3 flex items-center justify-between gap-2">
           <h3 class="text-base font-semibold text-text">{label(selectedSlug)}</h3>
           <div class="flex items-center gap-3">
-            {#if isEditable}
-              <button onclick={loadDefault} class="text-xs text-accent hover:underline">
-                Load default
-              </button>
-            {/if}
             <button onclick={cancelEdit} class="text-xs text-text-muted hover:text-text">
               Cancel
             </button>
@@ -193,15 +166,7 @@
           <p class="mt-2 text-xs text-danger">{saveError}</p>
         {/if}
       {:else if !currentDoc}
-        {#if isEditable}
-          <div class="mb-4 flex items-center justify-between">
-            <h3 class="text-base font-semibold text-text">{label(selectedSlug)}</h3>
-            <button onclick={startEdit} class="text-xs text-accent hover:underline">Create</button>
-          </div>
-          <EmptyState message="No email template yet. This is the body template the outbound run uses — click “Create” then “Load default” to start from the standard template." />
-        {:else}
-          <EmptyState message="Document not found" />
-        {/if}
+        <EmptyState message="Document not found" />
       {:else}
         <div class="mb-4 flex items-center justify-between gap-2">
           <div>

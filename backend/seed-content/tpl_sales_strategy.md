@@ -31,10 +31,6 @@ Examples:
 
 Note: Even at an early stage with no case studies yet, include estimated effects based on self-usage track records or feature capabilities
 
-## Outreach Mode
-
-(Write exactly one concrete value here — `precision` or `volume` — chosen per the generation guidelines below. Do not leave it ambiguous or write "default".)
-
 ## Sales Channels
 (Channel ordering, tone, sub-channel preferences. Optional.)
 
@@ -47,7 +43,7 @@ Note: Even at an early stage with no case studies yet, include estimated effects
 
 ## Messaging
 ### First Outreach (Email/Form)
-(Template-like structure: subject line patterns, opening hook, problem framing, solution presentation, CTA)
+(What to emphasize and what never to claim on first contact — the angle, the proof worth citing, wording the business must avoid. Body shape, length and CTA form come from the `tpl_email_guidelines` master document, and subject patterns plus per-angle body briefs live server-side in `message_variants` — do not restate either here.)
 ### Inquiry Landing CTA Mode
 
 The project picks one CTA mode for the inquiry-landing page (`/q/<short_id>`):
@@ -92,7 +88,6 @@ The two modes are mutually exclusive per project — the inquiry-settings page e
 - Structure messaging to lead with recipient benefits
 - List at least 10 search keywords
 - **Prospect Discovery Sources**: write 3-6 named strategies. Each heading is a stable slug — lowercase kebab-case, ≤64 chars (e.g. `pr-newswire-launches`, `github-active-repos`, `tradeshow-exhibitors-manufacturing`). Diversify source types (press/news, company DBs and directories, trade shows, code/product platforms, region-specific portals) relevant to the target market. The slug is an identifier, not prose: /build-list stamps it on every prospect it registers and /evaluate attributes reply rates per slug, so renaming a slug orphans its measured history — prefer adding a new strategy over renaming one.
-- **Outreach Mode**: write a single concrete value. `precision` = deep per-prospect personalization (specific news, job postings, funding rounds, initiatives), best for high-value targets. `volume` = semi-personalized from company / industry / overview using the project's `email_template` document, best for broad market testing. When the user hasn't indicated a preference, choose `precision` and write it — never leave the section ambiguous or defer to a runtime default.
 - **Sales Channels section rules:**
   - Channel on/off (`email` / `form` / `sns_twitter` / `sns_linkedin`) is owned by Project Settings (`outboundChannels`) and read by `/outbound` and `/build-list`. **Never restate enablement / disablement here.**
   - This section may carry tactical preferences Project Settings can't express: channel ordering ("SNS DM before email for consumer-facing prospects"), tone, sub-channel preferences ("prefer named-personal emails over generic"). `/outbound` reads the order from here when present.

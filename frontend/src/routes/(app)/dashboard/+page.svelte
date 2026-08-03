@@ -26,7 +26,6 @@
     Unplug,
     ShieldAlert,
     Megaphone,
-    FileWarning,
     Zap,
     Rocket,
   } from '@lucide/svelte';
@@ -112,7 +111,6 @@
     'compliance_incomplete',
     'gmail_disconnected',
     'no_outbound_channels',
-    'email_template_missing',
     'quota_exhausted',
   ];
   let paused = $derived(summary?.attention.some((a) => SENDING_BLOCKERS.includes(a.kind)) ?? false);
@@ -197,15 +195,6 @@
           desc: 'No channels enabled — turn one on to start reaching prospects',
           ctaLabel: 'Enable',
           href: '/project-settings',
-        };
-      case 'email_template_missing':
-        return {
-          icon: FileWarning,
-          tone: 'warning',
-          title: 'Email template missing',
-          desc: 'Email outreach is disabled until you add a template',
-          ctaLabel: 'Add',
-          href: '/documents',
         };
       case 'quota_exhausted':
         return {

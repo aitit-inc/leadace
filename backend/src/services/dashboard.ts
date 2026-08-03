@@ -93,7 +93,6 @@ export async function getDashboardSummary(
     lastCycleRows,
     escalationRows,
     pendingDraftsRows,
-    emailTemplateRows,
     learningsRows,
     outboundAllowlist,
     leverRes,
@@ -207,11 +206,6 @@ export async function getDashboardSummary(
       .from(outreachLogs)
       .where(and(eq(outreachLogs.projectId, projectId), eq(outreachLogs.status, 'pending_review'))),
     db
-      .select({ slug: projectDocuments.slug })
-      .from(projectDocuments)
-      .where(and(eq(projectDocuments.projectId, projectId), eq(projectDocuments.slug, 'email_template')))
-      .limit(1),
-    db
       .select({ content: projectDocuments.content })
       .from(projectDocuments)
       .where(and(eq(projectDocuments.projectId, projectId), eq(projectDocuments.slug, 'learnings')))
@@ -287,7 +281,6 @@ export async function getDashboardSummary(
     compliance: { ready: complianceRes.value.ready, missing: complianceRes.value.missing },
     gmailConnected: gmailRes.value.connected,
     outboundChannelsConfigured: outboundAllowlist.outboundChannels.length > 0,
-    emailTemplateExists: emailTemplateRows.length > 0,
     quota: {
       exhausted: quota.kind === 'capped' && quota.remaining <= 0,
       constraint: quota.kind === 'capped' ? quota.bindingConstraint : null,

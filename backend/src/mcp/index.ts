@@ -52,10 +52,9 @@ type Env = {
 // that the old plugin cannot tolerate (removed tool, renamed required arg,
 // changed response shape). See .claude/rules/release.md.
 const SERVER_VERSION = '1.0.0'
-// 0.7.23: Phase B removed record_evaluation and Phase C renamed the
-// subject-variant tools to message variants (list/upsert/pick_message_variant,
-// no aliases) — an older plugin calls tools that no longer exist.
-const MIN_PLUGIN_VERSION = '0.7.23'
+// 0.7.39: the email_template document was dropped; an older plugin reads it at
+// send time and skips the whole email channel when it is absent.
+const MIN_PLUGIN_VERSION = '0.7.39'
 
 async function extractUserId(request: Request, jwtSecret: string, supabaseUrl?: string): Promise<string | null> {
   const authHeader = request.headers.get('Authorization')
@@ -662,7 +661,7 @@ function buildToolRegistry(): ToolDef[] {
       projectId: z.string().min(1).describe('Project name or ID'),
       variantId: variantIdSchema,
       subjectPattern: z.string().min(1).max(300).describe('Subject template; may embed {{placeholders}} substituted at send time.'),
-      bodyApproach: z.string().min(1).max(2000).nullable().optional().describe('Angle brief (2-5 lines: structure / tone / CTA type / length / opener policy) the body is written from; null clears it back to the email_template default skeleton.'),
+      bodyApproach: z.string().min(1).max(2000).nullable().optional().describe('Angle brief (2-5 lines: structure / tone / CTA type / length / opener policy) the body is written from; null clears it, leaving the email guidelines alone to shape the body.'),
       label: z.string().min(1).max(120).nullable().optional().describe('Human-readable display label; null clears it.'),
       archived: z.boolean().optional().describe('Omit to leave the archived state unchanged; false un-archives.'),
     },
@@ -1430,7 +1429,7 @@ function buildToolRegistry(): ToolDef[] {
     'Get the latest version of a project document by slug. For sales_strategy, a WARNING line is appended while the Prospect Discovery Sources section still needs the named-strategy upgrade.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
-      slug: z.string().describe('Document slug: "business", "sales_strategy", "search_notes", "email_template", or "learnings"'),
+      slug: z.string().describe('Document slug: "business", "sales_strategy", "search_notes", "learnings", or "playbook_<strategy-slug>"'),
     },
     async ({ projectId, slug }, { apiUrl, authHeader }) => {
       const { ok, status, data } = await callApi('GET', `/projects/${encodeURIComponent(projectId)}/documents/${slug}`, null, apiUrl, authHeader)
@@ -1456,7 +1455,7 @@ function buildToolRegistry(): ToolDef[] {
     'Save a project document by slug as a new immutable version; prior versions preserved. For sales_strategy, the confirmation carries a WARNING while Prospect Discovery Sources still needs the named-strategy upgrade.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
-      slug: z.string().describe('Document slug: "business", "sales_strategy", "search_notes", "email_template", or "learnings"'),
+      slug: z.string().describe('Document slug: "business", "sales_strategy", "search_notes", "learnings", or "playbook_<strategy-slug>"'),
       content: z.string().describe('Full markdown content of the document'),
     },
     async ({ projectId, slug, content }, { apiUrl, authHeader }) => {

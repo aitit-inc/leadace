@@ -82,7 +82,6 @@ Check completeness of each section in existing `SALES_STRATEGY.md`:
 | Target | Primary and secondary specific by industry, scale, role |
 | Value proposition | Content present |
 | Track record / social proof | At least 1 specific achievement or number |
-| Outreach mode | precision / volume is set |
 | Outbound mode | send / draft is set in project settings |
 | Sales channels | Optional — tactical notes (ordering, tone) present, OR explicitly empty when no project-specific notes. Channel enablement lives in Project Settings (`outboundChannels`), not here. |
 | Sender information | Display name + email in project settings; phone + signature in document |
@@ -98,7 +97,7 @@ Classify sections:
 |---|---|---|
 | Not set | Missing / empty / incomplete | Subject to completion |
 | evaluate-managed | targeting, KPI, search keywords, prospect discovery sources (when already populated) | **Do not touch by default** |
-| Static settings | Sender info, response def, notification, track record, outreach mode, messaging, channels | Update only if user explicitly requests |
+| Static settings | Sender info, response def, notification, track record, messaging, channels | Update only if user explicitly requests |
 
 `/evaluate` auto-tunes targeting / KPI / search keywords / prospect discovery sources once a project has activity, so treat those sections as evaluate-managed whenever they already carry content. An empty such section is simply "not set" and is fillable here.
 
@@ -408,7 +407,6 @@ mcp__plugin_leadace_api__save_document
 
 Also retrieve via `get_master_document` to improve quality:
 - **`tpl_targeting_guide`**: Target persona refinement, competitive analysis, USP articulation, channel selection criteria, KPI reverse calculation, search keyword design patterns.
-- **`tpl_email_templates`**: Email template selection by target industry. Auto-select the best pattern, customize to business-specific info (USP, track record, pricing). Do **not** use templates as-is.
 
 **Environment information**: Tool / environment status is live-detected at run time — there is no env_status document, and the template has no "Environment & Tool Status" section. **Do not** write tool / environment status into SALES_STRATEGY.md; if `ENV_SUMMARY` shows a tool missing, surface it once in the Step 8 completion report. Channel on/off is managed in Project Settings (`outboundChannels`, collected in 4-8 / 4B-3); do not encode channel exclusions into "Sales Channels".
 
@@ -419,16 +417,6 @@ mcp__plugin_leadace_api__save_document
   slug: "sales_strategy"
   content: <full markdown>
 ```
-
-**Then handle the `email_template` document** — the project's first-outreach email body template and the single source the outbound step reads (the body template no longer lives in SALES_STRATEGY.md):
-- **Initial**: generate it from master `tpl_email_base` (`get_master_document`), adapting its voice to the business while keeping the per-prospect `{placeholders}`, then save:
-```
-mcp__plugin_leadace_api__save_document
-  projectId: "$0"
-  slug: "email_template"
-  content: <full markdown>
-```
-- **Update** (Mode A): the `email_template` is user-authored — rewrite only on explicit user request (same rule as Messaging); otherwise leave the existing document untouched.
 
 ## Step 7.5. Generate inquiry_chat_brief (AI Inquiry chat input)
 

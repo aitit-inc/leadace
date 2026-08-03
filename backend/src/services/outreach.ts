@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { eq, and, desc, gte, sql, inArray, notInArray, isNotNull, type SQL } from 'drizzle-orm'
+import { eq, ne, and, desc, gte, sql, inArray, notInArray, isNotNull, type SQL } from 'drizzle-orm'
 import {
   outreachLogs,
   organizations,
@@ -48,7 +48,17 @@ import { verifyAddressBeforeSend } from './email-verify'
 import { DASHBOARD_PERIODS, periodToWindow } from '../domain/dashboard'
 import { requireProspect, prospectHadFreshSignal } from './prospects'
 import { allocateInquiryUrl } from './inquiry-token'
-import { loadProjectReapproachSettings, loadProjectSendSettings, loadProjectFollowUpConfig } from './project-settings'
+import {
+  loadProjectReapproachSettings,
+  loadProjectSendSettings,
+  loadProjectFollowUpConfig,
+  type ProjectSendSettings,
+} from './project-settings'
+import {
+  checkOutboundContent,
+  describeContentViolations,
+  findNearDuplicate,
+} from '../domain/outbound-content'
 import {
   assertTenantComplianceReady,
   localizeComplianceIdentity,
@@ -289,6 +299,68 @@ async function assertProspectCountryAllowed(
   return ok(undefined)
 }
 
+const NEAR_DUPLICATE_LOOKBACK_DAYS = 30
+const NEAR_DUPLICATE_SAMPLE = 50
+
+// The machine-checkable half of the message bar (domain/outbound-content), run on
+// every pre-send path. Placed as the last free guard: recipient- and tenant-state
+// refusals still win, but nothing that spends a verification credit or allocates a
+// row happens before the content is known to be sendable.
+async function assertSendableContent(
+  db: Db,
+  tenantId: TenantId,
+  args: {
+    subject: string | null
+    body: string
+    ctx: SendContext
+    settings: ProjectSendSettings
+    compliance: TenantComplianceProjection
+    excludeOutreachId?: number
+  },
+): Promise<ServiceResult<undefined>> {
+  const identity = localizeComplianceIdentity(args.compliance, args.settings.targetLanguage)
+  const violations = checkOutboundContent({
+    subject: args.subject,
+    body: args.body,
+    targetLanguage: args.settings.targetLanguage,
+    appUrl: args.ctx.appUrl,
+    apiUrl: args.ctx.apiUrl,
+    inquiryCtaType: args.settings.inquiryCtaType,
+    inquiryCtaUrl: args.settings.inquiryCtaUrl,
+    inquiryLandingEnabled: args.settings.inquiryLandingEnabled,
+    physicalAddress: identity.physicalAddress,
+  })
+
+  // Tenant-wide and cross-channel: Gmail clusters on content, not on which project
+  // or channel produced it. Drafts count so a templated batch is caught where it is
+  // generated rather than one send at a time.
+  const priors = await db
+    .select({ id: outreachLogs.id, body: outreachLogs.body })
+    .from(outreachLogs)
+    .where(
+      and(
+        eq(outreachLogs.tenantId, tenantId),
+        inArray(outreachLogs.status, ['sent', 'pre_send', 'pending_review']),
+        gte(outreachLogs.sentAt, addDays(new Date(), -NEAR_DUPLICATE_LOOKBACK_DAYS)),
+        ...(args.excludeOutreachId === undefined
+          ? []
+          : [ne(outreachLogs.id, args.excludeOutreachId)]),
+      ),
+    )
+    .orderBy(desc(outreachLogs.sentAt))
+    .limit(NEAR_DUPLICATE_SAMPLE)
+
+  const duplicate = findNearDuplicate(args.body, priors)
+  if (duplicate) violations.push({ kind: 'near_duplicate', ...duplicate })
+
+  if (violations.length === 0) return ok(undefined)
+  return err(
+    'UNPROCESSABLE',
+    'Message content failed the pre-send check',
+    describeContentViolations(violations),
+  )
+}
+
 async function assertProspectContactable(
   db: Db,
   tenantId: TenantId,
@@ -505,6 +577,15 @@ export async function recordOutreachWithInquiry(
     if (!country.ok) return country
   }
 
+  const contentGuard = await assertSendableContent(db, tenantId, {
+    subject: input.subject ?? null,
+    body: input.body,
+    ctx,
+    settings: sendSettings,
+    compliance: complianceResult.value,
+  })
+  if (!contentGuard.ok) return contentGuard
+
   const sentAt = new Date()
   const status: OutreachStatus = willSend ? 'pre_send' : 'pending_review'
   const hadFreshSignal = await prospectHadFreshSignal(db, tenantId, input.prospectId)
@@ -635,6 +716,15 @@ export async function sendAndRecord(
   if (!complianceResult.ok) return complianceResult
   const hadFreshSignal = await prospectHadFreshSignal(db, tenantId, input.prospectId)
   if (sendSettings.outboundMode === 'draft') {
+    const contentGuard = await assertSendableContent(db, tenantId, {
+      subject: input.subject,
+      body: input.body,
+      ctx,
+      settings: sendSettings,
+      compliance: complianceResult.value,
+    })
+    if (!contentGuard.ok) return contentGuard
+
     const sentAt = new Date()
     const [log] = await db
       .insert(outreachLogs)
@@ -675,6 +765,15 @@ export async function sendAndRecord(
 
   const country = await assertProspectCountryAllowed(db, tenantId, input.prospectId)
   if (!country.ok) return country
+
+  const contentGuard = await assertSendableContent(db, tenantId, {
+    subject: input.subject,
+    body: input.body,
+    ctx,
+    settings: sendSettings,
+    compliance,
+  })
+  if (!contentGuard.ok) return contentGuard
 
   // Last guard: it spends a verification credit, so every refusal the DB can reach
   // has to fire before it.
@@ -1146,6 +1245,16 @@ export async function sendDraft(
   if (!complianceResult.ok) return complianceResult
   if (!countryResult.ok) return countryResult
   const compliance = complianceResult.value
+
+  const contentGuard = await assertSendableContent(db, tenantId, {
+    subject: draft.subject,
+    body: draft.body,
+    ctx,
+    settings: sendSettings,
+    compliance,
+    excludeOutreachId: draft.id,
+  })
+  if (!contentGuard.ok) return contentGuard
 
   // Last guard — see sendAndRecord.
   const recipient = await resolveDeliverableRecipient(

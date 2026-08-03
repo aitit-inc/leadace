@@ -181,7 +181,6 @@ export type AttentionItem =
   | { kind: 'compliance_incomplete'; missing: string[] }
   | { kind: 'gmail_disconnected' }
   | { kind: 'no_outbound_channels' }
-  | { kind: 'email_template_missing' }
   | { kind: 'quota_exhausted'; constraint: QuotaConstraint }
   | { kind: 'hot_leads'; count: number }
   | { kind: 'outreach_drafts'; count: number }
@@ -317,7 +316,6 @@ export type AttentionInput = {
   compliance: { ready: boolean; missing: string[] }
   gmailConnected: boolean
   outboundChannelsConfigured: boolean
-  emailTemplateExists: boolean
   quota: { exhausted: boolean; constraint: QuotaConstraint | null }
   pendingDrafts: number
   hotLeadsRecent: number
@@ -334,7 +332,6 @@ export function deriveAttentionItems(input: AttentionInput): AttentionItem[] {
   }
   if (!input.gmailConnected) items.push({ kind: 'gmail_disconnected' })
   if (!input.outboundChannelsConfigured) items.push({ kind: 'no_outbound_channels' })
-  if (!input.emailTemplateExists) items.push({ kind: 'email_template_missing' })
   if (input.quota.exhausted && input.quota.constraint) {
     items.push({ kind: 'quota_exhausted', constraint: input.quota.constraint })
   }

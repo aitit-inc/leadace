@@ -43,7 +43,11 @@ SKIP_CLEANUP="${SKIP_CLEANUP:-0}"
 
 RUN_TAG="e2e-platform-$(date +%s)"
 PROJECT_NAME="$RUN_TAG project"
-CORE_BODY="e2e platform proposal body marker"
+# Every body reaching a pre-send path must be mutually dissimilar: the content
+# check refuses a near-duplicate of any recent body in the tenant, including
+# bodies left behind by an earlier run.
+new_body() { printf 'e2e platform proposal body %s' "$(openssl rand -hex 32)"; }
+CORE_BODY=""
 STRATEGY_SLUG="crowdsource-postings"
 PLATFORM_DOMAIN="$RUN_TAG.example"
 
@@ -83,6 +87,7 @@ api_status() {
 api_body() { cat "$API_OUT"; }
 
 require_jq() { command -v jq >/dev/null 2>&1 || { echo "need jq on PATH" >&2; exit 1; }; }
+require_openssl() { command -v openssl >/dev/null 2>&1 || { echo "need openssl on PATH (fixture bodies must be unique per call)" >&2; exit 1; }; }
 psql_local() { PGPASSWORD=postgres psql -h 127.0.0.1 -p 54322 -U postgres -d postgres -tAc "$1"; }
 
 last_log_id()   { psql_local "SELECT id FROM outreach_logs WHERE prospect_id=$1 AND project_id='$PROJECT_ID' ORDER BY id DESC LIMIT 1;"; }
@@ -100,7 +105,7 @@ mkplatform() {
       matchReason:"seed", discoveryStrategy:$s}'
 }
 
-rwi_body() { jq -nc --arg pid "$PROJECT_ID" --argjson prid "$1" --arg b "$CORE_BODY" \
+rwi_body() { jq -nc --arg pid "$PROJECT_ID" --argjson prid "$1" --arg b "$2" \
   '{projectId:$pid, prospectId:$prid, channel:"platform", body:$b}'; }
 
 set_mode() {
@@ -110,6 +115,7 @@ set_mode() {
 }
 
 require_jq
+require_openssl
 API_OUT="$(mktemp)"
 TOKEN="$("$REPO_ROOT/e2e/mint-jwt.sh")"
 [[ -n "$TOKEN" ]] || { echo "failed to mint JWT" >&2; exit 1; }
@@ -201,7 +207,8 @@ assert_eq "target carries discoveryStrategy" \
 
 step "(3) send mode: channel platform, finalBody == body (no footer), no inquiry token"
 set_mode send
-CODE="$(api_status POST /api/outreach/record-with-inquiry "$(rwi_body "$P_A")")"; BODY="$(api_body)"
+CORE_BODY="$(new_body)"
+CODE="$(api_status POST /api/outreach/record-with-inquiry "$(rwi_body "$P_A" "$CORE_BODY")")"; BODY="$(api_body)"
 assert_eq "platform record-with-inquiry → 201" "$CODE" "201"
 assert_eq "status=pre_send" "$(echo "$BODY" | jq -r '.status // ""')" "pre_send"
 assert_eq "finalBody == body verbatim (no compliance footer)" "$(echo "$BODY" | jq -r '.finalBody')" "$CORE_BODY"
@@ -215,7 +222,8 @@ assert_eq "sent flips prospect to contacted" "$(pp_status "$P_A")" "contacted"
 
 step "(3) draft mode: pending_review body carries no footer either"
 set_mode draft
-CODE="$(api_status POST /api/outreach/record-with-inquiry "$(rwi_body "$P_B")")"; BODY="$(api_body)"
+CORE_BODY="$(new_body)"
+CODE="$(api_status POST /api/outreach/record-with-inquiry "$(rwi_body "$P_B" "$CORE_BODY")")"; BODY="$(api_body)"
 assert_eq "platform draft → 201" "$CODE" "201"
 assert_eq "status=pending_review" "$(echo "$BODY" | jq -r '.status // ""')" "pending_review"
 LID_B="$(last_log_id "$P_B")"

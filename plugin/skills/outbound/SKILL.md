@@ -56,9 +56,8 @@ re-run once saved.
 Load `mcp__plugin_leadace_api__get_document` (`projectId: "$0"`) for
 `slug: "business"` and `slug: "sales_strategy"`. Sections that matter:
 
-- **Outreach mode**: `precision` (deep personalization) or `volume` (template-based semi-personalization). Always carries a concrete value — read it, don't assume a default
 - **Sales channels**: tactical preferences only (ordering, sub-channel, tone). Enablement is owned by `outboundChannels` in project settings, not this section
-- **Messaging**: the "First Outreach" structure — opening hook, problem framing, solution, CTA. Subject lines are **not** sourced here; server-side `message_variants` own them (step 3). The body template itself is the `email_template` document, read at send
+- **Messaging**: what to emphasize and what never to claim on first contact. Body shape and length come from `tpl_email_guidelines` unless the picked variant's body approach overrides them; subject patterns and those briefs live server-side in `message_variants` (step 3) — neither is sourced here
 - **Sender information**: the name (+ optional role) for the light sign-off — not a signature block. Display name and address come from project settings; the backend appends the compliance footer
 - **SNS messages**: SNS DM messaging policy
 
@@ -191,7 +190,7 @@ An explicit user override ("send anyway", "ignore timing") wins — they own the
 
 Retrieve email guidelines via `mcp__plugin_leadace_api__get_master_document` with `slug: "tpl_email_guidelines"` and follow them.
 
-**Body template.** Retrieve the project's `email_template` document (`mcp__plugin_leadace_api__get_document`, `slug: "email_template"`) and use it as the body template — it is the single source for the email body (created by `/leadace` onboarding from master `tpl_email_base`). If `get_document` reports it does not exist, the project hasn't completed email setup: **skip the email channel entirely for this run — do not compose, draft, or send** (this holds in draft mode too), surface it in the run-end report, and tell the operator to create the template (WebUI Documents → Email Template, or run `/leadace`). Do not fabricate a template or fall back to another document.
+There is no stored body template: every body is written for the one recipient, from the guidelines' shape, the facts in BUSINESS.md / SALES_STRATEGY.md, and the prospect's own material.
 
 Close with a light sign-off (name + optional role) drawn from the "Sender Information" section of SALES_STRATEGY.md — not a full signature block; the backend appends the compliance footer (legal name, address, unsubscribe) automatically. Sender display name and `From:` address are applied automatically by `send_email_and_record` from project settings — do not pass them as arguments.
 
@@ -203,10 +202,10 @@ project id; it reports the picked variant id and its subject pattern, plus a lab
 and a body approach when the variant carries them. Render the subject by
 substituting the `{{org}}` / `{{name}}` / `{{signal}}` placeholders the pattern
 uses. When a body approach is reported, write the body to that brief — its
-structure, tone, CTA type, length, and opener policy govern, with `email_template`
-supplying the facts and the personalization rules below still applying; with none,
-the `email_template` skeleton is the structure. The compliance rules and the
-inquiry-aware CTA branch below always outrank the brief. Forward `variantId` to
+structure, tone, CTA type, length, and opener policy govern, with the
+personalization rules below still applying; with none, the guidelines' shape
+governs. The compliance rules and the inquiry-aware CTA branch below always
+outrank the brief. Forward `variantId` to
 `send_email_and_record` so `outreach_logs.variant_id` is stamped for per-variant
 reply metrics — and likewise to `record_outreach_with_inquiry` when a contact form
 carries a variant (SNS DMs have no subject, so none applies), otherwise the metrics
@@ -250,12 +249,9 @@ footer. If `send_email_and_record` returns `412 Tenant compliance settings
 incomplete`, surface the message verbatim and tell the user to fill in Workspace
 settings at https://app.leadace.ai/workspace-settings before retrying.
 
-**Body personalization (vary depth by outreach mode):**
+**Body personalization.** Refer to each prospect's `overview` and `matchReason`, and write the entire body tailored to the recipient -- not just the opening. Reference specific numbers, achievements, and initiatives of the target company. Generic openers like "I visited your website" alone are insufficient.
 
-- **Precision mode**: Refer to each prospect's `overview` and `matchReason`, and write the entire body tailored to the recipient -- not just the opening. Reference specific numbers, achievements, and initiatives of the target company. Generic openers like "I visited your website" alone are insufficient
-- **Volume mode**: Use the `email_template` document (retrieved in step 3) as the base, adjusting the opening (why you're reaching out) and the problem statement in 2 places based on `overview` / `matchReason`. The solution through CTA can follow the template structure as-is
-
-Having composed the body (reached only when the `email_template` exists), call `mcp__plugin_leadace_api__send_email_and_record` — the same call for both outreach modes (precision or volume):
+Having composed the body, call `mcp__plugin_leadace_api__send_email_and_record`:
 - `projectId: "$0"`
 - `prospectId`: the prospect's id — the server sends to that prospect's stored address
 - `subject`: subject line (rendered from the variant's subject pattern)

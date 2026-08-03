@@ -12,8 +12,8 @@ export const upsertVariantBodySchema = z
   .object({
     variantId: variantIdSchema,
     subjectPattern: z.string().min(1).max(300),
-    // Angle brief (2-5 lines) the body is written from; null clears it back to
-    // the email_template default skeleton.
+    // Angle brief (2-5 lines) the body is written from; null clears it, leaving
+    // the email guidelines alone to shape the body.
     bodyApproach: z.string().min(1).max(2000).nullable().optional(),
     label: z.string().min(1).max(120).nullable().optional(),
     archived: z.boolean().optional(),

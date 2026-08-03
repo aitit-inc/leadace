@@ -116,11 +116,16 @@ require_jq() {
   command -v jq >/dev/null 2>&1 || { echo "need jq on PATH" >&2; exit 1; }
 }
 
+require_openssl() {
+  command -v openssl >/dev/null 2>&1 || { echo "need openssl on PATH (fixture bodies must be unique per call)" >&2; exit 1; }
+}
+
 psql_local() {
   PGPASSWORD=postgres psql -h 127.0.0.1 -p 54322 -U postgres -d postgres -tAc "$1"
 }
 
 require_jq
+require_openssl
 TOKEN="$("$REPO_ROOT/e2e/mint-jwt.sh")"
 [[ -n "$TOKEN" ]] || { echo "failed to mint JWT" >&2; exit 1; }
 
@@ -373,7 +378,8 @@ else
     SEND_BODY="$(jq -nc \
       --arg pid "$PROJECT_ID" --argjson prid "$PROSPECT_US_ID" \
       --arg subject "regression-outbound real-send $RUN_TAG" \
-      '{projectId:$pid, prospectId:$prid, subject:$subject, body:"E2E regression real-send body. Disregard."}')"
+      --arg body "E2E regression real-send body. Disregard. $(openssl rand -hex 32)" \
+      '{projectId:$pid, prospectId:$prid, subject:$subject, body:$body}')"
 
     SEND_CODE="$(api_status POST /api/outreach/send-and-record "$SEND_BODY" 2>/tmp/regression-outbound-out.$$ || true)"
     SEND_RESP="$(cat /tmp/regression-outbound-out.$$)"

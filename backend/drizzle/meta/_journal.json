@@ -463,6 +463,13 @@
       "when": 1785331935982,
       "tag": "0065_gifted_gauntlet",
       "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1785681171529,
+      "tag": "0066_drop_email_template_documents",
+      "breakpoints": true
     }
   ]
 }

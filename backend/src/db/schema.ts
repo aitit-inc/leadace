@@ -788,8 +788,8 @@ export const messageVariants = pgTable('message_variants', {
   // substitutes at send time.
   subjectPattern: text('subject_pattern').notNull(),
   // Angle brief (2-5 lines: structure / tone / CTA type / length / opener
-  // policy) the LLM writes the body from. NULL = no body directive — the
-  // email_template default skeleton alone (pre-rename variants stay valid).
+  // policy) the LLM writes the body from. NULL = no body directive — the email
+  // guidelines alone shape the body (pre-rename variants stay valid).
   bodyApproach: text('body_approach'),
   label: text('label'),
   archivedAt: timestamp('archived_at', { withTimezone: true }),

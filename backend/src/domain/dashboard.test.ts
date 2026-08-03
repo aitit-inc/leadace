@@ -268,7 +268,6 @@ describe('deriveAttentionItems', () => {
     compliance: { ready: true, missing: [] },
     gmailConnected: true,
     outboundChannelsConfigured: true,
-    emailTemplateExists: true,
     quota: { exhausted: false, constraint: null },
     pendingDrafts: 0,
     hotLeadsRecent: 0,
@@ -294,7 +293,6 @@ describe('deriveAttentionItems', () => {
       compliance: { ready: false, missing: ['legalName'] },
       gmailConnected: false,
       outboundChannelsConfigured: false,
-      emailTemplateExists: false,
       quota: { exhausted: true, constraint: 'monthly' },
       pendingDrafts: 3,
     })
@@ -304,7 +302,6 @@ describe('deriveAttentionItems', () => {
       'compliance_incomplete',
       'gmail_disconnected',
       'no_outbound_channels',
-      'email_template_missing',
       'quota_exhausted',
       'outreach_drafts',
     ])

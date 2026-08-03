@@ -162,6 +162,8 @@ export type ProjectSendSettings = {
   unsubscribeEnabled: boolean
   footerOverride: string | null
   inquiryLandingEnabled: boolean
+  inquiryCtaType: InquiryCtaType
+  inquiryCtaUrl: string | null
   targetLanguage: Locale
 }
 
@@ -177,6 +179,8 @@ export async function loadProjectSendSettings(
       unsubscribeEnabled: projectSettings.unsubscribeEnabled,
       footerOverride: projectSettings.footerOverride,
       inquiryLandingEnabled: projectSettings.inquiryLandingEnabled,
+      inquiryCtaType: projectSettings.inquiryCtaType,
+      inquiryCtaUrl: projectSettings.inquiryCtaUrl,
       targetLanguage: projectSettings.targetLanguage,
     })
     .from(projectSettings)

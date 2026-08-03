@@ -65,6 +65,7 @@ api_status() {
 api_body() { cat "$API_OUT"; }
 
 require_jq() { command -v jq >/dev/null 2>&1 || { echo "need jq on PATH" >&2; exit 1; }; }
+require_openssl() { command -v openssl >/dev/null 2>&1 || { echo "need openssl on PATH (fixture bodies must be unique per call)" >&2; exit 1; }; }
 psql_local() { PGPASSWORD=postgres psql -h 127.0.0.1 -p 54322 -U postgres -d postgres -tAc "$1"; }
 
 pp_status() { psql_local "SELECT status FROM project_prospects WHERE prospect_id=$1 AND project_id='$PROJECT_ID';"; }
@@ -78,13 +79,18 @@ mkseed() {
       name:$n, overview:"seed", websiteUrl:("https://"+$d+"/about"), email:$e, matchReason:"seed"}'
 }
 
+# Body is unique per call: the content check refuses a near-duplicate of any recent
+# body in the tenant, including bodies left behind by an earlier run.
 mint_presend() {
   local prid="$1"
   api POST /api/outreach/record-with-inquiry \
-    "$(jq -nc --arg pid "$PROJECT_ID" --argjson prid "$prid" '{projectId:$pid, prospectId:$prid, channel:"form", body:"e2e pre_send body"}')"
+    "$(jq -nc --arg pid "$PROJECT_ID" --argjson prid "$prid" \
+      --arg b "e2e pre_send body $(openssl rand -hex 32)" \
+      '{projectId:$pid, prospectId:$prid, channel:"form", body:$b}')"
 }
 
 require_jq
+require_openssl
 API_OUT="$(mktemp)"
 TOKEN="$("$REPO_ROOT/e2e/mint-jwt.sh")"
 [[ -n "$TOKEN" ]] || { echo "failed to mint JWT" >&2; exit 1; }

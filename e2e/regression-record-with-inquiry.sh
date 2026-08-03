@@ -42,7 +42,11 @@ SKIP_CLEANUP="${SKIP_CLEANUP:-0}"
 
 RUN_TAG="e2e-inqfooter-$(date +%s)"
 PROJECT_NAME="$RUN_TAG project"
-CORE_BODY="e2e inquiry core body marker"
+# Every body reaching a pre-send path must be mutually dissimilar: the content
+# check refuses a near-duplicate of any recent body in the tenant, including
+# bodies left behind by an earlier run.
+new_body() { printf 'e2e inquiry core body %s' "$(openssl rand -hex 32)"; }
+CORE_BODY=""
 
 PASS=0
 FAIL=0
@@ -90,6 +94,7 @@ api_status() {
 api_body() { cat "$API_OUT"; }
 
 require_jq() { command -v jq >/dev/null 2>&1 || { echo "need jq on PATH" >&2; exit 1; }; }
+require_openssl() { command -v openssl >/dev/null 2>&1 || { echo "need openssl on PATH (fixture bodies must be unique per call)" >&2; exit 1; }; }
 psql_local() { PGPASSWORD=postgres psql -h 127.0.0.1 -p 54322 -U postgres -d postgres -tAc "$1"; }
 
 last_log_id()     { psql_local "SELECT id FROM outreach_logs WHERE prospect_id=$1 AND project_id='$PROJECT_ID' ORDER BY id DESC LIMIT 1;"; }
@@ -107,7 +112,7 @@ mkseed() {
       name:$n, overview:"seed", websiteUrl:("https://"+$d+"/about"), email:$e, matchReason:"seed"}'
 }
 
-rwi_body() { jq -nc --arg pid "$PROJECT_ID" --argjson prid "$1" --arg b "$CORE_BODY" \
+rwi_body() { jq -nc --arg pid "$PROJECT_ID" --argjson prid "$1" --arg b "$2" \
   '{projectId:$pid, prospectId:$prid, channel:"form", subject:"e2e", body:$b}'; }
 
 set_mode() {
@@ -117,6 +122,7 @@ set_mode() {
 }
 
 require_jq
+require_openssl
 API_OUT="$(mktemp)"
 TOKEN="$("$REPO_ROOT/e2e/mint-jwt.sh")"
 [[ -n "$TOKEN" ]] || { echo "failed to mint JWT" >&2; exit 1; }
@@ -188,7 +194,8 @@ say "ids: us=$P_US us2=$P_US2 gb=$P_GB dnc=$P_DNC (dnc flagged)"
 
 step "DRAFT mode: footer baked into the persisted pending_review body"
 set_mode draft
-CODE="$(api_status POST /api/outreach/record-with-inquiry "$(rwi_body "$P_US")")"; BODY="$(api_body)"
+CORE_BODY="$(new_body)"
+CODE="$(api_status POST /api/outreach/record-with-inquiry "$(rwi_body "$P_US" "$CORE_BODY")")"; BODY="$(api_body)"
 assert_eq "draft → 201" "$CODE" "201"
 assert_eq "status=pending_review" "$(echo "$BODY" | jq -r '.status // ""')" "pending_review"
 LID="$(last_log_id "$P_US")"; SID="$(token_shortid "$LID")"
@@ -205,16 +212,19 @@ assert_eq "returned finalBody == persisted body" "$(echo "$BODY" | jq -r '.final
 assert_eq "draft does NOT flip prospect to contacted" "$(pp_status "$P_US")" "new"
 
 step "DRAFT mode: send-only gates BYPASSED (DNC + GB still draft successfully)"
-CODE="$(api_status POST /api/outreach/record-with-inquiry "$(rwi_body "$P_DNC")")"; BODY="$(api_body)"
+CORE_BODY="$(new_body)"
+CODE="$(api_status POST /api/outreach/record-with-inquiry "$(rwi_body "$P_DNC" "$CORE_BODY")")"; BODY="$(api_body)"
 assert_eq "DNC drafts → 201 (no DNC gate in draft mode)" "$CODE" "201"
 assert_eq "DNC draft status=pending_review" "$(echo "$BODY" | jq -r '.status // ""')" "pending_review"
-CODE="$(api_status POST /api/outreach/record-with-inquiry "$(rwi_body "$P_GB")")"; BODY="$(api_body)"
+CORE_BODY="$(new_body)"
+CODE="$(api_status POST /api/outreach/record-with-inquiry "$(rwi_body "$P_GB" "$CORE_BODY")")"; BODY="$(api_body)"
 assert_eq "GB drafts → 201 (no country gate in draft mode)" "$CODE" "201"
 assert_eq "GB draft status=pending_review" "$(echo "$BODY" | jq -r '.status // ""')" "pending_review"
 
 step "SEND mode: pre_send body == input.body VERBATIM (footer NOT persisted)"
 set_mode send
-CODE="$(api_status POST /api/outreach/record-with-inquiry "$(rwi_body "$P_US2")")"; BODY="$(api_body)"
+CORE_BODY="$(new_body)"
+CODE="$(api_status POST /api/outreach/record-with-inquiry "$(rwi_body "$P_US2" "$CORE_BODY")")"; BODY="$(api_body)"
 assert_eq "send → 201" "$CODE" "201"
 assert_eq "status=pre_send" "$(echo "$BODY" | jq -r '.status // ""')" "pre_send"
 LID2="$(last_log_id "$P_US2")"
@@ -227,13 +237,15 @@ assert_eq "returned finalBody starts with the input core text" \
 
 step "SEND mode: DNC + country gates fire (422, no row created)"
 BEFORE_DNC="$(log_count "$P_DNC")"
-CODE="$(api_status POST /api/outreach/record-with-inquiry "$(rwi_body "$P_DNC")")"; BODY="$(api_body)"
+CORE_BODY="$(new_body)"
+CODE="$(api_status POST /api/outreach/record-with-inquiry "$(rwi_body "$P_DNC" "$CORE_BODY")")"; BODY="$(api_body)"
 assert_eq "send to DNC → 422" "$CODE" "422"
 assert_eq "DNC error message" "$(echo "$BODY" | jq -r '.error // ""')" "Prospect is on do-not-contact list"
 assert_eq "no new row for DNC prospect" "$(log_count "$P_DNC")" "$BEFORE_DNC"
 
 BEFORE_GB="$(log_count "$P_GB")"
-CODE="$(api_status POST /api/outreach/record-with-inquiry "$(rwi_body "$P_GB")")"; BODY="$(api_body)"
+CORE_BODY="$(new_body)"
+CODE="$(api_status POST /api/outreach/record-with-inquiry "$(rwi_body "$P_GB" "$CORE_BODY")")"; BODY="$(api_body)"
 assert_eq "send to GB → 422" "$CODE" "422"
 assert_eq "GB country error message" "$(echo "$BODY" | jq -r '.error // ""')" "Recipient country GB is not supported"
 assert_eq "no new row for GB prospect" "$(log_count "$P_GB")" "$BEFORE_GB"
@@ -242,7 +254,8 @@ step "Compliance gates BOTH modes: incomplete tenant → 412 even in draft mode"
 api PUT /api/tenant-settings '{"legalName":null,"physicalAddress":null,"defaultSenderCountry":null}' > /dev/null
 set_mode draft
 BEFORE_US2="$(log_count "$P_US2")"
-CODE="$(api_status POST /api/outreach/record-with-inquiry "$(rwi_body "$P_US2")")"; BODY="$(api_body)"
+CORE_BODY="$(new_body)"
+CODE="$(api_status POST /api/outreach/record-with-inquiry "$(rwi_body "$P_US2" "$CORE_BODY")")"; BODY="$(api_body)"
 assert_eq "incomplete compliance in draft mode → 412" "$CODE" "412"
 assert_eq "compliance error message" "$(echo "$BODY" | jq -r '.error // ""')" "Tenant compliance settings incomplete"
 assert_eq "no new row created on 412" "$(log_count "$P_US2")" "$BEFORE_US2"
