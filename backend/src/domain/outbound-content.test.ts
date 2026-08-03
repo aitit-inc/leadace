@@ -76,6 +76,12 @@ describe('checkOutboundContent', () => {
       })
     })
 
+    it('matches the hostname, so the port in APP_URL is irrelevant', () => {
+      expect(
+        check({ appUrl: 'http://localhost:5273', body: 'Details at http://localhost:9999/x' }),
+      ).toContainEqual({ kind: 'forbidden_link', needle: 'localhost', reason: 'own_host' })
+    })
+
     it('rejects the signup URL regardless of inquiry landing', () => {
       const input = {
         inquiryCtaType: 'signup' as const,

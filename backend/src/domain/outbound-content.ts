@@ -148,15 +148,9 @@ export function checkOutboundContent(input: OutboundContentInput): ContentViolat
   return violations
 }
 
-// Gmail spam-clusters by content similarity, so one flagged body poisons every
-// similar future send. Character shingles keep the measure language-agnostic.
-//
-// Measured on realistic cold bodies (en + ja): identical 1.00, name swapped 0.79–0.97,
-// template with every slot swapped 0.74–0.76, same frame with the middle rewritten
-// 0.26, unrelated messages in the same house style 0.01–0.02. The threshold sits in
-// the empty band between the last two, so slot-swapped templating is refused and
-// genuine per-recipient writing is not.
-export const NEAR_DUPLICATE_THRESHOLD = 0.5
+// Refuses mechanical re-use only (slot-swapped skeletons land ≥0.74); how similar
+// honestly written bodies may be is context-dependent and stays with the guidelines.
+export const NEAR_DUPLICATE_THRESHOLD = 0.7
 const SHINGLE_SIZE = 5
 
 // Stored bodies for form / SNS drafts already carry the appended footer, which is
@@ -242,7 +236,7 @@ function describeViolation(violation: ContentViolation): string {
     case 'body_too_long':
       return `The body is ${violation.measured} ${violation.unit} (hard limit ${violation.limit}). Cut everything that is not about the recipient or one concrete point about the offer.`
     case 'near_duplicate':
-      return `The body is ${Math.round(violation.similarity * 100)}% identical to outreach #${violation.priorOutreachId}. Vary the opener, structure, paragraph order and CTA — a re-used body poisons every similar future send.`
+      return `The body is ${Math.round(violation.similarity * 100)}% identical to outreach #${violation.priorOutreachId} — re-used text, not a message written for this recipient. Write it fresh for them; re-used bodies form content clusters that spam filters punish.`
   }
 }
 

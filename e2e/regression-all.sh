@@ -33,6 +33,7 @@ SUITES=(
   regression-record-with-inquiry
   regression-funnel-drilldown
   regression-draft-send
+  regression-content-check
   regression-inflight-reachable
   regression-followup-sequence
   regression-mailbox-warmup
