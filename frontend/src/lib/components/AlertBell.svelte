@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { Bell, TriangleAlert } from '@lucide/svelte';
-  import type { Alert } from '$lib/types/alerts';
+  import { Bell } from '@lucide/svelte';
+  import { attentionMeta } from '$lib/attention-meta';
+  import type { AttentionItem } from '$lib/types/attention';
 
-  let { alerts }: { alerts: Alert[] } = $props();
+  let { items }: { items: AttentionItem[] } = $props();
 
   let open = $state(false);
   let buttonEl: HTMLButtonElement | null = $state(null);
@@ -12,22 +13,12 @@
     open = false;
   }
 
-  function describe(alert: Alert): { title: string; detail: string } {
-    switch (alert.kind) {
-      case 'reply_collection_revoked':
-        return {
-          title: 'Reply collection stopped',
-          detail: `Google rejected the saved access for ${alert.fromEmail} on ${new Date(
-            alert.since,
-          ).toLocaleDateString()}. Replies to this address have not been read since.`,
-        };
-      case 'reply_collection_scope_missing':
-        return {
-          title: 'Replies are not being read',
-          detail: `${alert.fromEmail} can send, but permission to read replies was never granted, so replies and bounces to it go unrecorded.`,
-        };
-    }
-  }
+  const TONE_TEXT: Record<ReturnType<typeof attentionMeta>['tone'], string> = {
+    accent: 'text-accent',
+    info: 'text-info',
+    danger: 'text-danger',
+    warning: 'text-warning',
+  };
 
   $effect(() => {
     if (!open) return;
@@ -55,15 +46,15 @@
     onclick={() => (open = !open)}
     aria-haspopup="menu"
     aria-expanded={open}
-    aria-label={alerts.length > 0 ? `Alerts (${alerts.length})` : 'Alerts'}
+    aria-label={items.length > 0 ? `Alerts (${items.length})` : 'Alerts'}
     class="relative flex h-9 w-9 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-surface hover:text-text focus:outline-none focus:ring-2 focus:ring-text/30"
   >
     <Bell size={18} />
-    {#if alerts.length > 0}
+    {#if items.length > 0}
       <span
         class="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-medium text-page"
       >
-        {alerts.length}
+        {items.length}
       </span>
     {/if}
   </button>
@@ -74,25 +65,25 @@
       role="menu"
       class="absolute right-0 top-11 z-40 w-80 rounded-md border border-border bg-page shadow-lg"
     >
-      {#if alerts.length === 0}
+      {#if items.length === 0}
         <p class="px-3 py-4 text-sm text-text-muted">No alerts.</p>
       {:else}
         <ul class="divide-y divide-border">
-          {#each alerts as alert}
-            {@const described = describe(alert)}
+          {#each items as item}
+            {@const meta = attentionMeta(item)}
             <li class="px-3 py-3">
               <div class="flex items-start gap-2">
-                <TriangleAlert size={14} class="mt-0.5 shrink-0 text-danger" />
+                <meta.icon size={14} class="mt-0.5 shrink-0 {TONE_TEXT[meta.tone]}" />
                 <div class="min-w-0">
-                  <p class="text-sm font-medium text-text">{described.title}</p>
-                  <p class="mt-0.5 text-xs text-text-muted">{described.detail}</p>
+                  <p class="text-sm font-medium text-text">{meta.title}</p>
+                  <p class="mt-0.5 text-xs text-text-muted">{meta.desc}</p>
                   <a
-                    href="/account-settings"
+                    href={meta.href}
                     onclick={close}
                     role="menuitem"
                     class="mt-1.5 inline-block text-xs font-medium text-accent hover:text-accent-strong transition-colors"
                   >
-                    Fix in Account settings →
+                    {meta.ctaLabel} →
                   </a>
                 </div>
               </div>

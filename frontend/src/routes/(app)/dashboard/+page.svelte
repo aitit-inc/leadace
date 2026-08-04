@@ -1,6 +1,5 @@
 <script lang="ts">
   import { goto, invalidate } from '$app/navigation';
-  import type { Component } from 'svelte';
   import type { PageProps } from './$types';
   import type { AttentionItem, DashboardActivityKind, JournalEvent } from '$lib/types/dashboard';
   import EmptyState from '$lib/components/EmptyState.svelte';
@@ -22,13 +21,8 @@
     Check,
     BellRing,
     Target,
-    Mail,
-    Unplug,
-    ShieldAlert,
-    Megaphone,
-    Zap,
-    Rocket,
   } from '@lucide/svelte';
+  import { attentionMeta, humanize, type AttentionMeta } from '$lib/attention-meta';
 
   let { data }: PageProps = $props();
   let summary = $derived(data.summary);
@@ -105,21 +99,16 @@
   let hasReplyData = $derived((summary?.kpis.approached.current ?? 0) > 0);
   let rejectionMax = $derived(Math.max(1, ...(summary?.rejections.topReasons ?? []).map((r) => r.percentage)));
 
-  // Only the opportunity/queue kinds (hot leads, outreach drafts) leave autopilot "on".
+  // Opportunity/queue/degradation kinds don't stop sending — autopilot stays "on".
   const SENDING_BLOCKERS: AttentionItem['kind'][] = [
     'mcp_not_connected',
     'compliance_incomplete',
     'gmail_disconnected',
+    'gmail_auth_revoked',
     'no_outbound_channels',
     'quota_exhausted',
   ];
   let paused = $derived(summary?.attention.some((a) => SENDING_BLOCKERS.includes(a.kind)) ?? false);
-
-  function humanize(s: string): string {
-    // snake_case (reasons/windows) and camelCase (compliance fields like legalName) → sentence case.
-    const t = s.replace(/_/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2');
-    return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase();
-  }
 
   function timeAgo(iso: string): string {
     const then = new Date(iso).getTime();
@@ -130,85 +119,6 @@
     const hrs = Math.floor(mins / 60);
     if (hrs < 24) return `${hrs}h ago`;
     return `${Math.floor(hrs / 24)}d ago`;
-  }
-
-  type AttentionMeta = {
-    icon: Component;
-    tone: 'accent' | 'info' | 'danger' | 'warning';
-    title: string;
-    desc: string;
-    ctaLabel: string;
-    href: string;
-  };
-  function attentionMeta(item: AttentionItem): AttentionMeta {
-    switch (item.kind) {
-      case 'hot_leads':
-        return {
-          icon: Target,
-          tone: 'accent',
-          title: `${item.count} meeting ${item.count === 1 ? 'request' : 'requests'} waiting`,
-          desc: 'Prospects asked to talk — book the call',
-          ctaLabel: 'Review',
-          href: '/responses',
-        };
-      case 'outreach_drafts':
-        return {
-          icon: Mail,
-          tone: 'info',
-          title: `${item.count} ${item.count === 1 ? 'draft' : 'drafts'} ready to review`,
-          desc: 'AI-drafted outreach — review & send',
-          ctaLabel: 'Review',
-          href: '/drafts',
-        };
-      case 'mcp_not_connected':
-        return {
-          icon: Rocket,
-          tone: 'accent',
-          title: 'Connect the LeadAce plugin',
-          desc: 'Connect in Claude Code to start finding and emailing prospects',
-          ctaLabel: 'Set up',
-          href: '/onboarding',
-        };
-      case 'compliance_incomplete':
-        return {
-          icon: ShieldAlert,
-          tone: 'danger',
-          title: 'Compliance details missing',
-          desc: `Sending is blocked until you add: ${item.missing.map(humanize).join(', ')}`,
-          ctaLabel: 'Fix',
-          href: '/workspace-settings',
-        };
-      case 'gmail_disconnected':
-        return {
-          icon: Unplug,
-          tone: 'danger',
-          title: 'Gmail disconnected',
-          desc: 'Email sending is paused until you reconnect',
-          ctaLabel: 'Reconnect',
-          href: '/account-settings',
-        };
-      case 'no_outbound_channels':
-        return {
-          icon: Megaphone,
-          tone: 'warning',
-          title: 'Outbound is paused',
-          desc: 'No channels enabled — turn one on to start reaching prospects',
-          ctaLabel: 'Enable',
-          href: '/project-settings',
-        };
-      case 'quota_exhausted':
-        return {
-          icon: Zap,
-          tone: 'warning',
-          title: 'Outreach quota reached',
-          desc:
-            item.constraint === 'daily'
-              ? "Today's sending limit is used up — it resets tomorrow"
-              : 'Your plan limit is used up — upgrade to keep sending',
-          ctaLabel: item.constraint === 'daily' ? 'View plan' : 'Upgrade',
-          href: '/plans',
-        };
-    }
   }
 
   const TONE_CHIP: Record<AttentionMeta['tone'], string> = {

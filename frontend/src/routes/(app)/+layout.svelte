@@ -31,6 +31,15 @@
   let connectingGmail = $state(false);
   let gmailConnectError = $state<string | null>(null);
 
+  // Daily quota exhaustion self-resolves at UTC midnight — nothing to fix, so
+  // it stays off the bell (the dashboard still shows it).
+  let bellItems = $derived(
+    data.attention.filter((i) => !(i.kind === 'quota_exhausted' && i.constraint === 'daily')),
+  );
+  let gmailBannerItem = $derived(
+    data.attention.find((i) => i.kind === 'gmail_disconnected' || i.kind === 'gmail_auth_revoked'),
+  );
+
   async function handleConnectGmail() {
     connectingGmail = true;
     gmailConnectError = null;
@@ -161,7 +170,7 @@
       <div class="min-w-0 flex-1">
         <ProjectSwitcher projects={data.projects} activeProjectId={data.activeProjectId} />
       </div>
-      <AlertBell alerts={data.alerts} />
+      <AlertBell items={bellItems} />
     </header>
 
     {#if !data.mcpConnected && page.url.pathname !== '/onboarding' && page.url.pathname !== '/dashboard'}
@@ -181,19 +190,16 @@
       </div>
     {/if}
 
-    {#if data.gmailStatus.state === 'disconnected' && page.url.pathname !== '/dashboard'}
-      <!--
-        Gmail send permission lapsed (never granted, refresh token revoked, or
-        scope dropped). Surface globally rather than only on /account-settings
-        so the user notices before triggering a send that would silently fail.
-        Backend deletes the credential row on token revoke (auth/google.ts),
-        so this state is reachable mid-session, not just on first sign-in.
-      -->
+    {#if gmailBannerItem && page.url.pathname !== '/dashboard'}
       <div class="border-b border-danger/40 bg-danger/10 px-4 py-2 md:px-6">
         <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
           <div class="flex items-center gap-2 text-sm text-danger">
             <TriangleAlert size={16} />
-            <span>Gmail is not connected — outbound email sending is disabled.</span>
+            <span>
+              {gmailBannerItem.kind === 'gmail_auth_revoked'
+                ? 'Google access was revoked — sending and reply collection are stopped until you reconnect.'
+                : 'Gmail is not connected — outbound email sending is disabled.'}
+            </span>
           </div>
           <button
             type="button"

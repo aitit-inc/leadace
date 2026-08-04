@@ -4,6 +4,7 @@ export type GmailCredentialsStatus = {
   connected: boolean;
   email?: string;
   updatedAt?: string;
+  revokedSince?: string | null;
 };
 
 export function getGmailStatus(

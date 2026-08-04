@@ -1,4 +1,4 @@
-import type { CloudflareOptions } from '@sentry/cloudflare'
+import type { Breadcrumb, CloudflareOptions } from '@sentry/cloudflare'
 import type { ErrorEvent } from '@sentry/cloudflare'
 
 // Auth tokens and identifiers ride in some URL paths
@@ -42,8 +42,21 @@ export function sentryOptions(
     sendDefaultPii: false,
     beforeSend(event: ErrorEvent): ErrorEvent {
       if (event.request?.url) event.request.url = scrubUrl(event.request.url)
-      if (event.request) delete event.request.query_string
+      if (event.request) {
+        delete event.request.query_string
+        // Unpopulated by the current SDK; dropped fail-closed.
+        delete event.request.data
+      }
       return event
+    },
+    // Outgoing-fetch breadcrumbs carry the raw URL; the Reoon verifier URL's
+    // query holds the recipient address and API key.
+    beforeBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb {
+      const url = breadcrumb.data?.url
+      if (typeof url === 'string') {
+        breadcrumb.data = { ...breadcrumb.data, url: scrubUrl(url) }
+      }
+      return breadcrumb
     },
   }
 }

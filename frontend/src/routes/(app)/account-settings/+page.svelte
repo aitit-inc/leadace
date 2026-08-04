@@ -112,6 +112,22 @@
         LeadAce can send email on your behalf and read your Gmail inbox (read-only) to detect and
         classify replies to your outreach. It never modifies or deletes your messages.
       </p>
+    {:else if data.gmailStatus.state === 'revoked'}
+      <p class="text-danger text-sm mb-3">
+        Google access for <span class="font-mono">{data.gmailStatus.email}</span> was revoked on
+        {new Date(data.gmailStatus.since).toLocaleDateString()}.
+      </p>
+      <p class="text-text-muted text-xs mb-4">
+        Sending and reply collection are stopped until you reconnect.
+      </p>
+      <button
+        type="button"
+        onclick={handleConnectGmail}
+        disabled={connectingGmail}
+        class="rounded-md border border-border bg-page px-3 py-1.5 text-xs font-medium text-text hover:bg-surface disabled:opacity-50"
+      >
+        {connectingGmail ? 'Connecting…' : 'Reconnect Gmail'}
+      </button>
     {:else if data.gmailStatus.state === 'disconnected'}
       <p class="text-danger text-sm mb-3">Gmail is not connected.</p>
       <p class="text-text-muted text-xs mb-4">
@@ -173,7 +189,7 @@
       planTier={data.plan?.plan}
       {token}
       onChanged={async () => {
-        await Promise.all([invalidate('app:sending-identities'), invalidate('app:alerts')]);
+        await Promise.all([invalidate('app:sending-identities'), invalidate('app:attention')]);
       }}
     />
   </div>

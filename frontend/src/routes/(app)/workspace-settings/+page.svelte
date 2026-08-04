@@ -79,7 +79,7 @@
       // PUT body excludes `id` (immutable, backend sources it from auth).
       const { id: _id, ...patch } = normalized;
       await updateWorkspaceSettings(patch, fetch, token);
-      await invalidate('app:workspace-settings');
+      await Promise.all([invalidate('app:workspace-settings'), invalidate('app:attention')]);
       saveMessage = 'Saved.';
     } catch (e) {
       saveMessage = `Error: ${e instanceof Error ? e.message : 'Unknown error'}`;

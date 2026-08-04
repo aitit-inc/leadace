@@ -10,7 +10,6 @@ import {
   buildFunnel,
   buildJournal,
   buildTrend,
-  deriveAttentionItems,
   parseLearnings,
   periodToWindow,
   replyRate,
@@ -34,9 +33,8 @@ import { listMessageVariantsById, type MessageVariantRow } from './message-varia
 import { REVISIT_STRATEGY_SUGGESTION_KIND } from './suggestions'
 import { getRejectionFeedbackSummaryById } from './responses'
 import { listRecentOutreachById } from './outreach'
-import { getTenantComplianceStatus, getOnboardingStatus } from './tenants'
-import { getCredentialsStatus } from './google-auth'
-import { getPlanInfo } from './billing'
+import { deriveAttentionItems } from '../domain/attention'
+import { loadTenantAttentionInput } from './attention'
 
 export const dashboardQuerySchema = z.object({
   period: z.enum(DASHBOARD_PERIODS).default('30d'),
@@ -100,10 +98,7 @@ export async function getDashboardSummary(
     variantsRes,
     rejectionRes,
     recentRes,
-    complianceRes,
-    onboardingRes,
-    gmailRes,
-    planRes,
+    attentionInputRes,
   ] = await Promise.all([
     // The four KPI stage queries below define the funnel-stage events. They MUST stay
     // in lockstep with funnelStageCondition in services/outreach.ts — the KPI drill-down
@@ -223,10 +218,7 @@ export async function getDashboardSummary(
       ...(windowDays !== undefined ? { windowDays } : {}),
     }),
     listRecentOutreachById(db, tenantId, projectId, { limit: RECENT_ACTIVITY_CANDIDATES, offset: 0, period: 'all' }),
-    getTenantComplianceStatus(db, tenantId),
-    getOnboardingStatus(db, tenantId),
-    getCredentialsStatus(db, tenantId, userId),
-    getPlanInfo(db, tenantId, edition),
+    loadTenantAttentionInput(db, tenantId, userId, edition),
   ])
 
   // One-by-one (not a loop) so each result narrows to its ok branch for the build below.
@@ -235,10 +227,7 @@ export async function getDashboardSummary(
   if (!variantsRes.ok) return variantsRes
   if (!rejectionRes.ok) return rejectionRes
   if (!recentRes.ok) return recentRes
-  if (!complianceRes.ok) return complianceRes
-  if (!onboardingRes.ok) return onboardingRes
-  if (!gmailRes.ok) return gmailRes
-  if (!planRes.ok) return planRes
+  if (!attentionInputRes.ok) return attentionInputRes
 
   const approached = toKpi(Number(approachedRows[0]?.current ?? 0), Number(approachedRows[0]?.previous ?? 0))
   const reached = toKpi(Number(reachedRows[0]?.current ?? 0), Number(reachedRows[0]?.previous ?? 0))
@@ -275,18 +264,13 @@ export async function getDashboardSummary(
     .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
     .slice(0, RECENT_ACTIVITY_LIMIT)
 
-  const quota = planRes.value.outreach
   const attention = deriveAttentionItems({
-    mcpConnected: onboardingRes.value.mcpConnected,
-    compliance: { ready: complianceRes.value.ready, missing: complianceRes.value.missing },
-    gmailConnected: gmailRes.value.connected,
-    outboundChannelsConfigured: outboundAllowlist.outboundChannels.length > 0,
-    quota: {
-      exhausted: quota.kind === 'capped' && quota.remaining <= 0,
-      constraint: quota.kind === 'capped' ? quota.bindingConstraint : null,
+    ...attentionInputRes.value,
+    project: {
+      outboundChannelsConfigured: outboundAllowlist.outboundChannels.length > 0,
+      pendingDrafts: Number(pendingDraftsRows[0]?.count ?? 0),
+      hotLeadsRecent: Number(hotLeadsRows[0]?.count ?? 0),
     },
-    pendingDrafts: Number(pendingDraftsRows[0]?.count ?? 0),
-    hotLeadsRecent: Number(hotLeadsRows[0]?.count ?? 0),
   })
 
   return ok({

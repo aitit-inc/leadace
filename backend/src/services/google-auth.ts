@@ -74,7 +74,7 @@ export async function saveCredentials(
 
 export type CredentialsStatus =
   | { connected: false }
-  | { connected: true; email: string; grantedAt: Date; updatedAt: Date }
+  | { connected: true; email: string; grantedAt: Date; updatedAt: Date; revokedSince: Date | null }
 
 export async function getCredentialsStatus(
   db: Db,
@@ -86,6 +86,7 @@ export async function getCredentialsStatus(
       email: sendingIdentities.fromEmail,
       grantedAt: sendingIdentities.grantedAt,
       updatedAt: sendingIdentities.updatedAt,
+      authRevokedAt: sendingIdentities.authRevokedAt,
     })
     .from(sendingIdentities)
     .where(
@@ -97,7 +98,13 @@ export async function getCredentialsStatus(
     )
     .limit(1)
   if (!row) return ok({ connected: false })
-  return ok({ connected: true, email: row.email, grantedAt: row.grantedAt, updatedAt: row.updatedAt })
+  return ok({
+    connected: true,
+    email: row.email,
+    grantedAt: row.grantedAt,
+    updatedAt: row.updatedAt,
+    revokedSince: row.authRevokedAt,
+  })
 }
 
 // Used for internal notifications (daily-cycle start/wrap-up emails) that

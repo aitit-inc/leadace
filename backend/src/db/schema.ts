@@ -400,8 +400,12 @@ export const sendingIdentities = pgTable('sending_identities', {
   pausedUntil: timestamp('paused_until', { withTimezone: true }),
   // Observability only — NOT a poll cursor (the poll re-searches a fixed window).
   lastPolledAt: timestamp('last_polled_at', { withTimezone: true }),
-  // The send path deletes the row instead — the unattended poll must not destroy
-  // a credential nobody is watching.
+  // Poll-failure streak start; NULL while healthy. Persistence is the alert
+  // signal — IMAP has no reliable permanent-vs-transient line to classify.
+  pollFailingSince: timestamp('poll_failing_since', { withTimezone: true }),
+  lastPollError: text('last_poll_error'),
+  // Google 400/401 on refresh — set by poll and send paths, cleared on
+  // successful poll or reconnect upsert. gmail_oauth only.
   authRevokedAt: timestamp('auth_revoked_at', { withTimezone: true }),
   grantedAt: timestamp('granted_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),

@@ -4,12 +4,10 @@ import {
   buildJournal,
   buildTrend,
   computeDeltaPct,
-  deriveAttentionItems,
   parseLearnings,
   periodToWindow,
   replyRate,
   trendWindowStartIso,
-  type AttentionInput,
 } from './dashboard'
 
 describe('computeDeltaPct', () => {
@@ -259,66 +257,5 @@ describe('buildJournal', () => {
       '2026-06-16',
     )
     expect(events.map((e) => e.kind)).toEqual(['variant_added', 'variant_archived'])
-  })
-})
-
-describe('deriveAttentionItems', () => {
-  const clean: AttentionInput = {
-    mcpConnected: true,
-    compliance: { ready: true, missing: [] },
-    gmailConnected: true,
-    outboundChannelsConfigured: true,
-    quota: { exhausted: false, constraint: null },
-    pendingDrafts: 0,
-    hotLeadsRecent: 0,
-  }
-
-  it('returns nothing when everything is healthy', () => {
-    expect(deriveAttentionItems(clean)).toEqual([])
-  })
-
-  it('surfaces hot leads first (revenue opportunity), then the review queue', () => {
-    const items = deriveAttentionItems({ ...clean, hotLeadsRecent: 2, pendingDrafts: 4 })
-    expect(items).toEqual([
-      { kind: 'hot_leads', count: 2 },
-      { kind: 'outreach_drafts', count: 4 },
-    ])
-  })
-
-  it('orders blockers between the opportunity and the review queue', () => {
-    const items = deriveAttentionItems({
-      ...clean,
-      hotLeadsRecent: 1,
-      mcpConnected: false,
-      compliance: { ready: false, missing: ['legalName'] },
-      gmailConnected: false,
-      outboundChannelsConfigured: false,
-      quota: { exhausted: true, constraint: 'monthly' },
-      pendingDrafts: 3,
-    })
-    expect(items.map((i) => i.kind)).toEqual([
-      'hot_leads',
-      'mcp_not_connected',
-      'compliance_incomplete',
-      'gmail_disconnected',
-      'no_outbound_channels',
-      'quota_exhausted',
-      'outreach_drafts',
-    ])
-  })
-
-  it('omits quota_exhausted when there is no binding constraint', () => {
-    const items = deriveAttentionItems({ ...clean, quota: { exhausted: true, constraint: null } })
-    expect(items).toEqual([])
-  })
-
-  it('carries the compliance missing fields and quota constraint through', () => {
-    const items = deriveAttentionItems({
-      ...clean,
-      compliance: { ready: false, missing: ['physicalAddress', 'defaultSenderCountry'] },
-      quota: { exhausted: true, constraint: 'daily' },
-    })
-    expect(items).toContainEqual({ kind: 'compliance_incomplete', missing: ['physicalAddress', 'defaultSenderCountry'] })
-    expect(items).toContainEqual({ kind: 'quota_exhausted', constraint: 'daily' })
   })
 })

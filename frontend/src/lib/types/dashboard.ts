@@ -1,6 +1,9 @@
 // Mirrors backend domain/dashboard.ts DashboardSummary (the GET
 // /projects/:id/dashboard response).
 import type { Channel } from './outreach';
+import type { AttentionItem } from './attention';
+
+export type { AttentionItem, QuotaConstraint } from './attention';
 
 export type DashboardPeriod = '7d' | '30d' | 'all';
 
@@ -116,17 +119,6 @@ export interface DashboardActivityEvent {
   kind: DashboardActivityKind;
   detail: string | null;
 }
-
-export type QuotaConstraint = 'daily' | 'lifetime' | 'monthly';
-
-export type AttentionItem =
-  | { kind: 'mcp_not_connected' }
-  | { kind: 'compliance_incomplete'; missing: string[] }
-  | { kind: 'gmail_disconnected' }
-  | { kind: 'no_outbound_channels' }
-  | { kind: 'quota_exhausted'; constraint: QuotaConstraint }
-  | { kind: 'hot_leads'; count: number }
-  | { kind: 'outreach_drafts'; count: number };
 
 export interface DashboardSummary {
   period: DashboardPeriod;

@@ -849,7 +849,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_gmail_status',
-    'Whether the current user\'s Google account is connected (gmail.send scope), and the address it is connected as.',
+    'Whether the current user\'s Google account is connected (gmail.send scope), the address it is connected as, and whether Google has revoked the stored access.',
     {},
     async (_args, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('GET', '/auth/google-credentials/status', null, apiUrl, authHeader)
@@ -857,10 +857,18 @@ function buildToolRegistry(): ToolDef[] {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
       }
-      const result = data as { connected: boolean; email?: string; grantedAt?: string; updatedAt?: string }
-      const text = result.connected
-        ? `Gmail connected as ${result.email} (granted: ${result.grantedAt}, last refreshed: ${result.updatedAt}).`
-        : 'Gmail not connected. Have the user sign in at https://app.leadace.ai (Settings → Connect Google).'
+      const result = data as {
+        connected: boolean
+        email?: string
+        grantedAt?: string
+        updatedAt?: string
+        revokedSince?: string | null
+      }
+      const text = !result.connected
+        ? 'Gmail not connected. Have the user sign in at https://app.leadace.ai (Settings → Connect Google).'
+        : result.revokedSince
+          ? `Gmail connected as ${result.email}, but Google revoked the stored access on ${result.revokedSince} — sending and reply collection fail until the user reconnects at https://app.leadace.ai (Account settings).`
+          : `Gmail connected as ${result.email} (granted: ${result.grantedAt}, last refreshed: ${result.updatedAt}).`
       return { content: [{ type: 'text' as const, text }] }
     },
   )

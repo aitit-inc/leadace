@@ -328,6 +328,8 @@ export async function saveGmailRefreshToken(
       scope = ${args.scope},
       from_email = ${args.email},
       auth_revoked_at = NULL,
+      poll_failing_since = NULL,
+      last_poll_error = NULL,
       updated_at = now()
   `)
 }
@@ -375,7 +377,8 @@ export async function resolveSendingIdentityId(
       (SELECT sending_identity_id FROM project_settings
          WHERE tenant_id = ${args.tenantId} AND project_id = ${args.projectId}),
       (SELECT identity_id FROM sending_identities
-         WHERE tenant_id = ${args.tenantId} AND provider = 'gmail_oauth' LIMIT 1)
+         WHERE tenant_id = ${args.tenantId} AND provider = 'gmail_oauth'
+           AND auth_revoked_at IS NULL LIMIT 1)
     ) AS identity_id
   `)
   const id = rows[0]?.identity_id
@@ -434,12 +437,15 @@ export async function stampMailboxFirstSendIfNeeded(
   `)
 }
 
-export async function deleteGmailRefreshToken(
+// Mark rather than delete: the row keeps its warmup state and carries WHY
+// sending stopped; the reconnect upsert restores it in place.
+export async function markGmailAuthRevoked(
   db: Db,
   args: { tenantId: TenantId; identityId: SendingIdentityId },
 ): Promise<void> {
   await db.execute(sql`
-    DELETE FROM sending_identities
+    UPDATE sending_identities
+    SET auth_revoked_at = COALESCE(auth_revoked_at, now())
     WHERE tenant_id = ${args.tenantId}
       AND identity_id = ${args.identityId}
       AND provider = 'gmail_oauth'
@@ -546,10 +552,7 @@ export async function sendForIdentity(
       } catch (e) {
         if (e instanceof GoogleAuthError && (e.status === 400 || e.status === 401)) {
           // Google rejected the refresh token (revoked / expired / scope dropped).
-          // Drop the stored credential so /auth/google-credentials/status flips to
-          // `disconnected` and the UI surfaces the reconnect affordance instead of
-          // showing a stale "connected" status.
-          await deleteGmailRefreshToken(db, { tenantId: args.tenantId, identityId: identity.identityId })
+          await markGmailAuthRevoked(db, { tenantId: args.tenantId, identityId: identity.identityId })
           return {
             ok: false,
             httpStatus: 412,

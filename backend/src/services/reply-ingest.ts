@@ -224,10 +224,29 @@ async function markAuthRevokedIfUnset(db: Db, tenantId: TenantId, identityId: st
     )
 }
 
+// A failure string can embed a full server response.
+const MAX_POLL_ERROR_CHARS = 500
+
+// COALESCE keeps the streak start.
+async function markPollFailed(
+  db: Db,
+  tenantId: TenantId,
+  identityId: string,
+  detail: string,
+): Promise<void> {
+  await db
+    .update(sendingIdentities)
+    .set({
+      pollFailingSince: sql`COALESCE(${sendingIdentities.pollFailingSince}, now())`,
+      lastPollError: detail.slice(0, MAX_POLL_ERROR_CHARS),
+    })
+    .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.identityId, identityId)))
+}
+
 async function markPollSucceeded(db: Db, tenantId: TenantId, identityId: string): Promise<void> {
   await db
     .update(sendingIdentities)
-    .set({ lastPolledAt: new Date(), authRevokedAt: null })
+    .set({ lastPolledAt: new Date(), authRevokedAt: null, pollFailingSince: null, lastPollError: null })
     .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.identityId, identityId)))
 }
 
@@ -254,6 +273,7 @@ async function ingestIdentity(
   `)
   if (!secretRow?.secret) {
     summary.pollErrors++
+    await markPollFailed(db, tenantId, identity.identity_id, 'stored secret could not be decrypted')
     console.error(`[reply-ingest] secret unavailable identity=${identity.identity_id}`)
     return
   }
@@ -265,6 +285,7 @@ async function ingestIdentity(
       summary.identitiesAuthRevoked++
       await markAuthRevokedIfUnset(db, tenantId, identity.identity_id)
     }
+    await markPollFailed(db, tenantId, identity.identity_id, polled.detail)
     console.error(`[reply-ingest] poll failed identity=${identity.identity_id} provider=${identity.provider} authRevoked=${polled.authRevoked}: ${polled.detail}`)
     return
   }
@@ -390,7 +411,13 @@ export async function runReplyIngest(db: Db, env: ReplyIngestEnv): Promise<Reply
       await ingestIdentity(db, env, identity, summary)
     } catch (e) {
       summary.pollErrors++
-      console.error(`[reply-ingest] identity ${identity.identity_id} threw: ${e instanceof Error ? e.message : String(e)}`)
+      const detail = e instanceof Error ? e.message : String(e)
+      // Thrown paths (Google refresh 5xx) must feed the streak too; best-effort
+      // so a DB failure here doesn't kill the remaining identities.
+      try {
+        await markPollFailed(db, asTenantId(identity.tenant_id), identity.identity_id, detail)
+      } catch {}
+      console.error(`[reply-ingest] identity ${identity.identity_id} threw: ${detail}`)
     }
   }
 

@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/cloudflare'
 import {
   verifierDeliverabilityVerdict,
   verifierResponseSchema,
@@ -20,7 +21,8 @@ export type SendTimeVerdict =
   | { deliverability: 'unknown' }
   | { deliverability: 'undeliverable'; reason: string }
 
-// `unknown` blocks nothing, so an outage or a revoked key is silent unless logged.
+// `unknown` blocks nothing, so an outage or a revoked key is silent unless
+// reported. Sentry messages stay fixed strings — the URL would leak address + key.
 async function probeMailbox(email: string, apiKey: string): Promise<VerifierStatus> {
   try {
     const res = await fetch(
@@ -28,11 +30,16 @@ async function probeMailbox(email: string, apiKey: string): Promise<VerifierStat
       { signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS) },
     )
     if (!res.ok) {
+      Sentry.captureMessage(
+        `email verifier rejected the request (${res.status}) — mailbox unchecked`,
+        'error',
+      )
       console.warn(`[deliverability] verifier rejected the request (${res.status}) — mailbox unchecked`)
       return 'unknown'
     }
     return verifierResponseSchema.parse(await res.json()).status
   } catch (e) {
+    Sentry.captureMessage('email verifier unreachable or unreadable — mailbox unchecked', 'warning')
     console.warn(
       `[deliverability] verifier unreachable or unreadable: ${e instanceof Error ? e.message : String(e)}`,
     )

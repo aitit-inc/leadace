@@ -23,7 +23,7 @@ import { countryCodesRouter } from './routes/country-codes'
 import { billingRouter } from './routes/billing'
 import { mailboxRouter } from './routes/mailbox'
 import { sendingIdentitiesRouter } from './routes/sending-identities'
-import { alertsRouter } from './routes/alerts'
+import { attentionRouter } from './routes/attention'
 import { authRouter } from './routes/auth'
 import { accountRouter } from './routes/account'
 import { bugReportsRouter } from './routes/bug-reports'
@@ -82,7 +82,7 @@ app.route('/api', countryCodesRouter)
 app.route('/api', billingRouter)
 app.route('/api', mailboxRouter)
 app.route('/api', sendingIdentitiesRouter)
-app.route('/api', alertsRouter)
+app.route('/api', attentionRouter)
 app.route('/api', authRouter)
 app.route('/api', accountRouter)
 app.route('/api', bugReportsRouter)

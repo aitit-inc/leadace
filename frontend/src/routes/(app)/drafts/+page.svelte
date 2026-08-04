@@ -187,6 +187,8 @@
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       banner = { kind: 'error', text: `Send failed — ${msg}` };
+      // A 412 can mean the send just marked the Gmail credential revoked.
+      await invalidate('app:attention');
     } finally {
       busyId = null;
     }

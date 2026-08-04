@@ -470,6 +470,13 @@
       "when": 1785681171529,
       "tag": "0066_drop_email_template_documents",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1785800553546,
+      "tag": "0067_perpetual_clint_barton",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,5 @@
 import type { Channel, RejectionRecontactWindow } from '../db/schema'
+import type { AttentionItem } from './attention'
 
 export const DASHBOARD_PERIODS = ['7d', '30d', 'all'] as const
 export type DashboardPeriod = (typeof DASHBOARD_PERIODS)[number]
@@ -174,16 +175,6 @@ export type DashboardActivityEvent = {
   detail: string | null
 }
 
-export type QuotaConstraint = 'daily' | 'lifetime' | 'monthly'
-
-export type AttentionItem =
-  | { kind: 'mcp_not_connected' }
-  | { kind: 'compliance_incomplete'; missing: string[] }
-  | { kind: 'gmail_disconnected' }
-  | { kind: 'no_outbound_channels' }
-  | { kind: 'quota_exhausted'; constraint: QuotaConstraint }
-  | { kind: 'hot_leads'; count: number }
-  | { kind: 'outreach_drafts'; count: number }
 
 export type DashboardSummary = {
   period: DashboardPeriod
@@ -311,31 +302,3 @@ export function buildTrend(
   return out
 }
 
-export type AttentionInput = {
-  mcpConnected: boolean
-  compliance: { ready: boolean; missing: string[] }
-  gmailConnected: boolean
-  outboundChannelsConfigured: boolean
-  quota: { exhausted: boolean; constraint: QuotaConstraint | null }
-  pendingDrafts: number
-  hotLeadsRecent: number
-}
-
-// Push order is the display priority: opportunity (hot leads) → blockers → review queue.
-export function deriveAttentionItems(input: AttentionInput): AttentionItem[] {
-  const items: AttentionItem[] = []
-
-  if (input.hotLeadsRecent > 0) items.push({ kind: 'hot_leads', count: input.hotLeadsRecent })
-  if (!input.mcpConnected) items.push({ kind: 'mcp_not_connected' })
-  if (!input.compliance.ready) {
-    items.push({ kind: 'compliance_incomplete', missing: input.compliance.missing })
-  }
-  if (!input.gmailConnected) items.push({ kind: 'gmail_disconnected' })
-  if (!input.outboundChannelsConfigured) items.push({ kind: 'no_outbound_channels' })
-  if (input.quota.exhausted && input.quota.constraint) {
-    items.push({ kind: 'quota_exhausted', constraint: input.quota.constraint })
-  }
-  if (input.pendingDrafts > 0) items.push({ kind: 'outreach_drafts', count: input.pendingDrafts })
-
-  return items
-}
