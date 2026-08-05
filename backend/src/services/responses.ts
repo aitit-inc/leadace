@@ -300,12 +300,15 @@ async function derivePointerProspect(
       websiteUrl: prospects.websiteUrl,
       industry: prospects.industry,
       email: prospects.email,
+      orgDoNotContact: organizations.doNotContact,
     })
     .from(prospects)
+    .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
     .where(eq(prospects.id, referringProspectId))
     .limit(1)
 
   if (!referring) return null
+  if (referring.orgDoNotContact) return null
 
   // Skip self-references to avoid recursive defer/role-flip loops.
   if (pointerEmail && referring.email === pointerEmail) return null

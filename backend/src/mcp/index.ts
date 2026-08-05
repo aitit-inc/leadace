@@ -982,7 +982,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'list_drafts',
-    'List pending_review drafts for a project, newest first. Returns total and rows with a truncated bodyPreview.',
+    'List pending_review drafts for a project, newest first. Returns total and rows with a truncated bodyPreview; doNotContact marks drafts whose recipient became DNC after drafting — discard those, sending is blocked.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       limit: z.number().int().min(1).max(200).default(20),
@@ -1009,6 +1009,7 @@ function buildToolRegistry(): ToolDef[] {
           channel: string
           subject: string | null
           body: string
+          doNotContact: boolean
           createdAt: string
         }>
         total: number
@@ -1021,6 +1022,7 @@ function buildToolRegistry(): ToolDef[] {
         channel: d.channel,
         subject: d.subject,
         bodyPreview: d.body.length > 200 ? `${d.body.slice(0, 200)}…` : d.body,
+        ...(d.doNotContact ? { doNotContact: true } : {}),
         createdAt: d.createdAt,
       }))
       return {
@@ -1082,18 +1084,19 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'update_organization',
-    'Partial-update an organization\'s name, website URL, or employeeBand; domain is immutable. organizationId is the PK returned in the organizationId field of list_tenant_prospects / list_project_prospects / get_outbound_targets, not a domain.',
+    'Partial-update an organization\'s name, website URL, employeeBand, or doNotContact; domain is immutable. organizationId is the PK returned in the organizationId field of list_tenant_prospects / list_project_prospects / get_outbound_targets, not a domain.',
     {
       organizationId: z.number().int().positive(),
       patch: z.object({
         name: z.string().min(1).optional(),
         websiteUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
         employeeBand: z.enum(EMPLOYEE_BANDS).optional(),
+        doNotContact: z.boolean().optional().describe('Workspace-wide sales exclusion for the whole domain: excluded from outbound targets, blocked at send, skipped by imports and linking. false clears it.'),
       }).describe('At least one required.'),
     },
     async ({ organizationId, patch }, { apiUrl, authHeader }) => {
       if (Object.keys(patch).length === 0) {
-        return { content: [{ type: 'text' as const, text: 'Error: patch is empty (provide name, websiteUrl, and/or employeeBand).' }], isError: true }
+        return { content: [{ type: 'text' as const, text: 'Error: patch is empty (provide name, websiteUrl, employeeBand, and/or doNotContact).' }], isError: true }
       }
       const { ok, data } = await callApi('PATCH', `/organizations/${organizationId}`, patch, apiUrl, authHeader)
       if (!ok) {
@@ -1107,8 +1110,30 @@ function buildToolRegistry(): ToolDef[] {
   )
 
   defineTool(
+    'create_organization',
+    'Register an organization by domain alone — e.g. to flag a company do_not_contact before any prospect exists. Omitted name/websiteUrl default from the domain; CONFLICT if the domain already exists (use update_organization).',
+    {
+      domain: z.string().min(1).describe('Domain or website URL; protocol, path, and "www." are stripped. Pass the apex domain (e.g. "example.com") — a subdomain only excludes that exact subdomain.'),
+      name: z.string().min(1).optional(),
+      websiteUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
+      doNotContact: z.boolean().default(false),
+    },
+    async ({ domain, name, websiteUrl, doNotContact }, { apiUrl, authHeader }) => {
+      const { ok, data } = await callApi('POST', '/organizations', { domain, name, websiteUrl, doNotContact }, apiUrl, authHeader)
+      if (!ok) {
+        const e = data as { error: string; detail?: string }
+        const msg = e.detail ? `${e.error}: ${e.detail}` : e.error
+        return { content: [{ type: 'text' as const, text: `Error: ${msg}` }], isError: true }
+      }
+      const result = data as { organization: { id: number; domain: string; name: string; doNotContact: boolean } }
+      const o = result.organization
+      return { content: [{ type: 'text' as const, text: `Organization #${o.id} ${o.name} (${o.domain}) created${o.doNotContact ? ', do_not_contact set' : ''}.` }] }
+    },
+  )
+
+  defineTool(
     'list_organizations',
-    'List tenant organizations with employee-size band and per-org prospect and project counts.',
+    'List tenant organizations with employee-size band and per-org prospect and project counts; do-not-contact organizations are marked [DNC].',
     {
       q: z.string().optional().describe('Substring search on name / domain'),
       limit: z.number().int().min(1).max(500).default(200),
@@ -1126,14 +1151,14 @@ function buildToolRegistry(): ToolDef[] {
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
       }
       const result = data as {
-        organizations: Array<{ id: number; name: string; domain: string; employeeBand: string; prospectCount: number; projectCount: number }>
+        organizations: Array<{ id: number; name: string; domain: string; employeeBand: string; doNotContact: boolean; prospectCount: number; projectCount: number }>
         total: number
       }
       if (result.organizations.length === 0) {
         return { content: [{ type: 'text' as const, text: `0 of ${result.total} organization(s).` }] }
       }
       const lines = result.organizations.map(
-        (o) => `#${o.id} ${o.name} (${o.domain}) size=${o.employeeBand} prospects=${o.prospectCount} projects=${o.projectCount}`,
+        (o) => `#${o.id} ${o.name} (${o.domain}) size=${o.employeeBand} prospects=${o.prospectCount} projects=${o.projectCount}${o.doNotContact ? ' [DNC]' : ''}`,
       )
       return {
         content: [{

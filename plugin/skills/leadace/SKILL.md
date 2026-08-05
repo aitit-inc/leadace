@@ -33,6 +33,7 @@ allowed-tools:
   - mcp__plugin_leadace_api__update_prospect_status
   - mcp__plugin_leadace_api__set_prospect_priority
   - mcp__plugin_leadace_api__set_prospect_do_not_contact
+  - mcp__plugin_leadace_api__create_organization
   - mcp__plugin_leadace_api__update_organization
   - mcp__plugin_leadace_api__delete_prospects
   - mcp__plugin_leadace_api__delete_organizations

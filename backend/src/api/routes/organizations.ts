@@ -5,10 +5,12 @@ import {
   listOrganizationsQuerySchema,
   updateOrganizationBodySchema,
   deleteOrganizationsBodySchema,
+  createOrganizationBodySchema,
   listOrganizations,
   getOrganization,
   updateOrganization,
   deleteOrganizations,
+  createOrganization,
 } from '../../services/organizations'
 import { respondWithError } from '../respond'
 import type { Env, Variables } from '../types'
@@ -32,6 +34,16 @@ organizationsRouter.post(
     const result = await deleteOrganizations(c.get('db'), c.get('tenantId'), c.req.valid('json'))
     if (!result.ok) return respondWithError(c, result)
     return c.json(result.value)
+  },
+)
+
+organizationsRouter.post(
+  '/organizations',
+  zValidator('json', createOrganizationBodySchema),
+  async (c) => {
+    const result = await createOrganization(c.get('db'), c.get('tenantId'), c.req.valid('json'))
+    if (!result.ok) return respondWithError(c, result)
+    return c.json(result.value, 201)
   },
 )
 

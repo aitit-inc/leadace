@@ -16,6 +16,7 @@ export type DedupIndex = {
   byEmail: Map<string, { id: number; doNotContact: boolean }>
   byForm: Map<string, { id: number }>
   byPlatform: Map<string, { id: number }>
+  dncDomains: Set<string>
   domainsInProject: Set<string>
   claimedEmails: Set<string>
   claimedForms: Set<string>
@@ -53,6 +54,7 @@ export function overwriteSourceToSkipReason(source: DedupOverwriteSource): Dedup
 const claimedDomainKey = (projectId: ProjectId, organizationDomain: string): string =>
   `${projectId} ${organizationDomain}`
 
+// An org-level DNC domain rejects the candidate before any channel matching.
 // Channel priority is email > form > platform > domain. DNC on an existing
 // email blocks any update. Platform candidates skip the domain check: their
 // granularity is the posting, and the org may be the platform itself.
@@ -61,6 +63,9 @@ export function resolveDedup(
   projectId: ProjectId | undefined,
   input: DedupCandidate,
 ): DedupResolution {
+  if (idx.dncDomains.has(input.organizationDomain)) {
+    return { kind: 'skip', reason: 'do_not_contact' }
+  }
   if (input.email) {
     const hit = idx.byEmail.get(input.email)
     if (hit?.doNotContact) return { kind: 'skip', reason: 'do_not_contact' }

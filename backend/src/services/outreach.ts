@@ -367,8 +367,11 @@ async function assertProspectContactable(
   prospectId: number,
 ): Promise<ServiceResult<undefined>> {
   const [row] = await db
-    .select({ doNotContact: prospects.doNotContact })
+    .select({
+      doNotContact: sql<boolean>`${prospects.doNotContact} OR ${organizations.doNotContact}`,
+    })
     .from(prospects)
+    .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
     .where(and(eq(prospects.id, prospectId), eq(prospects.tenantId, tenantId)))
     .limit(1)
   // Missing prospect → defer to the caller's requireProspect NOT_FOUND.
@@ -1100,6 +1103,7 @@ export type DraftRow = {
   channel: Channel
   subject: string | null
   body: string
+  doNotContact: boolean
   createdAt: Date
 }
 
@@ -1144,10 +1148,12 @@ export async function listDrafts(
         channel: outreachLogs.channel,
         subject: outreachLogs.subject,
         body: outreachLogs.body,
+        doNotContact: sql<boolean>`${prospects.doNotContact} OR ${organizations.doNotContact}`,
         createdAt: outreachLogs.sentAt,
       })
       .from(outreachLogs)
       .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
+      .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
       .where(where)
       .orderBy(desc(outreachLogs.sentAt), desc(outreachLogs.id))
       .limit(limit)
@@ -1203,10 +1209,11 @@ export async function sendDraft(
         subject: outreachLogs.subject,
         body: outreachLogs.body,
         status: outreachLogs.status,
-        doNotContact: prospects.doNotContact,
+        doNotContact: sql<boolean>`${prospects.doNotContact} OR ${organizations.doNotContact}`,
       })
       .from(outreachLogs)
       .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
+      .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
       .where(and(eq(outreachLogs.id, id), eq(outreachLogs.tenantId, tenantId)))
       .limit(1)
       .then((rows) => rows[0]),
@@ -1389,10 +1396,11 @@ export async function markDraftSent(
         prospectId: outreachLogs.prospectId,
         channel: outreachLogs.channel,
         status: outreachLogs.status,
-        doNotContact: prospects.doNotContact,
+        doNotContact: sql<boolean>`${prospects.doNotContact} OR ${organizations.doNotContact}`,
       })
       .from(outreachLogs)
       .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
+      .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
       .where(and(eq(outreachLogs.id, id), eq(outreachLogs.tenantId, tenantId)))
       .limit(1)
       .then((rows) => rows[0]),

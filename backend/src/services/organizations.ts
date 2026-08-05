@@ -19,6 +19,7 @@ import type { Db } from '../db/connection'
 import { type TenantId } from '../domain/ids'
 export { organizationIdParamSchema } from '../domain/ids'
 import { isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG } from '../domain/url'
+import { normalizeDomain } from '../domain/normalize-domain'
 import { ok, err, type ServiceResult } from './result'
 
 type Channel = (typeof channelEnum.enumValues)[number]
@@ -35,6 +36,7 @@ export type OrganizationListItem = {
   domain: string
   websiteUrl: string
   employeeBand: EmployeeBand
+  doNotContact: boolean
   createdAt: Date
   updatedAt: Date
   prospectCount: number
@@ -96,6 +98,7 @@ export const updateOrganizationBodySchema = z
     name: z.string().min(1).optional(),
     websiteUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
     employeeBand: z.enum(EMPLOYEE_BANDS).optional(),
+    doNotContact: z.boolean().optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {
     message: 'At least one field is required',
@@ -125,6 +128,7 @@ export async function listOrganizations(
         domain: organizations.domain,
         websiteUrl: organizations.websiteUrl,
         employeeBand: organizations.employeeBand,
+        doNotContact: organizations.doNotContact,
         createdAt: organizations.createdAt,
         updatedAt: organizations.updatedAt,
         prospectCount: sql<number>`COUNT(DISTINCT ${prospects.id})::int`,
@@ -302,6 +306,55 @@ export async function updateOrganization(
 
   if (!updated) return err('NOT_FOUND', 'Organization not found')
   return ok({ organization: updated })
+}
+
+// Domain-derived name/websiteUrl placeholders are refreshed by the next
+// import's org upsert.
+export const createOrganizationBodySchema = z.object({
+  domain: z.string().min(1).transform(normalizeDomain),
+  name: z.string().min(1).optional(),
+  websiteUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
+  doNotContact: z.boolean().default(false),
+})
+export type CreateOrganizationBody = z.infer<typeof createOrganizationBodySchema>
+
+export async function createOrganization(
+  db: Db,
+  tenantId: TenantId,
+  body: CreateOrganizationBody,
+): Promise<ServiceResult<{ organization: OrganizationRow }>> {
+  const { domain, name, websiteUrl, doNotContact } = body
+  if (!domain.includes('.')) {
+    return err('INVALID_INPUT', 'domain must be a hostname like "example.com"')
+  }
+
+  const now = new Date()
+  const [created] = await db
+    .insert(organizations)
+    .values({
+      tenantId,
+      domain,
+      name: name ?? domain,
+      websiteUrl: websiteUrl ?? `https://${domain}`,
+      doNotContact,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoNothing({ target: [organizations.tenantId, organizations.domain] })
+    .returning()
+
+  if (created) return ok({ organization: created })
+
+  const [existing] = await db
+    .select({ id: organizations.id })
+    .from(organizations)
+    .where(and(eq(organizations.tenantId, tenantId), eq(organizations.domain, domain)))
+    .limit(1)
+  return err(
+    'CONFLICT',
+    'Organization with this domain already exists',
+    existing ? `organizationId ${existing.id}; modify it via PATCH /organizations/${existing.id}` : undefined,
+  )
 }
 
 export const deleteOrganizationsBodySchema = z.object({

@@ -8,6 +8,7 @@ const emptyIndex = (): DedupIndex => ({
   byEmail: new Map(),
   byForm: new Map(),
   byPlatform: new Map(),
+  dncDomains: new Set(),
   domainsInProject: new Set(),
   claimedEmails: new Set(),
   claimedForms: new Set(),
@@ -75,6 +76,34 @@ describe('resolveDedup — existing rows', () => {
     idx.domainsInProject.add('example.com')
     expect(resolveDedup(idx, proj, candidate({ platformUrl: 'https://p/job/2' })))
       .toEqual({ kind: 'insert' })
+  })
+})
+
+describe('resolveDedup — org-level DNC domains', () => {
+  it('skips a DNC domain before channel matching, even on an email overwrite match', () => {
+    const idx = emptyIndex()
+    idx.dncDomains.add('example.com')
+    idx.byEmail.set('a@x.com', { id: 7, doNotContact: false })
+    expect(resolveDedup(idx, proj, candidate({ email: 'a@x.com' }))).toEqual({ kind: 'skip', reason: 'do_not_contact' })
+  })
+
+  it('skips a DNC domain for platform candidates despite their domain-check bypass', () => {
+    const idx = emptyIndex()
+    idx.dncDomains.add('example.com')
+    expect(resolveDedup(idx, proj, candidate({ platformUrl: 'https://p/job/1' })))
+      .toEqual({ kind: 'skip', reason: 'do_not_contact' })
+  })
+
+  it('applies without a project (workspace-wide, unlike the project-domain check)', () => {
+    const idx = emptyIndex()
+    idx.dncDomains.add('example.com')
+    expect(resolveDedup(idx, undefined, candidate({ email: 'new@x.com' }))).toEqual({ kind: 'skip', reason: 'do_not_contact' })
+  })
+
+  it('does not affect other domains', () => {
+    const idx = emptyIndex()
+    idx.dncDomains.add('blocked.com')
+    expect(resolveDedup(idx, proj, candidate({ email: 'new@x.com' }))).toEqual({ kind: 'insert' })
   })
 })
 

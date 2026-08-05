@@ -329,7 +329,7 @@ async function buildDedupIndex(
     new Set(inputs.map((i) => i.organizationDomain).filter((v): v is string => Boolean(v))),
   )
 
-  const [byEmailRows, byFormRows, byPlatformRows, domainRows] = await Promise.all([
+  const [byEmailRows, byFormRows, byPlatformRows, dncDomainRows, domainRows] = await Promise.all([
     emails.length > 0
       ? db
           .select({
@@ -351,6 +351,16 @@ async function buildDedupIndex(
           .select({ id: prospects.id, platformUrl: prospects.platformUrl })
           .from(prospects)
           .where(and(eq(prospects.tenantId, tenantId), inArray(prospects.platformUrl, platforms)))
+      : Promise.resolve([]),
+    domains.length > 0
+      ? db
+          .select({ domain: organizations.domain })
+          .from(organizations)
+          .where(and(
+            eq(organizations.tenantId, tenantId),
+            inArray(organizations.domain, domains),
+            eq(organizations.doNotContact, true),
+          ))
       : Promise.resolve([]),
     projectId && domains.length > 0
       ? db
@@ -378,12 +388,14 @@ async function buildDedupIndex(
   for (const r of byPlatformRows) {
     if (r.platformUrl) byPlatform.set(r.platformUrl, { id: r.id })
   }
+  const dncDomains = new Set<string>(dncDomainRows.map((r) => r.domain))
   const domainsInProject = new Set<string>(domainRows.map((r) => r.domain))
 
   return {
     byEmail,
     byForm,
     byPlatform,
+    dncDomains,
     domainsInProject,
     claimedEmails: new Set(),
     claimedForms: new Set(),

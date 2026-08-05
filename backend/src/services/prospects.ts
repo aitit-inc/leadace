@@ -445,6 +445,7 @@ export async function listReachable(
     eq(projectProspects.projectId, projectId),
     eq(projectProspects.tenantId, tenantId),
     eq(prospects.doNotContact, false),
+    eq(organizations.doNotContact, false),
     or(
       and(
         inArray(projectProspects.status, REACHABLE_STATUSES),
@@ -930,6 +931,7 @@ export async function listTenantProspects(
   const conditions = [
     eq(prospects.tenantId, tenantId),
     eq(prospects.doNotContact, false),
+    eq(organizations.doNotContact, false),
   ]
 
   if (industry) {
@@ -1028,8 +1030,12 @@ export async function linkProspects(
   const { links } = input
   const ids = links.map((l) => l.prospectId)
   const existing = await db
-    .select({ id: prospects.id, doNotContact: prospects.doNotContact })
+    .select({
+      id: prospects.id,
+      doNotContact: sql<boolean>`${prospects.doNotContact} OR ${organizations.doNotContact}`,
+    })
     .from(prospects)
+    .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
     .where(and(eq(prospects.tenantId, tenantId), inArray(prospects.id, ids)))
 
   const byId = new Map(existing.map((r) => [r.id, r]))

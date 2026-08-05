@@ -1,0 +1,1 @@
+ALTER TABLE "organizations" ADD COLUMN "do_not_contact" boolean DEFAULT false NOT NULL;

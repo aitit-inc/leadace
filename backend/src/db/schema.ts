@@ -584,6 +584,9 @@ export const organizations = pgTable('organizations', {
   countrySource: countrySourceEnum('country_source'),
   // INSERT-only, same convention as country; explicit changes via PATCH /organizations/:id.
   employeeBand: employeeBandEnum('employee_band').notNull().default('unknown'),
+  // Tenant-wide sales exclusion for the whole domain. A business decision,
+  // so clearable — unlike prospects.do_not_contact (legal opt-out, ratchets).
+  doNotContact: boolean('do_not_contact').notNull().default(false),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
