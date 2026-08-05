@@ -45,7 +45,7 @@
   // 03:00 UTC stays out of US/EU business hours; the per-run cap inside
   // runDailySignalRefresh prevents a multi-hour run on large tenants.
   "triggers": {
-    // 0 3 = org-signals refresh; 0 * = hourly server-side reply poll.
+    // 0 3 = org-signals refresh + verifier balance watch; 0 * = hourly server-side reply poll.
     "crons": ["0 3 * * *", "0 * * * *"]
   },
 }

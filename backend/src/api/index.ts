@@ -34,6 +34,7 @@ import { createDb } from '../db/connection'
 import { runDailySignalRefresh } from '../services/org-signals'
 import { runDailyBetaStats } from '../services/beta-stats'
 import { runReplyIngest } from '../services/reply-ingest'
+import { watchVerifierBalance } from '../services/email-verify'
 import type { Env, Variables } from './types'
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>()
@@ -117,6 +118,12 @@ const handler = {
     const db = createDb(env.DATABASE_URL)
 
     if (controller.cron === ORG_SIGNALS_CRON) {
+      ctx.waitUntil(
+        watchVerifierBalance(env.REOON_API_KEY ?? null).catch((e: unknown) => {
+          console.error('[scheduled] verifier balance watch failed', e)
+          Sentry.captureException(e)
+        }),
+      )
       ctx.waitUntil(
         runDailySignalRefresh(db, env)
           .then((summary) => {

@@ -1,5 +1,6 @@
 import * as Sentry from '@sentry/cloudflare'
 import {
+  verifierBalanceSchema,
   verifierDeliverabilityVerdict,
   verifierResponseSchema,
   type VerifierStatus,
@@ -30,9 +31,11 @@ async function probeMailbox(email: string, apiKey: string): Promise<VerifierStat
       { signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS) },
     )
     if (!res.ok) {
+      // 429 is transient burst throttling (fail-open already covers it); other
+      // statuses (401 revoked key, 5xx) must page the operator, so they stay error.
       Sentry.captureMessage(
         `email verifier rejected the request (${res.status}) — mailbox unchecked`,
-        'error',
+        res.status === 429 ? 'warning' : 'error',
       )
       console.warn(`[deliverability] verifier rejected the request (${res.status}) — mailbox unchecked`)
       return 'unknown'
@@ -44,6 +47,42 @@ async function probeMailbox(email: string, apiKey: string): Promise<VerifierStat
       `[deliverability] verifier unreachable or unreadable: ${e instanceof Error ? e.message : String(e)}`,
     )
     return 'unknown'
+  }
+}
+
+const BALANCE_URL = 'https://emailverifier.reoon.com/api/v1/check-account-balance'
+// ~3 days of runway at the current ~30 verifications/day
+const LOW_BALANCE_THRESHOLD = 100
+
+// Rejected key / unreadable response = the watch is dead until someone acts, so
+// they page as error; a network blip on a daily probe does not.
+export async function watchVerifierBalance(apiKey: string | null): Promise<void> {
+  if (!apiKey) return
+  try {
+    const res = await fetch(`${BALANCE_URL}?key=${encodeURIComponent(apiKey)}`, {
+      signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
+    })
+    if (!res.ok) {
+      Sentry.captureMessage(`email verifier balance check rejected (${res.status})`, 'error')
+      console.warn(`[deliverability] balance check rejected (${res.status})`)
+      return
+    }
+    const parsed = verifierBalanceSchema.safeParse(await res.json().catch(() => null))
+    if (!parsed.success) {
+      Sentry.captureMessage('email verifier balance response unreadable', 'error')
+      console.warn('[deliverability] balance response unreadable')
+      return
+    }
+    const { remaining_daily_credits: daily, remaining_instant_credits: instant } = parsed.data
+    console.log(`[scheduled] verifier balance daily=${daily} instant=${instant}`)
+    if (daily + instant < LOW_BALANCE_THRESHOLD) {
+      Sentry.captureMessage('email verifier balance low — mailbox checks about to stop', 'error')
+    }
+  } catch (e) {
+    Sentry.captureMessage('email verifier balance check unreachable', 'warning')
+    console.warn(
+      `[deliverability] balance check unreachable: ${e instanceof Error ? e.message : String(e)}`,
+    )
   }
 }
 
