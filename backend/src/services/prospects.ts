@@ -1136,7 +1136,7 @@ export async function updateProspect(
     ...(patch.industry !== undefined ? { industry: patch.industry } : {}),
     ...(patch.websiteUrl !== undefined ? { websiteUrl: patch.websiteUrl } : {}),
     ...(patch.email !== undefined ? { email: patch.email } : {}),
-    ...(emailChanged ? { emailDeliverability: 'unknown' as const } : {}),
+    ...(emailChanged ? { emailDeliverability: 'unknown' as const, mailboxVerifiedAt: null } : {}),
     ...(patch.contactFormUrl !== undefined ? { contactFormUrl: patch.contactFormUrl } : {}),
     ...(patch.formType !== undefined ? { formType: patch.formType } : {}),
     ...(patch.snsAccounts !== undefined ? { snsAccounts: patch.snsAccounts } : {}),

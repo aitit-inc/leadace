@@ -49,7 +49,7 @@ export function sentryOptions(
       }
       return event
     },
-    // Outgoing-fetch breadcrumbs carry the raw URL; the Reoon verifier URL's
+    // Outgoing-fetch breadcrumbs carry the raw URL; the mailbox-verifier URL's
     // query holds the recipient address and API key.
     beforeBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb {
       const url = breadcrumb.data?.url

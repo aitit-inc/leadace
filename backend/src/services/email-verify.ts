@@ -13,21 +13,26 @@ import {
 } from '../domain/email-deliverability'
 import { resolveEmailDeliverability } from './dns-check'
 
-const VERIFY_URL = 'https://emailverifier.reoon.com/api/v1/verify'
-// Vendor documents "seconds to over a minute", measured 1.4-2.1s. The send holds
-// its RLS transaction open for the wait, so it is capped rather than awaited out.
+const VERIFY_URL = 'https://api.millionverifier.com/api/v3/'
+// Measured 0.3-3.9s (2026-08-12, from both residential and CF egress). The send
+// holds its RLS transaction open for the wait, so it is capped rather than
+// awaited out; the vendor-side timeout stays below the client abort so a slow
+// SMTP conversation surfaces as a parsed 'unknown' instead of an aborted fetch.
 const VERIFY_TIMEOUT_MS = 8_000
+const VENDOR_TIMEOUT_SECONDS = 6
 
 export type SendTimeVerdict =
-  | { deliverability: 'unknown' }
-  | { deliverability: 'undeliverable'; reason: string }
+  | { deliverability: 'unknown'; mailboxAnswered: boolean }
+  | { deliverability: 'undeliverable'; reason: string; mailboxAnswered: boolean }
 
-// `unknown` blocks nothing, so an outage or a revoked key is silent unless
+type MailboxProbeOutcome = { answered: true; status: VerifierStatus } | { answered: false }
+
+// `answered: false` blocks nothing, so an outage or a revoked key is silent unless
 // reported. Sentry messages stay fixed strings — the URL would leak address + key.
-async function probeMailbox(email: string, apiKey: string): Promise<VerifierStatus> {
+async function probeMailbox(email: string, apiKey: string): Promise<MailboxProbeOutcome> {
   try {
     const res = await fetch(
-      `${VERIFY_URL}?email=${encodeURIComponent(email)}&key=${encodeURIComponent(apiKey)}&mode=power`,
+      `${VERIFY_URL}?api=${encodeURIComponent(apiKey)}&email=${encodeURIComponent(email)}&timeout=${VENDOR_TIMEOUT_SECONDS}`,
       { signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS) },
     )
     if (!res.ok) {
@@ -38,19 +43,32 @@ async function probeMailbox(email: string, apiKey: string): Promise<VerifierStat
         res.status === 429 ? 'warning' : 'error',
       )
       console.warn(`[deliverability] verifier rejected the request (${res.status}) — mailbox unchecked`)
-      return 'unknown'
+      return { answered: false }
     }
-    return verifierResponseSchema.parse(await res.json()).status
+    const parsed = verifierResponseSchema.safeParse(await res.json().catch(() => null))
+    if (!parsed.success) {
+      Sentry.captureMessage('email verifier response unreadable — mailbox unchecked', 'warning')
+      console.warn('[deliverability] verifier response unreadable — mailbox unchecked')
+      return { answered: false }
+    }
+    const status = parsed.data.result
+    // The vendor's 'error' result reports a failed verification, not a verdict —
+    // treated like a transport failure so it never stamps the verdict store.
+    if (status === 'error') {
+      console.warn('[deliverability] verifier returned error — mailbox unchecked')
+      return { answered: false }
+    }
+    return { answered: true, status }
   } catch (e) {
     Sentry.captureMessage('email verifier unreachable or unreadable — mailbox unchecked', 'warning')
     console.warn(
       `[deliverability] verifier unreachable or unreadable: ${e instanceof Error ? e.message : String(e)}`,
     )
-    return 'unknown'
+    return { answered: false }
   }
 }
 
-const BALANCE_URL = 'https://emailverifier.reoon.com/api/v1/check-account-balance'
+const BALANCE_URL = 'https://api.millionverifier.com/api/v3/credits'
 // ~3 days of runway at the current ~30 verifications/day
 const LOW_BALANCE_THRESHOLD = 100
 
@@ -59,7 +77,7 @@ const LOW_BALANCE_THRESHOLD = 100
 export async function watchVerifierBalance(apiKey: string | null): Promise<void> {
   if (!apiKey) return
   try {
-    const res = await fetch(`${BALANCE_URL}?key=${encodeURIComponent(apiKey)}`, {
+    const res = await fetch(`${BALANCE_URL}?api=${encodeURIComponent(apiKey)}`, {
       signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
     })
     if (!res.ok) {
@@ -73,9 +91,9 @@ export async function watchVerifierBalance(apiKey: string | null): Promise<void>
       console.warn('[deliverability] balance response unreadable')
       return
     }
-    const { remaining_daily_credits: daily, remaining_instant_credits: instant } = parsed.data
-    console.log(`[scheduled] verifier balance daily=${daily} instant=${instant}`)
-    if (daily + instant < LOW_BALANCE_THRESHOLD) {
+    const { credits } = parsed.data
+    console.log(`[scheduled] verifier balance credits=${credits}`)
+    if (credits < LOW_BALANCE_THRESHOLD) {
       Sentry.captureMessage('email verifier balance low — mailbox checks about to stop', 'error')
     }
   } catch (e) {
@@ -89,25 +107,42 @@ export async function watchVerifierBalance(apiKey: string | null): Promise<void>
 export async function verifyAddressBeforeSend(
   email: string,
   apiKey: string | null,
+  opts: { skipMailboxProbe: boolean },
 ): Promise<SendTimeVerdict> {
-  if (isReservedDomain(domainOf(email))) return { deliverability: 'unknown' }
+  if (isReservedDomain(domainOf(email))) {
+    return { deliverability: 'unknown', mailboxAnswered: false }
+  }
 
   // Separate from the DNS verdict, which collapses both causes: `reason` reaches a
   // 422 and the log, so it must not name a cause this has not established.
   if (!isEmailSyntaxValid(email)) {
-    return { deliverability: UNDELIVERABLE, reason: 'malformed address' }
+    return { deliverability: UNDELIVERABLE, reason: 'malformed address', mailboxAnswered: false }
   }
 
+  // DNS re-resolves on every send regardless of the stored verdict — it is
+  // free, fast, and catches domains that died after the mailbox probe.
   const dns = (await resolveEmailDeliverability([email])).get(email)
   if (dns === UNDELIVERABLE) {
-    return { deliverability: UNDELIVERABLE, reason: 'domain does not accept mail' }
+    return {
+      deliverability: UNDELIVERABLE,
+      reason: 'domain does not accept mail',
+      mailboxAnswered: false,
+    }
   }
+  if (opts.skipMailboxProbe) return { deliverability: 'unknown', mailboxAnswered: false }
   if (!apiKey) {
-    console.warn('[deliverability] REOON_API_KEY is not set — mailbox unchecked')
-    return { deliverability: 'unknown' }
+    console.warn('[deliverability] MILLION_VERIFIER_API_KEY is not set — mailbox unchecked')
+    return { deliverability: 'unknown', mailboxAnswered: false }
   }
 
-  const status = await probeMailbox(email, apiKey)
-  if (verifierDeliverabilityVerdict(status) !== UNDELIVERABLE) return { deliverability: 'unknown' }
-  return { deliverability: UNDELIVERABLE, reason: `mailbox ${status}` }
+  const outcome = await probeMailbox(email, apiKey)
+  if (!outcome.answered) return { deliverability: 'unknown', mailboxAnswered: false }
+  if (verifierDeliverabilityVerdict(outcome.status) !== UNDELIVERABLE) {
+    return { deliverability: 'unknown', mailboxAnswered: true }
+  }
+  return {
+    deliverability: UNDELIVERABLE,
+    reason: `mailbox ${outcome.status}`,
+    mailboxAnswered: true,
+  }
 }

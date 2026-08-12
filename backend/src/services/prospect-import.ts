@@ -289,6 +289,7 @@ function prospectUpdateSet(input: ProspectInput, orgId: number, now: Date) {
       ? {
           email: input.email,
           emailDeliverability: sql`CASE WHEN ${prospects.email} IS DISTINCT FROM ${input.email} THEN 'unknown'::email_deliverability ELSE ${prospects.emailDeliverability} END`,
+          mailboxVerifiedAt: sql`CASE WHEN ${prospects.email} IS DISTINCT FROM ${input.email} THEN NULL ELSE ${prospects.mailboxVerifiedAt} END`,
           // Provenance describes the stored address, so a changed address
           // without a new source URL leaves no record rather than a stale one.
           ...(input.emailSourceUrl === undefined

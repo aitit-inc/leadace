@@ -67,10 +67,10 @@ OPENAI_API_KEY=""
 # by reading their pages via Gemini. The daily cron fails without it.
 GEMINI_API_KEY=""
 
-# --- Send-time address verification (optional) ---
-# Reoon Email Verifier key (pay-as-you-go credits). Empty leaves only the free
+# --- Mailbox verification (optional) ---
+# MillionVerifier key (pay-as-you-go credits). Empty leaves only the free
 # DNS half of the check.
-REOON_API_KEY=""
+MILLION_VERIFIER_API_KEY=""
 
 # --- Stripe (cloud edition only) ---
 # Required only when LEADACE_EDITION=cloud. Self-hosted ignores them and

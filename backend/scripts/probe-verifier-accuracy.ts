@@ -1,6 +1,15 @@
 /**
- * Scores a verifier against the labels dump-bounce-groundtruth.ts emits, run
- * through the shipped send gate. Spends one credit per address; touches no DB.
+ * Scores the shipped verifier (MillionVerifier) against the labels
+ * dump-bounce-groundtruth.ts emits, run through the shipped send gate.
+ * Spends one credit per address; touches no DB.
+ *
+ * Trust boundary before rerunning: the blocking rule is imported from
+ * domain/email-verification, so rule changes flow into the scoring
+ * automatically — a same-vendor rerun on grown ground truth is trustworthy
+ * as-is. What does NOT auto-track: the vendor endpoint/response mapping
+ * hardcoded below, and any future gate logic that reads more than `result`.
+ * After a vendor swap or a gate-shape change, revise this script first or
+ * its numbers are wrong.
  */
 
 import { readFileSync, existsSync } from 'node:fs'
@@ -36,10 +45,10 @@ for (const arg of args.filter((a) => a.startsWith('--env-file='))) {
     if (process.env[m[1]!] === undefined) process.env[m[1]!] = value
   }
 }
-const apiKey = process.env['REOON_API_KEY']
+const apiKey = process.env['MILLION_VERIFIER_API_KEY']
 const inputPath = args.find((a) => a.startsWith('--input='))?.slice('--input='.length)
 if (!apiKey || !inputPath) {
-  console.error('REOON_API_KEY and --input=<groundtruth.json> are required')
+  console.error('MILLION_VERIFIER_API_KEY and --input=<groundtruth.json> are required')
   process.exit(1)
 }
 
@@ -53,35 +62,24 @@ const { dead: allDead, live: allLive } = JSON.parse(readFileSync(inputPath, 'utf
 const dead = allDead.slice(0, deadLimit)
 const live = allLive.slice(0, liveLimit)
 
-type ReoonResult = {
-  status?: string
-  overall_score?: number
-  is_catch_all?: boolean
-  can_connect_smtp?: boolean
-  mx_records?: string[]
+type VerifierResult = {
+  result?: string
+  subresult?: string
+  quality?: string
 }
 
-async function verify(email: string): Promise<ReoonResult | { error: string }> {
-  const url = `https://emailverifier.reoon.com/api/v1/verify?email=${encodeURIComponent(email)}&key=${apiKey}&mode=power`
+async function verify(email: string): Promise<VerifierResult | { error: string }> {
+  const url = `https://api.millionverifier.com/api/v3/?api=${apiKey}&email=${encodeURIComponent(email)}&timeout=20`
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(120_000) })
     if (!res.ok) return { error: `http_${res.status}` }
-    return (await res.json()) as ReoonResult
+    return (await res.json()) as VerifierResult
   } catch (e) {
     return { error: e instanceof Error ? e.name : 'fetch_failed' }
   }
 }
 
-function provider(mx: string[] | undefined): string {
-  const hosts = (mx ?? []).map((h) => h.toLowerCase().replace(/\.$/, ''))
-  if (hosts.some((h) => h.includes('google'))) return 'google'
-  if (hosts.some((h) => h.includes('outlook') || h.includes('microsoft'))) return 'microsoft'
-  if (hosts.some((h) => h.includes('zoho'))) return 'zoho'
-  if (hosts.length === 0) return 'no_mx'
-  return 'other'
-}
-
-type Scored = { email: string; status: string; provider: string; score: number | string }
+type Scored = { email: string; status: string; detail: string; quality: string }
 
 const blocks = (r: Scored): boolean =>
   verifierDeliverabilityVerdict(verifierStatusSchema.parse(r.status)) === UNDELIVERABLE
@@ -96,15 +94,15 @@ async function run(emails: string[], truth: string): Promise<Scored[]> {
       const r = await verify(email)
       const row: Scored = {
         email,
-        status: 'error' in r ? `ERR:${r.error}` : (r.status ?? 'no_status'),
-        provider: 'error' in r ? '-' : provider(r.mx_records),
-        score: 'error' in r ? '-' : (r.overall_score ?? '-'),
+        status: 'error' in r ? `ERR:${r.error}` : (r.result ?? 'no_result'),
+        detail: 'error' in r ? '-' : (r.subresult ?? '-'),
+        quality: 'error' in r ? '-' : (r.quality ?? '-'),
       }
       results.push(row)
-      console.log(`  [${truth}] ${row.email.padEnd(38)} ${row.status.padEnd(12)} ${row.provider.padEnd(10)} ${row.score}`)
+      console.log(`  [${truth}] ${row.email.padEnd(38)} ${row.status.padEnd(12)} ${row.detail.padEnd(14)} ${row.quality}`)
     }
   }
-  // Reoon asks for no more than 5 concurrent single-verify calls.
+  // Stay well under any vendor-side concurrency ceiling.
   await Promise.all(Array.from({ length: 3 }, worker))
   return results
 }
@@ -138,13 +136,6 @@ async function main(): Promise<void> {
   console.log(`dead caught (bounce prevented):   ${caught}/${deadResults.length}  ${((caught / Math.max(deadResults.length, 1)) * 100).toFixed(0)}%`)
   console.log(`dead missed (would still bounce): ${deadResults.length - caught}/${deadResults.length}`)
   console.log(`live wrongly blocked (lost lead): ${falseBlocks}/${liveResults.length}`)
-
-  for (const p of ['google', 'microsoft', 'zoho', 'other', 'no_mx']) {
-    const subset = deadResults.filter((r) => r.provider === p)
-    if (subset.length === 0) continue
-    const hit = subset.filter(blocks).length
-    console.log(`  dead on ${p.padEnd(10)} caught ${hit}/${subset.length}`)
-  }
 }
 
 main().catch((e) => {

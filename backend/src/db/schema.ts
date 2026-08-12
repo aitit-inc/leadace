@@ -638,6 +638,10 @@ export const prospects = pgTable('prospects', {
   country: text('country'),
   countrySource: countrySourceEnum('country_source'),
   emailDeliverability: emailDeliverabilityEnum('email_deliverability').notNull().default('unknown'),
+  // Last conclusive mailbox-verifier answer for this address — non-blocking
+  // verdicts stamp too; transport failures and vendor errors do not. NULL =
+  // never answered. Fresh rows (MAILBOX_VERDICT_TTL_MS) skip the send-time probe.
+  mailboxVerifiedAt: timestamp('mailbox_verified_at', { withTimezone: true }),
   // Page the address was published on. Doubles as the legal record for the
   // published-address exemption (Japan's Specified Commercial Email Act / CASL
   // conspicuous publication), which requires the source to carry no

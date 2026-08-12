@@ -45,6 +45,7 @@ import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { UNDELIVERABLE } from '../domain/email-deliverability'
 import { verifyAddressBeforeSend } from './email-verify'
+import { isMailboxVerdictFresh } from '../domain/email-verification'
 import { DASHBOARD_PERIODS, periodToWindow } from '../domain/dashboard'
 import { requireProspect, prospectHadFreshSignal } from './prospects'
 import { allocateInquiryUrl } from './inquiry-token'
@@ -389,7 +390,11 @@ async function resolveDeliverableRecipient(
   verifyApiKey: string | null,
 ): Promise<ServiceResult<string>> {
   const [row] = await db
-    .select({ email: prospects.email, emailDeliverability: prospects.emailDeliverability })
+    .select({
+      email: prospects.email,
+      emailDeliverability: prospects.emailDeliverability,
+      mailboxVerifiedAt: prospects.mailboxVerifiedAt,
+    })
     .from(prospects)
     .where(and(eq(prospects.id, prospectId), eq(prospects.tenantId, tenantId)))
     .limit(1)
@@ -399,13 +404,36 @@ async function resolveDeliverableRecipient(
     return err('UNPROCESSABLE', 'Recipient email address cannot receive mail')
   }
 
-  const verdict = await verifyAddressBeforeSend(row.email, verifyApiKey)
-  if (verdict.deliverability !== UNDELIVERABLE) return ok(row.email)
+  const verdict = await verifyAddressBeforeSend(row.email, verifyApiKey, {
+    skipMailboxProbe: isMailboxVerdictFresh(row.mailboxVerifiedAt, new Date()),
+  })
+  // Both stamps guard on the verified address so a concurrent re-address never
+  // inherits this verdict.
+  if (verdict.deliverability !== UNDELIVERABLE) {
+    if (verdict.mailboxAnswered) {
+      await db
+        .update(prospects)
+        .set({ mailboxVerifiedAt: new Date() })
+        .where(and(
+          eq(prospects.id, prospectId),
+          eq(prospects.tenantId, tenantId),
+          eq(prospects.email, row.email),
+        ))
+    }
+    return ok(row.email)
+  }
 
   await db
     .update(prospects)
-    .set({ emailDeliverability: UNDELIVERABLE })
-    .where(and(eq(prospects.id, prospectId), eq(prospects.tenantId, tenantId)))
+    .set({
+      emailDeliverability: UNDELIVERABLE,
+      ...(verdict.mailboxAnswered ? { mailboxVerifiedAt: new Date() } : {}),
+    })
+    .where(and(
+      eq(prospects.id, prospectId),
+      eq(prospects.tenantId, tenantId),
+      eq(prospects.email, row.email),
+    ))
   console.warn(
     `[deliverability] send blocked tenant=${tenantId} prospectId=${prospectId} reason=${verdict.reason}`,
   )

@@ -25,7 +25,7 @@ export type Env = {
   // Google AI Studio key for the daily org-signal refresh cron.
   GEMINI_API_KEY: string
   // Absent leaves only the free DNS half of the send-time address check.
-  REOON_API_KEY?: string
+  MILLION_VERIFIER_API_KEY?: string
   // 'cloud' on the hosted SurpassOne deploy, 'self-hosted' (default) for
   // local dev and public-repo self-hosters. See domain/edition.ts.
   LEADACE_EDITION: string

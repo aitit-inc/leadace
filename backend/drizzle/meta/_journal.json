@@ -484,6 +484,13 @@
       "when": 1785920130823,
       "tag": "0068_low_cable",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1786452172444,
+      "tag": "0069_rare_mercury",
+      "breakpoints": true
     }
   ]
 }

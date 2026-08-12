@@ -1,0 +1,1 @@
+ALTER TABLE "prospects" ADD COLUMN "mailbox_verified_at" timestamp with time zone;
