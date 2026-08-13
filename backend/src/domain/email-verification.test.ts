@@ -8,37 +8,35 @@ import {
 } from './email-verification'
 
 describe('verifierStatusSchema', () => {
-  it('degrades an unrecognised result to unknown instead of throwing', () => {
+  it('degrades an unrecognised state to unknown instead of throwing', () => {
     expect(verifierStatusSchema.parse('brand_new_status')).toBe('unknown')
     expect(verifierStatusSchema.parse(null)).toBe('unknown')
   })
 
-  it('parses a verifier payload down to its result', () => {
-    expect(verifierResponseSchema.parse({ result: 'invalid', subresult: 'no_mailbox' })).toEqual({
-      result: 'invalid',
+  it('parses a verifier payload down to its state', () => {
+    expect(verifierResponseSchema.parse({ state: 'undeliverable', reason: 'rejected_email' })).toEqual({
+      state: 'undeliverable',
     })
   })
 
-  it('rejects a payload without a recognised result, so an error-shaped response is never an answer', () => {
-    expect(verifierResponseSchema.safeParse({ result: 'weird' }).success).toBe(false)
-    expect(verifierResponseSchema.safeParse({ error: 'api_key_invalid' }).success).toBe(false)
+  it('rejects a payload without a recognised state, so an error-shaped response is never an answer', () => {
+    expect(verifierResponseSchema.safeParse({ state: 'weird' }).success).toBe(false)
+    expect(verifierResponseSchema.safeParse({ message: 'Free account abuse' }).success).toBe(false)
   })
 })
 
 describe('verifierDeliverabilityVerdict', () => {
   it('blocks only a provably dead mailbox', () => {
-    expect(verifierDeliverabilityVerdict('invalid')).toBe('undeliverable')
+    expect(verifierDeliverabilityVerdict('undeliverable')).toBe('undeliverable')
   })
 
   it('sends when the verifier cannot tell', () => {
-    expect(verifierDeliverabilityVerdict('catch_all')).toBe('unknown')
+    expect(verifierDeliverabilityVerdict('risky')).toBe('unknown')
     expect(verifierDeliverabilityVerdict('unknown')).toBe('unknown')
-    expect(verifierDeliverabilityVerdict('error')).toBe('unknown')
   })
 
   it('sends to mailboxes that exist even when they are undesirable targets', () => {
-    expect(verifierDeliverabilityVerdict('disposable')).toBe('unknown')
-    expect(verifierDeliverabilityVerdict('ok')).toBe('unknown')
+    expect(verifierDeliverabilityVerdict('deliverable')).toBe('unknown')
   })
 })
 

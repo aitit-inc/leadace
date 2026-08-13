@@ -119,7 +119,7 @@ const handler = {
 
     if (controller.cron === ORG_SIGNALS_CRON) {
       ctx.waitUntil(
-        watchVerifierBalance(env.MILLION_VERIFIER_API_KEY ?? null).catch((e: unknown) => {
+        watchVerifierBalance(env.EMAILABLE_API_KEY ?? null).catch((e: unknown) => {
           console.error('[scheduled] verifier balance watch failed', e)
           Sentry.captureException(e)
         }),

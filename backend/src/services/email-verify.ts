@@ -13,12 +13,13 @@ import {
 } from '../domain/email-deliverability'
 import { resolveEmailDeliverability } from './dns-check'
 
-const VERIFY_URL = 'https://api.millionverifier.com/api/v3/'
-// Measured 0.3-3.9s (2026-08-12, from both residential and CF egress). The send
+const VERIFY_URL = 'https://api.emailable.com/v1/verify'
+// Measured 0.25-0.8s from CF egress (2026-08-12/13 gate probes). The send
 // holds its RLS transaction open for the wait, so it is capped rather than
 // awaited out; the vendor-side timeout stays below the client abort so a slow
-// SMTP conversation surfaces as a parsed 'unknown' instead of an aborted fetch.
+// SMTP conversation surfaces as a parsed HTTP 249 instead of an aborted fetch.
 const VERIFY_TIMEOUT_MS = 8_000
+// Emailable accepts 2-10 seconds.
 const VENDOR_TIMEOUT_SECONDS = 6
 
 export type SendTimeVerdict =
@@ -27,38 +28,64 @@ export type SendTimeVerdict =
 
 type MailboxProbeOutcome = { answered: true; status: VerifierStatus } | { answered: false }
 
+// Failure bodies carry the diagnosis (MillionVerifier died silently for a day
+// because only the HTTP status was visible), but success-shaped bodies echo
+// the probed address — so only the vendor's `message` field is ever logged.
+function vendorMessage(raw: string): string {
+  try {
+    const message: unknown = (JSON.parse(raw) as { message?: unknown }).message
+    return typeof message === 'string' ? message.slice(0, 120) : '(no message)'
+  } catch {
+    return '(unparseable body)'
+  }
+}
+
 // `answered: false` blocks nothing, so an outage or a revoked key is silent unless
 // reported. Sentry messages stay fixed strings — the URL would leak address + key.
 async function probeMailbox(email: string, apiKey: string): Promise<MailboxProbeOutcome> {
   try {
     const res = await fetch(
-      `${VERIFY_URL}?api=${encodeURIComponent(apiKey)}&email=${encodeURIComponent(email)}&timeout=${VENDOR_TIMEOUT_SECONDS}`,
+      `${VERIFY_URL}?api_key=${encodeURIComponent(apiKey)}&email=${encodeURIComponent(email)}&timeout=${VENDOR_TIMEOUT_SECONDS}`,
       { signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS) },
     )
+    // 249 sits in the 2xx range (res.ok), so it must be handled before the
+    // rejection branch. It is the vendor's documented slow-SMTP outcome, not a
+    // fault, so it never pages — fail-open covers it.
+    if (res.status === 249) {
+      console.warn('[deliverability] verifier still verifying (249) — mailbox unchecked')
+      return { answered: false }
+    }
     if (!res.ok) {
       // 429 is transient burst throttling (fail-open already covers it); other
-      // statuses (401 revoked key, 5xx) must page the operator, so they stay error.
+      // statuses (403 revoked key, 402 out of credits, 5xx) must page the
+      // operator, so they stay error.
       Sentry.captureMessage(
         `email verifier rejected the request (${res.status}) — mailbox unchecked`,
         res.status === 429 ? 'warning' : 'error',
       )
-      console.warn(`[deliverability] verifier rejected the request (${res.status}) — mailbox unchecked`)
+      console.warn(
+        `[deliverability] verifier rejected the request (${res.status}): ${vendorMessage(await res.text().catch(() => ''))} — mailbox unchecked`,
+      )
       return { answered: false }
     }
-    const parsed = verifierResponseSchema.safeParse(await res.json().catch(() => null))
+    const raw = await res.text().catch(() => '')
+    const parsed = verifierResponseSchema.safeParse(
+      (() => {
+        try {
+          return JSON.parse(raw) as unknown
+        } catch {
+          return null
+        }
+      })(),
+    )
     if (!parsed.success) {
       Sentry.captureMessage('email verifier response unreadable — mailbox unchecked', 'warning')
-      console.warn('[deliverability] verifier response unreadable — mailbox unchecked')
+      console.warn(
+        `[deliverability] verifier response unreadable: ${vendorMessage(raw)} — mailbox unchecked`,
+      )
       return { answered: false }
     }
-    const status = parsed.data.result
-    // The vendor's 'error' result reports a failed verification, not a verdict —
-    // treated like a transport failure so it never stamps the verdict store.
-    if (status === 'error') {
-      console.warn('[deliverability] verifier returned error — mailbox unchecked')
-      return { answered: false }
-    }
-    return { answered: true, status }
+    return { answered: true, status: parsed.data.state }
   } catch (e) {
     Sentry.captureMessage('email verifier unreachable or unreadable — mailbox unchecked', 'warning')
     console.warn(
@@ -68,7 +95,7 @@ async function probeMailbox(email: string, apiKey: string): Promise<MailboxProbe
   }
 }
 
-const BALANCE_URL = 'https://api.millionverifier.com/api/v3/credits'
+const BALANCE_URL = 'https://api.emailable.com/v1/account'
 // ~3 days of runway at the current ~30 verifications/day
 const LOW_BALANCE_THRESHOLD = 100
 
@@ -77,7 +104,7 @@ const LOW_BALANCE_THRESHOLD = 100
 export async function watchVerifierBalance(apiKey: string | null): Promise<void> {
   if (!apiKey) return
   try {
-    const res = await fetch(`${BALANCE_URL}?api=${encodeURIComponent(apiKey)}`, {
+    const res = await fetch(`${BALANCE_URL}?api_key=${encodeURIComponent(apiKey)}`, {
       signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
     })
     if (!res.ok) {
@@ -91,7 +118,7 @@ export async function watchVerifierBalance(apiKey: string | null): Promise<void>
       console.warn('[deliverability] balance response unreadable')
       return
     }
-    const { credits } = parsed.data
+    const credits = parsed.data.available_credits
     console.log(`[scheduled] verifier balance credits=${credits}`)
     if (credits < LOW_BALANCE_THRESHOLD) {
       Sentry.captureMessage('email verifier balance low — mailbox checks about to stop', 'error')
@@ -131,7 +158,7 @@ export async function verifyAddressBeforeSend(
   }
   if (opts.skipMailboxProbe) return { deliverability: 'unknown', mailboxAnswered: false }
   if (!apiKey) {
-    console.warn('[deliverability] MILLION_VERIFIER_API_KEY is not set — mailbox unchecked')
+    console.warn('[deliverability] EMAILABLE_API_KEY is not set — mailbox unchecked')
     return { deliverability: 'unknown', mailboxAnswered: false }
   }
 

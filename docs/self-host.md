@@ -313,7 +313,7 @@ npx wrangler secret put OPENAI_API_KEY        --config wrangler.api.jsonc
 npx wrangler secret put GEMINI_API_KEY        --config wrangler.api.jsonc
 
 # API Worker — verifies the recipient mailbox just before sending (optional)
-npx wrangler secret put MILLION_VERIFIER_API_KEY --config wrangler.api.jsonc
+npx wrangler secret put EMAILABLE_API_KEY --config wrangler.api.jsonc
 
 # MCP Worker — required
 npx wrangler secret put WEB_API_URL           --config wrangler.mcp.jsonc
@@ -590,7 +590,7 @@ Most self-hosters will leave Stripe off entirely.
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | API | for outbound | OAuth refresh-token exchange for Gmail send. |
 | `OPENAI_API_KEY` | API | for chat | Powers inquiry-chat. Chat is disabled if absent. |
 | `GEMINI_API_KEY` | API | yes | Google AI Studio key (paid tier). Powers the daily org-signal refresh, which reads company pages via Gemini. The daily cron fails without it. |
-| `MILLION_VERIFIER_API_KEY` | API | no | MillionVerifier key (pay-as-you-go credits that never expire, no subscription). Verifies recipient mailboxes ahead of sending and refuses addresses that provably do not accept mail. Absent leaves only the free DNS half of that check, which still catches domains that went dark after the address was collected. |
+| `EMAILABLE_API_KEY` | API | no | Emailable key (pay-as-you-go credits, no subscription). Verifies recipient mailboxes ahead of sending and refuses addresses that provably do not accept mail. Absent leaves only the free DNS half of that check, which still catches domains that went dark after the address was collected. |
 | `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | API | cloud only | Required only when `LEADACE_EDITION=cloud`. Ignored otherwise. |
 
 ### Frontend (`frontend/.env` for local; GitHub Variables for production)

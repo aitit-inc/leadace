@@ -1,7 +1,7 @@
 /**
- * Scores the shipped verifier (MillionVerifier) against the labels
- * dump-bounce-groundtruth.ts emits, run through the shipped send gate.
- * Spends one credit per address; touches no DB.
+ * Scores the shipped verifier (Emailable, since 2026-08-13 — MillionVerifier
+ * blocked CF egress) against the labels dump-bounce-groundtruth.ts emits, run
+ * through the shipped send gate. Spends one credit per address; touches no DB.
  *
  * Trust boundary before rerunning: the blocking rule is imported from
  * domain/email-verification, so rule changes flow into the scoring
@@ -45,10 +45,10 @@ for (const arg of args.filter((a) => a.startsWith('--env-file='))) {
     if (process.env[m[1]!] === undefined) process.env[m[1]!] = value
   }
 }
-const apiKey = process.env['MILLION_VERIFIER_API_KEY']
+const apiKey = process.env['EMAILABLE_API_KEY']
 const inputPath = args.find((a) => a.startsWith('--input='))?.slice('--input='.length)
 if (!apiKey || !inputPath) {
-  console.error('MILLION_VERIFIER_API_KEY and --input=<groundtruth.json> are required')
+  console.error('EMAILABLE_API_KEY and --input=<groundtruth.json> are required')
   process.exit(1)
 }
 
@@ -63,20 +63,27 @@ const dead = allDead.slice(0, deadLimit)
 const live = allLive.slice(0, liveLimit)
 
 type VerifierResult = {
-  result?: string
-  subresult?: string
-  quality?: string
+  state?: string
+  reason?: string
+  score?: number
 }
 
 async function verify(email: string): Promise<VerifierResult | { error: string }> {
-  const url = `https://api.millionverifier.com/api/v3/?api=${apiKey}&email=${encodeURIComponent(email)}&timeout=20`
-  try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(120_000) })
-    if (!res.ok) return { error: `http_${res.status}` }
-    return (await res.json()) as VerifierResult
-  } catch (e) {
-    return { error: e instanceof Error ? e.name : 'fetch_failed' }
+  const url = `https://api.emailable.com/v1/verify?api_key=${apiKey}&email=${encodeURIComponent(email)}&timeout=10`
+  // 249 = still verifying server-side; the vendor's documented protocol is to
+  // resend the same request until the verdict is ready.
+  for (let attempt = 0; attempt < 10; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 3_000))
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(120_000) })
+      if (res.status === 249) continue
+      if (!res.ok) return { error: `http_${res.status}` }
+      return (await res.json()) as VerifierResult
+    } catch (e) {
+      return { error: e instanceof Error ? e.name : 'fetch_failed' }
+    }
   }
+  return { error: 'still_249_after_retries' }
 }
 
 type Scored = { email: string; status: string; detail: string; quality: string }
@@ -94,9 +101,9 @@ async function run(emails: string[], truth: string): Promise<Scored[]> {
       const r = await verify(email)
       const row: Scored = {
         email,
-        status: 'error' in r ? `ERR:${r.error}` : (r.result ?? 'no_result'),
-        detail: 'error' in r ? '-' : (r.subresult ?? '-'),
-        quality: 'error' in r ? '-' : (r.quality ?? '-'),
+        status: 'error' in r ? `ERR:${r.error}` : (r.state ?? 'no_state'),
+        detail: 'error' in r ? '-' : (r.reason ?? '-'),
+        quality: 'error' in r ? '-' : String(r.score ?? '-'),
       }
       results.push(row)
       console.log(`  [${truth}] ${row.email.padEnd(38)} ${row.status.padEnd(12)} ${row.detail.padEnd(14)} ${row.quality}`)

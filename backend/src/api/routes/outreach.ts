@@ -233,7 +233,7 @@ function sendContext(c: Context<{ Bindings: Env; Variables: Variables }>): SendC
     apiUrl: new URL(c.req.url).origin,
     unsubscribeSecret: c.env.UNSUBSCRIBE_TOKEN_SECRET,
     e2eRecipientOverride: c.env.E2E_RECIPIENT_OVERRIDE ?? null,
-    emailVerifyApiKey: c.env.MILLION_VERIFIER_API_KEY ?? null,
+    emailVerifyApiKey: c.env.EMAILABLE_API_KEY ?? null,
   }
 }
 
