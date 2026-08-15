@@ -155,12 +155,13 @@ export function computeArmWeights(
   arms: ArmStat[],
   params: ArmBanditParams,
   rng: () => number,
+  samples: number = PBEST_SAMPLES,
 ): ArmWeightDecision {
   const sorted = [...arms].sort(byArmId)
   const k = sorted.length
   if (k === 0) return { weights: {}, pBest: {}, toArchive: [] }
 
-  const pBest = computePBest(sorted, rng)
+  const pBest = computePBest(sorted, rng, samples)
 
   // Archive on mature data only; never below 2 active arms. When more arms
   // qualify than may go, shed the worst P(best) first; clear losers often tie

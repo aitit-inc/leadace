@@ -1,6 +1,7 @@
 node_modules/
 .wrangler/
 dist/
+sim/out/
 .dev.vars
 .dev.vars.mcp
 *.env
