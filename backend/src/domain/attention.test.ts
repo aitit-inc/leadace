@@ -111,6 +111,7 @@ describe('deriveAttentionItems', () => {
     compliance: { ready: true, missing: [] },
     gmailConnected: true,
     identities: [],
+    futileProjects: [],
     quota: { exhausted: false, constraint: null },
     now: NOW,
     project: { outboundChannelsConfigured: true, pendingDrafts: 0, hotLeadsRecent: 0 },
@@ -147,6 +148,7 @@ describe('deriveAttentionItems', () => {
         }),
       ],
       quota: { exhausted: true, constraint: 'monthly' },
+      futileProjects: [{ projectId: 'p-acme', projectName: 'Acme', sends: 400, replies: 0 }],
       project: { outboundChannelsConfigured: false, pendingDrafts: 3, hotLeadsRecent: 1 },
     })
     expect(items.map((i) => i.kind)).toEqual([
@@ -157,7 +159,23 @@ describe('deriveAttentionItems', () => {
       'no_outbound_channels',
       'quota_exhausted',
       'reply_collection_failing',
+      'outreach_futility',
       'outreach_drafts',
+    ])
+  })
+
+  it('surfaces futile projects in the tenant-wide feed, one item per project', () => {
+    const items = deriveAttentionItems({
+      ...clean,
+      futileProjects: [
+        { projectId: 'p-acme', projectName: 'Acme', sends: 400, replies: 0 },
+        { projectId: 'p-globex', projectName: 'Globex', sends: 310, replies: 0 },
+      ],
+      project: null,
+    })
+    expect(items).toEqual([
+      { kind: 'outreach_futility', projectName: 'Acme', sends: 400, replies: 0 },
+      { kind: 'outreach_futility', projectName: 'Globex', sends: 310, replies: 0 },
     ])
   })
 

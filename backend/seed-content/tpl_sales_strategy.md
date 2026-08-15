@@ -69,14 +69,6 @@ The two modes are mutually exclusive per project — the inquiry-settings page e
 
 ## Search Keywords
 (Keyword list for finding prospects. Industry names, service categories, related terms, etc.)
-
-## Prospect Discovery Sources
-(Named discovery strategies — each is one repeatable way to find prospect candidates. /build-list executes these and stamps each registered prospect with the strategy slug; /evaluate promotes/demotes entries based on measured reply rates.)
-
-### (strategy-slug)
-- Status: active
-- How: (source + concrete search/crawl tactic, 1-2 lines: which platform/directory, which query or page shape)
-- Why: (why this source should surface good-fit prospects)
 ```
 
 (Environment / tool status is live-detected at run time, never stored in a project document. The outbound channel allowlist is Project Settings → `outboundChannels`.)
@@ -87,7 +79,7 @@ The two modes are mutually exclusive per project — the inquiry-settings page e
 - Make targets as specific as possible (not "small businesses" but "SaaS companies with 50-200 employees in the US"; not "retailers" but "DTC e-commerce brands with under 50 employees")
 - Structure messaging to lead with recipient benefits
 - List at least 10 search keywords
-- **Prospect Discovery Sources**: write 3-6 named strategies. Each heading is a stable slug — lowercase kebab-case, ≤64 chars (e.g. `pr-newswire-launches`, `github-active-repos`, `tradeshow-exhibitors-manufacturing`). Diversify source types (press/news, company DBs and directories, trade shows, code/product platforms, region-specific portals) relevant to the target market. The slug is an identifier, not prose: /build-list stamps it on every prospect it registers and /evaluate attributes reply rates per slug, so renaming a slug orphans its measured history — prefer adding a new strategy over renaming one.
+- Discovery strategies are NOT a section of this document — they live in the project's strategy registry (`upsert_discovery_strategy` / `get_lever_state`), where /build-list executes them and /evaluate attributes reply rates per slug.
 - **Sales Channels section rules:**
   - Channel on/off (`email` / `form` / `sns_twitter` / `sns_linkedin`) is owned by Project Settings (`outboundChannels`) and read by `/outbound` and `/build-list`. **Never restate enablement / disablement here.**
   - This section may carry tactical preferences Project Settings can't express: channel ordering ("SNS DM before email for consumer-facing prospects"), tone, sub-channel preferences ("prefer named-personal emails over generic"). `/outbound` reads the order from here when present.

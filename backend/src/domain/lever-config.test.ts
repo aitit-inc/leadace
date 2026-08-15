@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { leverConfigSchema, leverConfigPatchSchema, defaultLeverConfig } from './lever-config'
+import {
+  leverConfigSchema,
+  leverConfigPatchSchema,
+  leverConfigInvariantViolation,
+  defaultLeverConfig,
+} from './lever-config'
 
 describe('leverConfigSchema', () => {
   it('parses an empty object into the neutral-prior defaults', () => {
@@ -12,8 +17,14 @@ describe('leverConfigSchema', () => {
       archiveThreshold: 0.05,
       targetActiveArms: 3,
       maxActiveArms: 4,
+      targetActiveStrategies: 3,
+      maxActiveStrategies: 6,
       messageWeightFloor: 0.1,
+      strategyWeightFloor: 0.1,
       stagnationTicks: 7,
+      futilitySurvivalRate: 0.01,
+      futilityConfidence: 0.95,
+      futilityMinSends: 100,
     })
   })
 
@@ -46,6 +57,37 @@ describe('leverConfigSchema', () => {
 
   it('rejects a non-positive lookback window', () => {
     expect(() => leverConfigSchema.parse({ rewardLookbackDays: 0 })).toThrow()
+  })
+
+  it('leaves measurementsSince absent by default (no epoch cut)', () => {
+    expect('measurementsSince' in defaultLeverConfig).toBe(false)
+    expect(leverConfigSchema.parse({ measurementsSince: '2026-08-27' }).measurementsSince).toBe('2026-08-27')
+  })
+
+  it('rejects a non-date measurementsSince', () => {
+    expect(() => leverConfigSchema.parse({ measurementsSince: 'not-a-date' })).toThrow()
+    expect(() => leverConfigSchema.parse({ measurementsSince: '2026-08-27T00:00:00Z' })).toThrow()
+  })
+})
+
+describe('leverConfigInvariantViolation (write-path cross-field guard)', () => {
+  const effective = (over: Record<string, number>) => leverConfigSchema.parse(over)
+
+  it('defaults are valid', () => {
+    expect(leverConfigInvariantViolation(defaultLeverConfig)).toBeNull()
+  })
+
+  it('flags a variant target above its cap (cap lowered under the default target)', () => {
+    expect(leverConfigInvariantViolation(effective({ maxActiveArms: 2 }))).toContain('targetActiveArms')
+  })
+
+  it('flags a strategy target above its cap', () => {
+    expect(leverConfigInvariantViolation(effective({ targetActiveStrategies: 7 }))).toContain('targetActiveStrategies')
+    expect(leverConfigInvariantViolation(effective({ maxActiveStrategies: 2 }))).toContain('targetActiveStrategies')
+  })
+
+  it('accepts target equal to the cap (boundary)', () => {
+    expect(leverConfigInvariantViolation(effective({ targetActiveArms: 4, targetActiveStrategies: 6 }))).toBeNull()
   })
 })
 

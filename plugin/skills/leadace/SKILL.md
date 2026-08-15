@@ -26,6 +26,7 @@ allowed-tools:
   - mcp__plugin_leadace_api__update_tenant_settings
   - mcp__plugin_leadace_api__list_message_variants
   - mcp__plugin_leadace_api__upsert_message_variant
+  - mcp__plugin_leadace_api__upsert_discovery_strategy
   - mcp__plugin_leadace_api__list_project_prospects
   - mcp__plugin_leadace_api__list_tenant_prospects
   - mcp__plugin_leadace_api__list_organizations
@@ -221,11 +222,11 @@ channel enabled — the cycle skills pick the means up with no further wiring.
    like, account/login state, how proposals are submitted, rate limits / ToS, where
    replies land. Given a platform URL, offer to research it (`fetch_url.py` /
    WebSearch) and draft for review instead of asking everything.
-3. **Write both artifacts** (show to the user before saving): the `### <slug>` entry
-   in `## Prospect Discovery Sources` of `sales_strategy` (Status: active, How
-   references the playbook), and the `playbook_<slug>` document. If an open
-   `add-means` suggestion matches (`list_suggestions`), reuse its `dedupeKey`
-   as `<slug>` so the saved playbook auto-closes it.
+3. **Write both artifacts** (show to the user before saving): register the strategy
+   via `upsert_discovery_strategy` (slug + `approach` referencing the playbook), and
+   save the `playbook_<slug>` document. If an open `add-means` suggestion matches
+   (`list_suggestions`), reuse its `dedupeKey` as `<slug>` so the saved playbook
+   auto-closes it.
 4. **Enable the channel**: `update_project_settings` — add `"platform"` to
    `outboundChannels`, preserving existing entries.
 5. **Report**: slug, playbook saved, channel enabled; `/evaluate` promotes/demotes it

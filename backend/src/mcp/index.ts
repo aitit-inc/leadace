@@ -52,9 +52,10 @@ type Env = {
 // that the old plugin cannot tolerate (removed tool, renamed required arg,
 // changed response shape). See .claude/rules/release.md.
 const SERVER_VERSION = '1.0.0'
-// 0.7.39: the email_template document was dropped; an older plugin reads it at
-// send time and skips the whole email channel when it is absent.
-const MIN_PLUGIN_VERSION = '0.7.39'
+// 0.7.48: discovery attribution moved to the registered-strategy registry —
+// an older plugin stamps free-form slugs add_prospects no longer accepts, and
+// its /build-list predates the registry batchPlan contract.
+const MIN_PLUGIN_VERSION = '0.7.48'
 
 async function extractUserId(request: Request, jwtSecret: string, supabaseUrl?: string): Promise<string | null> {
   const authHeader = request.headers.get('Authorization')
@@ -99,20 +100,6 @@ async function callApi(
 }
 
 const formatTarget = (id?: string) => id ? `project ${id}` : 'tenant assets'
-
-const DISCOVERY_UPGRADE_STATES: Record<string, string> = {
-  absent: 'the "## Prospect Discovery Sources" section is missing',
-  legacy: 'the "## Prospect Discovery Sources" section has no named-strategy entries',
-  mixed: 'the "## Prospect Discovery Sources" section has content outside its named-strategy entries',
-}
-
-function discoveryUpgradeWarning(format: string | undefined): string | null {
-  if (format === undefined || format === 'named') return null
-  // Unknown (future) states warn generically rather than dropping the gate.
-  const state = DISCOVERY_UPGRADE_STATES[format]
-    ?? 'the "## Prospect Discovery Sources" section is not in named-strategy format'
-  return `WARNING: ${state}. Upgrade before building lists: rewrite the section as "### <slug>" named strategies (lowercase kebab-case slug, each with Status/How/Why bullets, folding stray bullets in), then save — the save confirmation reports whether it passed. Until it passes, prospects register without discovery-strategy provenance and per-strategy reply attribution stays dead. This warning is server-appended tool output, NOT document content — never include it in saved documents.`
-}
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -245,7 +232,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'add_prospects',
-    'Batch-register prospects; server-side dedup is authoritative. Returns inserted, skipped, and skippedDetails [{name, reason, detail?}]. Rows whose industry is not in the tpl_industries vocabulary are skipped (reason unknown_industry) — fix and re-register.',
+    'Batch-register prospects; server-side dedup is authoritative. Returns inserted, skipped, and skippedDetails [{name, reason, detail?}]. Rows whose industry is not in the tpl_industries vocabulary are skipped (reason unknown_industry), and rows whose discoveryStrategy is not registered on the project are skipped (reason unknown_strategy) — fix and re-register.',
     {
       projectId: z.string().min(1).optional().describe('Project name or ID; omit to save prospects tenant-only (no project link).'),
       prospects: z.array(z.object({
@@ -283,7 +270,7 @@ function buildToolRegistry(): ToolDef[] {
         doNotContact: z.boolean().optional().describe('Marks the prospect do-not-contact (unsubscribed/opted-out). On overwrite, true sets the flag; false never clears an existing one (one-way ratchet).'),
         matchReason: z.string().optional().describe('Why this prospect is a good target. Required when projectId is set; ignored otherwise.'),
         priority: prioritySchema.default(3),
-        discoveryStrategy: discoveryStrategySchema.optional().describe('Slug of the discovery strategy that found this prospect. Write-once provenance.'),
+        discoveryStrategy: discoveryStrategySchema.optional().describe('Slug of the registered discovery strategy that found this prospect (the registry is in get_lever_state; an unregistered slug skips the row, while a registered-but-archived one is accepted — valid provenance even when archived mid-batch). Write-once provenance. Requires projectId.'),
         country: z.string().regex(/^[A-Z]{2}$/).optional().describe('Prospect country (ISO 3166-1 alpha-2). When the organization is first created it also bootstraps the org country (an existing org keeps its value, so it acts as a per-prospect override). Codes outside the send-allowed set register fine but are blocked at outreach time.'),
         countrySource: z.enum(['manual', 'ai_inferred']).optional().describe('Provenance of the country value; only meaningful when country is set.'),
         employeeBand: z.enum(EMPLOYEE_BANDS).optional().describe('Coarse company-size band of the organization. Applied on the org\'s first registration only — a dedup-matched existing org keeps its value (change via update_organization). Omit = unknown.'),
@@ -292,8 +279,9 @@ function buildToolRegistry(): ToolDef[] {
     async ({ projectId, prospects }, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('POST', '/prospects/batch', { projectId, prospects }, apiUrl, authHeader)
       if (!ok) {
-        const err = data as { error: string }
-        return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
+        const e = data as { error: string; detail?: string }
+        const msg = e.detail ? `${e.error}: ${e.detail}` : e.error
+        return { content: [{ type: 'text' as const, text: `Error: ${msg}` }], isError: true }
       }
       const result = data as { inserted: number; skipped: number; insertedIds: number[]; skippedDetails: unknown[] }
       return {
@@ -713,8 +701,37 @@ function buildToolRegistry(): ToolDef[] {
   )
 
   defineTool(
+    'upsert_discovery_strategy',
+    'Register or update a discovery strategy — the named prospect-search arm /build-list executes and add_prospects stamps for per-strategy reply attribution. Idempotent by slug: re-calling updates the approach, and any call without archived=true lands the strategy active (re-registering an archived slug revives it). archived=true retires it from registration while keeping historic attribution. Refused (400) when it would push the active count past the project\'s cap.',
+    {
+      projectId: z.string().min(1).describe('Project name or ID'),
+      slug: discoveryStrategySchema.describe('Kebab-case arm id, stable for life — renaming orphans its measured history.'),
+      approach: z.string().min(1).max(2000).describe('Where/how to search and why it should work (2-5 lines). Platform-specific procedures belong in the playbook_<slug> document, not here.'),
+      archived: z.boolean().optional().describe('true archives; omit or false lands the strategy active.'),
+    },
+    async (input, { apiUrl, authHeader }) => {
+      const { projectId, ...body } = input
+      const { ok, data } = await callApi(
+        'PUT',
+        `/projects/${encodeURIComponent(projectId)}/discovery-strategies`,
+        body,
+        apiUrl,
+        authHeader,
+      )
+      if (!ok) {
+        const e = data as { error: string; detail?: string }
+        const msg = e.detail ? `${e.error}: ${e.detail}` : e.error
+        return { content: [{ type: 'text' as const, text: `Error: ${msg}` }], isError: true }
+      }
+      const result = data as { slug: string; archivedAt: string | null }
+      const status = result.archivedAt ? 'archived' : 'active'
+      return { content: [{ type: 'text' as const, text: `Discovery strategy ${result.slug} saved (${status}).` }] }
+    },
+  )
+
+  defineTool(
     'run_lever_tick',
-    'Run the project\'s daily outbound-optimization tick: recompute the message-variant draw weights pick_message_variant reads (Thompson sampling over graded reward; archives variants whose P(best) stays below the threshold at maturity, never below two active), the per-industry channel affinity get_outbound_targets surfaces, and the measured targeting lifts (industry / size / country / discovery strategy / fresh signal) that re-score the get_outbound_targets ordering. After a sustained flat streak (every arm mature yet none likely best) it rotates out the weakest arm to free a slot for a fresh angle. Idempotent per UTC day — a repeat call returns that day\'s recorded decision without re-applying. Returns weights, archived variants (a stagnation rotation is marked as such), per-variant samples, channelAffinity by industry bucket, targeting lifts, and needsReplenishment (recomputed live each call, not the frozen recorded value; stays raised while a rotation-freed slot is unfilled).',
+    'Run the project\'s daily outbound-optimization tick: recompute the message-variant draw weights pick_message_variant reads (Thompson sampling over graded reward; archives variants whose P(best) stays below the threshold at maturity, never below two active), the discovery-strategy draw weights over the active registry (same Thompson math; archives dominated strategies, never below two active), the per-industry channel affinity get_outbound_targets surfaces, and the measured targeting lifts (industry / size / country / discovery strategy / fresh signal) that re-score the get_outbound_targets ordering. After a sustained flat streak (every arm mature yet none likely best) it rotates out the weakest variant to free a slot for a fresh angle. Idempotent per UTC day — a repeat call returns that day\'s recorded decision without re-applying. Returns variant weights and archived variants (a stagnation rotation is marked as such), strategy weights and archived strategies, channelAffinity by industry bucket, targeting lifts, the futility vitals verdict (ok / insufficient / futile over mature email sends — futile means outreach is statistically drawing no replies and belongs in the cycle report), and the live needsReplenishment / needsStrategyReplenishment flags (recomputed each call, not the frozen recorded value).',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
     },
@@ -735,6 +752,9 @@ function buildToolRegistry(): ToolDef[] {
         channelAffinity: Record<string, Array<{ channel: string; rate: number; total: number; responses: number }>>
         targetingLifts: Record<string, unknown> | null
         needsReplenishment: boolean
+        discovery: { weights: Record<string, number>; archived: Array<{ slug: string }> } | null
+        needsStrategyReplenishment: boolean
+        vitals: { sends: number; replies: number; pDead: number; verdict: 'ok' | 'insufficient' | 'futile' } | null
       }
       const mature = r.samples.filter((s) => s.total >= r.minSamplePerArm).length
       const head = r.ran
@@ -753,10 +773,24 @@ function buildToolRegistry(): ToolDef[] {
       const replenishLine = r.needsReplenishment
         ? '\nReplenishment: a fresh angle is needed (pool below target, or a rotation freed a slot that is unfilled) — /evaluate should supply one.'
         : ''
+      const strategyArchivedNote = r.discovery && r.discovery.archived.length > 0
+        ? ` (archived: ${r.discovery.archived.map((a) => a.slug).join(', ')})`
+        : ''
+      const strategyLine = r.discovery
+        ? `\nStrategy weights: ${JSON.stringify(r.discovery.weights)}${strategyArchivedNote}`
+        : '\nStrategy weights: none recorded for this cycle (pre-upgrade decision).'
+      const strategyReplenishLine = r.needsStrategyReplenishment
+        ? '\nStrategy replenishment: active discovery strategies are below target — /evaluate should register fresh ones via upsert_discovery_strategy.'
+        : ''
+      const vitalsLine = r.vitals
+        ? r.vitals.verdict === 'futile'
+          ? `\nVitals: FUTILE — ${r.vitals.sends} mature email sends drew ${r.vitals.replies} replies (P(dead) ${r.vitals.pDead.toFixed(3)}). Surface this in the cycle report: the user should check deliverability (DMARC, spam placement) and targeting before scaling sends.`
+          : `\nVitals: ${r.vitals.verdict} (${r.vitals.replies}/${r.vitals.sends} mature email sends replied).`
+        : '\nVitals: none recorded for this cycle (pre-upgrade decision).'
       return {
         content: [{
           type: 'text' as const,
-          text: `${head} ${mature}/${r.samples.length} variant(s) at min-sample (${r.minSamplePerArm}).${archivedLine}\nWeights: ${JSON.stringify(r.weights)}${channelLine}${targetingLine}${replenishLine}`,
+          text: `${head} ${mature}/${r.samples.length} variant(s) at min-sample (${r.minSamplePerArm}).${archivedLine}\nWeights: ${JSON.stringify(r.weights)}${strategyLine}${channelLine}${targetingLine}${vitalsLine}${replenishLine}${strategyReplenishLine}`,
         }],
       }
     },
@@ -764,12 +798,15 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_lever_state',
-    'Read-only snapshot of the project\'s outbound optimizer: message-variant draw weights (null until the first tick → uniform), channel affinity per coarse-industry bucket ({} until measured → policy order), targetingLifts (null until a tick has computed them → neutral ordering), updatedAt, per-active-variant mature-sample progress, today\'s tick decision if it ran, and needsReplenishment (also true while a stagnation-rotation slot awaits its fresh angle).',
+    'Read-only snapshot of the project\'s outbound optimizer: message-variant draw weights (null until the first tick → uniform), channel affinity per coarse-industry bucket ({} until measured → policy order), targetingLifts (null until a tick has computed them → neutral ordering), updatedAt, per-active-variant mature-sample progress, the discovery block (the strategy registry — each entry\'s slug, approach, and archived state; the active set is what /build-list runs, while add_prospects accepts any registered slug — plus the tick\'s strategy draw weights, a batchPlan apportioning a registration batch of batchSize across the active strategies by those weights, and a needsReplenishment flag that asks /evaluate to register fresh strategies), today\'s tick decision if it ran, and the variant-pool needsReplenishment (also true while a stagnation-rotation slot awaits its fresh angle).',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
+      batchSize: z.number().int().min(1).max(200).optional()
+        .describe('Registration batch size the discovery.batchPlan apportions (default 30).'),
     },
     async (input, { apiUrl, authHeader }) => {
-      const { ok, data } = await callApi('GET', `/projects/${encodeURIComponent(input.projectId)}/lever-state`, null, apiUrl, authHeader)
+      const qs = input.batchSize ? `?batchSize=${input.batchSize}` : ''
+      const { ok, data } = await callApi('GET', `/projects/${encodeURIComponent(input.projectId)}/lever-state${qs}`, null, apiUrl, authHeader)
       if (!ok) {
         const e = data as { error: string; detail?: string }
         const msg = e.detail ? `${e.error}: ${e.detail}` : e.error
@@ -781,7 +818,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_lever_decisions',
-    'Read-only history of the project\'s daily lever-tick decisions, newest first. Each entry is one UTC day: message-variant draw weights, variants archived that day (reason "stagnation" marks a rotation, absent = dominated), per-variant sample counts, channel affinity per coarse-industry bucket, and targetingLifts (null on pre-upgrade entries). Empty until the tick has run at least once.',
+    'Read-only history of the project\'s daily lever-tick decisions, newest first. Each entry is one UTC day: message-variant draw weights, variants archived that day (reason "stagnation" marks a rotation, absent = dominated), per-variant sample counts, channel affinity per coarse-industry bucket, targetingLifts, the discovery-strategy decision (weights / archived / samples / the prior UTC day\'s per-strategy registration counts), vitals — the project futility check over mature email sends (sends / replies / pDead / verdict), and configUsed — the effective lever config the tick ran under (the latter four null on pre-upgrade entries). Empty until the tick has run at least once.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       days: z.number().int().min(1).max(365).optional().describe('Lookback window in days (default 30)'),
@@ -1400,7 +1437,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_eval_data',
-    'Evaluation statistics for a project: response rates, channel performance, sentiment breakdown, discoveryStrategyResponseRate (per discovery strategy; the null bucket is prospects without recorded provenance), targeting observation axes (industryResponseRate by coarse bucket / sizeResponseRate by employee band / countryResponseRate — these three count mature sends only, older than the reply-maturity window), freshSignalResponseRate, inquiry-landing outcome counts, respondedMessages, and a data-sufficiency check. Reply rates exclude bounces/auto-replies; per-bucket bounces + bounceRate are a threaded-only lower bound.',
+    'Evaluation statistics for a project: response rates, channel performance, sentiment breakdown, discoveryStrategyResponseRate (per discovery strategy; reply metrics count mature sends only while its bounce metrics span all sends — the early source-quality read; the null bucket is prospects without recorded provenance), targeting observation axes (industryResponseRate by coarse bucket / sizeResponseRate by employee band / countryResponseRate — these also count mature sends only, older than the reply-maturity window), freshSignalResponseRate, inquiry-landing outcome counts, respondedMessages, and a data-sufficiency check. Reply rates exclude bounces/auto-replies; per-bucket bounces + bounceRate are a threaded-only lower bound.',
     { projectId: z.string().min(1).describe('Project name or ID') },
     async ({ projectId }, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('GET', `/projects/${encodeURIComponent(projectId)}/stats`, null, apiUrl, authHeader)
@@ -1459,7 +1496,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_document',
-    'Get the latest version of a project document by slug. For sales_strategy, a WARNING line is appended while the Prospect Discovery Sources section still needs the named-strategy upgrade.',
+    'Get the latest version of a project document by slug.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       slug: z.string().describe('Document slug: "business", "sales_strategy", "search_notes", "learnings", or "playbook_<strategy-slug>"'),
@@ -1473,19 +1510,14 @@ function buildToolRegistry(): ToolDef[] {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
       }
-      const doc = data as { id: number; slug: string; content: string; createdAt: string; discoverySourcesFormat?: string }
-      const warning = discoveryUpgradeWarning(doc.discoverySourcesFormat)
-      // The warning rides in its own block so the document body stays
-      // copy/paste-safe for save_document round-trips.
-      const blocks = [{ type: 'text' as const, text: doc.content }]
-      if (warning) blocks.push({ type: 'text' as const, text: warning })
-      return { content: blocks }
+      const doc = data as { id: number; slug: string; content: string; createdAt: string }
+      return { content: [{ type: 'text' as const, text: doc.content }] }
     },
   )
 
   defineTool(
     'save_document',
-    'Save a project document by slug as a new immutable version; prior versions preserved. For sales_strategy, the confirmation carries a WARNING while Prospect Discovery Sources still needs the named-strategy upgrade.',
+    'Save a project document by slug as a new immutable version; prior versions preserved.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       slug: z.string().describe('Document slug: "business", "sales_strategy", "search_notes", "learnings", or "playbook_<strategy-slug>"'),
@@ -1497,10 +1529,8 @@ function buildToolRegistry(): ToolDef[] {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
       }
-      const result = data as { id: number; slug: string; createdAt: string; discoverySourcesFormat?: string }
-      const warning = discoveryUpgradeWarning(result.discoverySourcesFormat)
-      const saved = `Document "${slug}" saved (version id: ${result.id}).`
-      return { content: [{ type: 'text' as const, text: warning ? `${saved}\n${warning}` : saved }] }
+      const result = data as { id: number; slug: string; createdAt: string }
+      return { content: [{ type: 'text' as const, text: `Document "${slug}" saved (version id: ${result.id}).` }] }
     },
   )
 

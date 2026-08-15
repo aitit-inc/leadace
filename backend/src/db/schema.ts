@@ -19,12 +19,13 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
-import type { LeverConfigPatch } from '../domain/lever-config'
+import type { LeverConfig, LeverConfigPatch } from '../domain/lever-config'
 import type { FollowUpSequencePatch } from '../domain/follow-up-sequence'
 import type { Locale } from '../domain/locale'
 import type { ChannelAffinityMap, ChannelCoarseStat } from '../domain/channel-affinity'
 import type { CoarseIndustry } from '../domain/coarse-industry'
 import type { TargetingAxisStat, TargetingLifts } from '../domain/targeting-score'
+import type { VitalsAssessment } from '../domain/vital-signs'
 
 const bytea = customType<{ data: Uint8Array; driverData: Uint8Array }>({
   dataType() {
@@ -818,13 +819,41 @@ export const messageVariants = pgTable('message_variants', {
   index('idx_message_variants_active').on(table.projectId, table.archivedAt),
 ])
 
+// `archivedAt` retires a slug from registration while keeping historic
+// prospects.discovery_strategy attributable.
+export const discoveryStrategies = pgTable('discovery_strategies', {
+  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  projectId: text('project_id').notNull(),
+  slug: text('slug').notNull(),
+  approach: text('approach').notNull(),
+  archivedAt: timestamp('archived_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  unique('uq_discovery_strategy_project').on(table.projectId, table.slug),
+  foreignKey({
+    columns: [table.projectId, table.tenantId],
+    foreignColumns: [projects.id, projects.tenantId],
+    name: 'fk_discovery_strategy_project_tenant',
+  }).onDelete('cascade'),
+  index('idx_discovery_strategies_tenant').on(table.tenantId),
+  index('idx_discovery_strategies_active').on(table.projectId, table.archivedAt),
+])
+
 // `channel` is absent on pre-P3 rows and until the project has channel data;
 // `targeting` is absent on pre-Phase-B rows. The `subject` key predates the
 // message_variants rename and stays — renaming it would only force readers
 // into old/new branching. `pBest` is absent on pre-Phase-C rows, whose
 // `archived` entries carry Wilson-era { leaderLower, armUpper } instead of pBest.
 // `reason: 'stagnation'` marks a rotation archive (absent = dominance archive);
-// hasUnfulfilledRotation queries it by jsonb containment.
+// hasUnfulfilledRotation queries it by jsonb containment. `discovery` /
+// `configUsed` are absent on pre-strategy-bandit rows; configUsed snapshots the
+// effective config so old decisions replay exactly after config changes.
+// `discovery.registrations` (absent on pre-allocation rows) is the prior UTC
+// day's per-strategy registration counts — the plan-compliance record.
 export type LeverDecisionPayload = {
   subject: {
     weights: Record<string, number>
@@ -846,6 +875,15 @@ export type LeverDecisionPayload = {
       freshSignal: { withSignal: TargetingAxisStat; withoutSignal: TargetingAxisStat }
     }
   }
+  discovery?: {
+    weights: Record<string, number>
+    pBest: Record<string, number>
+    archived: Array<{ slug: string; pBest: number; n: number }>
+    samples: Array<{ slug: string; total: number; rewardSum: number }>
+    registrations?: Record<string, number>
+  }
+  vitals?: VitalsAssessment
+  configUsed?: LeverConfig
 }
 
 // Message-variant draw weights, one row per project. A separate table (not a
@@ -857,6 +895,8 @@ export const leverState = pgTable('lever_state', {
     .notNull()
     .references(() => tenants.id, { onDelete: 'cascade' }),
   variantWeights: jsonb('variant_weights').$type<Record<string, number>>().notNull().default({}),
+  // {} = no tick has weighed strategies yet → build-list spreads evenly.
+  strategyWeights: jsonb('strategy_weights').$type<Record<string, number>>().notNull().default({}),
   // {} = no measured preference → listReachable falls back to policy order.
   channelAffinity: jsonb('channel_affinity').$type<ChannelAffinityMap>().notNull().default({}),
   // NULL = no tick has computed lifts yet → listReachable uses neutral defaults.

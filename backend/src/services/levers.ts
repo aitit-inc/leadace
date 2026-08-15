@@ -1,9 +1,12 @@
-import { and, asc, desc, eq, gt, inArray, isNull, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import {
+  discoveryStrategies,
   leverDecisions,
   leverState,
   messageVariants,
+  projectProspects,
+  prospects,
   type LeverDecisionPayload,
 } from '../db/schema'
 import type { Db } from '../db/connection'
@@ -18,6 +21,10 @@ import {
   type StagnationTick,
   type VariantStat,
 } from '../domain/message-bandit'
+import { computeArmWeights, floorRescuedWeights, type ArmStat } from '../domain/arm-bandit'
+import { assessVitals, type VitalsAssessment } from '../domain/vital-signs'
+import { apportionLargestRemainder, type BatchPlanEntry } from '../domain/discovery-allocation'
+import type { LeverConfig } from '../domain/lever-config'
 import {
   aggregateByCoarse,
   computeChannelAffinity,
@@ -37,7 +44,8 @@ import { COARSE_TO_FINES, type CoarseIndustry } from '../domain/coarse-industry'
 import { ok, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { loadLeverConfig } from './project-settings'
-import { getVariantStats, getChannelStats, getTargetingStats } from './evaluations'
+import { getVariantStats, getChannelStats, getTargetingStats, getFutilityStats } from './evaluations'
+import { getActiveStrategySlugs, listDiscoveryStrategiesById } from './discovery-strategies'
 
 async function loadActiveVariantIds(db: Db, projectId: ProjectId): Promise<string[]> {
   const rows = await db
@@ -85,6 +93,37 @@ async function hasUnfulfilledRotation(
   return !fresh
 }
 
+// Prior-UTC-day registration counts per strategy — the plan-compliance record
+// (§ the tick journals what actually flowed in against yesterday's batchPlan).
+// Derived from project_prospects.created_at × prospects.discovery_strategy,
+// restricted to this project's registry (archived included — a slug planned
+// yesterday may be archived today; a provenance slug carried in by a
+// cross-project link is not an arm here and stays out, matching the bandit's
+// registry ∩ stats rule). A persistent gap between plan and registrations
+// marks a strategy the LLM cannot execute (exhausted or non-existent angle).
+async function loadPriorDayRegistrations(
+  db: Db,
+  projectId: ProjectId,
+  cycleDate: string,
+): Promise<Record<string, number>> {
+  const rows = await db
+    .select({ slug: prospects.discoveryStrategy, count: sql<number>`COUNT(*)::int` })
+    .from(projectProspects)
+    .innerJoin(prospects, eq(prospects.id, projectProspects.prospectId))
+    .innerJoin(discoveryStrategies, and(
+      eq(discoveryStrategies.projectId, projectProspects.projectId),
+      eq(discoveryStrategies.slug, prospects.discoveryStrategy),
+    ))
+    .where(and(
+      eq(projectProspects.projectId, projectId),
+      isNotNull(prospects.discoveryStrategy),
+      sql`${projectProspects.createdAt} >= ((${cycleDate}::date - 1)::timestamp AT TIME ZONE 'UTC')`,
+      sql`${projectProspects.createdAt} < ((${cycleDate}::date)::timestamp AT TIME ZONE 'UTC')`,
+    ))
+    .groupBy(prospects.discoveryStrategy)
+  return Object.fromEntries(rows.map((r) => [r.slug!, Number(r.count)]))
+}
+
 async function computeNeedsReplenishment(
   db: Db,
   projectId: ProjectId,
@@ -110,6 +149,11 @@ export type LeverTickResult = {
   // null on ran:false replays of pre-Phase-B decisions.
   targetingLifts: TargetingLifts | null
   needsReplenishment: boolean
+  // null on ran:false replays of pre-strategy-bandit decisions.
+  discovery: NonNullable<LeverDecisionPayload['discovery']> | null
+  needsStrategyReplenishment: boolean
+  // null on ran:false replays of pre-vitals decisions.
+  vitals: VitalsAssessment | null
 }
 
 function valueLiftCase(column: ReturnType<typeof sql>, lifts: TargetingAxisLift[]): ReturnType<typeof sql> {
@@ -209,10 +253,56 @@ export async function runLeverTick(
     ),
   }
 
+  // A stats slug outside the active registry stays baseline-only (e.g. carried
+  // in by a cross-project link); its own seeded stream so a discovery decision
+  // replays without re-running the variant Monte Carlo.
+  const activeSlugs = await getActiveStrategySlugs(db, projectId)
+  const strategyStats = new Map(
+    targetingStats.discoveryStrategy
+      .filter((s): s is typeof s & { value: string } => s.value !== null)
+      .map((s) => [s.value, s]),
+  )
+  const strategyArms: ArmStat[] = activeSlugs.map((slug) => ({
+    armId: slug,
+    total: strategyStats.get(slug)?.total ?? 0,
+    rewardSum: strategyStats.get(slug)?.rewardSum ?? 0,
+  }))
+  const discoveryDecision = computeArmWeights(
+    strategyArms,
+    {
+      minSamplePerArm: config.minSamplePerArm,
+      archiveThreshold: config.archiveThreshold,
+      weightFloor: config.strategyWeightFloor,
+    },
+    seededRng(`${cycleDate}:${projectId}:discovery`),
+  )
+  const discovery: NonNullable<LeverDecisionPayload['discovery']> = {
+    weights: discoveryDecision.weights,
+    pBest: discoveryDecision.pBest,
+    archived: discoveryDecision.toArchive.map(({ armId, pBest, n }) => ({ slug: armId, pBest, n })),
+    samples: strategyArms.map(({ armId, total, rewardSum }) => ({ slug: armId, total, rewardSum })),
+    registrations: await loadPriorDayRegistrations(db, projectId, cycleDate),
+  }
+
+  // Own seeded stream, like discovery: the vitals Monte Carlo must not shift
+  // the variant/discovery draws a replay would recompute. Deliberately NOT
+  // date-keyed: the verdict thresholds the sampled estimate, so a day-varying
+  // seed lets identical data flip futile⇄ok at the confidence boundary
+  // (measured: 298 zero-reply sends → pDead 0.9503 one day, 0.9498 the next)
+  // and the attention alert would flicker without new evidence.
+  const vitals = assessVitals(
+    await getFutilityStats(db, projectId, config),
+    config,
+    seededRng(`vitals:${projectId}`),
+  )
+
   const payload: LeverDecisionPayload = {
     subject: { weights: decision.weights, pBest: decision.pBest, archived: decision.toArchive, samples: arms },
     channel: { affinity: channelAffinity, samples: channelStats },
     targeting: { lifts: targetingLifts, samples: targetingStats },
+    discovery,
+    vitals,
+    configUsed: config,
   }
 
   const inserted = await db
@@ -239,10 +329,13 @@ export async function runLeverTick(
       channelAffinity: existing.decision.channel?.affinity ?? {},
       channelSamples: existing.decision.channel?.samples ?? [],
       targetingLifts: existing.decision.targeting?.lifts ?? null,
+      discovery: existing.decision.discovery ?? null,
+      vitals: existing.decision.vitals ?? null,
       // needsReplenishment is a live current-state signal (never persisted), not part
       // of the applied decision the fields above echo — a mid-day archive or config
       // change may shift it while the applied weights stay fixed.
       needsReplenishment: await computeNeedsReplenishment(db, projectId, activeIds.length, config),
+      needsStrategyReplenishment: activeSlugs.length < config.targetActiveStrategies,
     })
   }
 
@@ -258,12 +351,37 @@ export async function runLeverTick(
         isNull(messageVariants.archivedAt),
       ))
   }
+  const strategyArchiveSlugs = discoveryDecision.toArchive.map((a) => a.armId)
+  if (strategyArchiveSlugs.length > 0) {
+    await db
+      .update(discoveryStrategies)
+      .set({ archivedAt: now, updatedAt: now })
+      .where(and(
+        eq(discoveryStrategies.projectId, projectId),
+        inArray(discoveryStrategies.slug, strategyArchiveSlugs),
+        isNull(discoveryStrategies.archivedAt),
+      ))
+  }
   await db
     .insert(leverState)
-    .values({ projectId, tenantId, variantWeights: decision.weights, channelAffinity, targetingLifts, updatedAt: now })
+    .values({
+      projectId,
+      tenantId,
+      variantWeights: decision.weights,
+      strategyWeights: discoveryDecision.weights,
+      channelAffinity,
+      targetingLifts,
+      updatedAt: now,
+    })
     .onConflictDoUpdate({
       target: leverState.projectId,
-      set: { variantWeights: decision.weights, channelAffinity, targetingLifts, updatedAt: now },
+      set: {
+        variantWeights: decision.weights,
+        strategyWeights: discoveryDecision.weights,
+        channelAffinity,
+        targetingLifts,
+        updatedAt: now,
+      },
     })
 
   // fresh_signal is deliberately absent — time-varying, applied at read time.
@@ -291,9 +409,13 @@ export async function runLeverTick(
     channelAffinity,
     channelSamples: channelStats,
     targetingLifts,
+    discovery,
+    vitals,
     // Today's decision row is already inserted, so a rotation applied above
     // reads back as an unfulfilled rotation here.
     needsReplenishment: await computeNeedsReplenishment(db, projectId, activeIds.length - archiveIds.length, config),
+    needsStrategyReplenishment:
+      activeSlugs.length - strategyArchiveSlugs.length < config.targetActiveStrategies,
   })
 }
 
@@ -305,6 +427,13 @@ export type LeverStateVariant = {
   weight: number | null
 }
 
+const DEFAULT_BATCH_PLAN_SIZE = 30
+
+export const leverStateQuerySchema = z.object({
+  batchSize: z.coerce.number().int().min(1).max(200).default(DEFAULT_BATCH_PLAN_SIZE),
+})
+export type LeverStateQuery = z.infer<typeof leverStateQuerySchema>
+
 export type LeverStateView = {
   // null = no tick has run yet → pickMessageVariant draws uniformly.
   weights: Record<string, number> | null
@@ -314,6 +443,18 @@ export type LeverStateView = {
   updatedAt: string | null
   minSamplePerArm: number
   variants: LeverStateVariant[]
+  discovery: {
+    strategies: Array<{ slug: string; approach: string; archivedAt: string | null }>
+    // null = no lever_state row yet; {} = no tick has weighed strategies yet.
+    weights: Record<string, number> | null
+    // Server-side apportionment of the registration batch across active
+    // strategies (largest remainder over the tick's weights; uniform until a
+    // tick has weighed the active set). /build-list constructs its batch to
+    // this plan; a 0 count is an explicit skip.
+    batchPlan: BatchPlanEntry[]
+    // Active strategies below targetActiveStrategies → /evaluate registers fresh ones.
+    needsReplenishment: boolean
+  }
   todaysDecision: LeverDecisionPayload | null
   // Active variants below targetActiveArms, or a stagnation rotation freed a
   // slot that is still unfilled → /evaluate supplies a fresh angle.
@@ -324,16 +465,18 @@ export async function getLeverState(
   db: Db,
   tenantId: TenantId,
   projectRef: ProjectRef,
+  query: LeverStateQuery,
 ): Promise<ServiceResult<LeverStateView>> {
   const resolved = await resolveProject(db, tenantId, projectRef)
   if (!resolved.ok) return resolved
-  return getLeverStateById(db, tenantId, resolved.value)
+  return getLeverStateById(db, tenantId, resolved.value, query.batchSize)
 }
 
 export async function getLeverStateById(
   db: Db,
   tenantId: TenantId,
   projectId: ProjectId,
+  batchSize: number = DEFAULT_BATCH_PLAN_SIZE,
 ): Promise<ServiceResult<LeverStateView>> {
   const config = await loadLeverConfig(db, projectId)
   const activeIds = await loadActiveVariantIds(db, projectId)
@@ -346,6 +489,7 @@ export async function getLeverStateById(
   const [stateRow] = await db
     .select({
       variantWeights: leverState.variantWeights,
+      strategyWeights: leverState.strategyWeights,
       channelAffinity: leverState.channelAffinity,
       targetingLifts: leverState.targetingLifts,
       updatedAt: leverState.updatedAt,
@@ -376,6 +520,27 @@ export async function getLeverStateById(
     }
   })
 
+  const strategies = (await listDiscoveryStrategiesById(db, projectId)).map((s) => ({
+    slug: s.slug,
+    approach: s.approach,
+    archivedAt: s.archivedAt ? s.archivedAt.toISOString() : null,
+  }))
+  const activeSlugs = strategies.filter((s) => s.archivedAt === null).map((s) => s.slug)
+
+  // Apportion over the tick's weights restricted to the currently active set.
+  // An active slug the tick hasn't weighed yet (registered since) enters at
+  // the floor — the same rescue the next tick would grant it; when nothing
+  // carries weight (no tick yet, or a zero floor) the plan degrades to a
+  // uniform spread — the pre-bandit behavior.
+  const storedWeights = stateRow?.strategyWeights ?? {}
+  const planWeights = floorRescuedWeights(activeSlugs, storedWeights, config.strategyWeightFloor)
+  const batchPlan = apportionLargestRemainder(
+    Object.values(planWeights).reduce((acc, w) => acc + w, 0) > 0
+      ? planWeights
+      : Object.fromEntries(activeSlugs.map((slug) => [slug, 1])),
+    batchSize,
+  )
+
   return ok({
     weights,
     channelAffinity: stateRow?.channelAffinity ?? {},
@@ -383,6 +548,12 @@ export async function getLeverStateById(
     updatedAt: stateRow?.updatedAt ? stateRow.updatedAt.toISOString() : null,
     minSamplePerArm: config.minSamplePerArm,
     variants,
+    discovery: {
+      strategies,
+      weights: stateRow?.strategyWeights ?? null,
+      batchPlan,
+      needsReplenishment: activeSlugs.length < config.targetActiveStrategies,
+    },
     todaysDecision: today?.decision ?? null,
     needsReplenishment,
   })
@@ -401,6 +572,11 @@ export type LeverDecisionHistoryEntry = {
   channelAffinity: ChannelAffinityMap
   // null on pre-Phase-B decisions.
   targetingLifts: TargetingLifts | null
+  // Both null on pre-strategy-bandit decisions.
+  discovery: NonNullable<LeverDecisionPayload['discovery']> | null
+  // null on pre-vitals decisions.
+  vitals: VitalsAssessment | null
+  configUsed: LeverConfig | null
 }
 
 export async function getLeverDecisionsHistory(
@@ -429,6 +605,9 @@ export async function getLeverDecisionsHistory(
     samples: r.decision.subject.samples,
     channelAffinity: r.decision.channel?.affinity ?? {},
     targetingLifts: r.decision.targeting?.lifts ?? null,
+    discovery: r.decision.discovery ?? null,
+    vitals: r.decision.vitals ?? null,
+    configUsed: r.decision.configUsed ?? null,
   }))
   return ok({ decisions })
 }

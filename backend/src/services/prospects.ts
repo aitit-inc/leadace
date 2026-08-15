@@ -39,6 +39,7 @@ import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { resolveSendingIdentityId } from '../auth/google'
 import { getOutboundMode, loadLeverConfig, loadProjectOutboundAllowlist } from './project-settings'
+import { getActiveStrategySlugs } from './discovery-strategies'
 import {
   DEFAULT_FRESH_SIGNAL_LIFTS,
   PRIORITY_MULTIPLIERS,
@@ -57,6 +58,8 @@ import { isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG } from '../domain/url'
 import { ALLOWED_SEND_COUNTRIES } from '../domain/country'
 import { coarseIndustry, isKnownIndustry } from '../domain/coarse-industry'
 import type { ChannelRank } from '../domain/channel-affinity'
+import { drawExploreSlots } from '../domain/discovery-allocation'
+import { floorRescuedWeights } from '../domain/arm-bandit'
 
 // See get_outbound_targets / B §4.2-F.
 const SIGNAL_FRESH_DAYS = 14
@@ -348,7 +351,7 @@ export async function listReachable(
 
   const { limit } = query
 
-  const [quota, mailboxQuota, outboundMode, allowlist, leverConfig, stateRows] = await Promise.all([
+  const [quota, mailboxQuota, outboundMode, allowlist, leverConfig, stateRows, activeStrategySlugs] = await Promise.all([
     getRemainingOutreachQuota(db, tenantId, edition),
     // Resolve runs alongside the independent queries; only the mailbox cap depends on it.
     resolveSendingIdentityId(db, { tenantId, projectId }).then((id) =>
@@ -361,10 +364,12 @@ export async function listReachable(
       .select({
         channelAffinity: leverState.channelAffinity,
         targetingLifts: leverState.targetingLifts,
+        strategyWeights: leverState.strategyWeights,
       })
       .from(leverState)
       .where(eq(leverState.projectId, projectId))
       .limit(1),
+    getActiveStrategySlugs(db, projectId),
   ])
 
   if (isOutreachQuotaExhausted(quota)) {
@@ -555,19 +560,58 @@ export async function listReachable(
       .where(reachableCondition),
   ])
 
-  // Sequential: the random draw must exclude the top picks.
+  // Stratified exploration: each explore slot draws a stratum from the tick's
+  // weights, then a random reachable prospect within it. The unattributed
+  // stratum keeps no-strategy prospects (CSV imports, ad-hoc) in the
+  // exploration lane — without it the ordering becomes for them the de-facto
+  // selection gate explorationShare exists to prevent. Strata are disjoint,
+  // so their fills run concurrently; any shortfall falls back to a fully
+  // random draw.
+  // Sequential after the top query: every draw must exclude the top picks.
   const topIds = topRows.map((r) => r.ppId)
-  const exploreRows =
-    exploreCount > 0
+  // '*' cannot collide with a slug (slugs are kebab-case).
+  const UNATTRIBUTED_STRATUM = '*'
+  const liveWeights = {
+    ...floorRescuedWeights(
+      activeStrategySlugs,
+      stateRows[0]?.strategyWeights ?? {},
+      leverConfig.strategyWeightFloor,
+    ),
+    [UNATTRIBUTED_STRATUM]: leverConfig.strategyWeightFloor,
+  }
+  const slotCounts = exploreCount > 0 ? drawExploreSlots(liveWeights, exploreCount, Math.random) : {}
+  const strataRows = (await Promise.all(
+    Object.entries(slotCounts).map(([slug, count]) =>
+      reachableSelect()
+        .where(and(
+          reachableCondition,
+          slug === UNATTRIBUTED_STRATUM
+            ? activeStrategySlugs.length > 0
+              ? or(
+                  isNull(prospects.discoveryStrategy),
+                  notInArray(prospects.discoveryStrategy, activeStrategySlugs),
+                )
+              : undefined
+            : eq(prospects.discoveryStrategy, slug),
+          topIds.length > 0 ? notInArray(projectProspects.id, topIds) : undefined,
+        ))
+        .orderBy(sql`random()`)
+        .limit(count),
+    ),
+  )).flat()
+  const pickedIds = [...topIds, ...strataRows.map((r) => r.ppId)]
+  const shortfall = exploreCount - strataRows.length
+  const fallbackRows =
+    shortfall > 0
       ? await reachableSelect()
           .where(and(
             reachableCondition,
-            topIds.length > 0 ? notInArray(projectProspects.id, topIds) : undefined,
+            pickedIds.length > 0 ? notInArray(projectProspects.id, pickedIds) : undefined,
           ))
           .orderBy(sql`random()`)
-          .limit(exploreCount)
+          .limit(shortfall)
       : []
-  const rows = [...topRows, ...exploreRows]
+  const rows = [...topRows, ...strataRows, ...fallbackRows]
 
   const summary = summaryRows[0] ?? { total: 0, email: 0, formOnly: 0, snsOnly: 0, platformOnly: 0 }
   const channelAffinityByBucket = stateRows[0]?.channelAffinity ?? {}

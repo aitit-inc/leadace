@@ -266,6 +266,8 @@ export async function getDashboardSummary(
 
   const attention = deriveAttentionItems({
     ...attentionInputRes.value,
+    // Own project only — the tenant-wide bell still names every futile project.
+    futileProjects: attentionInputRes.value.futileProjects.filter((p) => p.projectId === projectId),
     project: {
       outboundChannelsConfigured: outboundAllowlist.outboundChannels.length > 0,
       pendingDrafts: Number(pendingDraftsRows[0]?.count ?? 0),

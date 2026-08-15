@@ -19,6 +19,7 @@ allowed-tools:
   - mcp__plugin_leadace_api__update_prospect_status
   - mcp__plugin_leadace_api__get_eval_data
   - mcp__plugin_leadace_api__run_lever_tick
+  - mcp__plugin_leadace_api__get_lever_state
   - mcp__plugin_leadace_api__get_document
   - mcp__plugin_leadace_api__save_document
   - mcp__plugin_leadace_api__get_master_document
@@ -107,9 +108,9 @@ After receiving the summary from the sub-agent, report it to the user.
 
 ### 5b. run_lever_tick (outbound optimization)
 
-Run every cycle, right after evaluate. Call `mcp__plugin_leadace_api__run_lever_tick` once with `projectId: "$0"` — a single deterministic backend call, no sub-agent. From mature reply data it recomputes (1) the server-side message-variant draw weights (Thompson sampling; archives a variant whose P(best) stays below the threshold at maturity, and after a sustained flat streak where every mature angle is statistically indistinguishable, rotates out the weakest — marked `reason: "stagnation"` — so the next cycle's evaluate supplies a fresh angle), (2) the per-industry channel affinity that `get_outbound_targets` surfaces, and (3) the targeting lifts behind the `get_outbound_targets` ordering. All leave low-volume projects on their current behavior until enough data accrues. Idempotent per UTC day, so re-running the cycle is safe.
+Run every cycle, right after evaluate. Call `mcp__plugin_leadace_api__run_lever_tick` once with `projectId: "$0"` — a single deterministic backend call, no sub-agent. From mature reply data it recomputes (1) the server-side message-variant draw weights (Thompson sampling; archives a variant whose P(best) stays below the threshold at maturity, and after a sustained flat streak where every mature angle is statistically indistinguishable, rotates out the weakest — marked `reason: "stagnation"` — so the next cycle's evaluate supplies a fresh angle), (2) the discovery-strategy draw weights over the active registry (same Thompson math; archives dominated strategies, never below two active — the next cycle's evaluate registers fresh ones when the pool falls below target), (3) the per-industry channel affinity that `get_outbound_targets` surfaces, and (4) the targeting lifts behind the `get_outbound_targets` ordering, and (5) the futility vitals — whether mature email sends are statistically drawing any replies at all. All leave low-volume projects on their current behavior until enough data accrues. Idempotent per UTC day, so re-running the cycle is safe.
 
-Report the one-line result to the user (whether it ran or was already done today, sample progress, any archived variants, channel affinity buckets).
+Report the one-line result to the user (whether it ran or was already done today, sample progress, any archived variants, channel affinity buckets, and the vitals verdict). A FUTILE vitals verdict must also reach the step 9 wrap-up report: it means outreach is drawing no replies and the user should check deliverability and targeting before the loop keeps sending.
 
 ### 6. Check List Remaining and Determine Execution Order
 
@@ -220,7 +221,7 @@ Include the following in the prompt:
 - Target count
 - Read Phase 1 (steps 1-5) of `${CLAUDE_PLUGIN_ROOT}/skills/build-list/SKILL.md` and follow its procedure
 - **Contact retrieval (email, form, etc.) is not needed**. Collect candidate name, official URL, overview, industry, country, match reason, and priority
-- After completion, return the candidate list as a JSON array (each object: name, organization_name, website_url, overview, industry, country, match_reason, priority (numeric 1-5 per build-list SKILL.md definition), discovery_strategy (slug of the named strategy that surfaced the candidate, per build-list step 3))
+- After completion, return the candidate list as a JSON array (each object: name, organization_name, website_url, overview, industry, country, match_reason, priority (numeric 1-5 per build-list SKILL.md definition), discovery_strategy (slug of the named strategy that surfaced the candidate, per build-list step 3)), plus a `planCompliance` summary: per-strategy planned vs collected counts (build-list step 3's `batchPlan`) with shortfall reasons
 - Also update search notes via `mcp__plugin_leadace_api__save_document` with `projectId: "$0"`, `slug: "search_notes"`
 
 **8a2. Pre-dedup filter (main context)**
@@ -249,6 +250,7 @@ into **batches of 10** and launch a sub-agent for each.
 
 Include the following in each sub-agent's prompt:
 - List of assigned candidates (pass the relevant portion from 8a output)
+- The active strategies' `approach` text — read `discovery.strategies` (entries with `archivedAt: null`) from `mcp__plugin_leadace_api__get_lever_state` with `projectId: "$0"` once in the main context and pass it along; the enrichment procedure's external-search step draws its platform / directory list from it
 - Retrieve the contact enrichment procedure via `mcp__plugin_leadace_api__get_master_document` with `slug: "tpl_enrich_contacts"` and follow its procedure
 - Explore each candidate's official site to retrieve email addresses, contact form URLs, and SNS accounts
 - After completion, return results as a JSON array
@@ -276,13 +278,15 @@ For each prospect, construct the MCP tool fields:
 - Plus all other fields: `name`, `overview`, `websiteUrl`, `email`, `contactFormUrl`, `formType`, `snsAccounts`, `matchReason`, `priority`, `discoveryStrategy` (from 8a's `discovery_strategy`), etc.
 - **At least one of `email`, `contactFormUrl`, `snsAccounts` must be set** (prospects without contact channel are rejected)
 
-The server returns `skippedDetails` with `{name, reason}` for rows it dedup-rejected (`already_in_project` / `email_duplicate` / `form_url_duplicate` / `do_not_contact` / `duplicate_in_batch`). Surface the breakdown in the completion report so the user can see how much of the candidate pool was already covered.
+The server returns `skippedDetails` with `{name, reason}` for rows it rejected (`already_in_project` / `email_duplicate` / `form_url_duplicate` / `do_not_contact` / `duplicate_in_batch` / `unknown_industry` / `unknown_strategy`). Surface the breakdown in the completion report so the user can see how much of the candidate pool was already covered.
 
 **8d. Reachable recheck and summary output**
 
 After build-list completes, re-check reachable count via `mcp__plugin_leadace_api__get_outbound_targets` with `projectId: "$0"` and `limit: 1`.
 
-Report build-list summary (added count, reachable count, etc.) to the user.
+Report build-list summary (added count, reachable count, and per-strategy plan
+compliance — 8a's `planCompliance` reconciled against 8c's registration
+results, shortfalls noted with reason) to the user.
 
 If step 6 determined to run build-list first, proceed to step 7 (outbound) from here.
 
@@ -294,7 +298,7 @@ Include the following in the prompt:
 - Project ID: `$0`
 - Execution date and time: the datetime obtained in step 1
 - Phase summaries collected from sub-agents during this cycle (check-responses, evaluate, outbound, build-list)
-- The lever / trajectory narration from evaluate and step 5b (current response rate, which message angle / channel affinity is leading, sample progress, any angles added or archived this cycle with reason and numbers, any revisit-strategy suggestion raised)
+- The lever / trajectory narration from evaluate and step 5b (current response rate, which message angle / channel affinity is leading, sample progress, any angles added or archived this cycle with reason and numbers, any revisit-strategy suggestion raised, and the vitals verdict when step 5b reported FUTILE)
 - Any autonomous execution-order decisions taken this cycle and why (email depletion → ran build-list first; outbound success rate < 30% → aborted; form submissions capped at 5 → N carried to next cycle; total reachable 0 → outbound skipped). "None" if the cycle ran straight through.
 
 **Completion Notification Email**

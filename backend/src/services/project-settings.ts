@@ -21,7 +21,7 @@ import { ALLOWED_SEND_COUNTRIES } from '../domain/country'
 import { composeFooterBlock, replyUnsubscribeFooterLine } from '../domain/inquiry-footer'
 import { localeSchema, type Locale } from '../domain/locale'
 import { loadTenantSettings, localizeComplianceIdentity } from './tenants'
-import { leverConfigSchema, leverConfigPatchSchema, type LeverConfig } from '../domain/lever-config'
+import { leverConfigSchema, leverConfigPatchSchema, leverConfigInvariantViolation, type LeverConfig } from '../domain/lever-config'
 import {
   followUpSequenceSchema,
   followUpSequencePatchSchema,
@@ -365,6 +365,13 @@ export async function updateProjectSettings(
         'The inquiry landing appends a per-prospect link the static footer cannot carry. Reset the footer to default to enable the inquiry landing, or disable the inquiry landing to customize the footer.',
       )
     }
+  }
+
+  // leverConfig is whole-cell replace, so defaults + this patch IS the future
+  // effective config — cross-field invariants are checkable at the write.
+  if (patch.leverConfig !== undefined) {
+    const violation = leverConfigInvariantViolation(leverConfigSchema.parse(patch.leverConfig))
+    if (violation) return err('INVALID_INPUT', 'Invalid lever config', violation)
   }
 
   // FK is the atomic guarantee; this pre-check turns the common case into a clean 400.

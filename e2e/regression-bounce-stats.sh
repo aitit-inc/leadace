@@ -7,9 +7,11 @@
 #
 # Covers, against the local stack (localhost:8787 API + 54322 Postgres):
 #
-#   Seed: 4 US prospects registered under one discoveryStrategy slug, 4
-#   'sent' email logs on a dedicated dummy sending identity assigned to the
-#   project. L1/L2 get a message_id (threadable); L3/L4 stay unthreaded.
+#   Seed: 4 US prospects registered under one registered discoveryStrategy
+#   slug, 4 'sent' email logs on a dedicated dummy sending identity assigned
+#   to the project, backdated past the reply-maturity window (the strategy
+#   bucket's reply metrics count mature sends only). L1/L2 get a message_id
+#   (threadable); L3/L4 stay unthreaded.
 #   Responses: L1 bounce, L3 bounce (unthreaded), L4 reply.
 #
 #   1. GET /projects/:id/stats → discoveryStrategyResponseRate slug bucket:
@@ -165,6 +167,9 @@ say "project_id=$PROJECT_ID"
 ASSIGN_RESP="$(api PUT "/api/projects/$PROJECT_ID/settings" "$(jq -nc --arg i "$IDENTITY_ID" '{sendingIdentityId:$i}')")"
 assert_eq "project assigned to dummy identity" "$(echo "$ASSIGN_RESP" | jq -r '.sendingIdentityId // ""')" "$IDENTITY_ID"
 
+STRAT_RESP="$(api PUT "/api/projects/$PROJECT_ID/discovery-strategies" "$(jq -nc --arg s "$SLUG" '{slug:$s, approach:"e2e: bounce probe strategy"}')")"
+assert_eq "strategy $SLUG registered active" "$(echo "$STRAT_RESP" | jq -r '.archivedAt // "active"')" "active"
+
 SEED_BODY="$(jq -nc --arg pid "$PROJECT_ID" \
   --argjson a "$(mkseed a)" --argjson b "$(mkseed b)" --argjson c "$(mkseed c)" --argjson d "$(mkseed d)" \
   '{projectId:$pid, prospects:[$a,$b,$c,$d]}')"
@@ -181,7 +186,10 @@ L1="$(send_email "$P_A")"; L2="$(send_email "$P_B")"; L3="$(send_email "$P_C")";
 # POST /api/outreach never sets message_id (only real sends do), so patch the
 # threadable flag directly — same precedent as the warmup script's column pokes.
 psql_local "UPDATE outreach_logs SET message_id='<$RUN_TAG-'||id||'@example.com>' WHERE id IN ($L1,$L2);" > /dev/null
-say "logs: threadable=$L1,$L2 unthreaded=$L3,$L4"
+# 15 days clears the reply-maturity window (14) yet stays inside
+# mailbox-health's trailing-30d window (Test 3).
+psql_local "UPDATE outreach_logs SET sent_at = sent_at - interval '15 days' WHERE id IN ($L1,$L2,$L3,$L4);" > /dev/null
+say "logs: threadable=$L1,$L2 unthreaded=$L3,$L4 (backdated 15 days)"
 
 step "seed responses: bounce on L1 (threaded), bounce on L3 (unthreaded), reply on L4"
 record_response "$L1" bounce

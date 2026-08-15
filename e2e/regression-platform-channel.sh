@@ -168,6 +168,10 @@ PROJECT_ID="$(echo "$CREATE_RESP" | jq -r '.id // ""')"
 [[ -n "$PROJECT_ID" ]] || { echo "create-project failed: $CREATE_RESP" >&2; exit 1; }
 say "project_id=$PROJECT_ID"
 
+# add_prospects skips unregistered slugs (unknown_strategy).
+api PUT "/api/projects/$PROJECT_ID/discovery-strategies" "$(jq -nc --arg s "$STRATEGY_SLUG" '{slug:$s, approach:"e2e: crowdsourced postings"}')" > /dev/null
+say "registered strategy $STRATEGY_SLUG"
+
 step "(1) registration: platformUrl-only passes; no-channel row is 400"
 SEED_RESP="$(api POST /api/prospects/batch "$(jq -nc --arg pid "$PROJECT_ID" --argjson a "$(mkplatform 1)" '{projectId:$pid, prospects:[$a]}')")"
 assert_eq "platform-only prospect inserted" "$(echo "$SEED_RESP" | jq -r '.inserted // 0')" "1"

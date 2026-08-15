@@ -85,6 +85,11 @@ export async function getVariantStats(
       : undefined
   const forgetBare = lookbackDays === undefined ? sql`` : sql` AND sent_at >= now() - make_interval(days => ${lookbackDays})`
   const forgetOl = lookbackDays === undefined ? sql`` : sql` AND ol.sent_at >= now() - make_interval(days => ${lookbackDays})`
+  const epoch = applyLookback ? config.measurementsSince : undefined
+  // The epoch is a UTC date; a bare `>= date` comparison would promote it at
+  // the DB session TimeZone (same reason loadPriorDayRegistrations pins UTC).
+  const epochBare = epoch === undefined ? sql`` : sql` AND sent_at >= ((${epoch}::date)::timestamp AT TIME ZONE 'UTC')`
+  const epochOl = epoch === undefined ? sql`` : sql` AND ol.sent_at >= ((${epoch}::date)::timestamp AT TIME ZONE 'UTC')`
   const exec = async <T extends Record<string, unknown>>(q: ReturnType<typeof sql>): Promise<T[]> =>
     Array.from(await db.execute<T>(q)) as T[]
 
@@ -92,18 +97,18 @@ export async function getVariantStats(
     exec<{ variantId: string; total: string | number }>(sql`SELECT variant_id AS "variantId", COUNT(*)::int AS total
              FROM outreach_logs
              WHERE project_id = ${projectId} AND status = ${SENT}
-               AND variant_id IS NOT NULL AND sent_at < ${matureBefore}${forgetBare}
+               AND variant_id IS NOT NULL AND sent_at < ${matureBefore}${forgetBare}${epochBare}
              GROUP BY variant_id ORDER BY variant_id`),
     exec<{ variantId: string; responses: string | number }>(sql`SELECT ol.variant_id AS "variantId", COUNT(DISTINCT ol.id)::int AS responses
              FROM outreach_logs ol JOIN responses r ON r.outreach_log_id = ol.id
              WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}
-               AND ol.variant_id IS NOT NULL AND ol.sent_at < ${matureBefore}${forgetOl}
+               AND ol.variant_id IS NOT NULL AND ol.sent_at < ${matureBefore}${forgetOl}${epochOl}
                AND r.response_type NOT IN ('bounce', 'auto_reply')
              GROUP BY ol.variant_id`),
     exec<{ variantId: string; responseType: ResponseType; sentiment: Sentiment; count: string | number }>(sql`SELECT ol.variant_id AS "variantId", r.response_type AS "responseType", r.sentiment, COUNT(*)::int AS count
              FROM outreach_logs ol JOIN responses r ON r.outreach_log_id = ol.id
              WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}
-               AND ol.variant_id IS NOT NULL AND ol.sent_at < ${matureBefore}${forgetOl}
+               AND ol.variant_id IS NOT NULL AND ol.sent_at < ${matureBefore}${forgetOl}${epochOl}
                AND r.response_type NOT IN ('bounce', 'auto_reply')
              GROUP BY ol.variant_id, r.response_type, r.sentiment`),
   ])
@@ -137,6 +142,10 @@ export async function getChannelStats(
 ): Promise<ChannelFineStat[]> {
   const SENT: OutreachStatus = 'sent'
   const matureBefore = sql`now() - make_interval(days => ${config.rewardWindowDays})`
+  // Tick-path only — the epoch always applies so channel affinity re-baselines
+  // with the other lever aggregates.
+  const epoch = config.measurementsSince
+  const since = epoch === undefined ? sql`` : sql` AND ol.sent_at >= ((${epoch}::date)::timestamp AT TIME ZONE 'UTC')`
   const exec = async <T extends Record<string, unknown>>(q: ReturnType<typeof sql>): Promise<T[]> =>
     Array.from(await db.execute<T>(q)) as T[]
 
@@ -144,14 +153,14 @@ export async function getChannelStats(
     exec<{ channel: Channel; industry: string | null; total: string | number }>(sql`SELECT ol.channel AS "channel", p.industry AS "industry", COUNT(*)::int AS total
              FROM outreach_logs ol JOIN prospects p ON p.id = ol.prospect_id
              WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}
-               AND ol.sent_at < ${matureBefore}
+               AND ol.sent_at < ${matureBefore}${since}
              GROUP BY ol.channel, p.industry`),
     exec<{ channel: Channel; industry: string | null; responses: string | number }>(sql`SELECT ol.channel AS "channel", p.industry AS "industry", COUNT(DISTINCT ol.id)::int AS responses
              FROM outreach_logs ol
                JOIN prospects p ON p.id = ol.prospect_id
                JOIN responses r ON r.outreach_log_id = ol.id
              WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}
-               AND ol.sent_at < ${matureBefore}
+               AND ol.sent_at < ${matureBefore}${since}
                AND r.response_type NOT IN ('bounce', 'auto_reply')
              GROUP BY ol.channel, p.industry`),
   ])
@@ -195,6 +204,8 @@ export async function getTargetingStats(
       ? config.rewardWindowDays + config.rewardLookbackDays
       : undefined
   const forget = lookbackDays === undefined ? sql`` : sql` AND ol.sent_at >= now() - make_interval(days => ${lookbackDays})`
+  const epoch = applyLookback ? config.measurementsSince : undefined
+  const since = epoch === undefined ? sql`` : sql` AND ol.sent_at >= ((${epoch}::date)::timestamp AT TIME ZONE 'UTC')`
   const exec = async <T extends Record<string, unknown>>(q: ReturnType<typeof sql>): Promise<T[]> =>
     Array.from(await db.execute<T>(q)) as T[]
 
@@ -207,7 +218,7 @@ export async function getTargetingStats(
                  JOIN prospects p ON p.id = ol.prospect_id
                  JOIN organizations o ON o.id = p.organization_id
                WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}
-                 AND ol.sent_at < ${matureBefore}${forget} AND ${notBounced}
+                 AND ol.sent_at < ${matureBefore}${forget}${since} AND ${notBounced}
                GROUP BY 1`),
       exec<{ value: string | null; responseType: ResponseType; sentiment: Sentiment; count: string | number }>(sql`SELECT ${axisExpr} AS value, r.response_type AS "responseType", r.sentiment, COUNT(*)::int AS count
                FROM outreach_logs ol
@@ -215,7 +226,7 @@ export async function getTargetingStats(
                  JOIN organizations o ON o.id = p.organization_id
                  JOIN responses r ON r.outreach_log_id = ol.id
                WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}
-                 AND ol.sent_at < ${matureBefore}${forget} AND ${notBounced}
+                 AND ol.sent_at < ${matureBefore}${forget}${since} AND ${notBounced}
                  AND r.response_type NOT IN ('bounce', 'auto_reply')
                GROUP BY 1, r.response_type, r.sentiment`),
     ])
@@ -266,6 +277,36 @@ export async function getTargetingStats(
       withoutSignal: freshSignalRaw.find((s) => s.value === 'without') ?? EMPTY_STAT('without'),
     },
   }
+}
+
+// No forgetting window — futility judges the whole current regime, so only
+// measurementsSince narrows it. `replies` counts replied sends (not reply
+// rows) so it stays ≤ sends for the Beta posterior.
+export async function getFutilityStats(
+  db: Db,
+  projectId: ProjectId,
+  config: LeverConfig,
+): Promise<{ sends: number; replies: number }> {
+  const SENT: OutreachStatus = 'sent'
+  const EMAIL: Channel = 'email'
+  const matureBefore = sql`now() - make_interval(days => ${config.rewardWindowDays})`
+  const epoch = config.measurementsSince
+  const since = epoch === undefined ? sql`` : sql` AND ol.sent_at >= ((${epoch}::date)::timestamp AT TIME ZONE 'UTC')`
+  const rows = Array.from(
+    await db.execute<{ sends: string | number; replies: string | number }>(sql`
+      SELECT
+        COUNT(*)::int AS sends,
+        COUNT(*) FILTER (WHERE EXISTS (
+          SELECT 1 FROM responses r WHERE r.outreach_log_id = ol.id
+            AND r.response_type NOT IN ('bounce', 'auto_reply')
+        ))::int AS replies
+      FROM outreach_logs ol
+      WHERE ol.project_id = ${projectId} AND ol.status = ${SENT} AND ol.channel = ${EMAIL}
+        AND ol.sent_at < ${matureBefore}${since}
+        AND NOT EXISTS (SELECT 1 FROM responses rb WHERE rb.outreach_log_id = ol.id AND rb.response_type = 'bounce')
+    `),
+  )
+  return { sends: Number(rows[0]?.sends ?? 0), replies: Number(rows[0]?.replies ?? 0) }
 }
 
 export async function getProjectStats(
@@ -349,9 +390,11 @@ export async function getProjectStats(
                  WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}
                  GROUP BY ol.channel, NULLIF(TRIM(p.industry), '')`),
     // Bounce denominator is threadable email sends (bounceEligible), not total: a form/SNS send can't bounce.
+    // Reply metrics count mature sends only (parity with the other axes); bounce
+    // metrics span all sends — evaluate's early demote signal must not lag the maturity window.
     rawQuery<{ strategy: string | null; total: string | number; responses: string | number; bounces: string | number; bounceEligible: string | number }>(sql`SELECT p.discovery_strategy AS strategy,
-                   COUNT(DISTINCT ol.id)::int AS total,
-                   COUNT(DISTINCT ol.id) FILTER (WHERE r.id IS NOT NULL AND r.response_type NOT IN ('bounce', 'auto_reply'))::int AS responses,
+                   COUNT(DISTINCT ol.id) FILTER (WHERE ol.sent_at < ${matureBefore})::int AS total,
+                   COUNT(DISTINCT ol.id) FILTER (WHERE r.id IS NOT NULL AND r.response_type NOT IN ('bounce', 'auto_reply') AND ol.sent_at < ${matureBefore})::int AS responses,
                    COUNT(DISTINCT ol.id) FILTER (WHERE r.response_type = 'bounce' AND ol.channel = 'email' AND ol.message_id IS NOT NULL)::int AS bounces,
                    COUNT(DISTINCT ol.id) FILTER (WHERE ol.channel = 'email' AND ol.message_id IS NOT NULL)::int AS "bounceEligible"
                  FROM outreach_logs ol

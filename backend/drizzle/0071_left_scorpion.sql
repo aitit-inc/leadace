@@ -1,0 +1,1 @@
+ALTER TABLE "lever_state" ADD COLUMN "strategy_weights" jsonb DEFAULT '{}'::jsonb NOT NULL;

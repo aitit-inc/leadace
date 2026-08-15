@@ -12,6 +12,7 @@ allowed-tools:
   - mcp__plugin_leadace_api__get_lever_decisions
   - mcp__plugin_leadace_api__list_message_variants
   - mcp__plugin_leadace_api__upsert_message_variant
+  - mcp__plugin_leadace_api__upsert_discovery_strategy
   - mcp__plugin_leadace_api__record_suggestion
   - mcp__plugin_leadace_api__get_document
   - mcp__plugin_leadace_api__save_document
@@ -20,7 +21,7 @@ allowed-tools:
 
 # Evaluate - PDCA Evaluation & Improvement
 
-A skill that analyzes sales activity result data, reports on performance, and applies the improvements it still owns — targeting definitions / search keywords (hypothesis generation that steers /build-list) and the discovery-strategy portfolio (`## Prospect Discovery Sources`). Messaging (message angles), channel ranking, and the outbound selection order (measured targeting lifts × ordering score) are optimized deterministically by the daily lever tick; evaluate **reads and narrates** those, it does not rewrite them as strategy prose and it does not touch selection order.
+A skill that analyzes sales activity result data, reports on performance, and applies the improvements it still owns — targeting definitions / search keywords (hypothesis generation that steers /build-list) and the discovery-strategy portfolio (the registry managed via `upsert_discovery_strategy`). Messaging (message angles), channel ranking, and the outbound selection order (measured targeting lifts × ordering score) are optimized deterministically by the daily lever tick; evaluate **reads and narrates** those, it does not rewrite them as strategy prose and it does not touch selection order.
 
 **Before starting:** `Read` `${CLAUDE_PLUGIN_ROOT}/references/workspace-conventions.md` and follow the cross-cutting conventions there (data storage, MCP error handling, document writes, output discipline).
 
@@ -33,7 +34,7 @@ A skill that analyzes sales activity result data, reports on performance, and ap
 In parallel, call:
 - `mcp__plugin_leadace_api__get_eval_data` with `projectId: "$0"`
 - `mcp__plugin_leadace_api__get_rejection_feedback_summary` with `projectId: "$0"`, `windowDays: 30`, `scope: "tactical"`
-- `mcp__plugin_leadace_api__get_lever_state` with `projectId: "$0"` — current message-variant draw weights, channel affinity, targeting lifts, and per-variant maturity (read-only)
+- `mcp__plugin_leadace_api__get_lever_state` with `projectId: "$0"` — current message-variant draw weights, channel affinity, targeting lifts, per-variant maturity, and the discovery block (`discovery.strategies`: slug / approach / archived state; `discovery.weights`: the tick's strategy draw weights; `discovery.needsReplenishment`) (read-only)
 - `mcp__plugin_leadace_api__get_lever_decisions` with `projectId: "$0"` — the daily tick's decision history (newest first) for trend narration
 
 If `get_eval_data` returns a "Project not found" error, instruct the user to run `/leadace` first and **abort**.
@@ -41,8 +42,8 @@ If `get_eval_data` returns a "Project not found" error, instruct the user to run
 `get_eval_data` response includes:
 - `metrics`: totalOutreach, channelCounts, responseCounts, sentimentBreakdown, priorityResponseRate, statusCounts, channelResponseRate, variantResponseRate, discoveryStrategyResponseRate, industryResponseRate, sizeResponseRate, countryResponseRate, freshSignalResponseRate, inquiryOutcomeCounts
   - `variantResponseRate` / `channelResponseRate` / `priorityResponseRate` are the **measured lever surfaces**. The message and channel levers act on them automatically (lever tick) — read them to report, do not turn them into SALES_STRATEGY edits
-  - `discoveryStrategyResponseRate`: per named discovery strategy — reply rate PLUS `bounces` / `bounceRate` (bounces as a percentage of threadable email sends, 1dp — same units as `rate`). The `strategy: null` bucket is prospects without recorded provenance (manual/CSV imports, referrals, pre-provenance rows) — treat it as a baseline, not a strategy, and never demote it. **This is the lever evaluate owns** — it drives the `## Prospect Discovery Sources` Status updates in step 4. `bounceRate` is an *early* source-quality read (bounces arrive before replies): a high or rising per-strategy bounceRate means that source finds unreachable people. It is a threaded-only LOWER bound (real bounce rate is ≥ shown), so act on it when high, never read a low value as proof a source is clean
-  - `industryResponseRate` / `sizeResponseRate` / `countryResponseRate`: targeting observation axes — reply-rate splits by coarse industry bucket, organization employee band, and effective recipient country (prospect override, else org). Unlike the axes above they count **mature sends only** (older than the reply-maturity window), so fresh sends don't dilute them; each bucket also carries `bounces` / `bounceRate` with the same threaded-only caveat as `discoveryStrategyResponseRate`. Report-level observation for the Target Analysis — ground segment claims in these measured splits instead of impressions
+  - `discoveryStrategyResponseRate`: per named discovery strategy — reply rate PLUS `bounces` / `bounceRate` (bounces as a percentage of threadable email sends, 1dp — same units as `rate`). Reply metrics (`total` / `responses` / `rate`) count **mature sends only**; bounce metrics span all sends so the source-quality read never lags the maturity window — a young strategy can honestly show `total: 0` with non-zero bounces, which means "sends not mature yet", never "this strategy produced nothing". The `strategy: null` bucket is prospects without recorded provenance (manual/CSV imports, referrals, pre-provenance rows) — treat it as a baseline, not a strategy, and never demote it. The same applies to a slug that is not in this project's registry (`get_lever_state` → `discovery.strategies`) — e.g. carried by prospects linked in from another project: baseline-only, not an arm this project manages. **Evaluate owns the registry side of this lever** — register / archive via `upsert_discovery_strategy` in step 4, on evidence the tick cannot see; reply-rate selection is the tick's call. `bounceRate` is an *early* source-quality read (bounces arrive before replies): a high or rising per-strategy bounceRate means that source finds unreachable people. It is a threaded-only LOWER bound (real bounce rate is ≥ shown), so act on it when high, never read a low value as proof a source is clean
+  - `industryResponseRate` / `sizeResponseRate` / `countryResponseRate`: targeting observation axes — reply-rate splits by coarse industry bucket, organization employee band, and effective recipient country (prospect override, else org). Like the strategy axis above they count **mature sends only** (older than the reply-maturity window), so fresh sends don't dilute them; each bucket also carries `bounces` / `bounceRate` with the same threaded-only caveat as `discoveryStrategyResponseRate`. Report-level observation for the Target Analysis — ground segment claims in these measured splits instead of impressions
   - `freshSignalResponseRate`: `{ withSignal, withoutSignal }` reply-rate split by whether a fresh why-now org signal existed at compose time — the first measured read of whether signal-led sends convert better. Report-level observation only
   - `metrics.inquiryOutcomeCounts`: per-project session totals keyed by outcome (`opened` / `inquired` / `lead` / `signup_clicked` / `unsubscribed`). `signup_clicked` is the self-serve conversion path (project's CTA mode is `signup`, visitor clicked the Sign up button); `lead` is the human-sales conversion (meeting requested, button or chat-derived). Both `signup_clicked` and `lead` flip `project_prospects.status` to `responded`, so the prospect drops out of the outbound pool — they are different conversion axes that both belong in the "won" column
 - `respondedMessages`: all outreach bodies that received responses (with sentiment and responseType)
@@ -89,7 +90,7 @@ These feed the Step 5 report and the `[body]` entries of the Learnings Log (step
 - Segments with poor responses
 - Unexpected response patterns
 
-**Discovery Strategy Analysis (evaluate owns this lever — acted on in step 4):**
+**Discovery Strategy Analysis (evaluate owns the registry side, acted on in step 4; reply-rate selection is the tick's):**
 - Per-strategy sends and reply rate from `discoveryStrategyResponseRate`: which named strategies produce prospects that actually respond, which only produce volume
 - Fresh-signal effect from `freshSignalResponseRate`: does a why-now signal at compose time correlate with responses at this project's n? Narrate the split honestly — small n means "no signal yet", not "signals don't work"
 
@@ -135,10 +136,9 @@ Before deciding on improvement actions, review the Learnings Log loaded in step 
 - Continue and deepen the direction of measures that were effective before
 - If proposing the same improvement as before, state why different results are expected this time
 
-**Update SALES_STRATEGY.md (targeting, KPI & discovery strategies only):**
+**Update SALES_STRATEGY.md (targeting & KPI only):**
 - Narrow or broaden targeting
 - Update KPI goals
-- Discovery-strategy portfolio updates (see the dedicated block below)
 
 Do **not** edit messaging (subject line / body) or channel priority here — those are optimized deterministically by the daily lever tick (message-variant draw weights, channel affinity). Report their measured performance in Step 5; do not encode it as prose. (Tone/sub-channel preferences a user wrote in SALES_STRATEGY stay as their authored hints; evaluate just doesn't rewrite them.)
 
@@ -148,15 +148,15 @@ Save the updated document via `mcp__plugin_leadace_api__save_document` with `pro
 - Add keywords related to high-response segments
 - Remove ineffective keywords
 
-**Update discovery strategies (`## Prospect Discovery Sources` — same save as SALES_STRATEGY above):**
-Evaluate owns this section's `Status` flags — evidence-gated, per-slug:
-- **Demote**: flip a strategy to `Status: paused` when its reply rate underperforms the project's other strategies at `n ≥ minSamplePerArm` (from step 1's `get_lever_state`) across repeated cycles — never on a one-off gap. Also demote on a clearly elevated `bounceRate` (source finds unreachable people — wasteful and reputation-harming) even before reply data matures, since bounces read earlier than replies
-- **Promote / keep**: outperformers stay `active`; cite the evidence in the report
-- **Hypothesize**: when fewer than ~3 strategies are active (or every measured one underperforms), add 1-2 new named strategies (slug heading + Status/How/Why per the `tpl_sales_strategy` format) derived from business / sales_strategy context and rejection feedback. New strategies start `active` with no history — that is the point: they need sends to become measurable. Hypothesize search/crawl strategies only — playbook-driven means need user setup; propose those via the suggestion block below
-- **Never rename or delete a slug** — that orphans its measured history. Pause instead. Playbook-driven strategies get the same Status treatment; leave the playbook reference in How intact
+**Update the discovery-strategy portfolio (registry, via `upsert_discovery_strategy`):**
+Evaluate supplies and narrates this lever; the daily tick owns reply-based selection — it re-weights active strategies (Thompson draw weights in step 1's `get_lever_state` → `discovery.weights`) and archives dominated ones, never below two active. The current portfolio is `discovery.strategies`:
+- **Demote**: archive a strategy (`archived: true`, resending its current `approach` unchanged) only on evidence the tick cannot see: a clearly elevated `bounceRate` (source finds unreachable people — wasteful and reputation-harming; bounces read earlier than replies), or a source that no longer exists or can no longer be searched. Reply-rate underperformance is the tick's call — narrate it, don't act on it
+- **Promote / keep**: outperformers stay active (no write needed); cite the evidence in the report
+- **Hypothesize**: when step 1's `get_lever_state` → `discovery.needsReplenishment` is true (active strategies below target, usually after the tick archived a loser), register 1-2 new strategies — fresh slug + `approach` (where/how to search and why it should work, 2-5 lines) — derived from business / sales_strategy context and rejection feedback. New strategies start active with no history — that is the point: they need sends to become measurable. Hypothesize search/crawl strategies only — playbook-driven means need user setup; propose those via the suggestion block below. A refused upsert (400, active cap) means the portfolio is full — archive an underperformer first
+- **Never reuse a slug for a different idea** — a slug is the arm's measured identity; archive instead. Refining the same idea may update the same slug's `approach`. Playbook-driven strategies get the same archive treatment; leave their `approach`'s playbook reference intact
 
 **Suggest playbook-driven means (persist + report, never self-add):**
-When a promising means needs user setup (platform account, login, ToS), don't add it to `## Prospect Discovery Sources` yourself — call `mcp__plugin_leadace_api__record_suggestion` with `projectId: "$0"`, `kind: "add-means"`, `dedupeKey` = tentative strategy slug, short `title`, `body` citing the evidence, and a `command` runnable verbatim like `/leadace <project> add <platform> as an outreach means` (working language is fine).
+When a promising means needs user setup (platform account, login, ToS), don't register it as a strategy yourself — call `mcp__plugin_leadace_api__record_suggestion` with `projectId: "$0"`, `kind: "add-means"`, `dedupeKey` = tentative strategy slug, short `title`, `body` citing the evidence, and a `command` runnable verbatim like `/leadace <project> add <platform> as an outreach means` (working language is fine).
 - Suggest only what the user alone can do — never what this skill or the loop can do itself.
 - The server never resurrects a dismissed/done suggestion; if the confirmation says it was left untouched, drop it from next actions.
 - add_means completion closes the suggestion automatically.
@@ -201,7 +201,7 @@ Report the following directly to the user (no file output needed -- live metrics
 - Key KPIs (response rate, positive rate, etc.)
 - **Inquiry landing conversions** (from step 1's `inquiryOutcomeCounts`): show whenever any of `lead` / `signup_clicked` / `inquired` / `unsubscribed` is non-zero. Report `lead` (meeting-request conversions) and `signup_clicked` (self-serve signup conversions) separately — they reflect different CTA modes and inform whether the project's chosen CTA is converting. Skip the section when all five outcomes are 0
 - Changes since the last cycle (what the Learnings Log added or `[retired]` in step 4, plus notable lever shifts from `get_lever_decisions`)
-- **Discovery strategy performance** (from `discoveryStrategyResponseRate` / `freshSignalResponseRate`): per-strategy sends + reply rate, any `Status` changes applied in step 4, and the with/without-signal split. Skip when no send carries a strategy slug yet
+- **Discovery strategy performance** (from `discoveryStrategyResponseRate` / `freshSignalResponseRate`): per-strategy sends + reply rate, any registry changes applied in step 4 (archived / registered), and the with/without-signal split. Skip when no send carries a strategy slug yet
 - **Suggestions recorded** (from step 4 — a new means to add, or a strategy revisit): title, one-line rationale, and the copy-runnable command; note it stays on the Web UI dashboard until acted on or dismissed. Skip when none
 - Important findings from the analysis
 - List of improvements applied

@@ -27,6 +27,7 @@ import {
 } from './plan-limits'
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
+import { listDiscoveryStrategiesById } from './discovery-strategies'
 import { parseCsv } from '../domain/csv'
 import type { Edition } from '../domain/edition'
 import { projectProspectInsertValues } from '../domain/project-prospect'
@@ -407,7 +408,7 @@ async function buildDedupIndex(
 
 type BatchSkipped = {
   name: string
-  reason: 'plan_limit' | 'unknown_industry' | DedupSkipReason
+  reason: 'plan_limit' | 'unknown_industry' | 'unknown_strategy' | DedupSkipReason
   detail?: string
 }
 
@@ -450,6 +451,20 @@ export async function batchRegister(
       )
     }
   }
+
+  const carriesStrategy = inputs.some((p) => Boolean(p.discoveryStrategy))
+  if (carriesStrategy && !projectId) {
+    return err(
+      'INVALID_INPUT',
+      'discoveryStrategy requires projectId',
+      'Discovery strategies are project assets; omit discoveryStrategy when registering without a project.',
+    )
+  }
+  // Archived slugs stay valid provenance (the tick may archive one mid-batch);
+  // only an unregistered slug — a phantom attribution arm — skips its row.
+  const registeredSlugs = carriesStrategy && projectId
+    ? new Set((await listDiscoveryStrategiesById(db, projectId)).map((s) => s.slug))
+    : new Set<string>()
 
   const limits = getPlanLimits(tp.plan)
 
@@ -499,6 +514,15 @@ export async function batchRegister(
     const industryProblem = unknownIndustryDetail(input.industry)
     if (industryProblem) {
       skipped.push({ name: input.name, reason: 'unknown_industry', detail: industryProblem })
+      continue
+    }
+
+    if (input.discoveryStrategy && !registeredSlugs.has(input.discoveryStrategy)) {
+      skipped.push({
+        name: input.name,
+        reason: 'unknown_strategy',
+        detail: `discovery strategy "${input.discoveryStrategy}" is not registered on this project; register it via upsert_discovery_strategy or omit the field`,
+      })
       continue
     }
 

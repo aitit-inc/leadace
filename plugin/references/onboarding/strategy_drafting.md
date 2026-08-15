@@ -96,10 +96,10 @@ Classify sections:
 | Category | Sections | Behavior |
 |---|---|---|
 | Not set | Missing / empty / incomplete | Subject to completion |
-| evaluate-managed | targeting, KPI, search keywords, prospect discovery sources (when already populated) | **Do not touch by default** |
+| evaluate-managed | targeting, KPI, search keywords (when already populated) | **Do not touch by default** |
 | Static settings | Sender info, response def, notification, track record, messaging, channels | Update only if user explicitly requests |
 
-`/evaluate` auto-tunes targeting / KPI / search keywords / prospect discovery sources once a project has activity, so treat those sections as evaluate-managed whenever they already carry content. An empty such section is simply "not set" and is fillable here.
+`/evaluate` auto-tunes targeting / KPI / search keywords once a project has activity, so treat those sections as evaluate-managed whenever they already carry content. An empty such section is simply "not set" and is fillable here. (Discovery strategies live in the registry, not this document — `get_lever_state` → `discovery.strategies`; same evaluate-managed rule applies once populated.)
 
 **Template update detection:** Compare section headings in `tpl_sales_strategy` master document with the existing file. Sections present in template but missing in file → report as "possibly added by an update".
 
@@ -191,7 +191,7 @@ Price range or pricing structure + current sales challenges.
 - "Up to you" → research industry common ranges, propose.
 
 #### 4-6. Prospect Discovery Sources
-Where to find prospect candidates (depends on target market, industry, region). Written into SALES_STRATEGY.md as 3-6 *named strategies* per the `tpl_sales_strategy` format (slug heading + Status/How/Why) — /build-list executes them and /evaluate measures reply rate per strategy.
+Where to find prospect candidates (depends on target market, industry, region). Registered as 3-6 *named strategies* via `upsert_discovery_strategy` in Step 7 (kebab-case slug + `approach`: where/how to search and why it should work) — /build-list executes them and /evaluate measures reply rate per strategy. Diversify source types.
 - Source examples to draw from: PR sites (PR Newswire, Business Wire, GlobeNewswire, TechCrunch), company DBs (LinkedIn, Crunchbase, Apollo, ZoomInfo, industry assoc.), startup/VC DBs (Crunchbase, AngelList, PitchBook, Product Hunt), trade-show / event lists, code/product platforms (GitHub, Product Hunt), country/region directories.
 - "Up to you" → reasonable defaults by target market, formulated as named strategies.
 
@@ -399,7 +399,7 @@ mcp__plugin_leadace_api__save_document
 ## Step 7. Generate / Update SALES_STRATEGY.md
 
 - **Initial** (both modes): Retrieve template `tpl_sales_strategy`. Generate following structure.
-- **Update** (Mode A): Use existing from Step 3. Update only changed sections. **Evaluate-managed sections (targeting, KPI, search keywords, prospect discovery sources) are only rewritten when user explicitly instructs an update.** Messaging and channels are user-authored hints (subject lines & channel ranking are auto-optimized by the lever tick) — rewrite only on explicit user request.
+- **Update** (Mode A): Use existing from Step 3. Update only changed sections. **Evaluate-managed sections (targeting, KPI, search keywords) are only rewritten when user explicitly instructs an update.** Messaging and channels are user-authored hints (subject lines & channel ranking are auto-optimized by the lever tick) — rewrite only on explicit user request.
 
 **Sender Information section**: Write only the organization's phone number and a short human signature line (name, title, sign-off). Sender display name, sender company name, and email live in project settings (set in 4-7 / 4B-3); legal name, physical address, and the unsubscribe line live in Workspace Settings and are appended automatically by the backend at send time. **Do not duplicate any of these in the document signature** — duplicated address blocks make the recipient-side footer look broken. If the template prompts for sender display / company / email, replace with `Sender display name, company, and email: managed in Project Settings (Web UI → Project settings page; company name is on the Inquiry settings page)`. If the template prompts for legal name / postal address / unsubscribe, replace with `Legal identity + footer: managed in Workspace Settings (https://app.leadace.ai/workspace-settings)`. Never set `footerOverride` via `update_project_settings` unless the user explicitly asks to customize the footer — it replaces these server-appended disclosures verbatim.
 
@@ -417,6 +417,17 @@ mcp__plugin_leadace_api__save_document
   slug: "sales_strategy"
   content: <full markdown>
 ```
+
+## Step 7.2. Register discovery strategies
+
+Register the 3-6 named strategies from 4-6 into the project's strategy registry — one call each:
+```
+mcp__plugin_leadace_api__upsert_discovery_strategy
+  projectId: "$0"
+  slug: <kebab-case slug>
+  approach: <where/how to search and why it should work, 2-5 lines>
+```
+Initial mode: register all. Update mode: the registry is evaluate-managed once populated — only touch it on explicit user instruction (`get_lever_state` → `discovery.strategies` shows the current set). /build-list refuses to run while the registry is empty, so a new project must leave this step with at least one active strategy.
 
 ## Step 7.5. Generate inquiry_chat_brief (AI Inquiry chat input)
 

@@ -154,6 +154,11 @@ SETTINGS_RESP="$(api PUT "/api/projects/$PROJECT_ID/settings" "$(jq -nc --arg i 
   '{sendingIdentityId:$i, leverConfig:{priorStrength:5, explorationShare:0}}')")"
 assert_eq "identity assigned" "$(echo "$SETTINGS_RESP" | jq -r '.sendingIdentityId // ""')" "$IDENTITY_ID"
 
+# add_prospects skips unregistered slugs (unknown_strategy).
+api PUT "/api/projects/$PROJECT_ID/discovery-strategies" "$(jq -nc '{slug:"hot-src", approach:"e2e: hot source"}')" > /dev/null
+api PUT "/api/projects/$PROJECT_ID/discovery-strategies" "$(jq -nc '{slug:"cold-src", approach:"e2e: cold source"}')" > /dev/null
+say "registered strategies hot-src / cold-src"
+
 step "seed: 6 sent prospects (3 hot replied, 3 cold silent) + reachable H1,H2 (P3) and C1 (P1)"
 SEED_BODY="$(jq -nc --arg pid "$PROJECT_ID" \
   --argjson s1 "$(mkseed hot-1 'B2B SaaS' '11-50' hot-src 3)" \

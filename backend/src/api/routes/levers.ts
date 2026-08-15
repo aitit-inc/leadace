@@ -5,6 +5,7 @@ import {
   getLeverState,
   getLeverDecisionsHistory,
   leverDecisionsHistoryQuerySchema,
+  leverStateQuerySchema,
 } from '../../services/levers'
 import { projectRefParamSchema } from '../../services/projects'
 import { respondWithError } from '../respond'
@@ -25,8 +26,14 @@ leversRouter.post(
 leversRouter.get(
   '/projects/:id/lever-state',
   zValidator('param', projectRefParamSchema),
+  zValidator('query', leverStateQuerySchema),
   async (c) => {
-    const result = await getLeverState(c.get('db'), c.get('tenantId'), c.req.valid('param').id)
+    const result = await getLeverState(
+      c.get('db'),
+      c.get('tenantId'),
+      c.req.valid('param').id,
+      c.req.valid('query'),
+    )
     if (!result.ok) return respondWithError(c, result)
     return c.json(result.value)
   },

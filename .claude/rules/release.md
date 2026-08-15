@@ -50,6 +50,12 @@ If the Deploy Key is ever rotated, repeat 1–5 and update the secret/bypass ent
 
 Merge `develop` → `main` to deploy. CI builds backend (Workers + Pages); the plugin bump goes live through the marketplace as soon as it lands on `main`.
 
+CI runs schema migrations only — never data backfills. When a release ships a
+one-time backfill script (`backend/scripts/backfill-*.ts`), name it and its run
+command in the release PR body and run it (dry-run first) right after the
+deploy completes; until it runs, existing tenants sit on the migration's empty
+default.
+
 For backend changes that break the running plugin (drop / rename DB column, remove an MCP tool, change a required argument), push order does not save users still on the old plugin who haven't run `/plugin update`. The fix is backend backwards-compatibility for one release cycle, then removing the old shape in a later release.
 
 ## OSS public mirror

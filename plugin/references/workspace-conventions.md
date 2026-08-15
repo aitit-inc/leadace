@@ -48,6 +48,8 @@ The rule of thumb: if you're about to write a default value, a fallback (`if X i
 
 If any MCP tool call returns a "Project not found" error, instruct the user to run `/leadace` first and abort the current skill.
 
+If a correctly-used tool keeps erroring or returning unexpected results with no evident cause, suspect an outdated plugin: check `get_server_version` → `minPluginVersion`, and point the user to `/plugin update leadace@leadace` when behind.
+
 ## Document Write Safeguard
 
 When calling `save_document` (or any MCP tool that persists user-visible document/content), sanity-check that the content matches the slug's intent and the active project context. If the content is clearly unrelated — e.g., the session has drifted to another topic, the wrong project is selected, or stray output is about to be pasted in — confirm with the user before saving. Documents are persistent and read by other skills, so a wrong write is not silently absorbed.

@@ -9,6 +9,7 @@ import { projectsRouter } from './routes/projects'
 import { projectSettingsRouter } from './routes/project-settings'
 import { tenantSettingsRouter } from './routes/tenant-settings'
 import { messageVariantsRouter } from './routes/message-variants'
+import { discoveryStrategiesRouter } from './routes/discovery-strategies'
 import { leversRouter } from './routes/levers'
 import { dashboardRouter } from './routes/dashboard'
 import { prospectsRouter } from './routes/prospects'
@@ -69,6 +70,7 @@ app.route('/api/projects', projectsRouter)
 app.route('/api', projectSettingsRouter)
 app.route('/api', tenantSettingsRouter)
 app.route('/api', messageVariantsRouter)
+app.route('/api', discoveryStrategiesRouter)
 app.route('/api', leversRouter)
 app.route('/api', dashboardRouter)
 app.route('/api', prospectsRouter)

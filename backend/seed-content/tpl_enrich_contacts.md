@@ -43,14 +43,14 @@ If an email is found in the top page header/footer in step 1, stop here. If not,
 
 #### 2a. External Search (Do this first)
 
-Check the "Prospect Discovery Sources" section of SALES_STRATEGY.md for the specific platforms and directories to use. Then search with WebSearch using 1-2 queries:
+Check the project's registered discovery strategies (their `approach` text — the caller carries them from `get_lever_state`) for the specific platforms and directories to use. Then search with WebSearch using 1-2 queries:
 - `"{company name}" email address` or `"{company name}" contact`
-- Search on press release / news sites listed in SALES_STRATEGY.md (press releases often include PR contact emails)
+- Search on press release / news sites named in the strategy approaches (press releases often include PR contact emails)
 
-Priority sources to check (based on SALES_STRATEGY.md's "Prospect Discovery Sources"):
-- **Press release / news sites** listed in SALES_STRATEGY.md — high rate of PR contact emails
-- **Company databases / startup databases** listed in SALES_STRATEGY.md — company pages often have contact info
-- **Industry directories and corporate information sites** listed in SALES_STRATEGY.md
+Priority sources to check (based on the registered strategy approaches):
+- **Press release / news sites** they name — high rate of PR contact emails
+- **Company databases / startup databases** they name — company pages often have contact info
+- **Industry directories and corporate information sites** they name
 
 If found here, stop the search. If not, proceed to step 2b.
 

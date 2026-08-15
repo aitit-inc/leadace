@@ -1,4 +1,5 @@
 import {
+	HeartPulse,
 	Mail,
 	MailQuestion,
 	MailX,
@@ -105,6 +106,15 @@ export function attentionMeta(item: AttentionItem): AttentionMeta {
 				).toLocaleDateString()}${item.detail ? ` — ${item.detail}` : ''}`,
 				ctaLabel: 'Review',
 				href: '/account-settings',
+			};
+		case 'outreach_futility':
+			return {
+				icon: HeartPulse,
+				tone: 'warning',
+				title: `Outreach in ${item.projectName} is not getting replies`,
+				desc: `${item.sends} delivered emails drew ${item.replies === 1 ? '1 reply' : `${item.replies} replies`} — statistically below a viable rate. Check deliverability (DMARC, spam placement) and targeting before sending more`,
+				ctaLabel: 'Review',
+				href: '/dashboard',
 			};
 		case 'no_outbound_channels':
 			return {

@@ -15,6 +15,7 @@ allowed-tools:
   - mcp__plugin_leadace_api__save_document
   - mcp__plugin_leadace_api__get_master_document
   - mcp__plugin_leadace_api__get_project_settings
+  - mcp__plugin_leadace_api__get_lever_state
 ---
 
 # Build List - Prospect List Building
@@ -89,33 +90,27 @@ rules. Skip if the document is missing.
 
 ### 3. Search Strategy
 
-Discovery runs as **named strategies**. Read the `## Prospect Discovery Sources`
-section of SALES_STRATEGY.md: each `### <slug>` entry (Status / How / Why) is one
-repeatable discovery strategy. Select the strategies for this pass:
+Discovery runs as **named strategies** registered on the project. Call
+`mcp__plugin_leadace_api__get_lever_state` with `projectId: "$0"`, `batchSize`
+= the target count (`$1`), capped at 200 (the tool's maximum). In
+`discovery.strategies`, entries with `archivedAt: null` are the active set
+(each carries `slug` + `approach` — where/how to search and why it should
+work); archived entries are context only — never run or stamp them.
 
-- Run `Status: active` strategies; skip `paused` ones (evaluate demoted them).
-- Bias selection with the `[discovery]` learnings from step 2 — spend more of the
-  pass on strategies with measured above-average reply rates, but keep at least
-  one unproven strategy in rotation so attribution data accumulates across the
-  portfolio (a strategy that never sends can never be promoted or demoted).
-- **Upgrade gate (blocking)**: the server appends a `WARNING:` line to the
-  `get_document` / `save_document` output while the section is missing,
-  old-format, or mixed (deterministic check: any bullets or subsections not
-  forming a `### <slug>` entry). The warning is tool output, not document
-  content — never include it in content you save. While it is present, do NOT run
-  Phase 1 searches or register prospects — candidates would register without
-  `discoveryStrategy` and per-strategy attribution stays dead. Upgrade first:
-  fold the stray bullets plus the Target / Search Keywords sections into named
-  strategies (slug = lowercase kebab-case ≤64 chars, `Status: active`, How,
-  Why), keep existing `### <slug>` entries as-is, and save the full document
-  via `mcp__plugin_leadace_api__save_document` (slug `sales_strategy`). The
-  save confirmation re-runs the check — if it still carries the warning, the
-  rewrite missed something; fix and save again until it passes.
+- No active strategies → stop and tell the user to define them (project
+  onboarding via `/leadace`; `/evaluate` also registers new ones as it learns).
+- **`discovery.batchPlan` is the allocation for this pass**: server-computed
+  `[{slug, count}]` over the active strategies' draw weights (`count: 0` =
+  skip). Build the batch to the plan; when a strategy cannot fill its count
+  (angle exhausted), fill the gap from the others and record the shortfall for
+  step 8 — deviate only on real shortfall, never by preference. `[discovery]`
+  learnings (step 2) steer queries *within* a strategy, not the allocation.
 - Every candidate surfaced by a strategy belongs to exactly one — carry its slug
-  through to registration (Phase 3 `discoveryStrategy`). Candidates from ad-hoc
-  user instructions have no strategy; they register without the field.
+  through to registration (Phase 3 `discoveryStrategy`; an unregistered slug
+  skips the row as `unknown_strategy`). Candidates from ad-hoc user
+  instructions have no strategy; they register without the field.
 
-Within each selected strategy, formulate queries from its `How:` line plus the
+Within each selected strategy, formulate queries from its `approach` plus the
 "Search Keywords" and "Target" sections of SALES_STRATEGY.md.
 
 **Pick from unexplored cells of the coverage matrix first.** Each query
@@ -142,7 +137,7 @@ directory, association member list, exhibitor list, or GitHub topic/org page wit
 usually out-yield search on structured sources; step 4's tooling applies to both.
 
 A crawl-driven source may keep publishing, or hold more than one pass can take. When
-it is worth revisiting, note in its strategy entry what lets the next pass resume;
+it is worth revisiting, note in `search_notes` what lets the next pass resume;
 re-registering an org already held is dedup'd server-side.
 
 **Playbook-driven strategies (user-defined means).** A strategy may reference a
@@ -218,10 +213,7 @@ mid-cycle).
 - **30–70% skip rate** — the angle is fading. Deep-dive within the same
   target *first* before pivoting:
   - Look beyond top results to page 2, 3, and beyond
-  - Add regional qualifiers (e.g., "SaaS companies" → "SaaS companies
-    Portland", "SaaS companies Austin")
-  - Use synonyms / related terms (e.g., "consulting firm" → "advisory
-    firm", "management consultancy")
+  - Add regional qualifiers, or switch to synonyms / related terms
   - Follow industry-specific portal sites and directories
   - Search for "competitors" / "similar services" of already-registered
     prospects to find new ones organically
@@ -326,7 +318,8 @@ entries; Phase 1.7 may have enriched their `overview` with signals) into
 information.
 
 Include the following in each sub-agent's prompt:
-- List of assigned candidates (name, organization_name, website_url, overview, industry, department, country, employee_band, match_reason, priority)
+- List of assigned candidates (name, organization_name, website_url, overview, industry, department, country, employee_band, match_reason, priority, discovery_strategy)
+- The active strategies' `approach` text (from step 3) — the enrichment procedure's external-search step draws its platform / directory list from it
 - Retrieve the contact enrichment procedure via `mcp__plugin_leadace_api__get_master_document` with `slug: "tpl_enrich_contacts"` and follow its procedure
 - Explore each candidate's official site to retrieve email addresses and contact form URLs
 - **Keyperson lookup is required**, not optional. Search the official site's
@@ -340,7 +333,7 @@ Include the following in each sub-agent's prompt:
 
 Sub-agent allowed-tools: `Bash`, `WebSearch`, `WebFetch`, `Read`, `mcp__plugin_leadace_api__get_master_document`
 
-Each object in the JSON array returned by the sub-agent includes the Phase 1 information (name, organization_name, overview, website_url, industry, department, country, employee_band, match_reason, priority) plus the retrieved contacts (email, contact_form_url, form_type, sns_accounts, contact_name).
+Each object in the JSON array returned by the sub-agent includes the Phase 1 information echoed back unchanged (name, organization_name, overview, website_url, industry, department, country, employee_band, match_reason, priority, discovery_strategy) plus the retrieved contacts (email, contact_form_url, form_type, sns_accounts, contact_name). A dropped `discovery_strategy` silently registers the prospect without attribution — carry it through verbatim.
 
 ### 6b. Re-search for Candidates Without Contact Info (only when applicable)
 
@@ -360,7 +353,8 @@ Information may be found from industry directories, press release distribution s
 
 Call `mcp__plugin_leadace_api__add_prospects` with:
 - `projectId`: "$0"
-- `prospects`: array of prospect objects
+- `prospects`: array of prospect objects — **at most 100 per call** (the
+  tool's limit); submit a larger batch as successive calls
 
 **Field mapping for the MCP tool:**
 
@@ -406,10 +400,11 @@ For each prospect, construct the object as follows:
   strategy answers in-platform (optional*)
 - `matchReason`: why this prospect is a good target
 - `priority`: 1-5 (default 3)
-- `discoveryStrategy`: slug of the named strategy (step 3) that surfaced this
-  candidate — write-once provenance; `/evaluate` attributes reply rates per slug.
-  Omit only when the candidate came from an ad-hoc user instruction rather than
-  a named strategy.
+- `discoveryStrategy`: slug of the active registered strategy (step 3) that
+  surfaced this candidate — write-once provenance for per-slug reply
+  attribution. An unregistered slug skips the row (`unknown_strategy`); a
+  registered slug is accepted even if archived after step 3. Omit for ad-hoc
+  candidates.
 - `hypothesis`: per-prospect targeting hypothesis as a structured object (optional but recommended). Built from the assembled `overview` + any `## Recent Signals` + `matchReason` + SALES_STRATEGY context. Read by the inquiry-landing chat snapshot to ground answers about the visiting org. Shape:
   - `hypothesizedPain`: 1–3 short pain hypotheses, one sentence each (e.g. `["Manual lead routing slows reps", "No central buyer-signal aggregation"]`)
   - `valueMapping`: 1–3 bullets of how our offering addresses those pains (same order as `hypothesizedPain` when paired)
@@ -427,11 +422,13 @@ the org-domain check — their granularity is the posting, not the org).
 Inspect `skippedDetails` after the call: each entry is `{name, reason, detail?}` with
 `reason ∈ email_duplicate | form_url_duplicate | platform_url_duplicate |
 already_in_project | do_not_contact | duplicate_in_batch | plan_limit |
-unknown_industry`. If the same `reason` clusters tightly
+unknown_industry | unknown_strategy`. If the same `reason` clusters tightly
 (e.g. ≥ 50% of skips are `email_duplicate` from one industry), record the
 keyword in `## Exhausted Keywords` and switch angles for the next pass.
 `unknown_industry` rows are a labeling bug, not a dedup signal — replace the
 label with an exact `tpl_industries` value and re-register just those rows.
+`unknown_strategy` rows carried an unregistered slug — fix it against step 3's
+registry (or drop the field) and re-register just those rows.
 
 **Difference between organizations and prospects:**
 - `organizations` = **Legal entity** unit (apex domain is PK)
@@ -449,6 +446,8 @@ Call `mcp__plugin_leadace_api__get_outbound_targets` with `projectId: "$0"` and 
 
 Report the following:
 - Number of newly registered prospects / target count
+- **Per-strategy plan compliance**: planned vs registered per slug (step 3's
+  `batchPlan`), shortfalls noted with reason
 - **Reachable breakdown** (among newly registered: N with email, N with form, N SNS-only, N platform, N without contacts)
 - Breakdown by priority
 - Number rejected as duplicates (if many, briefly describe how the search angle was changed)

@@ -11,4 +11,5 @@ export type AttentionItem =
 	| { kind: 'quota_exhausted'; constraint: QuotaConstraint }
 	| { kind: 'reply_collection_scope_missing'; fromEmail: string }
 	| { kind: 'reply_collection_failing'; fromEmail: string; since: string; detail: string | null }
+	| { kind: 'outreach_futility'; projectName: string; sends: number; replies: number }
 	| { kind: 'outreach_drafts'; count: number };
