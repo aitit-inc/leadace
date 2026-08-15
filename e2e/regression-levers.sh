@@ -547,30 +547,30 @@ assert_eq "stag tick2 ran=false" "$(echo "$TS2" | jq -r '.ran')" "false"
 assert_eq "stag tick2 echoes reason stagnation" "$(echo "$TS2" | jq -r '.archived[0].reason // ""')" "stagnation"
 assert_eq "stag tick2 needsReplenishment false (fulfilled)" "$(echo "$TS2" | jq -r '.needsReplenishment')" "false"
 
-# Futility (vitals). A fifth project: 400 mature zero-reply email sends put
-# P(rate < 1%) ≈ 0.98 past the 0.95 confidence gate. The futile verdict on the
+# Futility (vitals). A fifth project: 600 mature zero-reply email sends put
+# P(rate < 1%) ≈ 0.998 past the 0.99 confidence gate. The futile verdict on the
 # newest decision must surface on the tenant-wide attention feed; the healthy
 # main project must not.
-step "futility: fifth project + 400 zero-reply mature sends"
+step "futility: fifth project + 600 zero-reply mature sends"
 CREATE5="$(api POST /api/projects "$(jq -nc --arg n "$PROJECT_NAME futile" '{name:$n}')")"
 PROJECT_ID5="$(echo "$CREATE5" | jq -r '.id // ""')"
 [[ -n "$PROJECT_ID5" ]] || { echo "create-project(5) failed: $CREATE5" >&2; exit 1; }
 say "project_id5=$PROJECT_ID5"
 psql_local "INSERT INTO outreach_logs (tenant_id, project_id, prospect_id, channel, body, status, sent_at)
             SELECT '$TENANT_ID', '$PROJECT_ID5', $PROSPECT_ID, 'email', 'e2e', 'sent', now() - interval '30 days'
-            FROM generate_series(1, 400);" > /dev/null
-say "inserted 400 mature sends, zero replies"
+            FROM generate_series(1, 600);" > /dev/null
+say "inserted 600 mature sends, zero replies"
 
 step "tick judges futile; /me/attention surfaces exactly the futile project"
 TV="$(api POST "/api/projects/$PROJECT_ID5/run-lever-tick")"
-assert_eq "futility tick vitals sends" "$(echo "$TV" | jq -r '.vitals.sends')" "400"
+assert_eq "futility tick vitals sends" "$(echo "$TV" | jq -r '.vitals.sends')" "600"
 assert_eq "futility tick vitals verdict" "$(echo "$TV" | jq -r '.vitals.verdict')" "futile"
-assert_eq "futility tick pDead past the confidence gate" "$(echo "$TV" | jq -r '.vitals.pDead >= 0.95')" "true"
+assert_eq "futility tick pDead past the confidence gate" "$(echo "$TV" | jq -r '.vitals.pDead >= 0.99')" "true"
 ATT="$(api GET "/api/me/attention")"
 assert_eq "attention feed carries the futile project" \
   "$(echo "$ATT" | jq -r --arg n "$PROJECT_NAME futile" '[.items[] | select(.kind=="outreach_futility" and .projectName==$n)] | length')" "1"
 assert_eq "attention futility carries the measured counts" \
-  "$(echo "$ATT" | jq -r --arg n "$PROJECT_NAME futile" '.items[] | select(.kind=="outreach_futility" and .projectName==$n) | "\(.sends)/\(.replies)"')" "400/0"
+  "$(echo "$ATT" | jq -r --arg n "$PROJECT_NAME futile" '.items[] | select(.kind=="outreach_futility" and .projectName==$n) | "\(.sends)/\(.replies)"')" "600/0"
 assert_eq "healthy main project raises no futility item" \
   "$(echo "$ATT" | jq -r --arg n "$PROJECT_NAME" '[.items[] | select(.kind=="outreach_futility" and .projectName==$n)] | length')" "0"
 

@@ -28,7 +28,7 @@ const futilityVariants: ConfigVariant[] = [
   { label: 'survival=0.005', patch: { futilitySurvivalRate: 0.005 } },
   { label: 'survival=0.02', patch: { futilitySurvivalRate: 0.02 } },
   { label: 'confidence=0.9', patch: { futilityConfidence: 0.9 } },
-  { label: 'confidence=0.99', patch: { futilityConfidence: 0.99 } },
+  { label: 'confidence=0.95', patch: { futilityConfidence: 0.95 } },
   { label: 'minSends=50', patch: { futilityMinSends: 50 } },
   { label: 'minSends=200', patch: { futilityMinSends: 200 } },
   // Frontier probes between the 0.005 and 0.01 survival lines: OFAT showed

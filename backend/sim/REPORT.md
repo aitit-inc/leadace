@@ -22,7 +22,7 @@ fixed per scenario), epoch-cut behavior.
 
 | Parameter | Shipped | Verdict | Basis |
 |---|---|---|---|
-| `futilityConfidence` | 0.95 | **raise to 0.99** (decision pending) | Healthy-1% false-fire rate over 180 days 14.0% → 4.0%; dead detection 460 → 630 sends (+2.5 weeks at 10/day); keeps near-dead sensitivity 91.7% and foldered sensitivity 36.5%; dominates lowering the survival rate to 0.0075 (85%/30% at the same FP) |
+| `futilityConfidence` | 0.95 | **raise to 0.99** (adopted 2026-08-16; run.ts OFAT probe swapped to 0.95 accordingly) | Healthy-1% false-fire rate over 180 days 14.0% → 4.0%; dead detection 460 → 630 sends (+2.5 weeks at 10/day); keeps near-dead sensitivity 91.7% and foldered sensitivity 36.5%; dominates lowering the survival rate to 0.0075 (85%/30% at the same FP) |
 | `futilitySurvivalRate` | 0.01 | keep | Lowering it trades away sensitivity (frontier below). Structural caveat: the measured healthy reply rate ~1% sits exactly on this line |
 | `futilityMinSends` | 100 | keep | Completely inert at this volume band (pDead needs ~300+ mature sends before any tested floor binds); harmless guard |
 | `archiveThreshold` | 0.05 | keep (initial 0.02 recommendation withdrawn) | Premature kills already 0–2% at default; 0.02 barely moves them and just slows pruning (clear-winner discovery 0.80 → 0.71); 0.1 speeds discovery but costs 10% premature kills under foldering and archives in ~100% of runs |

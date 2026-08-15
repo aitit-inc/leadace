@@ -23,7 +23,7 @@ describe('leverConfigSchema', () => {
       strategyWeightFloor: 0.1,
       stagnationTicks: 7,
       futilitySurvivalRate: 0.01,
-      futilityConfidence: 0.95,
+      futilityConfidence: 0.99,
       futilityMinSends: 100,
     })
   })

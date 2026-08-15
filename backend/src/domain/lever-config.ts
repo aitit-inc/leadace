@@ -54,7 +54,7 @@ export const leverConfigSchema = z.object({
   // Vitals gate: verdict "futile" once P(reply rate < futilitySurvivalRate) ≥
   // futilityConfidence over ≥ futilityMinSends mature email sends.
   futilitySurvivalRate: futilitySurvivalRate.default(0.01),
-  futilityConfidence: futilityConfidence.default(0.95),
+  futilityConfidence: futilityConfidence.default(0.99),
   futilityMinSends: futilityMinSends.default(100),
 })
 export type LeverConfig = z.infer<typeof leverConfigSchema>
