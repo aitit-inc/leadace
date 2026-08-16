@@ -25,6 +25,7 @@ describe('leverConfigSchema', () => {
       futilitySurvivalRate: 0.01,
       futilityConfidence: 0.99,
       futilityMinSends: 100,
+      futilityLookbackDays: 90,
     })
   })
 

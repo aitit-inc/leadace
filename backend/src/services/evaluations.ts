@@ -279,9 +279,10 @@ export async function getTargetingStats(
   }
 }
 
-// No forgetting window — futility judges the whole current regime, so only
-// measurementsSince narrows it. `replies` counts replied sends (not reply
-// rows) so it stays ≤ sends for the Beta posterior.
+// Windowed by futilityLookbackDays (deliberately not rewardLookbackDays —
+// the bandit keeps all history) so the verdict self-clears after a repair.
+// `replies` counts replied sends (not reply rows) so it stays ≤ sends for
+// the Beta posterior.
 export async function getFutilityStats(
   db: Db,
   projectId: ProjectId,
@@ -290,6 +291,8 @@ export async function getFutilityStats(
   const SENT: OutreachStatus = 'sent'
   const EMAIL: Channel = 'email'
   const matureBefore = sql`now() - make_interval(days => ${config.rewardWindowDays})`
+  // Same band shape as the variant queries: sent_at ∈ [now−W−F, now−W).
+  const windowDays = config.rewardWindowDays + config.futilityLookbackDays
   const epoch = config.measurementsSince
   const since = epoch === undefined ? sql`` : sql` AND ol.sent_at >= ((${epoch}::date)::timestamp AT TIME ZONE 'UTC')`
   const rows = Array.from(
@@ -302,7 +305,8 @@ export async function getFutilityStats(
         ))::int AS replies
       FROM outreach_logs ol
       WHERE ol.project_id = ${projectId} AND ol.status = ${SENT} AND ol.channel = ${EMAIL}
-        AND ol.sent_at < ${matureBefore}${since}
+        AND ol.sent_at < ${matureBefore}
+        AND ol.sent_at >= now() - make_interval(days => ${windowDays})${since}
         AND NOT EXISTS (SELECT 1 FROM responses rb WHERE rb.outreach_log_id = ol.id AND rb.response_type = 'bounce')
     `),
   )

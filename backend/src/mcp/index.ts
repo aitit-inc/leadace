@@ -731,7 +731,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'run_lever_tick',
-    'Run the project\'s daily outbound-optimization tick: recompute the message-variant draw weights pick_message_variant reads (Thompson sampling over graded reward; archives variants whose P(best) stays below the threshold at maturity, never below two active), the discovery-strategy draw weights over the active registry (same Thompson math; archives dominated strategies, never below two active), the per-industry channel affinity get_outbound_targets surfaces, and the measured targeting lifts (industry / size / country / discovery strategy / fresh signal) that re-score the get_outbound_targets ordering. After a sustained flat streak (every arm mature yet none likely best) it rotates out the weakest variant to free a slot for a fresh angle. Idempotent per UTC day — a repeat call returns that day\'s recorded decision without re-applying. Returns variant weights and archived variants (a stagnation rotation is marked as such), strategy weights and archived strategies, channelAffinity by industry bucket, targeting lifts, the futility vitals verdict (ok / insufficient / futile over mature email sends — futile means outreach is statistically drawing no replies and belongs in the cycle report), and the live needsReplenishment / needsStrategyReplenishment flags (recomputed each call, not the frozen recorded value).',
+    'Run the project\'s daily outbound-optimization tick: recompute the message-variant draw weights pick_message_variant reads (Thompson sampling over graded reward; archives variants whose P(best) stays below the threshold at maturity, never below two active), the discovery-strategy draw weights over the active registry (same Thompson math; archives dominated strategies, never below two active), the per-industry channel affinity get_outbound_targets surfaces, and the measured targeting lifts (industry / size / country / discovery strategy / fresh signal) that re-score the get_outbound_targets ordering. After a sustained flat streak (every arm mature yet none likely best) it rotates out the weakest variant to free a slot for a fresh angle. Idempotent per UTC day — a repeat call returns that day\'s recorded decision without re-applying. Returns variant weights and archived variants (a stagnation rotation is marked as such), strategy weights and archived strategies, channelAffinity by industry bucket, targeting lifts, the futility vitals verdict (ok / insufficient / futile over recent mature email sends — futile means outreach is statistically drawing no replies and belongs in the cycle report; it clears on its own once recent sends draw replies again), and the live needsReplenishment / needsStrategyReplenishment flags (recomputed each call, not the frozen recorded value).',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
     },
@@ -784,8 +784,8 @@ function buildToolRegistry(): ToolDef[] {
         : ''
       const vitalsLine = r.vitals
         ? r.vitals.verdict === 'futile'
-          ? `\nVitals: FUTILE — ${r.vitals.sends} mature email sends drew ${r.vitals.replies} replies (P(dead) ${r.vitals.pDead.toFixed(3)}). Surface this in the cycle report: the user should check deliverability (DMARC, spam placement) and targeting before scaling sends.`
-          : `\nVitals: ${r.vitals.verdict} (${r.vitals.replies}/${r.vitals.sends} mature email sends replied).`
+          ? `\nVitals: FUTILE — ${r.vitals.sends} recent mature email sends drew ${r.vitals.replies} replies (P(dead) ${r.vitals.pDead.toFixed(3)}). Surface this in the cycle report: the user should check deliverability (DMARC, spam placement) and targeting before scaling sends.`
+          : `\nVitals: ${r.vitals.verdict} (${r.vitals.replies}/${r.vitals.sends} recent mature email sends replied).`
         : '\nVitals: none recorded for this cycle (pre-upgrade decision).'
       return {
         content: [{
@@ -818,7 +818,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_lever_decisions',
-    'Read-only history of the project\'s daily lever-tick decisions, newest first. Each entry is one UTC day: message-variant draw weights, variants archived that day (reason "stagnation" marks a rotation, absent = dominated), per-variant sample counts, channel affinity per coarse-industry bucket, targetingLifts, the discovery-strategy decision (weights / archived / samples / the prior UTC day\'s per-strategy registration counts), vitals — the project futility check over mature email sends (sends / replies / pDead / verdict), and configUsed — the effective lever config the tick ran under (the latter four null on pre-upgrade entries). Empty until the tick has run at least once.',
+    'Read-only history of the project\'s daily lever-tick decisions, newest first. Each entry is one UTC day: message-variant draw weights, variants archived that day (reason "stagnation" marks a rotation, absent = dominated), per-variant sample counts, channel affinity per coarse-industry bucket, targetingLifts, the discovery-strategy decision (weights / archived / samples / the prior UTC day\'s per-strategy registration counts), vitals — the project futility check over recent mature email sends (sends / replies / pDead / verdict), and configUsed — the effective lever config the tick ran under (the latter four null on pre-upgrade entries). Empty until the tick has run at least once.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       days: z.number().int().min(1).max(365).optional().describe('Lookback window in days (default 30)'),

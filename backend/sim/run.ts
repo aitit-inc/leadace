@@ -5,11 +5,17 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { leverConfigSchema, type LeverConfigPatch } from '../src/domain/lever-config'
-import { oracleTrajectory, runScenario, type Scenario } from './environment'
+import { incidentWindowOf, oracleTrajectory, runScenario, type Scenario } from './environment'
 import { aggregate, extractRunMetrics, type AggregateRow } from './metrics'
 import { banditScenarios, futilityScenarios } from './scenarios'
 
-type ConfigVariant = { label: string; patch: LeverConfigPatch }
+// sim: policies outside LeverConfig; resetAtRepair is a no-op without
+// deliveryPhases (those rows duplicate `default`).
+type ConfigVariant = {
+  label: string
+  patch: LeverConfigPatch
+  sim?: { futilityLookbackDays?: number; resetAtRepair?: boolean }
+}
 
 const banditVariants: ConfigVariant[] = [
   { label: 'default', patch: {} },
@@ -21,6 +27,9 @@ const banditVariants: ConfigVariant[] = [
   { label: 'minSample=60', patch: { minSamplePerArm: 60 } },
   { label: 'explore=0.1', patch: { explorationShare: 0.1 } },
   { label: 'explore=0.3', patch: { explorationShare: 0.3 } },
+  { label: 'lookback=180', patch: { rewardLookbackDays: 180 } },
+  { label: 'lookback=90', patch: { rewardLookbackDays: 90 } },
+  { label: 'epoch@repair', patch: {}, sim: { resetAtRepair: true } },
 ]
 
 const futilityVariants: ConfigVariant[] = [
@@ -36,6 +45,10 @@ const futilityVariants: ConfigVariant[] = [
   { label: 'survival=0.0075', patch: { futilitySurvivalRate: 0.0075 } },
   { label: 'survival=0.0075,conf=0.99', patch: { futilitySurvivalRate: 0.0075, futilityConfidence: 0.99 } },
   { label: 'survival=0.005,conf=0.9', patch: { futilitySurvivalRate: 0.005, futilityConfidence: 0.9 } },
+  { label: 'fwindow=120', patch: {}, sim: { futilityLookbackDays: 120 } },
+  { label: 'fwindow=90', patch: {}, sim: { futilityLookbackDays: 90 } },
+  { label: 'fwindow=60', patch: {}, sim: { futilityLookbackDays: 60 } },
+  { label: 'epoch@repair', patch: {}, sim: { resetAtRepair: true } },
 ]
 
 const args = process.argv.slice(2)
@@ -68,10 +81,16 @@ function sweep(
     for (const scenario of scenarios) {
       const started = Date.now()
       const oracle = oracleTrajectory(scenario)
+      const params = {
+        config,
+        mcSamples,
+        futilityLookbackDays: variant.sim?.futilityLookbackDays,
+        resetStatsAtDay: variant.sim?.resetAtRepair ? incidentWindowOf(scenario)?.repair : undefined,
+      }
       const metrics = []
       for (let seed = 0; seed < seeds; seed++) {
         metrics.push(
-          extractRunMetrics(runScenario(scenario, seed, { config, mcSamples }), scenario, oracle, config),
+          extractRunMetrics(runScenario(scenario, seed, params), scenario, oracle, config),
         )
       }
       rows.push({ variant: variant.label, scenario: scenario.name, metrics: aggregate(metrics) })
@@ -130,6 +149,7 @@ if (experiment === 'bandit' || experiment === 'all') {
     'anyArchiveRate',
     'rescueDayP90',
     'captureRatioMean',
+    'captureAfterRepairMean',
     'shortfallMean',
   ])
 }
@@ -145,5 +165,9 @@ if (experiment === 'futility' || experiment === 'all') {
     'futileSendsP50',
     'futileSendsP90',
     'vitalsFlickersMean',
+    'firedIncidentFrac',
+    'recoveredOfFiredFrac',
+    'clearDaysP50',
+    'clearDaysP90',
   ])
 }

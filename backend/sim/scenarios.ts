@@ -75,12 +75,26 @@ const flatField: Scenario = {
   ],
 }
 
+// factor 0.1 ≈ hard silent foldering (the 0/646 dead arm); the measured 0.57
+// fires the futility alert too rarely inside one incident to measure recovery.
+const regimeShift: Scenario = {
+  ...base,
+  name: 'regime-shift',
+  horizonDays: 240,
+  strategies: clearWinner.strategies,
+  deliveryPhases: [
+    { fromDay: 60, factor: 0.1 },
+    { fromDay: 120, factor: 1 },
+  ],
+}
+
 export const banditScenarios: Scenario[] = [
   clearWinner,
   skewedIncumbent,
   foldered,
   depletingWinner,
   flatField,
+  regimeShift,
 ]
 
 // Single-strategy on purpose: the verdict reads project-wide sends only, and
@@ -110,5 +124,17 @@ export const futilityScenarios: Scenario[] = [
     name: 'foldered-healthy',
     strategies: [{ slug: 'only', replyRate: 0.01, inventory: 4000 }],
     deliveryFactor: 0.57,
+  },
+  // 120-day incident so the all-history baseline (diluted by its healthy
+  // prefix) reliably fires before the repair; 90 days observed after.
+  {
+    ...futilityBase,
+    name: 'incident-recovery',
+    horizonDays: 270,
+    strategies: [{ slug: 'only', replyRate: 0.01, inventory: 4000 }],
+    deliveryPhases: [
+      { fromDay: 60, factor: 0.1 },
+      { fromDay: 180, factor: 1 },
+    ],
   },
 ]

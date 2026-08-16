@@ -18,6 +18,7 @@ const measurementsSince = z.iso.date()
 const futilitySurvivalRate = z.number().min(0).max(1)
 const futilityConfidence = z.number().min(0).max(1)
 const futilityMinSends = z.number().int().min(1)
+const futilityLookbackDays = z.number().int().min(1)
 
 // R5 safety device: defaults make every lever behave like today until enough data accrues.
 export const leverConfigSchema = z.object({
@@ -52,10 +53,13 @@ export const leverConfigSchema = z.object({
   // regime, e.g. pre-deliverability-repair). Orthogonal to rewardLookbackDays.
   measurementsSince: measurementsSince.optional(),
   // Vitals gate: verdict "futile" once P(reply rate < futilitySurvivalRate) ≥
-  // futilityConfidence over ≥ futilityMinSends mature email sends.
+  // futilityConfidence over ≥ futilityMinSends mature email sends within the
+  // last futilityLookbackDays — bounded so the verdict self-clears after a
+  // deliverability repair (window calibrated in sim/REPORT.md sweep 2).
   futilitySurvivalRate: futilitySurvivalRate.default(0.01),
   futilityConfidence: futilityConfidence.default(0.99),
   futilityMinSends: futilityMinSends.default(100),
+  futilityLookbackDays: futilityLookbackDays.default(90),
 })
 export type LeverConfig = z.infer<typeof leverConfigSchema>
 export const defaultLeverConfig: LeverConfig = leverConfigSchema.parse({})
@@ -93,5 +97,6 @@ export const leverConfigPatchSchema = z.object({
   futilitySurvivalRate: futilitySurvivalRate.optional(),
   futilityConfidence: futilityConfidence.optional(),
   futilityMinSends: futilityMinSends.optional(),
+  futilityLookbackDays: futilityLookbackDays.optional(),
 })
 export type LeverConfigPatch = z.infer<typeof leverConfigPatchSchema>

@@ -548,10 +548,12 @@ assert_eq "stag tick2 echoes reason stagnation" "$(echo "$TS2" | jq -r '.archive
 assert_eq "stag tick2 needsReplenishment false (fulfilled)" "$(echo "$TS2" | jq -r '.needsReplenishment')" "false"
 
 # Futility (vitals). A fifth project: 600 mature zero-reply email sends put
-# P(rate < 1%) ≈ 0.998 past the 0.99 confidence gate. The futile verdict on the
-# newest decision must surface on the tenant-wide attention feed; the healthy
-# main project must not.
-step "futility: fifth project + 600 zero-reply mature sends"
+# P(rate < 1%) ≈ 0.998 past the 0.99 confidence gate. The verdict reads a
+# rolling window (futilityLookbackDays 90 + maturation 14 → sends older than
+# 104 days excluded), so the 50 pre-window sends must not count. The futile
+# verdict on the newest decision must surface on the tenant-wide attention
+# feed; the healthy main project must not.
+step "futility: fifth project + 600 zero-reply mature sends (+50 pre-window)"
 CREATE5="$(api POST /api/projects "$(jq -nc --arg n "$PROJECT_NAME futile" '{name:$n}')")"
 PROJECT_ID5="$(echo "$CREATE5" | jq -r '.id // ""')"
 [[ -n "$PROJECT_ID5" ]] || { echo "create-project(5) failed: $CREATE5" >&2; exit 1; }
@@ -559,11 +561,14 @@ say "project_id5=$PROJECT_ID5"
 psql_local "INSERT INTO outreach_logs (tenant_id, project_id, prospect_id, channel, body, status, sent_at)
             SELECT '$TENANT_ID', '$PROJECT_ID5', $PROSPECT_ID, 'email', 'e2e', 'sent', now() - interval '30 days'
             FROM generate_series(1, 600);" > /dev/null
-say "inserted 600 mature sends, zero replies"
+psql_local "INSERT INTO outreach_logs (tenant_id, project_id, prospect_id, channel, body, status, sent_at)
+            SELECT '$TENANT_ID', '$PROJECT_ID5', $PROSPECT_ID, 'email', 'e2e', 'sent', now() - interval '120 days'
+            FROM generate_series(1, 50);" > /dev/null
+say "inserted 600 mature sends in-window + 50 outside, zero replies"
 
 step "tick judges futile; /me/attention surfaces exactly the futile project"
 TV="$(api POST "/api/projects/$PROJECT_ID5/run-lever-tick")"
-assert_eq "futility tick vitals sends" "$(echo "$TV" | jq -r '.vitals.sends')" "600"
+assert_eq "futility tick vitals sends (window excludes the 50 old)" "$(echo "$TV" | jq -r '.vitals.sends')" "600"
 assert_eq "futility tick vitals verdict" "$(echo "$TV" | jq -r '.vitals.verdict')" "futile"
 assert_eq "futility tick pDead past the confidence gate" "$(echo "$TV" | jq -r '.vitals.pDead >= 0.99')" "true"
 ATT="$(api GET "/api/me/attention")"

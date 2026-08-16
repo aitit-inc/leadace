@@ -12,6 +12,10 @@
 //   stratum (archived-slug rows land there), stratum shortfall falls back to
 //   a fully random draw. No strategy stagnation rotation (#357 deferral), no
 //   replenishment (the LLM side is out of simulation scope).
+// - forgetting (evaluations.ts): the production band `sent_at ∈ [now−W−L, now−W)`
+//   equals mature-day ∈ [now−L, now). rewardLookbackDays feeds the bandit arms
+//   and targeting lifts; the futility window is a sim-first candidate
+//   (SimParams); resetStatsAtDay replays the manual measurementsSince wipe.
 
 import {
   computeArmWeights,
@@ -42,9 +46,25 @@ export type Scenario = {
   strategies: StrategyTruth[]
   bounceRate: number
   deliveryFactor: number
+  // Ascending fromDay; the first phase starts the incident, the last is the repair.
+  deliveryPhases?: { fromDay: number; factor: number }[]
   sendsPerDay: number
   batchSize: number
   horizonDays: number
+}
+
+export function deliveryFactorAt(scenario: Scenario, day: number): number {
+  let factor = scenario.deliveryFactor
+  for (const p of scenario.deliveryPhases ?? []) {
+    if (day >= p.fromDay) factor = p.factor
+  }
+  return factor
+}
+
+export function incidentWindowOf(scenario: Scenario): { start: number; repair: number } | null {
+  const phases = scenario.deliveryPhases
+  if (phases === undefined || phases.length < 2) return null
+  return { start: phases[0]!.fromDay, repair: phases[phases.length - 1]!.fromDay }
 }
 
 export type DayRecord = {
@@ -57,6 +77,7 @@ export type DayRecord = {
   registrationShortfall: number
   vitalsVerdict: VitalsVerdict
   vitalsPDead: number
+  // What assessVitals saw (windowed when futilityLookbackDays is set).
   matureSends: number
   matureReplies: number
 }
@@ -77,6 +98,10 @@ export type SimParams = {
   // Production runs computePBest/assessVitals at 10k; 500–1k keeps the sweep
   // tractable.
   mcSamples: number
+  // Sim-first candidate: futility window in days; unset = production all-history.
+  futilityLookbackDays?: number
+  // Replays the manual measurementsSince policy: every aggregate wiped at this day.
+  resetStatsAtDay?: number
 }
 
 const UNATTRIBUTED_STRATUM = '*'
@@ -132,6 +157,26 @@ export function runScenario(scenario: Scenario, seed: number, params: SimParams)
     matureSends += s.total
     matureReplies += s.replies
   }
+  // Seed history matures at day 0 and ages out of any window like real rows.
+  type DayCount = { total: number; replies: number }
+  const matureLog = new Map<string, DayCount[]>(
+    scenario.strategies.map((s) => [
+      s.slug,
+      s.seedHistory ? [{ total: s.seedHistory.total, replies: s.seedHistory.replies }] : [],
+    ]),
+  )
+  const windowStat = (slug: string, fromDay: number): DayCount => {
+    const log = matureLog.get(slug)!
+    let total = 0
+    let replies = 0
+    for (let d = Math.max(0, fromDay); d < log.length; d++) {
+      const cell = log[d]
+      if (cell === undefined) continue
+      total += cell.total
+      replies += cell.replies
+    }
+    return { total, replies }
+  }
 
   let seq = 0
   const pool = new Map<string, SlugPool>(
@@ -169,6 +214,18 @@ export function runScenario(scenario: Scenario, seed: number, params: SimParams)
   let sendsAcc = 0
 
   for (let day = 0; day < scenario.horizonDays; day++) {
+    if (day === params.resetStatsAtDay) {
+      for (const s of stats.values()) {
+        s.total = 0
+        s.replies = 0
+      }
+      matureSends = 0
+      matureReplies = 0
+      for (const slug of matureLog.keys()) matureLog.set(slug, [])
+      // The epoch filters on sent_at: pre-epoch in-flight sends never mature.
+      while (pending.length > 0 && pending[0]!.sentDay < day) pending.shift()
+    }
+
     while (pending.length > 0 && day - pending[0]!.sentDay >= config.rewardWindowDays) {
       const send = pending.shift()!
       if (send.bounced) continue
@@ -177,14 +234,24 @@ export function runScenario(scenario: Scenario, seed: number, params: SimParams)
       if (send.replied) s.replies += 1
       matureSends += 1
       if (send.replied) matureReplies += 1
+      const log = matureLog.get(send.slug)!
+      const cell = (log[day] ??= { total: 0, replies: 0 })
+      cell.total += 1
+      if (send.replied) cell.replies += 1
     }
 
+    // +1: exactly L mature-day buckets ending today (today's batch matured
+    // above), matching the half-open production band.
+    const armStatOf =
+      config.rewardLookbackDays === undefined
+        ? (slug: string): DayCount => stats.get(slug)!
+        : (slug: string): DayCount => windowStat(slug, day - config.rewardLookbackDays! + 1)
+
     const activeSlugs = [...active].sort()
-    const arms: ArmStat[] = activeSlugs.map((slug) => ({
-      armId: slug,
-      total: stats.get(slug)!.total,
-      rewardSum: stats.get(slug)!.replies,
-    }))
+    const arms: ArmStat[] = activeSlugs.map((slug) => {
+      const s = armStatOf(slug)
+      return { armId: slug, total: s.total, rewardSum: s.replies }
+    })
     const decision = computeArmWeights(
       arms,
       {
@@ -203,9 +270,10 @@ export function runScenario(scenario: Scenario, seed: number, params: SimParams)
     }
     storedWeights = decision.weights
 
-    const axisStats: TargetingAxisStat[] = [...stats]
-      .filter(([, s]) => s.total > 0)
-      .map(([slug, s]) => ({ value: slug, total: s.total, rewardSum: s.replies }))
+    const axisStats: TargetingAxisStat[] = [...stats.keys()]
+      .map((slug) => ({ slug, s: armStatOf(slug) }))
+      .filter(({ s }) => s.total > 0)
+      .map(({ slug, s }) => ({ value: slug, total: s.total, rewardSum: s.replies }))
     const r0 = overallMeanReward(axisStats)
     const lifts = new Map(
       computeAxisLifts(axisStats, r0, config.priorStrength).map((l) => [l.value as string, l.lift]),
@@ -219,8 +287,19 @@ export function runScenario(scenario: Scenario, seed: number, params: SimParams)
       p.scoredScore = lifts.get(slug) ?? 1
     }
 
+    let vitalsSends = matureSends
+    let vitalsReplies = matureReplies
+    if (params.futilityLookbackDays !== undefined) {
+      vitalsSends = 0
+      vitalsReplies = 0
+      for (const slug of stats.keys()) {
+        const w = windowStat(slug, day - params.futilityLookbackDays + 1)
+        vitalsSends += w.total
+        vitalsReplies += w.replies
+      }
+    }
     const vitals = assessVitals(
-      { sends: matureSends, replies: matureReplies },
+      { sends: vitalsSends, replies: vitalsReplies },
       config,
       seededRng(`vitals:${seed}`),
       mcSamples,
@@ -243,13 +322,14 @@ export function runScenario(scenario: Scenario, seed: number, params: SimParams)
     }
 
     const sendsBySlug: Record<string, number> = {}
+    const factorToday = deliveryFactorAt(scenario, day)
     const send = (slug: string): void => {
       const t = truth.get(slug)!
       const bounced = envRng() < scenario.bounceRate
-      const replied = !bounced && envRng() < t.replyRate * scenario.deliveryFactor
+      const replied = !bounced && envRng() < t.replyRate * factorToday
       pending.push({ sentDay: day, slug, bounced, replied })
       sendsBySlug[slug] = (sendsBySlug[slug] ?? 0) + 1
-      expectedAcc += (1 - scenario.bounceRate) * t.replyRate * scenario.deliveryFactor
+      expectedAcc += (1 - scenario.bounceRate) * t.replyRate * factorToday
       sendsAcc += 1
     }
 
@@ -319,8 +399,8 @@ export function runScenario(scenario: Scenario, seed: number, params: SimParams)
       registrationShortfall,
       vitalsVerdict: vitals.verdict,
       vitalsPDead: vitals.pDead,
-      matureSends,
-      matureReplies,
+      matureSends: vitalsSends,
+      matureReplies: vitalsReplies,
     })
     cumulativeExpected.push(expectedAcc)
     cumulativeSends.push(sendsAcc)
@@ -339,12 +419,13 @@ export function oracleTrajectory(scenario: Scenario): number[] {
   const out: number[] = []
   let acc = 0
   for (let day = 0; day < scenario.horizonDays; day++) {
+    const factor = deliveryFactorAt(scenario, day)
     let remaining = scenario.sendsPerDay
     for (const s of bySlugRate) {
       if (remaining === 0) break
       const take = Math.min(remaining, supply.get(s.slug)!)
       supply.set(s.slug, supply.get(s.slug)! - take)
-      acc += take * (1 - scenario.bounceRate) * s.replyRate * scenario.deliveryFactor
+      acc += take * (1 - scenario.bounceRate) * s.replyRate * factor
       remaining -= take
     }
     out.push(acc)

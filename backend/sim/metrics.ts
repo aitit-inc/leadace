@@ -1,5 +1,5 @@
 import type { LeverConfig } from '../src/domain/lever-config'
-import type { RunResult, Scenario } from './environment'
+import { incidentWindowOf, type RunResult, type Scenario } from './environment'
 
 export type RunMetrics = {
   discoveryDay: number | null
@@ -14,6 +14,11 @@ export type RunMetrics = {
   everFutile: boolean
   vitalsFlickers: number
   shortfallTotal: number
+  // Regime-scenario only; null elsewhere.
+  firedDuringIncident: boolean | null
+  recoveredAfterRepair: boolean | null
+  clearDaysAfterRepair: number | null
+  captureAfterRepair: number | null
 }
 
 const argmax = (weights: Record<string, number>): string | null => {
@@ -76,6 +81,40 @@ export function extractRunMetrics(
     shortfallTotal += day.registrationShortfall
   }
 
+  const incident = incidentWindowOf(scenario)
+  let firedDuringIncident: boolean | null = null
+  let recoveredAfterRepair: boolean | null = null
+  let clearDaysAfterRepair: number | null = null
+  let captureAfterRepair: number | null = null
+  if (incident !== null && incident.repair > 0 && incident.repair <= lastDay) {
+    const { start, repair } = incident
+    // A futile day inside [incidentStart, repair): a pre-incident false fire
+    // that clears before the incident must not count.
+    firedDuringIncident = run.days.some(
+      (d) => d.day >= start && d.day < repair && d.vitalsVerdict === 'futile',
+    )
+    if (firedDuringIncident) {
+      let lastFutile: number | null = null
+      for (const day of run.days) {
+        if (day.day >= repair && day.vitalsVerdict === 'futile') lastFutile = day.day
+      }
+      if (lastFutile === null) {
+        recoveredAfterRepair = true
+        clearDaysAfterRepair = 0
+      } else if (lastFutile === lastDay) {
+        recoveredAfterRepair = false
+      } else {
+        recoveredAfterRepair = true
+        clearDaysAfterRepair = lastFutile + 1 - repair
+      }
+    }
+    const oracleGain = oracle[lastDay]! - oracle[repair - 1]!
+    captureAfterRepair =
+      oracleGain > 0
+        ? (finalExpected - run.cumulativeExpected[repair - 1]!) / oracleGain
+        : 1
+  }
+
   return {
     discoveryDay,
     sendsUntilDiscovery,
@@ -89,6 +128,10 @@ export function extractRunMetrics(
     everFutile: firstFutileDay !== null,
     vitalsFlickers,
     shortfallTotal,
+    firedDuringIncident,
+    recoveredAfterRepair,
+    clearDaysAfterRepair,
+    captureAfterRepair,
   }
 }
 
@@ -120,6 +163,9 @@ export function aggregate(runs: RunMetrics[]): AggregateRow {
   const regret = stats(runs.map((r) => r.regretAtEnd))
   const futileDay = stats(runs.map((r) => r.firstFutileDay))
   const futileSends = stats(runs.map((r) => r.sendsAtFirstFutile))
+  const regime = runs.filter((r) => r.firedDuringIncident !== null)
+  const fired = regime.filter((r) => r.firedDuringIncident === true)
+  const clearDays = stats(fired.map((r) => r.clearDaysAfterRepair))
   return {
     runs: n,
     discoveredFrac: frac((r) => r.discoveryDay !== null),
@@ -144,5 +190,13 @@ export function aggregate(runs: RunMetrics[]): AggregateRow {
     futileSendsP90: futileSends.p90,
     vitalsFlickersMean: stats(runs.map((r) => r.vitalsFlickers)).mean,
     shortfallMean: stats(runs.map((r) => r.shortfallTotal)).mean,
+    firedIncidentFrac: regime.length > 0 ? fired.length / regime.length : null,
+    recoveredOfFiredFrac:
+      fired.length > 0
+        ? fired.filter((r) => r.recoveredAfterRepair === true).length / fired.length
+        : null,
+    clearDaysP50: clearDays.p50,
+    clearDaysP90: clearDays.p90,
+    captureAfterRepairMean: stats(runs.map((r) => r.captureAfterRepair)).mean,
   }
 }
