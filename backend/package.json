@@ -18,21 +18,21 @@
   "dependencies": {
     "@google/genai": "^2.10.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@sentry/cloudflare": "^10.64.0",
+    "@sentry/cloudflare": "^10.70.0",
     "drizzle-orm": "^0.45.2",
-    "hono": "^4.12.28",
+    "hono": "^4.13.2",
     "jose": "^6.2.3",
     "openai": "^6.46.0",
     "postgres": "^3.4.9",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260629.1",
+    "@cloudflare/workers-types": "^5.20260815.1",
     "@hono/zod-validator": "^0.8.0",
     "drizzle-kit": "^0.31.10",
     "drizzle-zod": "^0.8.3",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10",
-    "wrangler": "~4.107.0"
+    "wrangler": "^4.124.0"
   }
 }

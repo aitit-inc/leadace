@@ -15,9 +15,9 @@ export type AttentionItem =
   | { kind: 'quota_exhausted'; constraint: QuotaConstraint }
   | { kind: 'reply_collection_scope_missing'; fromEmail: string }
   | { kind: 'reply_collection_failing'; fromEmail: string; since: string; detail: string | null }
-  // Carries the project name: the verdict is per project but the feed is
-  // tenant-wide (like the identity items), so the bell can name it.
-  | { kind: 'outreach_futility'; projectName: string; sends: number; replies: number }
+  // The verdict is per project but the feed is tenant-wide, so the item
+  // carries the project: name for the bell, id for the CTA's deep link.
+  | { kind: 'outreach_futility'; projectId: string; projectName: string; sends: number; replies: number }
   | { kind: 'outreach_drafts'; count: number }
 
 export type IdentityHealthInput = {
@@ -114,7 +114,13 @@ export function deriveAttentionItems(input: AttentionInput): AttentionItem[] {
   }
   items.push(...degraded)
   for (const p of input.futileProjects) {
-    items.push({ kind: 'outreach_futility', projectName: p.projectName, sends: p.sends, replies: p.replies })
+    items.push({
+      kind: 'outreach_futility',
+      projectId: p.projectId,
+      projectName: p.projectName,
+      sends: p.sends,
+      replies: p.replies,
+    })
   }
   if (input.project && input.project.pendingDrafts > 0) {
     items.push({ kind: 'outreach_drafts', count: input.project.pendingDrafts })

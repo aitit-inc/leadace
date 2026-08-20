@@ -38,7 +38,7 @@ project's `playbook_<discoveryStrategy>` document.
    prefix like `sales@`, `bd@`, `partnerships@`, `recruiting@`.
 4. **Generic email** — `email` is set and starts with `info@`, `contact@`,
    `support@`, `hello@`, `pr@`. **Demoted but never excluded** — for many
-   small companies it is the only reachable address. Its lower reply rate is
+   small companies it is the only reachable address. Its higher bounce rate is
    reflected in priority, not in eligibility.
 5. **Contact form** — `contactFormUrl` is set.
 6. **X / Twitter DM** — `snsAccounts.x` is set. Lowest rung: reach depends on
@@ -49,8 +49,8 @@ If only one rung yields a valid channel for the prospect, use it.
 ## Address classification
 
 - **Named (personal)**: the local part encodes a human name — `jdoe@`,
-  `j.doe@`, `jane.doe@`, `jane@`. Highest intent, highest reply rate.
+  `j.doe@`, `jane.doe@`, `jane@`. Lowest bounce rate.
 - **Department / role**: a function, not a person — `sales@`, `bd@`,
-  `recruiting@`, `partnerships@`. Mid-funnel.
+  `recruiting@`, `partnerships@`.
 - **Generic / catch-all**: `info@`, `contact@`, `support@`, `hello@`, `pr@`.
-  Lowest reply rate; demoted, not excluded.
+  Highest bounce rate; demoted, not excluded.

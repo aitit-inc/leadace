@@ -239,7 +239,7 @@ For each prospect, assign a match reason (why they're appropriate as a target, i
 - Listed in startup DB or industry directory (more public information available)
 - Email explicitly shown on official site (e.g., info@) discovered during exploration
 
-**Note on email types:** Both named individual addresses (`first.last@co.com`) and generic addresses (`info@`, `contact@`, `sales@`, `support@`, `pr@`) are valid outreach targets. Named addresses generally have higher reply rates and deserve slightly higher priority, but **generic addresses must not be excluded** — for many companies they are the only reachable channel.
+**Note on email types:** Both named individual addresses (`first.last@co.com`) and generic addresses (`info@`, `contact@`, `sales@`, `support@`, `pr@`) are valid outreach targets. Named addresses bounce less and deserve slightly higher priority, but **generic addresses must not be excluded** — for many companies they are the only reachable channel.
 
 ## Phase 1.5: Pre-dedup Filter
 

@@ -1,5 +1,7 @@
 <script lang="ts">
   import { Bell } from '@lucide/svelte';
+  import { goto } from '$app/navigation';
+  import { setActiveProject } from '$lib/active-project';
   import { attentionMeta } from '$lib/attention-meta';
   import type { AttentionItem } from '$lib/types/attention';
 
@@ -11,6 +13,21 @@
 
   function close() {
     open = false;
+  }
+
+  // The dashboard renders the cookie's active project, so the futility CTA
+  // must switch to the named project first or it lands on the wrong one.
+  // Modified clicks (new tab/window) keep native link behavior.
+  async function followCta(e: MouseEvent, item: AttentionItem, href: string) {
+    close();
+    if (
+      item.kind === 'outreach_futility' &&
+      !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey
+    ) {
+      e.preventDefault();
+      await setActiveProject(item.projectId);
+      await goto(href);
+    }
   }
 
   const TONE_TEXT: Record<ReturnType<typeof attentionMeta>['tone'], string> = {
@@ -79,7 +96,7 @@
                   <p class="mt-0.5 text-xs text-text-muted">{meta.desc}</p>
                   <a
                     href={meta.href}
-                    onclick={close}
+                    onclick={(e) => followCta(e, item, meta.href)}
                     role="menuitem"
                     class="mt-1.5 inline-block text-xs font-medium text-accent hover:text-accent-strong transition-colors"
                   >

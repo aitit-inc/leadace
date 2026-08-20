@@ -174,8 +174,8 @@ describe('deriveAttentionItems', () => {
       project: null,
     })
     expect(items).toEqual([
-      { kind: 'outreach_futility', projectName: 'Acme', sends: 400, replies: 0 },
-      { kind: 'outreach_futility', projectName: 'Globex', sends: 310, replies: 0 },
+      { kind: 'outreach_futility', projectId: 'p-acme', projectName: 'Acme', sends: 400, replies: 0 },
+      { kind: 'outreach_futility', projectId: 'p-globex', projectName: 'Globex', sends: 310, replies: 0 },
     ])
   })
 
