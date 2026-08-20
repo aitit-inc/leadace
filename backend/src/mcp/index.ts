@@ -51,7 +51,7 @@ type Env = {
 // new plugin contract. Bump this **only when** introducing a backend change
 // that the old plugin cannot tolerate (removed tool, renamed required arg,
 // changed response shape). See .claude/rules/release.md.
-const SERVER_VERSION = '1.0.0'
+export const SERVER_VERSION = '1.0.0'
 // 0.7.48: discovery attribution moved to the registered-strategy registry —
 // an older plugin stamps free-form slugs add_prospects no longer accepts, and
 // its /build-list predates the registry batchPlan contract.
@@ -119,7 +119,7 @@ function withCors(response: Response): Response {
   })
 }
 
-type ToolCtx = { apiUrl: string; authHeader: string }
+export type ToolCtx = { apiUrl: string; authHeader: string }
 
 type ToolDef = {
   name: string
@@ -130,7 +130,7 @@ type ToolDef = {
 
 // Building the tool schemas once per isolate keeps the MCP fetch path off the
 // Worker CPU limit — per-request rebuild used to exceed Free's 10 ms ceiling.
-function buildToolRegistry(): ToolDef[] {
+export function buildToolRegistry(): ToolDef[] {
   const tools: ToolDef[] = []
   const defineTool = <S extends z.ZodRawShape>(
     name: string,

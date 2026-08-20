@@ -5,6 +5,7 @@
   "scripts": {
     "dev:api": "wrangler dev --config wrangler.api.jsonc --inspector-port 9229 --test-scheduled",
     "dev:mcp": "wrangler dev --config wrangler.mcp.jsonc --port 8788 --inspector-port 9230",
+    "mcp:stdio": "tsx src/mcp/stdio.ts",
     "deploy:api": "wrangler deploy --config wrangler.api.jsonc",
     "deploy:mcp": "wrangler deploy --config wrangler.mcp.jsonc",
     "db:generate": "drizzle-kit generate",
@@ -31,6 +32,7 @@
     "@hono/zod-validator": "^0.8.0",
     "drizzle-kit": "^0.31.10",
     "drizzle-zod": "^0.8.3",
+    "tsx": "^4.23.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10",
     "wrangler": "^4.124.0"
