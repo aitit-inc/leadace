@@ -215,7 +215,7 @@ export function findNearDuplicate(
 function describeForbiddenLink(needle: string, reason: ForbiddenLinkReason): string {
   switch (reason) {
     case 'own_host':
-      return `The body links to "${needle}". Our own domain is the strongest spam signal we have measured; the backend appends the only link this message may carry.`
+      return `The body contains "${needle}" — the platform host that every workspace's inquiry and opt-out links share; a cold-mail link to it is the strongest spam signal we have measured (18/20 spam with it, 2/20 without). It reaches recipients only through the backend-appended footer (the inquiry-landing URL when inquiry landing is on, the opt-out link). Drop it from the body; if a link is essential, use your own site or a well-aged third-party domain.`
     case 'signup_cta':
       return `The body contains the signup URL ("${needle}"). Inlining it lets the recipient bypass the inquiry landing page, so the click is never recorded — invite them to reply or to the landing conversation instead.`
     case 'cta_with_inquiry_landing':

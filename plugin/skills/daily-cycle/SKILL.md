@@ -157,7 +157,7 @@ You are an outbound sales agent. Please reach out to each company on the prospec
    Understand:
    - SALES_STRATEGY "Sales Channels" section: tactical preferences only (ordering, tone, sub-channel preferences). Channel enablement is owned by `outboundChannels` in project settings (applied in outbound/SKILL.md step 1).
    - Email messaging hints (First Outreach approach: what to emphasize, what never to claim). There is no stored body template — each body is written per recipient in the outbound step (outbound/SKILL.md)
-   - Sender information: signature block only (sender display name + email live in project settings and are applied automatically by `send_email` / `send_email_and_record`)
+   - Sender information: signature block only (the `From:` address and display name are applied server-side by `send_email_and_record` from the project's sending mailbox + project settings)
    - SNS messaging policy
 
 2. Next, read `${CLAUDE_PLUGIN_ROOT}/skills/outbound/SKILL.md` and follow its procedure
@@ -303,7 +303,7 @@ Include the following in the prompt:
 
 **Completion Notification Email**
 
-Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "sales_strategy"` and read the notification recipient email from its "Notification Settings" section. Skip if notification is "none" or not set. The `From:` address is applied automatically by `send_email` from project settings (`senderEmailAlias` / `senderDisplayName`) — do not pass them as arguments.
+Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "sales_strategy"` and read the notification recipient email from its "Notification Settings" section. Skip if notification is "none" or not set. `send_email` sends from the connected Gmail account and takes no sender arguments.
 
 Compose the report body from the phase summaries passed in the prompt:
 

@@ -466,7 +466,7 @@ function buildToolRegistry(): ToolDef[] {
             bounceRate: number
           }
       if (h.kind === 'no_mailbox') {
-        return { content: [{ type: 'text' as const, text: 'No sending mailbox connected. Connect a Gmail account at https://app.leadace.ai to enable email sends and warmup.' }] }
+        return { content: [{ type: 'text' as const, text: 'No sending mailbox: connect a Gmail account or assign a custom SMTP mailbox at https://app.leadace.ai to enable email sends and warmup.' }] }
       }
       const warmupLine = h.dailyCapOverride !== null
         ? `fixed daily cap ${h.dailyCapOverride}/day (warmup ramp bypassed)`
@@ -946,7 +946,7 @@ function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'send_email_and_record',
-    'Sends a prospect email to the address stored on the prospect and records the outreach log in one call; project outboundMode decides send vs a pending_review draft. Returns outreachId and whether it sent or drafted.',
+    'Sends a prospect email to the address stored on the prospect and records the outreach log in one call; project outboundMode decides send vs a pending_review draft. Reports whether it sent or drafted, the outreach id, and on a send the From address the project\'s sending mailbox used.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       prospectId: z.number().int(),
@@ -968,10 +968,10 @@ function buildToolRegistry(): ToolDef[] {
         return { content: [{ type: 'text' as const, text: `Error: ${msg}` }], isError: true }
       }
       const result = data as
-        | { mode: 'sent'; outreachId: number; messageId: string; threadId: string }
+        | { mode: 'sent'; outreachId: number; messageId: string; threadId: string; from: string }
         | { mode: 'drafted'; outreachId: number }
       const text = result.mode === 'sent'
-        ? `Email sent. Outreach logged (id: ${result.outreachId}).`
+        ? `Email sent from ${result.from}. Outreach logged (id: ${result.outreachId}).`
         : `Draft created (outreach id: ${result.outreachId}). User reviews and sends from https://app.leadace.ai/drafts.`
       return { content: [{ type: 'text' as const, text }] }
     },
@@ -1731,7 +1731,7 @@ function buildToolRegistry(): ToolDef[] {
       outboundMode: z.enum(OUTBOUND_MODES).optional()
         .describe('"send" sends immediately; "draft" stores as reviewable LeadAce drafts instead of sending.'),
       senderEmailAlias: z.email().nullable().optional()
-        .describe('Gmail Send-As alias to use as From: address. null = primary Gmail.'),
+        .describe('Gmail Send-As alias to use as From: address. null = primary Gmail. Ignored when the project sends from a custom SMTP mailbox.'),
       senderDisplayName: z.string().min(1).max(200).nullable().optional()
         .describe('Personal name shown as the email From: display name and on the inquiry-landing header.'),
       senderCompanyName: z.string().min(1).max(200).nullable().optional()

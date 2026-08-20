@@ -22,9 +22,9 @@ These are shapes, not text: reword the connective phrasing and the CTA every sen
 
 ## Hard rules
 
-The server refuses a send that breaks the mechanical half of these — an unfilled placeholder, our own domain or the CTA URL in the body, a footer written into the body, a near-duplicate of a recent body. It says which one; fix the body and retry.
+The server refuses a send that breaks the mechanical half of these — an unfilled placeholder, the platform host or the CTA URL in the body, a footer written into the body, a near-duplicate of a recent body. It says which one; fix the body and retry.
 
-- **No links in a cold first-touch body.** A link to a low-reputation domain, above all our own app domain, is the strongest spam signal we have measured. If one is genuinely unavoidable, use a single recipient-trusted, well-aged domain (`calendly.com`, `github.com`), never ours.
+- **Link-free by default in a cold first-touch body.** A link to a low-reputation domain is the strongest spam signal we have measured. The platform host (the app domain every workspace's inquiry and opt-out links share) is refused outright — it reaches recipients only as the backend-appended inquiry-landing URL. Your own site is allowed but carries its reputation cost; if a link is genuinely unavoidable, prefer a single recipient-trusted, well-aged domain (`calendly.com`, `github.com`).
 - **No near-duplicates.** Vary opener, structure, paragraph order and CTA across prospects; never re-send boilerplate, including the non-personalized parts. The shapes above are structures to reword, not text to send.
 - **One CTA, and it is a reply.** A reply also outperforms a click as an engagement signal.
 - **Legal disclosures come from the backend footer** (legal name, physical address, opt-out). Never put them in the body or the sign-off.

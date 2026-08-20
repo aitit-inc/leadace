@@ -42,10 +42,10 @@ Environment status is **live-detected, never persisted** — there is no `env_st
 Use `ENV_SUMMARY` for three things only:
 1. The **Step 8 hand-off summary** — surface any missing-tool warning once (per the tool-impact catalog below).
 2. A sensible **default for the outbound-channels collection** (Step 4 / 4B-3): per `BROWSER_AUTOMATION` — `chrome` → all channels; `other` → email + form; `none`/`unsure` → email only.
-3. The **sender / notification email default** (§4B-3): `GMAIL_STATUS.email` is the address outbound will actually send from, so propose it for both rather than asking.
+3. The **notification email default** (§4B-3): propose `GMAIL_STATUS.email` rather than asking. The `From:` address is never collected — the project sends from its sending mailbox (the connected Gmail unless the Web UI assigns a custom SMTP mailbox); `senderEmailAlias` exists only for a verified Gmail Send-As alias.
 
 **Tool impact catalog** (use as the content of the Step 8 warning):
-- No Gmail SaaS → blocks email auto-send (send mode); drafting still works.
+- No Gmail SaaS → blocks email auto-send (send mode) unless the project is assigned a custom SMTP mailbox in the Web UI; drafting still works.
 - No Gmail MCP → reply checking in `/check-responses` becomes manual.
 - No browser backend → blocks form / SNS auto-send (send mode); another browser-automation MCP unblocks form only (SNS needs Claude in Chrome); drafting still works.
 - No local fetch toolchain (`python3` + `claude` CLI) → `/build-list` and `/leadace` strategy research falls back to `WebFetch` — **not a channel block**, just lower research quality on WAF-blocked sites.
@@ -84,7 +84,7 @@ Check completeness of each section in existing `SALES_STRATEGY.md`:
 | Track record / social proof | At least 1 specific achievement or number |
 | Outbound mode | send / draft is set in project settings |
 | Sales channels | Optional — tactical notes (ordering, tone) present, OR explicitly empty when no project-specific notes. Channel enablement lives in Project Settings (`outboundChannels`), not here. |
-| Sender information | Display name + email in project settings; phone + signature in document |
+| Sender information | Display name (+ optional Send-As alias) in project settings; phone + signature in document |
 | Messaging | First Outreach approach present |
 | Response definition | Conditions counting as response specified |
 | Notification settings | Content present ("none" is a valid value) |
@@ -196,22 +196,22 @@ Where to find prospect candidates (depends on target market, industry, region). 
 - "Up to you" → reasonable defaults by target market, formulated as named strategies.
 
 #### 4-7. Sender Information
-Collect 5 items in order (display name / phone / email / signature required for outbound; company name optional but recommended for the AI inquiry landing):
+Collect 5 items in order (display name / phone / signature required for outbound; company name and Send-As alias optional):
 1. Organization phone number (used by contact forms).
 2. Sender display name — personal name only (e.g., "Jane Doe"). Do **not** append the company name here; that goes in item 3.
 3. Sender company / brand name (e.g., "Acme Inc."). Shown to recipients on the AI inquiry landing as `From {senderDisplayName} at {senderCompanyName}`. Distinct from the legal name in Workspace Settings (compliance footer). "None" allowed → omit.
-4. Sender email (Gmail address or verified Send-As alias of the connected Google account).
+4. Gmail Send-As alias — only when the `From:` should differ from the connected Gmail's primary address (must already be verified in Gmail). "None" → the project sends from its sending mailbox as is (the connected Gmail, or a custom SMTP mailbox assigned in the Web UI, which ignores the alias).
 5. Signature line (human signature only — name, title, sign-off; no postal address, no legal entity name, no phone block).
 
-"Up to you" not allowed for items 1, 2, 4, 5 — must come from the user. Only item 3 (company) may be skipped with "none".
+"Up to you" not allowed for items 1, 2, 5 — must come from the user. Items 3 (company) and 4 (alias) may be skipped with "none".
 
-After collection, **save display name + company + email to project settings**:
+After collection, **save display name + company + alias to project settings**:
 ```
 mcp__plugin_leadace_api__update_project_settings
   projectId: "$0"
   senderDisplayName: <display>
   senderCompanyName: <company>   # omit the field if user said "none"
-  senderEmailAlias: <email>
+  senderEmailAlias: <alias>      # null when the user said "none" — omitting it would keep a stored alias
 ```
 Phone stays in SALES_STRATEGY.md "Sender Information" (forms reference it). The compliance footer — legal name, physical address, unsubscribe — is appended server-side at send time from Workspace Settings; **do not** include any of those in the SALES_STRATEGY.md signature, and remove them on migration. If `TENANT_SETTINGS` (Step 3) shows any of `legalName` / `physicalAddress` / `defaultSenderCountry` as `(not set)`, surface a one-line note here directing the user to https://app.leadace.ai/workspace-settings before `/outbound`.
 
@@ -327,7 +327,7 @@ Print the whole proposed setup as **one** block and let the user reply `Y` to sa
 Contents, each value carrying its source in parentheses so it can be trusted or challenged at a glance:
 
 - **Project** (name from the URL) and the §4B-2 inferences — business / target / features / pricing / track record, one line each — plus both drafts, `inquiry_chat_brief` and `inquiry_one_liner`, on adjacent lines.
-- **Sender**: email and notification address default to the connected Gmail address from `ENV_SUMMARY`; company and phone from §4B-2. **Display name stays blank** — a personal name is not on a homepage, so never invent one — and the signature is `display name + company`, so it completes when the name arrives.
+- **Sender**: the notification address defaults to the connected Gmail address from `ENV_SUMMARY`; the `From:` address is the project's sending mailbox (that Gmail, until the Web UI assigns a custom SMTP mailbox) and is stated, not asked; company and phone from §4B-2. **Display name stays blank** — a personal name is not on a homepage, so never invent one — and the signature is `display name + company`, so it completes when the name arrives.
 - **Workspace identity** (the fields §4B-2 inferred): flag as *needs your confirmation* — they render verbatim into every recipient's compliance footer (CAN-SPAM § 5(a)(5), CASL § 6). Omit the block when §4B-2 inferred none.
 - **Landing extras**: only what §4B-2 inferred or 4-0 supplied. Never ask — close the block with one line that video / PDF / brand color / logo / CTA live in the Web UI → Inquiry page settings.
 - **Defaults, stated not asked**: outbound mode `draft` (nothing sends until the user reviews the first batch); outbound channels per detected browser automation; target language inferred from the market; delivery unrestricted (the server enforces the supported-country allowlist); 2-3 discovery sources from `tpl_targeting_guide`; response definition (1)(2)(3) from 4-9.
@@ -346,7 +346,7 @@ mcp__plugin_leadace_api__update_project_settings
   projectId: "$0"
   senderDisplayName: <display>
   senderCompanyName: <company>   # omit if the user said "none"
-  senderEmailAlias: <email>
+  senderEmailAlias: <alias>      # only when the review asked for a verified Gmail Send-As alias
   outboundMode: "draft"
   outboundChannels: ["email"]     # BROWSER_AUTOMATION: other → ["email","form"]; none/unsure → ["email"]; chrome → omit (all). Never []
   targetLanguage: "ja"            # only for a Japanese audience; omit for the "en" default
@@ -401,7 +401,7 @@ mcp__plugin_leadace_api__save_document
 - **Initial** (both modes): Retrieve template `tpl_sales_strategy`. Generate following structure.
 - **Update** (Mode A): Use existing from Step 3. Update only changed sections. **Evaluate-managed sections (targeting, KPI, search keywords) are only rewritten when user explicitly instructs an update.** Messaging and channels are user-authored hints (subject lines & channel ranking are auto-optimized by the lever tick) — rewrite only on explicit user request.
 
-**Sender Information section**: Write only the organization's phone number and a short human signature line (name, title, sign-off). Sender display name, sender company name, and email live in project settings (set in 4-7 / 4B-3); legal name, physical address, and the unsubscribe line live in Workspace Settings and are appended automatically by the backend at send time. **Do not duplicate any of these in the document signature** — duplicated address blocks make the recipient-side footer look broken. If the template prompts for sender display / company / email, replace with `Sender display name, company, and email: managed in Project Settings (Web UI → Project settings page; company name is on the Inquiry settings page)`. If the template prompts for legal name / postal address / unsubscribe, replace with `Legal identity + footer: managed in Workspace Settings (https://app.leadace.ai/workspace-settings)`. Never set `footerOverride` via `update_project_settings` unless the user explicitly asks to customize the footer — it replaces these server-appended disclosures verbatim.
+**Sender Information section**: Write only the organization's phone number and a short human signature line (name, title, sign-off). Sender display name, sender company name, and the optional Send-As alias live in project settings (set in 4-7 / 4B-3) and the `From:` address is the project's sending mailbox; legal name, physical address, and the unsubscribe line live in Workspace Settings and are appended automatically by the backend at send time. **Do not duplicate any of these in the document signature** — duplicated address blocks make the recipient-side footer look broken. If the template prompts for legal name / postal address / unsubscribe, replace with `Legal identity + footer: managed in Workspace Settings (https://app.leadace.ai/workspace-settings)`. Never set `footerOverride` via `update_project_settings` unless the user explicitly asks to customize the footer — it replaces these server-appended disclosures verbatim.
 
 **Outbound mode**: Do not write `send`/`draft` into the document — it lives in project settings. A one-line note near "Sales channels" is fine: `Outbound mode: managed in Project Settings`.
 

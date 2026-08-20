@@ -719,7 +719,7 @@ export async function updateOutreachStatus(
 // the caller) so the mode decision is deterministic and lives here, not in
 // skill logic.
 export type SendOutcome =
-  | { mode: 'sent'; outreachId: number; messageId: string; threadId: string }
+  | { mode: 'sent'; outreachId: number; messageId: string; threadId: string; from: string }
   | { mode: 'drafted'; outreachId: number }
 
 export async function sendAndRecord(
@@ -899,6 +899,7 @@ export async function sendAndRecord(
     outreachId: log.id,
     messageId: result.messageId,
     threadId: result.threadId,
+    from: result.from,
   })
 }
 
@@ -1354,6 +1355,7 @@ export async function sendDraft(
     outreachId: draft.id,
     messageId: result.messageId,
     threadId: result.threadId,
+    from: result.from,
   })
 }
 

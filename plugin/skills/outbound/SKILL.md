@@ -24,7 +24,6 @@ allowed-tools:
   - mcp__plugin_leadace_api__get_document
   - mcp__plugin_leadace_api__get_master_document
   - mcp__plugin_leadace_api__get_project_settings
-  - mcp__plugin_leadace_api__get_gmail_status
   - mcp__plugin_leadace_api__get_mailbox_health
   - mcp__plugin_leadace_api__pick_message_variant
   - mcp__plugin_leadace_api__get_compliance_status
@@ -92,11 +91,12 @@ And for channel selection in step 2:
   even if the policy ranks it higher. An empty response with a "paused" message means outbound
   is off for this project: report it and stop.
 
-**Gmail live pre-flight (send mode + email enabled).** If outbound mode is `send` and `email`
-is in `outboundChannels`, call `mcp__plugin_leadace_api__get_gmail_status`. If not connected,
-warn that email sends will be rejected at send time (HTTP 412) and the user should connect
-Gmail at https://app.leadace.ai — form / SNS prospects can still proceed. Courtesy check only;
-the 412 is the authoritative guard and draft mode needs no Gmail.
+**Mailbox pre-flight (send mode + email enabled).** If outbound mode is `send` and `email`
+is in `outboundChannels`, call `mcp__plugin_leadace_api__get_mailbox_health` (`projectId: "$0"`).
+It names the mailbox this project sends from (custom SMTP mailbox, else the connected Gmail). A
+no-mailbox answer means email sends will be rejected at send time (HTTP 412) — warn, point the
+user at https://app.leadace.ai, and let form / SNS prospects proceed. Courtesy check only; the
+412 is the authoritative guard and draft mode needs no mailbox.
 
 **Mailbox email cap (warmup).** The targets response carries `Mailbox email cap (warmup):
 N/cap sends remaining today` — a per-mailbox daily limit separate from the billing quota that
@@ -192,7 +192,7 @@ Retrieve email guidelines via `mcp__plugin_leadace_api__get_master_document` wit
 
 There is no stored body template: every body is written for the one recipient, from the guidelines' shape, the facts in BUSINESS.md / SALES_STRATEGY.md, and the prospect's own material.
 
-Close with a light sign-off (name + optional role) drawn from the "Sender Information" section of SALES_STRATEGY.md — not a full signature block; the backend appends the compliance footer (legal name, address, unsubscribe) automatically. Sender display name and `From:` address are applied automatically by `send_email_and_record` from project settings — do not pass them as arguments.
+Close with a light sign-off (name + optional role) drawn from the "Sender Information" section of SALES_STRATEGY.md — not a full signature block; the backend appends the compliance footer (legal name, address, unsubscribe) automatically. The `From:` address and display name are applied server-side (the project's sending mailbox + project settings) — do not pass them as arguments; each send result reports the From address actually used.
 
 **Message angle variation (weighted draw).** Message angles (subject pattern +
 optional body approach) live server-side in `message_variants`; the server picks
@@ -260,16 +260,16 @@ Having composed the body, call `mcp__plugin_leadace_api__send_email_and_record`:
 - `variantId`: from `pick_message_variant`; omit when no variants exist
 
 The server reads the project's `outboundMode` and which mailbox the project uses, then reports one of two outcomes. The email is sent server-side whichever mailbox the project uses — a connected Gmail or a custom SMTP mailbox — so **never branch on `outboundMode` or sending-identity type in your own logic:**
-- **sent** — the email went out and the outreach was logged. Nothing more to do.
+- **sent** — the email went out from the reported From address and the outreach was logged. Nothing more to do.
 - **drafted** — no send; stored as a `pending_review` draft for the user to review and send from https://app.leadace.ai/drafts. Drafts do not count against the outreach quota.
 
 Track which outcome each call reported for the step 8 report (sent vs. drafted counts).
 
-On a 502 `Send failed`, the outreach is still logged with `status: "failed"` and the prospect's re-eligibility is deferred by the project's no-response recycle window — do not retry manually. On a 412 `Gmail not connected` / `Gmail token revoked`, abort all email sending for this run and surface the message; the user must reconnect Gmail in the web app's Settings. On a 422 `Recipient email address cannot receive mail`, nothing was sent and the server has retired the email channel for that prospect — never retry email, and use the fallback attempt on another available channel if there is one.
+On a 502 `Send failed`, the outreach is still logged with `status: "failed"` and the prospect's re-eligibility is deferred by the project's no-response recycle window — do not retry manually. On a 412 `Gmail not connected` / `Gmail token revoked`, abort all email sending for this run and surface the message; the user fixes the mailbox in the web app (reconnect Gmail, or assign a custom SMTP mailbox). On a 422 `Recipient email address cannot receive mail`, nothing was sent and the server has retired the email channel for that prospect — never retry email, and use the fallback attempt on another available channel if there is one.
 
 **Notes:**
 - The body must be the complete content including the signature
-- The `From:` address and display name are pulled from project settings (`senderEmailAlias` / `senderDisplayName`) by the backend. If `senderEmailAlias` is set to a Send-As alias not yet verified in the user's Gmail account, sending fails with a Gmail error — surface it in the report and tell the user to verify the alias at https://mail.google.com → Settings → Accounts → "Send mail as"
+- The `From:` address is the project's sending mailbox: a custom SMTP mailbox sends as its own address; the connected Gmail sends as its primary address, or as `senderEmailAlias` when that Gmail Send-As alias is set. An alias not yet verified in the user's Gmail account fails with a Gmail error — surface it in the report and tell the user to verify the alias at https://mail.google.com → Settings → Accounts → "Send mail as"
 
 ### 3b. Re-approach Branching (cycle.kind != 'first')
 
@@ -439,8 +439,9 @@ After all prospects are processed, if successes fall short of the target count:
 Report the following:
 - Number of prospects approached
 - Attempts and successes per channel, success rate (Email: X successes/Y attempts (XX%), Form: X successes/Y attempts (XX%), SNS: X successes/Y attempts (XX%), Platform: X successes/Y attempts (XX%) — omit channels with zero attempts)
+- The From address the email sends reported (one line; omit when no email was sent)
 - If `outboundMode` was `draft`, report total drafts created across all channels (Drafts: N) and remind the user to review and send them at https://app.leadace.ai/drafts
-- **Missing-tool warnings**: if any send failed because a tool was not connected (Gmail not connected → email; Claude in Chrome unavailable → form / SNS), list it and recommend connecting the tool before the next run. Especially relevant in draft mode, where these tools weren't exercised but will be needed when the user sends the drafts.
+- **Missing-tool warnings**: if any send failed because a tool was not connected (no sending mailbox → email; Claude in Chrome unavailable → form / SNS), list it and recommend connecting the tool before the next run. Especially relevant in draft mode, where these tools weren't exercised but will be needed when the user sends the drafts.
 - Number of failures and reasons
 - Guide the user to run `/check-responses` as the next step (or, if drafts were created, after the user sends the reviewed drafts)
 - Append a single low-key dashboard line at the end: `Dashboard: https://app.leadace.ai/outreach` — purely informational, do not push the user to open it

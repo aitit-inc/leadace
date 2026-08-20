@@ -41,7 +41,7 @@ Run automatic detection first, then ask the user only what cannot be detected.
 
 Call `mcp__plugin_leadace_api__get_gmail_status`. Record `connected` (boolean) and `email` (when connected) as `GMAIL_STATUS`.
 
-If not connected: "Open https://app.leadace.ai — a 'Connect Gmail' banner is shown at the top of the page while disconnected; connect to enable email sending. Without this, no emails can be sent — you can still proceed with form-only or SNS-only outreach." Do **not** abort.
+If not connected: "Open https://app.leadace.ai — a 'Connect Gmail' banner is shown at the top of the page while disconnected; connect to enable email sending. Without this, no emails can be sent unless a custom SMTP mailbox is assigned to the project in the Web UI — you can still proceed with form-only or SNS-only outreach." Do **not** abort.
 
 ### 2-2. Gmail MCP (claude.ai built-in) — ask
 

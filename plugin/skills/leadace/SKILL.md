@@ -63,7 +63,7 @@ Run these in parallel:
 - **Plugin version**: `Read` `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and take `version`.
 - **Server version + min plugin**: `mcp__plugin_leadace_api__get_server_version` -> `{ serverVersion, minPluginVersion }`.
 - **Project list**: `mcp__plugin_leadace_api__list_projects` (may be empty).
-- **Gmail SaaS status**: `mcp__plugin_leadace_api__get_gmail_status` -> `{ connected, email? }`.
+- **Gmail connection** (account-level — a project may send from a custom SMTP mailbox instead): `mcp__plugin_leadace_api__get_gmail_status` -> `{ connected, email? }`.
 - **Current date/time**: `Bash` `date '+%Y-%m-%d %H:%M %Z'`.
 - **Runtime detect** (best-effort): `Bash` `printf '%s|%s|%s\n' "${CLAUDE_PLUGIN_ROOT:-?}" "$(command -v codex 2>/dev/null || echo none)" "$([ -d "$HOME/.claude" ] && echo y || echo n)"`. Classify as `claude_code` (most common — `~/.claude` exists), `codex` (codex command found), or `other`.
 
@@ -138,7 +138,7 @@ Answer the user's question using the context already gathered (`PROJECTS`, `GMAI
 - "結果は?" / "evaluation" / "改善案" / current results → `get_eval_data` (live metrics & response rates, also visualized in the `/evaluations` and `/dashboard` Web UI; the distilled "what worked / what didn't" memory lives in the `learnings` document)
 - Project documents (business / sales_strategy / etc.) → `get_document` / `list_documents`
 - Project / tenant settings → `get_project_settings` / `get_tenant_settings`
-- Daily send cap / warmup / mailbox state → `get_mailbox_health` (read-only; cap changes are Web UI only)
+- Which mailbox / From address a project sends from, daily send cap / warmup → `get_mailbox_health` (read-only; mailbox and cap changes are Web UI only)
 - "提案は?" / pending AI suggestions → `list_suggestions` (acting on an add-means one = Step 3h)
 
 Keep the answer to a few lines. Do not invoke other skills.
@@ -297,7 +297,7 @@ Print:
 
 1. **Header**: `Setup complete - <PROJECT_NAME>`
 2. **What was created**: project, `business` doc, `sales_strategy` doc, sender info + outbound channels in project settings, initial `inquiry_chat_brief`, message-angle variants.
-3. **Anything that still blocks sending** — Gmail not connected (fix: https://app.leadace.ai) or a workspace-identity field left blank in the review (fix: https://app.leadace.ai/workspace-settings). Both refuse `/outbound` and `/daily-cycle` until set. Omit the whole item when nothing is blocked.
+3. **Anything that still blocks sending** — no sending mailbox (Gmail not connected; fix: https://app.leadace.ai) or a workspace-identity field left blank in the review (fix: https://app.leadace.ai/workspace-settings). Both refuse `/outbound` and `/daily-cycle` until set. Omit the whole item when nothing is blocked.
 4. **Capability summary** from env_check, plus one line that Gmail-MCP / browser-automation were assumed `unsure` and can be re-checked by asking `/leadace`.
 5. **Recipient delivery scope**: one line that delivery is limited to the currently supported recipient countries, so the operator's targeting matches the send-time guardrail.
 6. **Defaults you can change later**: outbound mode is `draft` so nothing sends without your review; the AI inquiry chat is live on the recipient landing page (the inquiry landing defaults to enabled — toggle it off in the Web UI if you don't want recipient links to surface); landing extras (video / PDF / brand color / logo / CTA) are on the Web UI Inquiry page — or ask `/leadace` to refine the strategy / messaging.
