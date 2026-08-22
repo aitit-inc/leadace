@@ -59,9 +59,6 @@ The two modes are mutually exclusive per project — the inquiry-settings page e
 - Scheduling service in use: (Service name and notification sender email. Example: Timerex — notifications@timerex.net)
 - Other response signals: (Notifications from specific services, etc. List if applicable.)
 
-## Notification Settings
-- daily-cycle completion notification recipient: (Email address to receive completion reports. "None" if not needed.)
-
 ## KPI
 (Metrics to track: number of sends, open rate, response rate, meeting conversion rate, etc.)
 

@@ -49,6 +49,9 @@
     if (s.physicalAddressJa && s.physicalAddressJa.length < 5) {
       errors.physicalAddressJa = 'Address (Japanese) looks too short';
     }
+    if (s.notificationEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.notificationEmail)) {
+      errors.notificationEmail = 'Enter a valid email address';
+    }
     validationErrors = errors;
     return Object.keys(errors).length === 0;
   }
@@ -68,6 +71,7 @@
       defaultSenderCountry: emptyToNull(formData.defaultSenderCountry?.toUpperCase() ?? null),
       legalNameJa: emptyToNull(formData.legalNameJa),
       physicalAddressJa: emptyToNull(formData.physicalAddressJa),
+      notificationEmail: emptyToNull(formData.notificationEmail),
     };
     if (!validate(normalized)) {
       saveMessage = 'Fix the highlighted fields above before saving.';
@@ -251,6 +255,28 @@
             <p class="text-xs text-danger">{validationErrors.physicalAddressJa}</p>
           {/if}
         </div>
+      </section>
+
+      <section class="space-y-1 border-t border-border pt-6">
+        <label for="notificationEmail" class="block text-sm font-medium text-text">
+          Notification email
+        </label>
+        <p class="text-xs text-text-muted">
+          Where the plugin sends its run notifications (daily-cycle start and completion reports),
+          from your connected Gmail. Leave blank to turn notifications off. This address can only be
+          changed here, never by the plugin.
+        </p>
+        <input
+          id="notificationEmail"
+          type="email"
+          maxlength="254"
+          bind:value={formData.notificationEmail}
+          placeholder="you@example.com"
+          class="block w-full rounded border border-border bg-page px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-text/40 focus:outline-none"
+        />
+        {#if validationErrors.notificationEmail}
+          <p class="text-xs text-danger">{validationErrors.notificationEmail}</p>
+        {/if}
       </section>
 
       <div class="flex items-center gap-3 border-t border-border pt-4">

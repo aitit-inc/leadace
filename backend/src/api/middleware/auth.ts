@@ -25,6 +25,7 @@ export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: Varia
     const isMcp = verified.aud === MCP_AUDIENCE
 
     c.set('userId', userId)
+    c.set('caller', isMcp ? 'mcp' : 'browser')
 
     // Runs as postgres superuser — bypasses RLS (intentional for tenant resolution)
     const db = createDb(c.env.DATABASE_URL)

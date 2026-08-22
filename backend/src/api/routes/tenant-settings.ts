@@ -24,6 +24,7 @@ tenantSettingsRouter.put(
     const result = await updateTenantSettings(
       c.get('db'),
       c.get('tenantId'),
+      c.get('caller'),
       c.req.valid('json'),
     )
     if (!result.ok) return respondWithError(c, result)

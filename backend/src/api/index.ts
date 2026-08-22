@@ -26,6 +26,7 @@ import { mailboxRouter } from './routes/mailbox'
 import { sendingIdentitiesRouter } from './routes/sending-identities'
 import { attentionRouter } from './routes/attention'
 import { authRouter } from './routes/auth'
+import { notificationsRouter } from './routes/notifications'
 import { accountRouter } from './routes/account'
 import { bugReportsRouter } from './routes/bug-reports'
 import { stripeWebhookRouter } from './routes/stripe-webhook'
@@ -87,6 +88,7 @@ app.route('/api', mailboxRouter)
 app.route('/api', sendingIdentitiesRouter)
 app.route('/api', attentionRouter)
 app.route('/api', authRouter)
+app.route('/api', notificationsRouter)
 app.route('/api', accountRouter)
 app.route('/api', bugReportsRouter)
 

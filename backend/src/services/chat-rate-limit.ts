@@ -6,10 +6,12 @@ import { startOfTodayUtc } from './plan-limits'
 
 export const INQUIRY_CHAT_TURNS_PER_LINK_PER_DAY = 15
 export const PREVIEW_CHAT_TURNS_PER_TENANT_PER_DAY = 100
+export const NOTIFICATIONS_PER_TENANT_PER_DAY = 100
 
 const LIMITS: Record<ChatRateScope, number> = {
   inquiry_link: INQUIRY_CHAT_TURNS_PER_LINK_PER_DAY,
   preview: PREVIEW_CHAT_TURNS_PER_TENANT_PER_DAY,
+  notification: NOTIFICATIONS_PER_TENANT_PER_DAY,
 }
 
 // Reserve-first: call immediately before the LLM spend, so a concurrent burst

@@ -22,20 +22,6 @@ export const saveCredentialsSchema = z.object({
 })
 export type SaveCredentialsInput = z.infer<typeof saveCredentialsSchema>
 
-export const sendEmailSchema = z.object({
-  to: z.array(z.email()).min(1),
-  cc: z.array(z.email()).optional(),
-  bcc: z.array(z.email()).optional(),
-  subject: z.string().min(1),
-  body: z.string().min(1),
-  inReplyTo: z
-    .string()
-    .regex(/^<[^\r\n<>]+>$/, 'inReplyTo must be a single RFC 5322 Message-ID like <id@host>')
-    .max(998)
-    .optional(),
-})
-export type SendEmailInput = z.infer<typeof sendEmailSchema>
-
 export type GoogleCtx = {
   encryptionKey: string
   clientId: string
@@ -107,14 +93,15 @@ export async function getCredentialsStatus(
   })
 }
 
-// Used for internal notifications (daily-cycle start/wrap-up emails) that
-// are NOT prospect outreach. For prospect emails, use the outreach service.
-export async function sendInternalEmail(
+// Operator notifications (services/notifications), never prospect outreach —
+// the recipient is the tenant's configured address, so none of the outreach
+// guards apply. For prospect emails, use the outreach service.
+export async function sendNotificationEmail(
   db: Db,
   tenantId: TenantId,
   userId: string,
   ctx: GoogleCtx,
-  input: SendEmailInput,
+  input: { to: string; subject: string; body: string },
 ): Promise<ServiceResult<{ messageId: string; threadId: string }>> {
   const identity = await loadSendingIdentitySecret(db, {
     tenantId,
@@ -148,7 +135,7 @@ export async function sendInternalEmail(
   }
 
   const envelope = applyE2eRedirect(
-    { to: input.to, cc: input.cc, bcc: input.bcc, extraHeaders: undefined },
+    { to: [input.to], cc: undefined, bcc: undefined, extraHeaders: undefined },
     ctx.e2eRecipientOverride,
   )
 
@@ -159,7 +146,7 @@ export async function sendInternalEmail(
     bcc: envelope.bcc,
     subject: input.subject,
     body: input.body,
-    inReplyTo: input.inReplyTo,
+    inReplyTo: undefined,
     extraHeaders: envelope.extraHeaders,
   })
 

@@ -361,6 +361,10 @@ export const tenants = pgTable('tenants', {
   // Optional — never gates a send (not part of compliance readiness).
   legalNameJa: text('legal_name_ja'),
   physicalAddressJa: text('physical_address_ja'),
+  // Where notify_user delivers. NULL = notifications off. Set only through
+  // the Workspace Settings UI — updateTenantSettings refuses it from an MCP
+  // token, so a prompt-injected brain cannot redirect notifications.
+  notificationEmail: text('notification_email'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   // NULL = the plugin has never connected; gates the web onboarding flow.
   firstMcpConnectedAt: timestamp('first_mcp_connected_at', { withTimezone: true }),
@@ -1085,9 +1089,10 @@ export const inquiryMessages = pgTable('inquiry_messages', {
   }).onDelete('cascade'),
 ])
 
-// Fixed-window abuse counters for the LLM-backed chat endpoints.
-// 'inquiry_link' keys by short_id; 'preview' keys by the tenant id.
-export type ChatRateScope = 'inquiry_link' | 'preview'
+// Fixed-window abuse counters (LLM-backed chat endpoints, operator notifications).
+// 'inquiry_link' keys by short_id; 'preview' and 'notification' key by the
+// tenant id.
+export type ChatRateScope = 'inquiry_link' | 'preview' | 'notification'
 
 export const chatRateWindows = pgTable('chat_rate_windows', {
   tenantId: text('tenant_id')

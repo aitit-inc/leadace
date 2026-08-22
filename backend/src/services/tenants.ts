@@ -23,6 +23,7 @@ export const updateTenantSettingsSchema = z
       .optional(),
     legalNameJa: z.string().min(1).max(200).nullable().optional(),
     physicalAddressJa: z.string().min(5).max(500).nullable().optional(),
+    notificationEmail: z.email().nullable().optional(),
   })
   .strict()
 export type UpdateTenantSettingsPatch = z.infer<typeof updateTenantSettingsSchema>
@@ -35,6 +36,7 @@ export type TenantSettingsRow = {
   defaultSenderCountry: string | null
   legalNameJa: string | null
   physicalAddressJa: string | null
+  notificationEmail: string | null
 }
 
 const settingsCols = {
@@ -45,6 +47,7 @@ const settingsCols = {
   defaultSenderCountry: tenants.defaultSenderCountry,
   legalNameJa: tenants.legalNameJa,
   physicalAddressJa: tenants.physicalAddressJa,
+  notificationEmail: tenants.notificationEmail,
 }
 
 export async function loadTenantSettings(
@@ -66,8 +69,15 @@ export async function loadTenantSettings(
 export async function updateTenantSettings(
   db: Db,
   tenantId: TenantId,
+  caller: 'browser' | 'mcp',
   patch: UpdateTenantSettingsPatch,
 ): Promise<ServiceResult<TenantSettingsRow>> {
+  // The notification recipient is the one field the plugin must never aim:
+  // a prompt-injected agent holding the MCP token could otherwise redirect
+  // every notification. The Web UI is the only writer.
+  if (caller === 'mcp' && patch.notificationEmail !== undefined) {
+    return err('FORBIDDEN', 'notificationEmail is set from Workspace settings in the Web UI only')
+  }
   const updateSet = {
     ...(patch.name !== undefined ? { name: patch.name } : {}),
     ...(patch.legalName !== undefined ? { legalName: patch.legalName } : {}),
@@ -77,6 +87,7 @@ export async function updateTenantSettings(
       : {}),
     ...(patch.legalNameJa !== undefined ? { legalNameJa: patch.legalNameJa } : {}),
     ...(patch.physicalAddressJa !== undefined ? { physicalAddressJa: patch.physicalAddressJa } : {}),
+    ...(patch.notificationEmail !== undefined ? { notificationEmail: patch.notificationEmail } : {}),
   }
 
   if (Object.keys(updateSet).length === 0) {

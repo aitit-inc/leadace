@@ -8,4 +8,6 @@ export type TenantSettings = {
   // is 'ja'. Null = fall back to the default field above.
   legalNameJa: string | null;
   physicalAddressJa: string | null;
+  // Where the plugin's notify_user emails land. Null = notifications off.
+  notificationEmail: string | null;
 };

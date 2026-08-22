@@ -43,6 +43,9 @@ export type Env = {
 
 export type Variables = {
   userId: string
+  // Which credential authenticated the request: a browser session or an MCP
+  // token (JWT audience). Lets a service keep a field UI-only.
+  caller: 'browser' | 'mcp'
   tenantId: TenantId
   db: Db
   // Set by editionMiddleware on every request (incl. unauthenticated public

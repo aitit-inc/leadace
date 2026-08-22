@@ -1,6 +1,6 @@
 # LeadAce
 
-![Status: Public Beta](https://img.shields.io/badge/status-Public_Beta-E8755E) ![License](https://img.shields.io/badge/license-Apache_2.0_modified-6EADB0)
+![Status: Public Beta](https://img.shields.io/badge/status-Public_Beta-E8755E) ![License](https://img.shields.io/badge/license-Apache_2.0_modified-6EADB0) [![Listed on mcpservers.org](https://mcpservers.org/badge.svg)](https://mcpservers.org/servers/aitit-inc/leadace)
 
 Autonomous lead generation plugin for Claude Code.
 Builds prospect lists, runs outbound outreach, and iterates on strategy — all hands-free.

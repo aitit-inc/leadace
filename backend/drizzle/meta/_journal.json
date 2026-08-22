@@ -505,6 +505,13 @@
       "when": 1786691485703,
       "tag": "0071_left_scorpion",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1787390424558,
+      "tag": "0072_steady_king_bedlam",
+      "breakpoints": true
     }
   ]
 }

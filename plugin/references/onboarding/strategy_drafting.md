@@ -42,7 +42,7 @@ Environment status is **live-detected, never persisted** — there is no `env_st
 Use `ENV_SUMMARY` for three things only:
 1. The **Step 8 hand-off summary** — surface any missing-tool warning once (per the tool-impact catalog below).
 2. A sensible **default for the outbound-channels collection** (Step 4 / 4B-3): per `BROWSER_AUTOMATION` — `chrome` → all channels; `other` → email + form; `none`/`unsure` → email only.
-3. The **notification email default** (§4B-3): propose `GMAIL_STATUS.email` rather than asking. The `From:` address is never collected — the project sends from its sending mailbox (the connected Gmail unless the Web UI assigns a custom SMTP mailbox); `senderEmailAlias` exists only for a verified Gmail Send-As alias.
+3. **Stating the `From:` address** (§4B-3): it is never collected — the project sends from its sending mailbox (the connected Gmail per `GMAIL_STATUS.email` unless the Web UI assigns a custom SMTP mailbox); `senderEmailAlias` exists only for a verified Gmail Send-As alias.
 
 **Tool impact catalog** (use as the content of the Step 8 warning):
 - No Gmail SaaS → blocks email auto-send (send mode) unless the project is assigned a custom SMTP mailbox in the Web UI; drafting still works.
@@ -64,6 +64,8 @@ If any document call returns "Project not found", abort and instruct the user to
 Hold project settings (`outboundMode`, `senderEmailAlias`, `senderDisplayName`, `senderCompanyName`, `unsubscribeEnabled`, `inquiryChatBrief`, `inquiryOneLiner`) as `SETTINGS`, and the workspace identity (`legalName`, `physicalAddress`, `defaultSenderCountry`) as `TENANT_SETTINGS`.
 
 **Migration check (Mode A, update sub-mode only):** If the existing SALES_STRATEGY.md has a "Sender Information" section containing a sender email or display name (older versions), and `SETTINGS.senderEmailAlias` / `SETTINGS.senderDisplayName` are empty, propose migrating the values into project settings via `update_project_settings` and stripping them from the document.
+
+**Notification recipient migration (Mode A, update sub-mode only):** If the existing SALES_STRATEGY.md has a "Notification Settings" section (older versions), tell the user the recipient now lives in the Web UI → Workspace settings (notifications stay off until set there) and strip the section. Never copy the address anywhere.
 
 **Legacy combined-name split (Mode A, update sub-mode only):** Earlier versions of this skill instructed users to set `senderDisplayName` to a combined `"Personal Name — Company Name"` string. The current spec splits that into `senderDisplayName` (personal only) + `senderCompanyName` (company only) so the inquiry-landing header can render `From {personal} at {company}`. Detect the legacy format: if `SETTINGS.senderDisplayName` is non-empty AND contains one of the separators ` — ` (em-dash with spaces), ` – ` (en-dash with spaces), ` - ` (hyphen with spaces), or ` | ` (pipe with spaces), AND `SETTINGS.senderCompanyName` is empty, treat the part before the separator as the candidate personal name and the part after as the candidate company name. **Never auto-apply** — false positives like `"Jane Doe — PhD"` or `"Acme Inc. - West Coast Office"` are real. Use `AskUserQuestion` to show the proposed split and offer: (a) accept and save, (b) edit either side, (c) keep the existing combined value (skip migration). On accept / edit, write both via a single `update_project_settings { senderDisplayName, senderCompanyName }` call.
 
@@ -87,7 +89,6 @@ Check completeness of each section in existing `SALES_STRATEGY.md`:
 | Sender information | Display name (+ optional Send-As alias) in project settings; phone + signature in document |
 | Messaging | First Outreach approach present |
 | Response definition | Conditions counting as response specified |
-| Notification settings | Content present ("none" is a valid value) |
 | KPI | Metrics set |
 | Search keywords | 10 or more |
 
@@ -97,7 +98,7 @@ Classify sections:
 |---|---|---|
 | Not set | Missing / empty / incomplete | Subject to completion |
 | evaluate-managed | targeting, KPI, search keywords (when already populated) | **Do not touch by default** |
-| Static settings | Sender info, response def, notification, track record, messaging, channels | Update only if user explicitly requests |
+| Static settings | Sender info, response def, track record, messaging, channels | Update only if user explicitly requests |
 
 `/evaluate` auto-tunes targeting / KPI / search keywords once a project has activity, so treat those sections as evaluate-managed whenever they already carry content. An empty such section is simply "not set" and is fillable here. (Discovery strategies live in the registry, not this document — `get_lever_state` → `discovery.strategies`; same evaluate-managed rule applies once populated.)
 
@@ -133,7 +134,7 @@ If projects other than `$0` exist (from `list_projects`), use `get_document` to 
 Use `AskUserQuestion` to collect the following **one item at a time**. Tell the user they may answer in casual bullets.
 
 Execution scope by sub-mode:
-- Initial → run 4-0 first; depending on its outcome either delegate to Mode B (§4B-1..§4B-4, without re-running 4-11), or run 4-1..4-11 in sequence.
+- Initial → run 4-0 first; depending on its outcome either delegate to Mode B (§4B-1..§4B-4, without re-running 4-10), or run 4-1..4-10 in sequence.
 - Update (fill missing) → only steps for sections judged "not set" in Step 3. Skip completed and evaluate-managed. (Skip 4-0 — it is initial-only.)
 - Update (specific sections) → only user-specified. Show existing values, confirm changes.
 - Update (pivot) → all steps, present existing values as defaults, ask "Any changes?".
@@ -153,7 +154,7 @@ Before walking the long Q&A, give the user a fast path. Ask once via free-text p
 Parse the reply locally:
 - **Homepage / source URLs** (the first `https?://` that looks like a corporate / product site) → use as `$URL` and switch to **Mode B**: jump to §4B-1 with the inferred URL, run §4B-1..§4B-4 in full. Do **not** run 4-11 afterwards — §4B-3 shows the landing extras it has and points at the Web UI for the rest.
 - **Inquiry landing extras** (any of: video URL, PDF URL, hex color matching `#[0-9A-Fa-f]{6}`, logo URL, scheduling URL **or** SaaS signup URL) → hold them as `INQUIRY_PREFILLS`, show them in 4-11 / §4B-3 as already-supplied values and save them; never re-ask. If the user pasted a scheduling URL, default `inquiryCtaType` to `meeting` and `inquiryCtaUrl` to the URL; if a signup URL, default `inquiryCtaType` to `signup` and `inquiryCtaUrl` to the URL. The two are mutually exclusive — if both arrive, ask once which the project should use.
-- **"skip" / "ask me" / no URL of any kind** → continue with the guided Q&A path (4-1..4-10, then 4-11).
+- **"skip" / "ask me" / no URL of any kind** → continue with the guided Q&A path (4-1..4-9, then 4-10).
 
 If the user pastes only landing-page extras (no homepage URL), still continue with Q&A — the inference path needs a homepage to be useful.
 
@@ -249,11 +250,7 @@ Guards:
 - Scheduling service name(s). **Auto-resolve notification domain**: call `mcp__plugin_leadace_api__get_master_document` with `slug: "ref_scheduling_services"`, look up each named service, record the domain in SALES_STRATEGY.md without asking (e.g., `Calendly — calendly.com`). Only ask if not in the reference list.
 - "Up to you" → defaults: (1)(2)(3).
 
-#### 4-10. Notification Settings
-Email address for daily-cycle completion notifications (or "none").
-- "We can send a daily-cycle completion notification. Provide an address if desired."
-
-#### 4-11. Inquiry Landing Optional Polish
+#### 4-10. Inquiry Landing Optional Polish
 
 Collect the optional polish for the recipient AI inquiry landing page in **one combined free-text prompt**. All fields are optional and skipping is fine — the landing renders without them. Pre-fill any values already gathered in 4-0 as `INQUIRY_PREFILLS` (show them in the prompt and let the user accept by replying "ok").
 
@@ -308,7 +305,7 @@ For each of the following, draft a 1-3 sentence value from `URL_CONTENT`. Do **n
 - Organization phone number (part of 4-7) — only if published on the page.
 - **Workspace identity** — infer **only the fields `TENANT_SETTINGS` reports as `(not set)`**; a stored value is never re-proposed, so a partial fill can't clobber it. `legalName` / `physicalAddress` come verbatim from the page (footer, copyright line, company / about / legal / imprint page — a Japanese 特定商取引法 page carries both); `defaultSenderCountry` is the ISO 3166-1 alpha-2 code of that address's country. Leave a field blank rather than guessing — these render into every recipient's compliance footer, so §4B-3 makes the user confirm them.
 - Scheduling links (part of 4-9) — only if visibly linked
-- **Inquiry landing extras** (part of 4-11; only when the homepage explicitly surfaces them — leave blank otherwise, do **not** invent):
+- **Inquiry landing extras** (part of 4-10; only when the homepage explicitly surfaces them — leave blank otherwise, do **not** invent):
   - `inquiryVideoUrl` — first embedded YouTube / Vimeo URL on the page
   - `inquiryPdfUrl` — first PDF link that looks like a brochure / whitepaper / pitch deck (.pdf URL or anchor text mentioning "brochure" / "deck" / "whitepaper")
   - **CTA** (`inquiryCtaType` + `inquiryCtaUrl`) — pick at most one signal from the page; if neither is visible, leave both blank:
@@ -327,7 +324,7 @@ Print the whole proposed setup as **one** block and let the user reply `Y` to sa
 Contents, each value carrying its source in parentheses so it can be trusted or challenged at a glance:
 
 - **Project** (name from the URL) and the §4B-2 inferences — business / target / features / pricing / track record, one line each — plus both drafts, `inquiry_chat_brief` and `inquiry_one_liner`, on adjacent lines.
-- **Sender**: the notification address defaults to the connected Gmail address from `ENV_SUMMARY`; the `From:` address is the project's sending mailbox (that Gmail, until the Web UI assigns a custom SMTP mailbox) and is stated, not asked; company and phone from §4B-2. **Display name stays blank** — a personal name is not on a homepage, so never invent one — and the signature is `display name + company`, so it completes when the name arrives.
+- **Sender**: the `From:` address is the project's sending mailbox (the connected Gmail from `ENV_SUMMARY`, until the Web UI assigns a custom SMTP mailbox) and is stated, not asked; company and phone from §4B-2. **Display name stays blank** — a personal name is not on a homepage, so never invent one — and the signature is `display name + company`, so it completes when the name arrives.
 - **Workspace identity** (the fields §4B-2 inferred): flag as *needs your confirmation* — they render verbatim into every recipient's compliance footer (CAN-SPAM § 5(a)(5), CASL § 6). Omit the block when §4B-2 inferred none.
 - **Landing extras**: only what §4B-2 inferred or 4-0 supplied. Never ask — close the block with one line that video / PDF / brand color / logo / CTA live in the Web UI → Inquiry page settings.
 - **Defaults, stated not asked**: outbound mode `draft` (nothing sends until the user reviews the first batch); outbound channels per detected browser automation; target language inferred from the market; delivery unrestricted (the server enforces the supported-country allowlist); 2-3 discovery sources from `tpl_targeting_guide`; response definition (1)(2)(3) from 4-9.
@@ -507,5 +504,6 @@ Return:
 - A 5-10 line summary the caller can include in its completion report (sub-mode, sections completed, sections deferred, any sender-info migrations, the chosen outbound mode, whether `inquiry_chat_brief` was generated / skipped).
 - **Environment warnings**: if `ENV_SUMMARY` (Step 2) shows any tool missing, list each unavailable tool with its impact from the Step 2 "Tool impact catalog". Classify per the catalog: Gmail SaaS and the browser backend are channel-affecting (block outbound auto-send for their respective channels); Gmail MCP is reply-check-affecting (only degrades `/check-responses` to manual, not an outbound block); local fetch toolchain is a research-quality fallback, not a channel block. Recommend reconnecting the missing tool — status is re-checked live on the next run, there is no env document to refresh.
 - For Mode B: an explicit hint that the user can ask `/leadace` to refine the strategy later (e.g., to update messaging or fill in deferred fields).
+- One line that run notifications (daily-cycle start / completion) stay off until an address is set in the Web UI → Workspace settings.
 
 The caller composes its own user-facing completion message; this procedure does not print one.
