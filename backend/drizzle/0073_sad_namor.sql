@@ -1,0 +1,1 @@
+ALTER TABLE "project_documents" ADD COLUMN "approved_at" timestamp with time zone;

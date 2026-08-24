@@ -29,6 +29,7 @@ projectSettingsRouter.put(
     const result = await updateProjectSettings(
       c.get('db'),
       c.get('tenantId'),
+      c.get('caller'),
       c.req.valid('param').id,
       c.req.valid('json'),
     )

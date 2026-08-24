@@ -77,7 +77,7 @@ on, need no Claude session, and run fast:
   minted by `sign-unsubscribe-token.sh` (HMAC mirror of the backend).
 - `regression-import-dnc.sh` — the CSV import one-way do-not-contact ratchet
   (existing-DNC re-import is skipped; overwrite never clears an opt-out).
-- `regression-record-outreach.sh` — the `record_outreach` MCP path: status
+- `regression-record-outreach.sh` — the `POST /api/outreach` record path (REST-only, e2e fixture): status
   `sent` re-runs the compliance/DNC/country gates + contacted flip;
   `pending_review`/`failed` branches.
 - `regression-update-outreach-status.sh` — `update_outreach_status` confirm step:
@@ -127,6 +127,12 @@ on, need no Claude session, and run fast:
 - `regression-tenant-isolation.sh` — cross-tenant RLS isolation with a real second
   tenant (read + write + pooled reset + WITH CHECK backstop + account-deletion
   blast radius). Provisions tenant B via the GoTrue Admin API.
+- `regression-caller-gates.sh` — the agent's authority envelope: MCP-token
+  (aud=mcp) writes to tenant settings and to the UI-only project settings
+  (outbound mode, sender identity, footer override, landing CTA/media) → 403;
+  playbook approval gate (MCP save pending → MCP read 412 → browser approve →
+  MCP read 200; browser save approved on write; slug allowlist; add-means
+  suggestion resolves on approval).
 
 Run all of them in sequence with `./e2e/regression-all.sh`. See the sections
 below for what each asserts.
@@ -374,7 +380,7 @@ tenant. Shared helpers live in `e2e/lib-cloud.sh`.
 
 - `regression-cloud-quota.sh` — outreach quota binding end-to-end: free
   daily-5 (send-and-record → 403 with the daily message and NO `pre_send` row
-  allocated; `record_outreach('sent')` → 403; `reachable` → empty list +
+  allocated; `POST /api/outreach` (status=sent) → 403; `reachable` → empty list +
   "try again tomorrow"), free lifetime-100, starter monthly-1500, and the
   `effectiveLimit = min(limit, remaining)` clamp on `reachable` (incl. an
   in-flight `pre_send` row counting toward used).

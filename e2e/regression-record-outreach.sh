@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Regression for the record_outreach MCP path (POST /api/outreach), which
-# regression-outbound.sh (send-and-record) does not cover. record_outreach
+# Regression for the POST /api/outreach record path (no longer an MCP tool —
+# kept as the e2e fixture for seeding outreach rows), which
+# regression-outbound.sh (send-and-record) does not cover. recordOutreach
 # with status='sent' must re-run the SAME guard set as send-and-record
 # (compliance → quota → do-not-contact → country) and flip the prospect to
 # 'contacted'; if a guard is dropped here a mis-send gets logged as a legit

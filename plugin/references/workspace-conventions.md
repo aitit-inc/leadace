@@ -6,7 +6,7 @@ Common rules for all skills and sub-agents.
 
 All project data is stored on the server and accessed via MCP tools (`mcp__plugin_leadace_api__*`). There are no local project directories or databases.
 
-- **Structured data** (prospects, outreach logs, responses): Dedicated MCP tools (`add_prospects`, `record_outreach`, etc.)
+- **Structured data** (prospects, outreach logs, responses): Dedicated MCP tools (`add_prospects`, `send_email_and_record`, etc.)
 - **Documents** (business info, sales strategy, search notes, cross-stage learnings): `get_document` / `save_document` MCP tools with slugs: `business`, `sales_strategy`, `search_notes`, `learnings`, plus per-strategy `playbook_<strategy-slug>` documents (see "Playbook documents" below)
 - **Master documents** (templates, guidelines, frameworks): `get_master_document` MCP tool with slugs like `tpl_business`, `tpl_email_guidelines`, etc. These are shared across all users and updated centrally
 - **Local files**: Only plugin SKILL.md files, local-operation references (claude-in-chrome-guide, form-filling), and scripts in `${CLAUDE_PLUGIN_ROOT}/`
@@ -22,6 +22,8 @@ Content contract (omit sections that don't apply):
 - **Outreach** — how to compose and submit the in-platform response; the platform's rate limits / ToS constraints, stated explicitly.
 - **Response check** — where replies land (in-platform inbox, notification-email sender patterns).
 - **Scripts** (optional) — fenced code blocks, executed from a temp dir; never persisted as local files.
+
+**Approval**: a playbook version saved by a skill (`save_document`) is pending until the user approves it in the Web UI → Documents (https://app.leadace.ai/documents). `get_document` serves skills only the latest approved version and says when a playbook is not usable yet — treat that exactly like a missing playbook. Versions saved from the Web UI are approved as written.
 
 Guardrails: respect the platform's ToS and rate limits; never bypass blocks, CAPTCHAs, or bot detection — a refusal ends the attempt for that run.
 

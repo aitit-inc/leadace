@@ -39,6 +39,8 @@ api PUT /api/tenant-settings '{"legalName":"E2E Quota Co","physicalAddress":"1 E
 step "seed project + reachable US prospects"
 PROJ="$(api POST /api/projects "$(jq -nc '{name:"cloud-quota proj"}')" | jq -r '.id // ""')"
 [[ -n "$PROJ" ]] || { echo "project create failed" >&2; exit 1; }
+# New projects default to draft; quota binds on the send path.
+api PUT "/api/projects/$PROJ/settings" '{"outboundMode":"send"}' > /dev/null
 SEED="$(api POST /api/prospects/batch "$(jq -nc --arg pid "$PROJ" --arg ts "$TS" \
   '{projectId:$pid, prospects: [range(0;5) | {
       organizationDomain: ("e2e-q-\($ts)-\(.).example"), organizationName: "Q Org",

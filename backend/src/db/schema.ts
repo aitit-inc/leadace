@@ -361,9 +361,10 @@ export const tenants = pgTable('tenants', {
   // Optional — never gates a send (not part of compliance readiness).
   legalNameJa: text('legal_name_ja'),
   physicalAddressJa: text('physical_address_ja'),
-  // Where notify_user delivers. NULL = notifications off. Set only through
-  // the Workspace Settings UI — updateTenantSettings refuses it from an MCP
-  // token, so a prompt-injected brain cannot redirect notifications.
+  // Where notify_user delivers. NULL = the connected Gmail itself (the
+  // mailbox the notification is sent from). Set only through the Workspace
+  // Settings UI — updateTenantSettings refuses it from an MCP token, so a
+  // prompt-injected brain cannot redirect notifications.
   notificationEmail: text('notification_email'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   // NULL = the plugin has never connected; gates the web onboarding flow.
@@ -460,7 +461,9 @@ export const projectSettings = pgTable('project_settings', {
   tenantId: text('tenant_id')
     .notNull()
     .references(() => tenants.id, { onDelete: 'cascade' }),
-  outboundMode: outboundModeEnum('outbound_mode').notNull().default('send'),
+  // New projects draft until a human switches to send in the Web UI — the
+  // agent cannot change this field (services/project-settings.ts).
+  outboundMode: outboundModeEnum('outbound_mode').notNull().default('draft'),
   senderEmailAlias: text('sender_email_alias'),
   senderDisplayName: text('sender_display_name'),
   // Per-project sending identity; NULL falls back to the tenant's connected Gmail.
@@ -1119,6 +1122,10 @@ export const projectDocuments = pgTable('project_documents', {
   slug: text('slug').notNull(),
   content: text('content').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  // Stamped when a human saved or approved this version in the Web UI; NULL on
+  // versions the agent wrote over MCP. Playbooks are executed as procedure, so
+  // the agent may only read approved playbook versions (services/documents.ts).
+  approvedAt: timestamp('approved_at', { withTimezone: true }),
 }, (table) => [
   // Composite FK ties project_id + tenant_id (defense-in-depth on top of RLS).
   foreignKey({

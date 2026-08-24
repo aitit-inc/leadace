@@ -9,9 +9,11 @@ lives in the project's playbook document, not here (see
 
 Fetch `mcp__plugin_leadace_api__get_document` with
 `slug: "playbook_<discoveryStrategy>"` (the prospect's `discoveryStrategy`
-field). No `discoveryStrategy` or no playbook document → **skip the prospect
-for this run** and surface it in the run-end report (direct the user to
-`/leadace` to define the playbook); do not improvise a procedure. Report-only,
+field). No `discoveryStrategy`, no playbook document, or a playbook the tool
+reports as not usable yet (awaiting approval) → **skip the prospect for this
+run** and surface it in the run-end report (direct the user to `/leadace` to
+define the playbook, or to the Web UI → Documents to approve it); do not
+improvise a procedure. Report-only,
 no DB write — do not call `skip_prospect` or allocate an outreach row: this is
 a config gap, not a per-prospect timing judgment, and a recycle-window stamp
 would keep hiding the prospect after the user fixes the playbook. Same shape

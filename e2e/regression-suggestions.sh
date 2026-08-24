@@ -12,8 +12,10 @@
 #   3. PATCH /suggestions/:id status=dismissed wins: re-POST is a no-op
 #      (written=false, status=dismissed, content untouched), and the open
 #      filter excludes the row.
-#   4. Saving a playbook_<slug> document auto-resolves the matching open
-#      add-means suggestion to done; other suggestions stay untouched.
+#   4. A browser save of a playbook_<slug> document (approved on write)
+#      auto-resolves the matching open add-means suggestion to done; other
+#      suggestions stay untouched. (The pending MCP-save case is covered by
+#      regression-caller-gates.sh step 6.)
 #   5. Re-POST after done is also a no-op (written=false, status=done).
 #   6. A non-playbook document save touches no suggestion.
 #   7. Validation: non-kebab kind → 400, bad status → 400, unknown id → 404.

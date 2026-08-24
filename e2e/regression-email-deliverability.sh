@@ -154,6 +154,8 @@ CREATE_RESP="$(api POST /api/projects "$(jq -nc --arg n "$PROJECT_NAME" '{name:$
 PROJECT_ID="$(echo "$CREATE_RESP" | jq -r '.id // ""')"
 [[ -n "$PROJECT_ID" ]] || { echo "create-project failed: $CREATE_RESP" >&2; exit 1; }
 say "project_id=$PROJECT_ID"
+# New projects default to draft; the deliverability gate sits on the send path.
+api PUT "/api/projects/$PROJECT_ID/settings" '{"outboundMode":"send"}' > /dev/null
 
 SEED_BODY="$(jq -nc --arg pid "$PROJECT_ID" \
   --argjson good "$(mkseed good)" --argjson dead "$(mkseed dead)" \

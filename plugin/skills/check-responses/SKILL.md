@@ -115,7 +115,7 @@ Check for DM replies from prospects contacted via SNS using claude-in-chrome. Su
 
 **Prerequisite check:** If the `recent-outreach` result from step 2 has **no `platform` channel outreach**, **skip this entire step**.
 
-For each strategy with platform outreach, fetch the project's `playbook_<discoveryStrategy>` document and follow its **Response check** section: the platform's messages page (via claude-in-chrome, logged-in profile) and any notification-email sender patterns for step 3's Gmail pass. Match replies to outreach targets the same way as SNS.
+For each strategy with platform outreach, fetch the project's `playbook_<discoveryStrategy>` document and follow its **Response check** section: the platform's messages page (via claude-in-chrome, logged-in profile) and any notification-email sender patterns for step 3's Gmail pass. Match replies to outreach targets the same way as SNS. A playbook the tool reports as not usable yet (awaiting approval) counts as missing — its replies stay unconfirmed.
 
 **If the browser extension is not connected** (and no notification email surfaced a reply): report "**Unconfirmed platform replies: N**" in step 7.
 

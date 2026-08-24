@@ -72,6 +72,27 @@ export const updateSettingsSchema = z
   .strict()
 export type UpdateSettingsPatch = z.infer<typeof updateSettingsSchema>
 
+// Fields that bound what the agent may do — which mailbox and name it sends
+// as, whether sends wait for human review, what the footer discloses, what
+// the recipient-facing landing shows and where it sends them. Web UI only;
+// the agent proposes in chat.
+const UI_ONLY_SETTINGS = [
+  'outboundMode',
+  'sendingIdentityId',
+  'senderEmailAlias',
+  'senderDisplayName',
+  'senderCompanyName',
+  'senderJobTitle',
+  'footerOverride',
+  'inquiryVideoUrl',
+  'inquiryPdfUrl',
+  'inquiryBrandColor',
+  'inquiryBrandLogoUrl',
+  'inquiryDarkBackground',
+  'inquiryCtaType',
+  'inquiryCtaUrl',
+] as const satisfies readonly (keyof UpdateSettingsPatch)[]
+
 // The settings row is seeded on project creation and backfilled for existing
 // projects, so its absence is an invariant violation, not "not configured yet".
 function assertSettingsRow<T>(row: T | undefined, projectId: ProjectId): T {
@@ -316,9 +337,16 @@ export async function getProjectSettings(
 export async function updateProjectSettings(
   db: Db,
   tenantId: TenantId,
+  caller: 'browser' | 'mcp',
   projectRef: ProjectRef,
   patch: UpdateSettingsPatch,
 ): Promise<ServiceResult<ProjectSettingsRow>> {
+  if (caller === 'mcp') {
+    const blocked = UI_ONLY_SETTINGS.filter((k) => patch[k] !== undefined)
+    if (blocked.length > 0) {
+      return err('FORBIDDEN', `${blocked.join(', ')}: set from the Web UI (Project / Inquiry settings) only`)
+    }
+  }
   const resolved = await resolveProject(db, tenantId, projectRef)
   if (!resolved.ok) return resolved
   const projectId = resolved.value

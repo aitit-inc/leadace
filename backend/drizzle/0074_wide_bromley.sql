@@ -1,0 +1,1 @@
+ALTER TABLE "project_settings" ALTER COLUMN "outbound_mode" SET DEFAULT 'draft';

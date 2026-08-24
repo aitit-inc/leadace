@@ -11,6 +11,7 @@
 #   ./e2e/mint-jwt.sh --user-id 9818f126-...      # explicit user id
 #   ./e2e/mint-jwt.sh --email leo.uno@example.com # resolve via auth.users
 #   ./e2e/mint-jwt.sh                              # default: first row in auth.users
+#   ./e2e/mint-jwt.sh --aud mcp                    # MCP-shaped token (aud=mcp → caller 'mcp')
 #
 # Output: the bearer token, single line on stdout. Wrap as needed:
 #   TOKEN="$(./e2e/mint-jwt.sh --email ...)"
@@ -24,12 +25,14 @@ DEV_VARS="$REPO_ROOT/backend/.dev.vars"
 EMAIL=""
 USER_ID=""
 TTL_SECONDS="${TTL_SECONDS:-3600}"
+AUD="authenticated"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --email)    EMAIL="$2"; shift 2 ;;
     --user-id)  USER_ID="$2"; shift 2 ;;
     --ttl)      TTL_SECONDS="$2"; shift 2 ;;
+    --aud)      AUD="$2"; shift 2 ;;
     -h|--help)
       sed -n '2,18p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
@@ -70,7 +73,7 @@ if [[ -z "$USER_ID" ]]; then
   fi
 fi
 
-SECRET="$SECRET" USER_ID="$USER_ID" TTL_SECONDS="$TTL_SECONDS" node -e '
+SECRET="$SECRET" USER_ID="$USER_ID" TTL_SECONDS="$TTL_SECONDS" AUD="$AUD" node -e '
 const crypto = require("crypto");
 const b64 = (buf) =>
   Buffer.from(buf).toString("base64").replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_");
@@ -78,7 +81,7 @@ const now = Math.floor(Date.now() / 1000);
 const header = { alg: "HS256", typ: "JWT" };
 const payload = {
   sub: process.env.USER_ID,
-  aud: "authenticated",
+  aud: process.env.AUD,
   role: "authenticated",
   iat: now,
   exp: now + Number(process.env.TTL_SECONDS),

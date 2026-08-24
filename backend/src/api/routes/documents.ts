@@ -4,10 +4,12 @@ import {
   documentParamSchema,
   documentHistoryQuerySchema,
   saveDocumentSchema,
+  approveDocumentSchema,
   listDocuments,
   getDocument,
   getDocumentHistory,
   saveDocument,
+  approveDocumentVersion,
 } from '../../services/documents'
 import { projectRefParamSchema } from '../../services/projects'
 import { respondWithError } from '../respond'
@@ -29,7 +31,12 @@ documentsRouter.get(
   '/projects/:id/documents/:slug',
   zValidator('param', documentParamSchema),
   async (c) => {
-    const result = await getDocument(c.get('db'), c.get('tenantId'), c.req.valid('param'))
+    const result = await getDocument(
+      c.get('db'),
+      c.get('tenantId'),
+      c.get('caller'),
+      c.req.valid('param'),
+    )
     if (!result.ok) return respondWithError(c, result)
     return c.json(result.value)
   },
@@ -43,6 +50,7 @@ documentsRouter.get(
     const result = await getDocumentHistory(
       c.get('db'),
       c.get('tenantId'),
+      c.get('caller'),
       c.req.valid('param'),
       c.req.valid('query'),
     )
@@ -59,10 +67,28 @@ documentsRouter.put(
     const result = await saveDocument(
       c.get('db'),
       c.get('tenantId'),
+      c.get('caller'),
       c.req.valid('param'),
       c.req.valid('json'),
     )
     if (!result.ok) return respondWithError(c, result)
     return c.json(result.value, 201)
+  },
+)
+
+documentsRouter.post(
+  '/projects/:id/documents/:slug/approve',
+  zValidator('param', documentParamSchema),
+  zValidator('json', approveDocumentSchema),
+  async (c) => {
+    const result = await approveDocumentVersion(
+      c.get('db'),
+      c.get('tenantId'),
+      c.get('caller'),
+      c.req.valid('param'),
+      c.req.valid('json'),
+    )
+    if (!result.ok) return respondWithError(c, result)
+    return c.json(result.value)
   },
 )

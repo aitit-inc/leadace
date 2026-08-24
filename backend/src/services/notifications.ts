@@ -13,10 +13,11 @@ export const notifyUserSchema = z.object({
 })
 export type NotifyUserInput = z.infer<typeof notifyUserSchema>
 
-export type NotifyUserResult = { delivered: true } | { delivered: false; reason: 'not_configured' }
+export type NotifyUserResult = { to: string }
 
-// The recipient is never caller-supplied: it is the tenant's notification
-// address, so the brain can trigger a notification but cannot aim it.
+// The recipient is never caller-supplied — the brain can trigger a
+// notification but cannot aim it. It is the tenant's notification address
+// when set, otherwise the connected Gmail itself.
 export async function notifyUser(
   db: Db,
   tenantId: TenantId,
@@ -30,7 +31,6 @@ export async function notifyUser(
     .where(eq(tenants.id, tenantId))
     .limit(1)
   if (!row) return err('INTERNAL_ERROR', 'Tenant row missing')
-  if (row.notificationEmail === null) return ok({ delivered: false, reason: 'not_configured' })
 
   // Abuse ceiling on a Gmail-backed sender: a runaway loop must not burn the
   // mailbox's daily send quota that outreach depends on.
@@ -49,5 +49,5 @@ export async function notifyUser(
     body: input.body,
   })
   if (!sent.ok) return sent
-  return ok({ delivered: true })
+  return ok({ to: sent.value.to })
 }

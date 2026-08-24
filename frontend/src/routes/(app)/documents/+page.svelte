@@ -1,6 +1,11 @@
 <script lang="ts">
   import { invalidate } from '$app/navigation';
-  import { getDocument, listDocumentHistory, saveDocument } from '$lib/api/documents';
+  import {
+    approveDocumentVersion,
+    getDocument,
+    listDocumentHistory,
+    saveDocument,
+  } from '$lib/api/documents';
   import type { DocumentVersion } from '$lib/types/documents';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import type { PageProps } from './$types';
@@ -25,6 +30,31 @@
   let draft = $state('');
   let saving = $state(false);
   let saveError = $state<string | null>(null);
+  let approving = $state(false);
+  let approveError = $state<string | null>(null);
+
+  const PLAYBOOK_PREFIX = 'playbook_';
+  function isPlaybook(slug: string) {
+    return slug.startsWith(PLAYBOOK_PREFIX);
+  }
+  // Agent-saved playbook versions wait for a human: skills follow only approved ones.
+  let pendingApproval = $derived(
+    selectedSlug !== null && isPlaybook(selectedSlug) && currentDoc?.approvedAt === null,
+  );
+
+  async function approve() {
+    if (!data.activeProjectId || !selectedSlug || !currentDoc || approving) return;
+    approving = true;
+    approveError = null;
+    try {
+      await approveDocumentVersion(data.activeProjectId, selectedSlug, currentDoc.id, fetch, token);
+      await selectDoc(selectedSlug);
+    } catch (e) {
+      approveError = e instanceof Error ? e.message : 'Approval failed.';
+    } finally {
+      approving = false;
+    }
+  }
 
   // Reset the drilldown when the project (and its index) changes.
   $effect(() => {
@@ -104,6 +134,7 @@
   }
 
   function label(slug: string) {
+    if (isPlaybook(slug)) return `Playbook: ${slug.slice(PLAYBOOK_PREFIX.length)}`;
     return SLUG_LABELS[slug] ?? slug;
   }
 
@@ -184,6 +215,25 @@
           </div>
         </div>
 
+        {#if pendingApproval}
+          <div class="mb-4 flex flex-col gap-2 rounded border border-border bg-surface p-3 sm:flex-row sm:items-center sm:justify-between">
+            <p class="text-xs text-text-secondary">
+              <span class="font-medium text-text">Pending approval.</span>
+              This version was saved by the agent. Skills follow a playbook only once you approve it — read it first; it runs as procedure.
+            </p>
+            <button
+              onclick={approve}
+              disabled={approving}
+              class="shrink-0 rounded bg-text px-3 py-1 text-xs font-medium text-page transition-opacity hover:opacity-90 disabled:opacity-40"
+            >
+              {approving ? 'Approving…' : 'Approve'}
+            </button>
+          </div>
+          {#if approveError}
+            <p class="mb-2 text-xs text-danger">{approveError}</p>
+          {/if}
+        {/if}
+
         <div class="rounded border border-border bg-page p-4 overflow-x-auto">
           <pre class="text-sm text-text whitespace-pre-wrap font-mono leading-relaxed">{currentDoc.content}</pre>
         </div>
@@ -200,6 +250,11 @@
                     <span class="font-mono text-text-muted">{formatDate(ver.createdAt)}</span>
                     {#if i === 0}
                       <span class="ml-2 text-accent font-medium">current</span>
+                    {/if}
+                    {#if selectedSlug && isPlaybook(selectedSlug)}
+                      <span class="ml-2 {ver.approvedAt ? 'text-text-muted' : 'text-danger'}">
+                        {ver.approvedAt ? 'approved' : 'pending approval'}
+                      </span>
                     {/if}
                   </summary>
                   <div class="px-3 py-2 border-t border-border bg-surface">

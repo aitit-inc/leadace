@@ -23,7 +23,6 @@ allowed-tools:
   - mcp__plugin_leadace_api__get_lever_state
   - mcp__plugin_leadace_api__list_suggestions
   - mcp__plugin_leadace_api__get_tenant_settings
-  - mcp__plugin_leadace_api__update_tenant_settings
   - mcp__plugin_leadace_api__list_message_variants
   - mcp__plugin_leadace_api__upsert_message_variant
   - mcp__plugin_leadace_api__upsert_discovery_strategy
@@ -224,13 +223,16 @@ channel enabled — the cycle skills pick the means up with no further wiring.
    WebSearch) and draft for review instead of asking everything.
 3. **Write both artifacts** (show to the user before saving): register the strategy
    via `upsert_discovery_strategy` (slug + `approach` referencing the playbook), and
-   save the `playbook_<slug>` document. If an open `add-means` suggestion matches
-   (`list_suggestions`), reuse its `dedupeKey` as `<slug>` so the saved playbook
-   auto-closes it.
+   save the `playbook_<slug>` document — it stays **pending until the user approves
+   it at https://app.leadace.ai/documents**; skills follow only approved versions.
+   If an open `add-means` suggestion matches (`list_suggestions`), reuse its
+   `dedupeKey` as `<slug>` so the approved playbook auto-closes it.
 4. **Enable the channel**: `update_project_settings` — add `"platform"` to
    `outboundChannels`, preserving existing entries.
-5. **Report**: slug, playbook saved, channel enabled; `/evaluate` promotes/demotes it
-   like any strategy; point to `/build-list` or `/daily-cycle`.
+5. **Report**: slug, playbook saved (pending — approve it at
+   https://app.leadace.ai/documents before the cycle skills can use it), channel
+   enabled; `/evaluate` promotes/demotes it like any strategy; point to `/build-list`
+   or `/daily-cycle`.
 
 #### 3i. message_reset / message_steer — Message-Angle Pool Operations
 
@@ -296,11 +298,15 @@ Mode B infers the strategy from the page, defaults everything else, and puts the
 Print:
 
 1. **Header**: `Setup complete - <PROJECT_NAME>`
-2. **What was created**: project, `business` doc, `sales_strategy` doc, sender info + outbound channels in project settings, initial `inquiry_chat_brief`, message-angle variants.
-3. **Anything that still blocks sending** — no sending mailbox (Gmail not connected; fix: https://app.leadace.ai) or a workspace-identity field left blank in the review (fix: https://app.leadace.ai/workspace-settings). Both refuse `/outbound` and `/daily-cycle` until set. Omit the whole item when nothing is blocked.
+2. **What was created**: project, `business` doc, `sales_strategy` doc, outbound channels / language in project settings, initial `inquiry_chat_brief`, message-angle variants.
+3. **Finish in the Web UI** — the settings the chain never writes, each with the value found on the homepage (or `(not found)`) for copy-paste:
+   - Workspace identity (legal name / postal address / sender country): https://app.leadace.ai/workspace-settings — `/outbound` and `/daily-cycle` refuse until all three are set; so does a missing sending mailbox (Gmail not connected; fix: https://app.leadace.ai).
+   - Sender display name / company name, and outbound mode (`draft` until switched): https://app.leadace.ai/project-settings
+   - Landing CTA (scheduling or signup URL), video / PDF / logo: https://app.leadace.ai/inquiry-settings
+   Once those are in, sending can start — nothing else is pending on the Claude Code side.
 4. **Capability summary** from env_check, plus one line that Gmail-MCP / browser-automation were assumed `unsure` and can be re-checked by asking `/leadace`.
 5. **Recipient delivery scope**: one line that delivery is limited to the currently supported recipient countries, so the operator's targeting matches the send-time guardrail.
-6. **Defaults you can change later**: outbound mode is `draft` so nothing sends without your review; the AI inquiry chat is live on the recipient landing page (the inquiry landing defaults to enabled — toggle it off in the Web UI if you don't want recipient links to surface); landing extras (video / PDF / brand color / logo / CTA) are on the Web UI Inquiry page — or ask `/leadace` to refine the strategy / messaging.
+6. **Defaults you can change later**: outbound mode starts as `draft` so nothing sends without your review; the inquiry landing (and its AI chat) starts disabled — enable it in the Web UI (Inquiry page settings) when you want recipient links to surface — or ask `/leadace` to refine the strategy / messaging.
 7. **Next steps**:
    - `/daily-cycle <project>` — runs initial prospect collection (`/build-list` is auto-triggered when the list is empty), drafts outreach, and shows you the queue.
    - `/setup-cron <project>` (optional) — schedule the daily cycle to run on its own.

@@ -50,6 +50,7 @@ SUITES=(
   regression-inquiry-unsubscribe
   regression-decision-maker-pointer
   regression-tenant-isolation
+  regression-caller-gates
 )
 
 fail=0

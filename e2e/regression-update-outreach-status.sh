@@ -6,7 +6,7 @@
 # double-quota.
 #
 # Runs against the local stack (localhost:8787 API + 54322 Postgres). pre_send
-# rows are minted via record-with-inquiry (outboundMode=send default, compliant
+# rows are minted via record-with-inquiry (outboundMode set to send, compliant
 # tenant). Quota is self-host=unlimited so the 'failed' quota-refund is not
 # observable here — the prospect-state consequences (no contact + deferral) are.
 # Snapshots + restores tenant compliance. Curl-only, cleans up.
@@ -136,12 +136,14 @@ restore_and_exit() {
 }
 trap restore_and_exit EXIT
 
-step "set tenant compliance ready + create project (outboundMode=send default)"
+step "set tenant compliance ready + create project (outboundMode=send)"
 api PUT /api/tenant-settings '{"legalName":"E2E Test Corp","physicalAddress":"123 Test Lane, Test City, CA 94000","defaultSenderCountry":"US"}' > /dev/null
 CREATE_RESP="$(api POST /api/projects "$(jq -nc --arg n "$PROJECT_NAME" '{name:$n}')")"
 PROJECT_ID="$(echo "$CREATE_RESP" | jq -r '.id // ""')"
 [[ -n "$PROJECT_ID" ]] || { echo "create-project failed: $CREATE_RESP" >&2; exit 1; }
 say "project_id=$PROJECT_ID"
+# New projects default to draft; this suite exercises the pre_send path.
+api PUT "/api/projects/$PROJECT_ID/settings" '{"outboundMode":"send"}' > /dev/null
 
 SEED_BODY="$(jq -nc --arg pid "$PROJECT_ID" \
   --argjson sent "$(mkseed sent)" --argjson failed "$(mkseed failed)" --argjson nf "$(mkseed notfound)" \

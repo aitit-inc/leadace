@@ -34,11 +34,27 @@ export function saveDocument(
   content: string,
   fetchFn: RequestFetch = fetch,
   token?: string,
-): Promise<{ id: number; slug: string; createdAt: string }> {
-  return request<{ id: number; slug: string; createdAt: string }>(fetchFn, {
+): Promise<{ id: number; slug: string; createdAt: string; approvedAt: string | null }> {
+  return request<{ id: number; slug: string; createdAt: string; approvedAt: string | null }>(fetchFn, {
     method: 'PUT',
     path: `/projects/${projectId}/documents/${slug}`,
     body: { content },
+    auth: 'required',
+    token,
+  });
+}
+
+export function approveDocumentVersion(
+  projectId: string,
+  slug: string,
+  id: number,
+  fetchFn: RequestFetch = fetch,
+  token?: string,
+): Promise<{ id: number; slug: string; createdAt: string; approvedAt: string | null }> {
+  return request<{ id: number; slug: string; createdAt: string; approvedAt: string | null }>(fetchFn, {
+    method: 'POST',
+    path: `/projects/${projectId}/documents/${slug}/approve`,
+    body: { id },
     auth: 'required',
     token,
   });

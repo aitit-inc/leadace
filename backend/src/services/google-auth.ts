@@ -94,15 +94,16 @@ export async function getCredentialsStatus(
 }
 
 // Operator notifications (services/notifications), never prospect outreach —
-// the recipient is the tenant's configured address, so none of the outreach
-// guards apply. For prospect emails, use the outreach service.
+// the recipient is the operator's own address, so none of the outreach guards
+// apply. `to: null` = the sending mailbox itself (a note to self). For
+// prospect emails, use the outreach service.
 export async function sendNotificationEmail(
   db: Db,
   tenantId: TenantId,
   userId: string,
   ctx: GoogleCtx,
-  input: { to: string; subject: string; body: string },
-): Promise<ServiceResult<{ messageId: string; threadId: string }>> {
+  input: { to: string | null; subject: string; body: string },
+): Promise<ServiceResult<{ to: string; messageId: string; threadId: string }>> {
   const identity = await loadSendingIdentitySecret(db, {
     tenantId,
     userId,
@@ -134,8 +135,9 @@ export async function sendNotificationEmail(
     throw e
   }
 
+  const to = input.to ?? identity.fromEmail
   const envelope = applyE2eRedirect(
-    { to: [input.to], cc: undefined, bcc: undefined, extraHeaders: undefined },
+    { to: [to], cc: undefined, bcc: undefined, extraHeaders: undefined },
     ctx.e2eRecipientOverride,
   )
 
@@ -151,5 +153,5 @@ export async function sendNotificationEmail(
   })
 
   const result = await sendGmailMessage({ accessToken, rfc822 })
-  return ok({ messageId: result.id, threadId: result.threadId })
+  return ok({ to, messageId: result.id, threadId: result.threadId })
 }

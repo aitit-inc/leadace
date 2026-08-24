@@ -262,8 +262,10 @@
           Notification email
         </label>
         <p class="text-xs text-text-muted">
-          Where the plugin sends its run notifications (daily-cycle start and completion reports),
-          from your connected Gmail. Leave blank to turn notifications off. This address can only be
+          Where the plugin sends its run notifications (daily-cycle start and completion reports).
+          They go out from your connected Gmail and, by default, to that same address
+          {#if data.connectedGmail}(<span class="font-mono">{data.connectedGmail}</span>){:else}(none connected yet — see Account settings){/if}.
+          Enter an address to redirect them; leave blank to use the default. This can only be
           changed here, never by the plugin.
         </p>
         <input
@@ -271,7 +273,7 @@
           type="email"
           maxlength="254"
           bind:value={formData.notificationEmail}
-          placeholder="you@example.com"
+          placeholder={data.connectedGmail ?? 'you@example.com'}
           class="block w-full rounded border border-border bg-page px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-text/40 focus:outline-none"
         />
         {#if validationErrors.notificationEmail}

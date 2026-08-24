@@ -18,12 +18,12 @@ Shared procedure for collecting business information and generating / updating t
 
 | Mode | Caller | Input style | Behavior |
 |---|---|---|---|
-| **A — Interactive Q&A** | `/leadace` (strategy intent) | User-driven, mostly `AskUserQuestion` plus a few free-text prompts for open-ended items, 4-0..4-11 step-by-step | Full-detail collection. Supports both initial and update sub-modes (Step 3). On **initial sub-mode**, Step 4-0 first asks whether the user has a homepage URL / supporting materials; if yes, the run delegates to the Mode B inference path (§4B-1..§4B-4) so the strategy intent and onboarding chain share the same fast path when source material exists. |
+| **A — Interactive Q&A** | `/leadace` (strategy intent) | User-driven, mostly `AskUserQuestion` plus a few free-text prompts for open-ended items, 4-0..4-10 step-by-step | Full-detail collection. Supports both initial and update sub-modes (Step 3). On **initial sub-mode**, Step 4-0 first asks whether the user has a homepage URL / supporting materials; if yes, the run delegates to the Mode B inference path (§4B-1..§4B-4) so the strategy intent and onboarding chain share the same fast path when source material exists. |
 | **B — URL-driven inference** | `/leadace` onboarding chain (URL passed in) | URL fetched once, content parsed by LLM, everything inferred or defaulted, then **one** review round | Initial sub-mode only. The review (§4B-3) is the only interactive step in the whole chain — never a questionnaire. |
 
 The caller declares mode at invocation. This document references `MODE = A | B` throughout.
 
-When `MODE = A` and Step 4-0 yields a URL, treat the rest of Step 4 as `MODE = B` (the user gets the auto-infer fast path even though they entered through the strategy intent). Inquiry-landing polish (4-11) is a Mode A step only: Mode B infers what the page shows, carries over anything the user already pasted in 4-0, and points at the Web UI for the rest — a first run must not stall on optional cosmetics.
+When `MODE = A` and Step 4-0 yields a URL, treat the rest of Step 4 as `MODE = B` (the user gets the auto-infer fast path even though they entered through the strategy intent). Inquiry-landing extras (video / PDF / logo / CTA) are Web UI settings in both modes: Mode B lists what the page shows for the hand-off; neither mode asks for them — a first run must not stall on optional cosmetics.
 
 ---
 
@@ -63,11 +63,11 @@ If any document call returns "Project not found", abort and instruct the user to
 
 Hold project settings (`outboundMode`, `senderEmailAlias`, `senderDisplayName`, `senderCompanyName`, `unsubscribeEnabled`, `inquiryChatBrief`, `inquiryOneLiner`) as `SETTINGS`, and the workspace identity (`legalName`, `physicalAddress`, `defaultSenderCountry`) as `TENANT_SETTINGS`.
 
-**Migration check (Mode A, update sub-mode only):** If the existing SALES_STRATEGY.md has a "Sender Information" section containing a sender email or display name (older versions), and `SETTINGS.senderEmailAlias` / `SETTINGS.senderDisplayName` are empty, propose migrating the values into project settings via `update_project_settings` and stripping them from the document.
+**Migration check (Mode A, update sub-mode only):** If the existing SALES_STRATEGY.md has a "Sender Information" section containing a sender email or display name (older versions), and `SETTINGS.senderEmailAlias` / `SETTINGS.senderDisplayName` are empty, tell the user those now live in the Web UI → Project settings (https://app.leadace.ai/project-settings), show the values found, and strip them from the document.
 
-**Notification recipient migration (Mode A, update sub-mode only):** If the existing SALES_STRATEGY.md has a "Notification Settings" section (older versions), tell the user the recipient now lives in the Web UI → Workspace settings (notifications stay off until set there) and strip the section. Never copy the address anywhere.
+**Notification recipient migration (Mode A, update sub-mode only):** If the existing SALES_STRATEGY.md has a "Notification Settings" section (older versions), tell the user the recipient now lives in the Web UI → Workspace settings (it defaults to the connected Gmail) and strip the section. Never copy the address anywhere.
 
-**Legacy combined-name split (Mode A, update sub-mode only):** Earlier versions of this skill instructed users to set `senderDisplayName` to a combined `"Personal Name — Company Name"` string. The current spec splits that into `senderDisplayName` (personal only) + `senderCompanyName` (company only) so the inquiry-landing header can render `From {personal} at {company}`. Detect the legacy format: if `SETTINGS.senderDisplayName` is non-empty AND contains one of the separators ` — ` (em-dash with spaces), ` – ` (en-dash with spaces), ` - ` (hyphen with spaces), or ` | ` (pipe with spaces), AND `SETTINGS.senderCompanyName` is empty, treat the part before the separator as the candidate personal name and the part after as the candidate company name. **Never auto-apply** — false positives like `"Jane Doe — PhD"` or `"Acme Inc. - West Coast Office"` are real. Use `AskUserQuestion` to show the proposed split and offer: (a) accept and save, (b) edit either side, (c) keep the existing combined value (skip migration). On accept / edit, write both via a single `update_project_settings { senderDisplayName, senderCompanyName }` call.
+**Legacy combined-name split (Mode A, update sub-mode only):** Earlier versions stored `senderDisplayName` as a combined `"Personal Name — Company Name"` string. If `SETTINGS.senderDisplayName` contains one of the separators ` — `, ` – `, ` - `, ` | ` and `SETTINGS.senderCompanyName` is empty, point the user to the Web UI → Project settings to split it (display name = personal name only; company name in its own field) — never propose the split yourself (`"Jane Doe — PhD"` is one name).
 
 **Sub-mode determination:**
 - Both documents missing → **initial** sub-mode. Both modes use this when the project is new.
@@ -152,8 +152,8 @@ Before walking the long Q&A, give the user a fast path. Ask once via free-text p
 > "If you have a homepage URL or any supporting docs (brochure / pitch deck PDF / blog post / etc.) you'd like me to read first, paste them here and I'll auto-draft the strategy from there. You can also paste landing-page extras if you have them — short pitch video link (YouTube / Vimeo, unlisted is fine), product PDF, brand color (hex), brand logo URL, and either a scheduling link (Calendly / TimeRex — for meeting CTA) **or** a SaaS sign up URL (for self-serve CTA, no human follow-up). Anything missing is fine — we'll fall back to a guided Q&A and you can configure landing-page extras later in the Web UI. Reply 'skip' or 'ask me' to go straight to the guided flow."
 
 Parse the reply locally:
-- **Homepage / source URLs** (the first `https?://` that looks like a corporate / product site) → use as `$URL` and switch to **Mode B**: jump to §4B-1 with the inferred URL, run §4B-1..§4B-4 in full. Do **not** run 4-11 afterwards — §4B-3 shows the landing extras it has and points at the Web UI for the rest.
-- **Inquiry landing extras** (any of: video URL, PDF URL, hex color matching `#[0-9A-Fa-f]{6}`, logo URL, scheduling URL **or** SaaS signup URL) → hold them as `INQUIRY_PREFILLS`, show them in 4-11 / §4B-3 as already-supplied values and save them; never re-ask. If the user pasted a scheduling URL, default `inquiryCtaType` to `meeting` and `inquiryCtaUrl` to the URL; if a signup URL, default `inquiryCtaType` to `signup` and `inquiryCtaUrl` to the URL. The two are mutually exclusive — if both arrive, ask once which the project should use.
+- **Homepage / source URLs** (the first `https?://` that looks like a corporate / product site) → use as `$URL` and switch to **Mode B**: jump to §4B-1 with the inferred URL, run §4B-1..§4B-4 in full. Do **not** run 4-10 afterwards — §4B-3 lists the landing extras it found for the Web UI hand-off.
+- **Inquiry landing extras** (any of: video URL, PDF URL, hex color matching `#[0-9A-Fa-f]{6}`, logo URL, scheduling URL **or** SaaS signup URL) → hold them as `INQUIRY_PREFILLS` and surface them in the Step 8 hand-off (they are Web UI → Inquiry page settings; this procedure never writes them). A scheduling URL and a SaaS signup URL are mutually exclusive CTAs — if both arrive, list both and let the user pick in the UI.
 - **"skip" / "ask me" / no URL of any kind** → continue with the guided Q&A path (4-1..4-9, then 4-10).
 
 If the user pastes only landing-page extras (no homepage URL), still continue with Q&A — the inference path needs a homepage to be useful.
@@ -197,32 +197,15 @@ Where to find prospect candidates (depends on target market, industry, region). 
 - "Up to you" → reasonable defaults by target market, formulated as named strategies.
 
 #### 4-7. Sender Information
-Collect 5 items in order (display name / phone / signature required for outbound; company name and Send-As alias optional):
+Collect 2 items (both required; "up to you" not allowed):
 1. Organization phone number (used by contact forms).
-2. Sender display name — personal name only (e.g., "Jane Doe"). Do **not** append the company name here; that goes in item 3.
-3. Sender company / brand name (e.g., "Acme Inc."). Shown to recipients on the AI inquiry landing as `From {senderDisplayName} at {senderCompanyName}`. Distinct from the legal name in Workspace Settings (compliance footer). "None" allowed → omit.
-4. Gmail Send-As alias — only when the `From:` should differ from the connected Gmail's primary address (must already be verified in Gmail). "None" → the project sends from its sending mailbox as is (the connected Gmail, or a custom SMTP mailbox assigned in the Web UI, which ignores the alias).
-5. Signature line (human signature only — name, title, sign-off; no postal address, no legal entity name, no phone block).
+2. Signature line (human signature only — name, title, sign-off; no postal address, no legal entity name, no phone block).
 
-"Up to you" not allowed for items 1, 2, 5 — must come from the user. Items 3 (company) and 4 (alias) may be skipped with "none".
+Both stay in SALES_STRATEGY.md "Sender Information". The sender identity recipients see — display name, company / brand name, Gmail Send-As alias — and the compliance footer (legal name, postal address, sender country) are Web UI settings (https://app.leadace.ai/project-settings and https://app.leadace.ai/workspace-settings); never write them into the document or ask for them here. If `SETTINGS` / `TENANT_SETTINGS` (Step 3) show any of them unset, carry that into the Step 8 hand-off. A Send-As alias must be verified in Gmail (Settings → Accounts → "Send mail as") before `/outbound`, or Gmail rejects the send.
 
-After collection, **save display name + company + alias to project settings**:
-```
-mcp__plugin_leadace_api__update_project_settings
-  projectId: "$0"
-  senderDisplayName: <display>
-  senderCompanyName: <company>   # omit the field if user said "none"
-  senderEmailAlias: <alias>      # null when the user said "none" — omitting it would keep a stored alias
-```
-Phone stays in SALES_STRATEGY.md "Sender Information" (forms reference it). The compliance footer — legal name, physical address, unsubscribe — is appended server-side at send time from Workspace Settings; **do not** include any of those in the SALES_STRATEGY.md signature, and remove them on migration. If `TENANT_SETTINGS` (Step 3) shows any of `legalName` / `physicalAddress` / `defaultSenderCountry` as `(not set)`, surface a one-line note here directing the user to https://app.leadace.ai/workspace-settings before `/outbound`.
+#### 4-8. Channels, Target Countries & Language
 
-If the email is a Send-As alias **not yet verified** in Gmail (Settings → Accounts → "Send mail as"), Gmail will reject the send. Tell the user to verify before `/outbound`. Primary Gmail addresses don't need verification.
-
-#### 4-8. Outbound Mode, Channels, Target Countries & Language
-
-**Outbound mode:**
-- `send` (default): emails sent immediately during `/outbound`.
-- `draft`: `/outbound` stores as LeadAce draft; user reviews at https://app.leadace.ai/drafts. Recommended while calibrating or for high-stakes outreach.
+**Outbound mode** (`send` / `draft`) is a Web UI setting (https://app.leadace.ai/project-settings): a new project starts in `draft` — `/outbound` stores reviewable drafts at https://app.leadace.ai/drafts until the user switches to `send`. State this, don't ask.
 
 **Channels** — which channels `/outbound` may use (`email` / `form` / `sns_twitter` / `sns_linkedin`). Propose a default from `ENV_SUMMARY` (Step 2) `BROWSER_AUTOMATION`: `chrome` → all reachable channels; `other` → email + form (SNS needs Claude in Chrome); `none`/`unsure` → **email only**. Confirm with the user and let them narrow it.
 
@@ -234,13 +217,11 @@ Save the values the user actually chose:
 ```
 mcp__plugin_leadace_api__update_project_settings
   projectId: "$0"
-  outboundMode: "send" | "draft"
   outboundChannels: ["email", ...]   # a NON-EMPTY subset; see guard below. Omit to keep the all-channels default
   targetCountries: ["US", ...]       # omit entirely unless the user is restricting delivery
   targetLanguage: "en" | "ja"        # the value confirmed with the user; always include it
 ```
 Guards:
-- `outboundMode`: "Up to you" → default `send`.
 - `outboundChannels`: **never save `[]`** — an empty array pauses outbound entirely. If the user wants all channels, omit the field (the project already defaults to all). Only write a concrete non-empty subset when the user (or the `ENV_SUMMARY` capability default) narrows it.
 - `targetCountries`: omit the field unless the user explicitly restricts delivery. Never send `[]` or `null` — that is the default and writing it changes nothing meaningful while risking clobbering an existing restriction.
 
@@ -250,36 +231,9 @@ Guards:
 - Scheduling service name(s). **Auto-resolve notification domain**: call `mcp__plugin_leadace_api__get_master_document` with `slug: "ref_scheduling_services"`, look up each named service, record the domain in SALES_STRATEGY.md without asking (e.g., `Calendly — calendly.com`). Only ask if not in the reference list.
 - "Up to you" → defaults: (1)(2)(3).
 
-#### 4-10. Inquiry Landing Optional Polish
+#### 4-10. Inquiry Landing Extras
 
-Collect the optional polish for the recipient AI inquiry landing page in **one combined free-text prompt**. All fields are optional and skipping is fine — the landing renders without them. Pre-fill any values already gathered in 4-0 as `INQUIRY_PREFILLS` (show them in the prompt and let the user accept by replying "ok").
-
-> "A few last optional items for the recipient inquiry landing page (the per-recipient AI chat + CTA button page that gets linked in your outbound). All optional — reply 'skip' to leave any blank, and you can edit them anytime in the Web UI → Inquiry page settings. Paste anything you have:
-> 1. Short product video URL (YouTube / Vimeo unlisted is fine — embedded above the chat)
-> 2. Product PDF URL (download button on the landing — public link, e.g. Google Drive 'anyone with link')
-> 3. Brand color as a 6-digit hex (e.g. #1f6feb — landing accent color)
-> 4. Brand logo URL (public image URL — shown in the landing header)
-> 5. CTA — pick one: (a) scheduling link (Calendly / TimeRex / etc.) for the meeting button, or (b) SaaS sign up URL for a 'Sign up' button that sends visitors straight to your product (no human follow-up). Skip to leave the meeting button in notify-only mode."
-
-Parse the reply locally:
-- Skip any field the user did not provide; do **not** clear an existing value via `null` unless the user explicitly says "clear" / "remove" for that specific field.
-- Validate each URL is `https://...`; reject `http://` (the backend rejects too — surface the validation here so the user can fix it before save).
-- Validate the brand color matches `^#[0-9A-Fa-f]{6}$`; if the user typed `1f6feb` without the `#`, prepend it and confirm once.
-
-Save in a single call (only include fields the user actually provided):
-
-```
-mcp__plugin_leadace_api__update_project_settings
-  projectId: "$0"
-  inquiryVideoUrl: <url>          # omit unless provided
-  inquiryPdfUrl: <url>            # omit unless provided
-  inquiryBrandColor: <#hex>       # omit unless provided
-  inquiryBrandLogoUrl: <url>      # omit unless provided
-  inquiryCtaType: "meeting" | "signup"   # omit unless the user picked or supplied a CTA URL
-  inquiryCtaUrl: <url>            # omit unless provided; required when inquiryCtaType is "signup"
-```
-
-Tell the user once at the end: "All set — the inquiry landing is live. Anything you skipped can be added later in the Web UI → Inquiry page settings (sidebar)."
+Video / PDF / brand logo URLs, brand color and the CTA (scheduling link or SaaS signup URL) are Web UI → Inquiry page settings (https://app.leadace.ai/inquiry-settings). Never collect them here; anything 4-0 captured (`INQUIRY_PREFILLS`) goes into the Step 8 hand-off for the user to paste. Tell the user once: "The inquiry landing is off by default — enable it, and set its extras (video / PDF / brand color / logo / CTA), on the Web UI → Inquiry page settings."
 
 ### Mode B — URL-driven Inference
 
@@ -301,19 +255,11 @@ For each of the following, draft a 1-3 sentence value from `URL_CONTENT`. Do **n
 - Features / differentiation (4-3 equivalent)
 - Track record / social proof (4-4 equivalent) — if absent, leave a placeholder note "Add 1 trust foundation later"
 - Pricing (4-5 equivalent) — if absent, mark as "TBD"
-- Sender company / brand name (part of 4-7) — extract the canonical company name from `URL_CONTENT` (page title, header logo alt, footer "© ..."). Strip "Inc." / "Ltd." only if the homepage itself uses the bare form. Skip if no clear name is on the page.
+- Sender company / brand name (Web UI value — hold in `UI_HANDOFF`) — extract the canonical company name from `URL_CONTENT` (page title, header logo alt, footer "© ..."). Strip "Inc." / "Ltd." only if the homepage itself uses the bare form. Skip if no clear name is on the page.
 - Organization phone number (part of 4-7) — only if published on the page.
-- **Workspace identity** — infer **only the fields `TENANT_SETTINGS` reports as `(not set)`**; a stored value is never re-proposed, so a partial fill can't clobber it. `legalName` / `physicalAddress` come verbatim from the page (footer, copyright line, company / about / legal / imprint page — a Japanese 特定商取引法 page carries both); `defaultSenderCountry` is the ISO 3166-1 alpha-2 code of that address's country. Leave a field blank rather than guessing — these render into every recipient's compliance footer, so §4B-3 makes the user confirm them.
+- **Workspace identity** (Web UI values — hold in `UI_HANDOFF`) — infer **only the fields `TENANT_SETTINGS` reports as `(not set)`**. `legalName` / `physicalAddress` come verbatim from the page (footer, copyright line, company / about / legal / imprint page — a Japanese 特定商取引法 page carries both); `defaultSenderCountry` is the ISO 3166-1 alpha-2 code of that address's country. Leave a field blank rather than guessing — these render into every recipient's compliance footer, and the user enters them in the Web UI.
 - Scheduling links (part of 4-9) — only if visibly linked
-- **Inquiry landing extras** (part of 4-10; only when the homepage explicitly surfaces them — leave blank otherwise, do **not** invent):
-  - `inquiryVideoUrl` — first embedded YouTube / Vimeo URL on the page
-  - `inquiryPdfUrl` — first PDF link that looks like a brochure / whitepaper / pitch deck (.pdf URL or anchor text mentioning "brochure" / "deck" / "whitepaper")
-  - **CTA** (`inquiryCtaType` + `inquiryCtaUrl`) — pick at most one signal from the page; if neither is visible, leave both blank:
-    - Scheduling link (Calendly / TimeRex / Cal.com / HubSpot Meetings) → `inquiryCtaType: meeting`, `inquiryCtaUrl: <link>` (the human-sales path)
-    - SaaS sign up / "Get started free" / "Start your trial" button URL on the homepage → `inquiryCtaType: signup`, `inquiryCtaUrl: <link>` (the self-serve path; only infer when the destination is unmistakably a signup page, not a contact form)
-    - If both signals appear, prefer the scheduling link unless the page is clearly self-serve PLG (no sales contact info anywhere); §4B-3 will let the user override.
-  - `inquiryBrandLogoUrl` — leave blank; the local fetch tool strips images from the page (Jina Reader is invoked with `x-remove-all-images: true`), so logo URLs cannot be inferred from `URL_CONTENT`.
-  - `inquiryBrandColor` — leave blank; CSS-derived colors are unreliable from a text-extracted page.
+- **Inquiry landing extras** (Web UI values — hold in `UI_HANDOFF`; only when the homepage explicitly surfaces them, never invent): the first embedded YouTube / Vimeo URL; the first PDF that looks like a brochure / whitepaper / deck; the CTA — a scheduling link (Calendly / TimeRex / Cal.com / HubSpot Meetings) as the meeting CTA, or an unmistakable self-serve signup page URL as the signup CTA (prefer the scheduling link when both appear, unless the page is clearly PLG with no sales contact). Logo URL and brand color cannot be read from the text extraction — leave them out.
 - `inquiry_chat_brief` — ~1000-character system-prompt fragment composed per the Step 7.5 "Content / style spec" (using `URL_CONTENT` as the source). Includes elevator pitch, problems solved, pricing, trust foundation, and 2-4 FAQ items.
 - `inquiry_one_liner` — single hooky tagline (≤140 chars) for the recipient landing page, derived from the elevator pitch.
 
@@ -324,15 +270,13 @@ Print the whole proposed setup as **one** block and let the user reply `Y` to sa
 Contents, each value carrying its source in parentheses so it can be trusted or challenged at a glance:
 
 - **Project** (name from the URL) and the §4B-2 inferences — business / target / features / pricing / track record, one line each — plus both drafts, `inquiry_chat_brief` and `inquiry_one_liner`, on adjacent lines.
-- **Sender**: the `From:` address is the project's sending mailbox (the connected Gmail from `ENV_SUMMARY`, until the Web UI assigns a custom SMTP mailbox) and is stated, not asked; company and phone from §4B-2. **Display name stays blank** — a personal name is not on a homepage, so never invent one — and the signature is `display name + company`, so it completes when the name arrives.
-- **Workspace identity** (the fields §4B-2 inferred): flag as *needs your confirmation* — they render verbatim into every recipient's compliance footer (CAN-SPAM § 5(a)(5), CASL § 6). Omit the block when §4B-2 inferred none.
-- **Landing extras**: only what §4B-2 inferred or 4-0 supplied. Never ask — close the block with one line that video / PDF / brand color / logo / CTA live in the Web UI → Inquiry page settings.
-- **Defaults, stated not asked**: outbound mode `draft` (nothing sends until the user reviews the first batch); outbound channels per detected browser automation; target language inferred from the market; delivery unrestricted (the server enforces the supported-country allowlist); 2-3 discovery sources from `tpl_targeting_guide`; response definition (1)(2)(3) from 4-9.
+- **Sender**: the `From:` address is the project's sending mailbox (the connected Gmail from `ENV_SUMMARY`, until the Web UI assigns a custom SMTP mailbox) and is stated, not asked; phone from §4B-2 goes into the document. Display name and company name are Web UI settings — never invent a personal name.
+- **Web UI hand-off** (`UI_HANDOFF`, plus `INQUIRY_PREFILLS` from 4-0): the values found for workspace identity, sender company name and landing extras, each with the page it goes to — they render into every recipient's footer / landing, so the user enters them in the Web UI and this procedure never writes them. Omit the block when nothing was found.
+- **Defaults, stated not asked**: outbound mode starts as `draft` (Web UI setting; nothing sends until the user switches it); outbound channels per detected browser automation; target language inferred from the market; delivery unrestricted (the server enforces the supported-country allowlist); 2-3 discovery sources from `tpl_targeting_guide`; response definition (1)(2)(3) from 4-9.
 
 Then apply the corrections and save. Re-print the block only when a correction changed something worth re-reading (a compliance field, the sender identity).
 
-Two things the review must not fudge:
-- **Sender display name has no fallback.** If the reply approves while it is blank, ask for that one item, then save.
+One thing the review must not fudge:
 - **A project name is fixed at creation.** If the user wants a different one, offer `/delete-project` + a re-run — never create a second project (Free caps projects at 1).
 
 #### 4B-4. Save
@@ -341,30 +285,13 @@ Write the approved setup in one pass. **Include a field only when it has a value
 ```
 mcp__plugin_leadace_api__update_project_settings
   projectId: "$0"
-  senderDisplayName: <display>
-  senderCompanyName: <company>   # omit if the user said "none"
-  senderEmailAlias: <alias>      # only when the review asked for a verified Gmail Send-As alias
-  outboundMode: "draft"
   outboundChannels: ["email"]     # BROWSER_AUTOMATION: other → ["email","form"]; none/unsure → ["email"]; chrome → omit (all). Never []
   targetLanguage: "ja"            # only for a Japanese audience; omit for the "en" default
   inquiryChatBrief: <brief>
   inquiryOneLiner: <one-liner>
-  inquiryVideoUrl: <url>          # these six only as §4B-2 inferred or 4-0 supplied; omit the rest
-  inquiryPdfUrl: <url>
-  inquiryBrandColor: <#hex>
-  inquiryBrandLogoUrl: <url>
-  inquiryCtaType: "meeting" | "signup"
-  inquiryCtaUrl: <url>            # required when inquiryCtaType is "signup"
 ```
 
-Then, when §4B-3 carried any workspace-identity field, save exactly those — the ones already stored stay out of the payload:
-```
-mcp__plugin_leadace_api__update_tenant_settings
-  legalName: <legal name>
-  physicalAddress: <postal address>
-  defaultSenderCountry: "JP"      # ISO alpha-2 code, not the label
-```
-Any of the three still blank goes into the Step 8 hand-off as a prominent warning: sending refuses (412) until all three are set, while build-list / strategy / evaluate work fine without them.
+`UI_HANDOFF` is never written here — it goes to the Step 8 hand-off verbatim. Sending refuses (412) until the three workspace-identity fields are set in the Web UI, while build-list / strategy / evaluate work fine without them.
 
 ---
 
@@ -398,7 +325,7 @@ mcp__plugin_leadace_api__save_document
 - **Initial** (both modes): Retrieve template `tpl_sales_strategy`. Generate following structure.
 - **Update** (Mode A): Use existing from Step 3. Update only changed sections. **Evaluate-managed sections (targeting, KPI, search keywords) are only rewritten when user explicitly instructs an update.** Messaging and channels are user-authored hints (subject lines & channel ranking are auto-optimized by the lever tick) — rewrite only on explicit user request.
 
-**Sender Information section**: Write only the organization's phone number and a short human signature line (name, title, sign-off). Sender display name, sender company name, and the optional Send-As alias live in project settings (set in 4-7 / 4B-3) and the `From:` address is the project's sending mailbox; legal name, physical address, and the unsubscribe line live in Workspace Settings and are appended automatically by the backend at send time. **Do not duplicate any of these in the document signature** — duplicated address blocks make the recipient-side footer look broken. If the template prompts for legal name / postal address / unsubscribe, replace with `Legal identity + footer: managed in Workspace Settings (https://app.leadace.ai/workspace-settings)`. Never set `footerOverride` via `update_project_settings` unless the user explicitly asks to customize the footer — it replaces these server-appended disclosures verbatim.
+**Sender Information section**: Write only the organization's phone number and a short human signature line (name, title, sign-off). Sender display name, sender company name, and the optional Send-As alias are Web UI project settings and the `From:` address is the project's sending mailbox; legal name, physical address, and the unsubscribe line live in Workspace Settings and are appended automatically by the backend at send time. **Do not duplicate any of these in the document signature** — duplicated address blocks make the recipient-side footer look broken. If the template prompts for legal name / postal address / unsubscribe, replace with `Legal identity + footer: managed in Workspace Settings (https://app.leadace.ai/workspace-settings)`. A custom footer (`footerOverride`, Web UI only) replaces these server-appended disclosures verbatim — never propose it as a way to change them.
 
 **Outbound mode**: Do not write `send`/`draft` into the document — it lives in project settings. A one-line note near "Sales channels" is fine: `Outbound mode: managed in Project Settings`.
 
@@ -428,7 +355,7 @@ Initial mode: register all. Update mode: the registry is evaluate-managed once p
 
 ## Step 7.5. Generate inquiry_chat_brief (AI Inquiry chat input)
 
-The AI inquiry chat on the recipient landing page reads `inquiry_chat_brief` from project settings as its system-prompt input. The chat entry is shown only when **both** `inquiry_landing_enabled = true` (default) **and** `inquiry_chat_brief` is non-empty; otherwise recipients fall back to the meeting-request button (or, if the landing itself is disabled, `/q/<short_id>` returns 404 and no chat surfaces at all).
+The AI inquiry chat on the recipient landing page reads `inquiry_chat_brief` from project settings as its system-prompt input. The chat entry is shown only when **both** `inquiry_landing_enabled = true` (off by default — enabled in the Web UI) **and** `inquiry_chat_brief` is non-empty; otherwise recipients fall back to the meeting-request button (or, if the landing itself is disabled, `/q/<short_id>` returns 404 and no chat surfaces at all).
 
 `EXISTING_BRIEF = SETTINGS.inquiryChatBrief` (from Step 3).
 
@@ -501,9 +428,10 @@ Tell the user once: "Seeded N message angles (subject + body approach) — `/out
 ## Step 8. Hand-off to caller
 
 Return:
-- A 5-10 line summary the caller can include in its completion report (sub-mode, sections completed, sections deferred, any sender-info migrations, the chosen outbound mode, whether `inquiry_chat_brief` was generated / skipped).
+- A 5-10 line summary the caller can include in its completion report (sub-mode, sections completed, sections deferred, any sender-info migrations, whether `inquiry_chat_brief` was generated / skipped).
+- **Web UI hand-off**: every value this procedure found but may not write (`UI_HANDOFF`, `INQUIRY_PREFILLS`; `(not found)` otherwise), grouped by page — workspace identity → https://app.leadace.ai/workspace-settings (sending refuses until set); sender display name / company name / outbound mode → https://app.leadace.ai/project-settings; landing CTA / video / PDF / logo → https://app.leadace.ai/inquiry-settings.
 - **Environment warnings**: if `ENV_SUMMARY` (Step 2) shows any tool missing, list each unavailable tool with its impact from the Step 2 "Tool impact catalog". Classify per the catalog: Gmail SaaS and the browser backend are channel-affecting (block outbound auto-send for their respective channels); Gmail MCP is reply-check-affecting (only degrades `/check-responses` to manual, not an outbound block); local fetch toolchain is a research-quality fallback, not a channel block. Recommend reconnecting the missing tool — status is re-checked live on the next run, there is no env document to refresh.
 - For Mode B: an explicit hint that the user can ask `/leadace` to refine the strategy later (e.g., to update messaging or fill in deferred fields).
-- One line that run notifications (daily-cycle start / completion) stay off until an address is set in the Web UI → Workspace settings.
+- One line that run notifications (daily-cycle start / completion) go to the connected Gmail by default and can be redirected in the Web UI → Workspace settings.
 
 The caller composes its own user-facing completion message; this procedure does not print one.

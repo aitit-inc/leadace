@@ -47,36 +47,15 @@ If not connected: "Open https://app.leadace.ai — a 'Connect Gmail' banner is s
 
 Use `AskUserQuestion`: "Have you connected the Gmail MCP in claude.ai? (Required for reply checking in `/check-responses` and for auto-drafting replies to positive responses.)" — options: `yes` / `no` / `unsure`. Record as `GMAIL_MCP`.
 
-### 2-2b. Workspace identity / compliance footer (interactive fill)
-
-**Skip this step entirely when `$URL` is set** (the `/leadace` onboarding chain): the caller's strategy step reads the homepage moments later, and a registered name + postal address are usually printed on it — proposing them for confirmation beats making a first-time user type all three. The chain's single review round collects and saves them instead.
+### 2-2b. Workspace identity / compliance footer (read)
 
 Call `mcp__plugin_leadace_api__get_tenant_settings`. Hold the response as `TENANT_SETTINGS`.
 
-The mandatory fields for outbound sending are `legalName`, `physicalAddress`, and `defaultSenderCountry`. The first two are rendered into every outgoing message's compliance footer (CAN-SPAM § 5(a)(5), CASL § 6 sender identification); `defaultSenderCountry` is workspace metadata — required, but not rendered into mail and unrelated to message language (that is the per-project `targetLanguage` setting). When any is `(not set)`, every send-side endpoint refuses with HTTP 412.
+`legalName`, `physicalAddress`, and `defaultSenderCountry` are mandatory for sending — the first two render into every outgoing message's compliance footer (CAN-SPAM § 5(a)(5), CASL § 6 sender identification), `defaultSenderCountry` is workspace metadata (the sender's own country, unrelated to message language). While any is `(not set)`, every send-side endpoint refuses with HTTP 412. They are set in the Web UI only: https://app.leadace.ai/workspace-settings — never ask for the values in chat.
 
-**Fill the missing fields here, in this skill, before handing off.** Reaching `/outbound` only to discover the workspace is incomplete is a poor UX.
+When any is `(not set)`, say so once here with that URL and carry it into the Step 4 hand-off as a prominent warning. Do **not** abort — build-list / strategy / evaluate work fine without them; only `/outbound` and `/daily-cycle` are blocked.
 
-**Skip the prompts entirely when all three are already set.** Otherwise, ask for the missing fields in **one combined free-text prompt** so the user only has to type once:
-
-> "I need three things for the email compliance footer (CAN-SPAM § 5(a)(5)). Paste all of them in one go — separator/format is up to you:
-> 1. Legal name — registered business / legal name, e.g. 'Acme, Inc.' or 'Jane Doe' for a sole proprietor.
-> 2. Physical mailing address — CAN-SPAM requires a real postal address; a P.O. box or registered agent address is fine.
-> 3. Sender country — your country as an ISO 3166-1 alpha-2 code (US, CA, JP, DE, GB, …) or the country name; recorded as workspace metadata (not shown in the mail). Note: outbound currently delivers only to recipients in **US / CA / JP**, but you can send from anywhere.
->
-> Reply 'skip' to configure later at https://app.leadace.ai/workspace-settings ."
-
-List only the fields that are still `(not set)` so the user is asked exactly for what's missing; omit any bullet whose field is already filled.
-
-Parse the user's reply locally:
-- Legal name and physical address are taken verbatim (trim whitespace).
-- Sender country: accept any ISO 3166-1 alpha-2 code (the backend stores any `^[A-Z]{2}$`). If the user typed a country name, do a best-effort map to the alpha-2 code (`Japan` / `日本` → `JP`; `United States` / `USA` / `アメリカ` → `US`; `Canada` / `カナダ` → `CA`; `Germany` / `Deutschland` / `ドイツ` → `DE`; etc.). If you can't confidently resolve it to a 2-letter code, ask once for clarification ("Could you give me the ISO alpha-2 country code? E.g. US, JP, DE."). Don't reject codes outside US/CA/JP — sender country is independent from the recipient-delivery allowlist.
-
-After parsing, call `mcp__plugin_leadace_api__update_tenant_settings` once with all the newly collected values in a single payload (pass `defaultSenderCountry` as the two-letter code, not the label). Trust the tool's "Compliance ready." reply or re-fetch to confirm. Refresh `TENANT_SETTINGS` in memory after the update.
-
-If the user declines to provide a value (says "skip" / "later"), record that in the Step 4 hand-off summary as a prominent warning with the URL `https://app.leadace.ai/workspace-settings` for later self-service. Do **not** abort — build-list / strategy / evaluate work fine with compliance unset; only `/outbound` and `/daily-cycle` will be blocked.
-
-Mention the recipient-delivery scope once in the completion report (the supported countries are listed in the prompt above) so the operator's targeting matches the send-time guardrail.
+Mention the recipient-delivery scope once in the completion report (outbound currently delivers only to recipients in **US / CA / JP**; sending from any country is fine) so the operator's targeting matches the send-time guardrail.
 
 ### 2-3. Browser automation backend — ask
 

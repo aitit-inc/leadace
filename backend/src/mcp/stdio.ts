@@ -16,7 +16,8 @@
 // Run: npx tsx src/mcp/stdio.ts
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { buildToolRegistry, SERVER_VERSION, type ToolCtx } from './index'
+import { buildToolRegistry, type ToolCtx } from './index'
+import { SERVER_VERSION } from './version'
 
 // Trailing slash stripped: callApi builds `${apiUrl}/api${path}`.
 const apiUrl = (process.env.LEADACE_API_URL ?? 'https://api.leadace.ai').replace(/\/+$/, '')

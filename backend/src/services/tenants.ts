@@ -72,11 +72,12 @@ export async function updateTenantSettings(
   caller: 'browser' | 'mcp',
   patch: UpdateTenantSettingsPatch,
 ): Promise<ServiceResult<TenantSettingsRow>> {
-  // The notification recipient is the one field the plugin must never aim:
-  // a prompt-injected agent holding the MCP token could otherwise redirect
-  // every notification. The Web UI is the only writer.
-  if (caller === 'mcp' && patch.notificationEmail !== undefined) {
-    return err('FORBIDDEN', 'notificationEmail is set from Workspace settings in the Web UI only')
+  // Every field here bounds what the agent may do (the compliance footer's
+  // identity, the notification recipient), so a prompt-injected or misjudging
+  // agent holding the MCP token must not be able to move them. The Web UI is
+  // the only writer.
+  if (caller === 'mcp') {
+    return err('FORBIDDEN', 'Workspace settings are set from the Web UI only')
   }
   const updateSet = {
     ...(patch.name !== undefined ? { name: patch.name } : {}),
