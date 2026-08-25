@@ -5,6 +5,7 @@ import { randomFromAlphabet } from '../../auth/random-id'
 import { createDb } from '../../db/connection'
 import { tenantMembers, tenantPlans, tenants } from '../../db/schema'
 import { asTenantId } from '../../domain/ids'
+import { logFunnel } from '../../services/funnel'
 import type { Env, Variables } from '../types'
 
 export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: Variables }>(
@@ -23,9 +24,10 @@ export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: Varia
 
     const userId = verified.sub
     const isMcp = verified.aud === MCP_AUDIENCE
+    const caller = isMcp ? 'mcp' : 'browser'
 
     c.set('userId', userId)
-    c.set('caller', isMcp ? 'mcp' : 'browser')
+    c.set('caller', caller)
 
     // Runs as postgres superuser — bypasses RLS (intentional for tenant resolution)
     const db = createDb(c.env.DATABASE_URL)
@@ -58,6 +60,7 @@ export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: Varia
         tenantId = newTenantId
         // An MCP-first signup is stamped by the shared post-block below, not inline.
         mcpStamped = false
+        logFunnel({ event: 'tenant_created', tenantId: asTenantId(newTenantId), caller })
       } catch (e) {
         // Only the UNIQUE(user_id) race is recoverable by re-reading the winner's
         // tenantId; anything else rethrows so it surfaces as a real 500.
@@ -81,10 +84,12 @@ export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: Varia
 
     // IS NULL guard keeps the one-time stamp idempotent under concurrent requests.
     if (isMcp && !mcpStamped) {
-      await db
+      const stamped = await db
         .update(tenants)
         .set({ firstMcpConnectedAt: new Date() })
         .where(and(eq(tenants.id, tenantId), isNull(tenants.firstMcpConnectedAt)))
+        .returning({ id: tenants.id })
+      if (stamped.length > 0) logFunnel({ event: 'mcp_connected', tenantId: asTenantId(tenantId) })
     }
 
     // Store raw db for downstream middleware (rlsMiddleware wraps it in a transaction)

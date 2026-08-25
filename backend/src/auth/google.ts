@@ -14,6 +14,7 @@ import {
   type SendingIdentitySecret,
 } from '../domain/sending-identity'
 import { sendViaSmtp } from '../services/smtp-send'
+import { logFunnel } from '../services/funnel'
 import { quotedPrintableEncode } from '../domain/smtp'
 import type { Locale } from '../domain/locale'
 import {
@@ -296,8 +297,9 @@ export function generateRfc822MessageId(fromEmail: string): string {
   return `<${randomFromAlphabet(MESSAGE_ID_ALPHABET, 32)}@${domain}>`
 }
 
-// On reconnect (ON CONFLICT) the warmup state and identity_id are left untouched
-// so the ramp clock survives.
+// On reconnect (ON CONFLICT) the warmup state, identity_id and granted_at are
+// left untouched so the ramp clock survives; granted_at = updated_at therefore
+// holds exactly when this statement inserted the row.
 export async function saveGmailRefreshToken(
   db: Db,
   args: {
@@ -308,8 +310,8 @@ export async function saveGmailRefreshToken(
     email: string
     encryptionKey: string
   },
-): Promise<void> {
-  await db.execute(sql`
+): Promise<{ firstConnect: boolean }> {
+  const [row] = await db.execute<{ first_connect: boolean }>(sql`
     INSERT INTO sending_identities
       (tenant_id, identity_id, user_id, provider, from_email, scope, secret, granted_at, updated_at)
     VALUES (
@@ -331,7 +333,9 @@ export async function saveGmailRefreshToken(
       poll_failing_since = NULL,
       last_poll_error = NULL,
       updated_at = now()
+    RETURNING (granted_at = updated_at) AS first_connect
   `)
+  return { firstConnect: row?.first_connect === true }
 }
 
 export async function loadSendingIdentitySecret(
@@ -428,13 +432,15 @@ export async function stampMailboxFirstSendIfNeeded(
   sentAt: Date,
 ): Promise<void> {
   if (!identityId) return
-  await db.execute(sql`
+  const stamped = await db.execute<{ identity_id: string }>(sql`
     UPDATE sending_identities
     SET warmup_started_at = ${sentAt.toISOString()}::timestamptz
     WHERE tenant_id = ${tenantId}
       AND identity_id = ${identityId}
       AND warmup_started_at IS NULL
+    RETURNING identity_id
   `)
+  if (stamped.length > 0) logFunnel({ event: 'mailbox_first_send', tenantId, identityId })
 }
 
 // Mark rather than delete: the row keeps its warmup state and carries WHY

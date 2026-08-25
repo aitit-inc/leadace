@@ -66,6 +66,10 @@ We actively welcome your pull requests. A few things to keep in mind:
   external dependency.
 - Don't include generated artifacts (`.svelte-kit/`, `dist/`,
   `node_modules/`) or anything matched by `.gitignore` in the diff.
+- If the change affects anything a user sees (landing page, app screens,
+  email bodies, the inquiry landing), run it locally and attach
+  screenshots of the rendered result to the PR, so reviewers check the
+  actual display and not just the diff.
 
 ### Pre-flight checks
 

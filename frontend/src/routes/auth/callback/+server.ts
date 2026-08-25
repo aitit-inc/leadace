@@ -7,11 +7,15 @@ import { isSafeRelativePath } from '$lib/redirect';
 import type { RequestHandler } from './$types';
 
 const NEXT_COOKIE = 'lp-next';
+const SIGNUP_COOKIE = 'lp-signup';
 const DEFAULT_DEST = '/dashboard';
 const ONBOARDING_DEST = '/onboarding';
 
-function loginRedirect(reason: string): never {
-	redirect(303, `/login?error=${encodeURIComponent(reason)}`);
+// `signup=1` rides along so a retry after a failed attempt keeps the landing
+// attribution (the login page re-sets the cookie from the query param).
+function loginRedirector(fromSignupCta: boolean): (reason: string) => never {
+	const signup = fromSignupCta ? '&signup=1' : '';
+	return (reason) => redirect(303, `/login?error=${encodeURIComponent(reason)}${signup}`);
 }
 
 // signOut() already expires the sb- cookies via hooks.server.ts's setAll
@@ -32,6 +36,10 @@ async function signOutAndClearCookies(
 // exchangeCodeForSession sets auth cookies via the request's cookie jar
 // (wired by hooks.server.ts), so the 303 below lands on a signed-in session.
 export const GET: RequestHandler = async ({ url, cookies, fetch, locals }) => {
+	const fromSignupCta = cookies.get(SIGNUP_COOKIE) === '1';
+	if (fromSignupCta) cookies.delete(SIGNUP_COOKIE, { path: '/' });
+	const loginRedirect: (reason: string) => never = loginRedirector(fromSignupCta);
+
 	const oauthError = url.searchParams.get('error');
 	if (oauthError) {
 		loginRedirect(url.searchParams.get('error_description') ?? oauthError);
@@ -73,6 +81,7 @@ export const GET: RequestHandler = async ({ url, cookies, fetch, locals }) => {
 					refreshToken,
 					scope: providerScope ?? GOOGLE_OAUTH_SCOPES,
 					email,
+					fromSignupCta,
 				},
 				fetch,
 				session.access_token,

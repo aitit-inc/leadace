@@ -27,6 +27,9 @@
       : '',
   );
   let deletedNotice = $state(page.url.searchParams.get('deleted') === '1');
+  // Landing-page signup CTAs link here with ?signup=1; the callback forwards it
+  // to the backend for funnel attribution.
+  const fromSignupCta = page.url.searchParams.get('signup') === '1';
   let loading = $state(false);
 
   async function handleGoogle() {
@@ -41,13 +44,15 @@
     const cookieAttrs = `Path=/; SameSite=Lax; Max-Age=600${
       dev ? '' : '; Secure'
     }`;
+    const expiredAttrs = `Path=/; SameSite=Lax; Max-Age=0${dev ? '' : '; Secure'}`;
     if (next && isSafeRelativePath(next)) {
       document.cookie = `lp-next=${encodeURIComponent(next)}; ${cookieAttrs}`;
     } else {
-      document.cookie = `lp-next=; Path=/; SameSite=Lax; Max-Age=0${
-        dev ? '' : '; Secure'
-      }`;
+      document.cookie = `lp-next=; ${expiredAttrs}`;
     }
+    document.cookie = fromSignupCta
+      ? `lp-signup=1; ${cookieAttrs}`
+      : `lp-signup=; ${expiredAttrs}`;
     const { error: err } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
@@ -75,7 +80,11 @@
       <Logo size={32} class="text-accent" />
       <h1 class="font-mono text-2xl font-semibold text-text">LeadAce</h1>
     </div>
-    <p class="text-text-muted text-sm mb-8">Sign in with your Google account</p>
+    <p class="text-text-muted text-sm mb-8">
+      {fromSignupCta
+        ? 'Start free: sign in with Google and your account is created. No card, no separate form.'
+        : 'Sign in with your Google account'}
+    </p>
 
     {#if deletedNotice}
       <p class="text-text text-xs mb-4 rounded-md border border-border bg-surface px-3 py-2">

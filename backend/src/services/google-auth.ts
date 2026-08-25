@@ -14,11 +14,14 @@ import { sendingIdentities } from '../db/schema'
 import type { Db } from '../db/connection'
 import type { TenantId } from '../domain/ids'
 import { ok, err, type ServiceResult } from './result'
+import { logFunnel } from './funnel'
 
 export const saveCredentialsSchema = z.object({
   refreshToken: z.string().min(1),
   scope: z.string().min(1),
   email: z.email(),
+  // Sign-in started from the landing page's signup CTA (/login?signup=1).
+  fromSignupCta: z.boolean().default(false),
 })
 export type SaveCredentialsInput = z.infer<typeof saveCredentialsSchema>
 
@@ -39,6 +42,7 @@ export async function saveCredentials(
 ): Promise<ServiceResult<{ ok: true }>> {
   const grantedScopes = input.scope.split(/\s+/)
   if (!grantedScopes.includes(GMAIL_SEND_SCOPE)) {
+    logFunnel({ event: 'gmail_scope_rejected', tenantId })
     return err(
       'INVALID_INPUT',
       'Missing required scope',
@@ -46,7 +50,7 @@ export async function saveCredentials(
     )
   }
 
-  await saveGmailRefreshToken(db, {
+  const { firstConnect } = await saveGmailRefreshToken(db, {
     tenantId,
     userId,
     refreshToken: input.refreshToken,
@@ -54,6 +58,7 @@ export async function saveCredentials(
     email: input.email,
     encryptionKey: ctx.encryptionKey,
   })
+  if (firstConnect) logFunnel({ event: 'gmail_connected', tenantId, signupCta: input.fromSignupCta })
 
   return ok({ ok: true })
 }

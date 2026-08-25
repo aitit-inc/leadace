@@ -23,6 +23,7 @@ export type SaveGoogleCredentialsBody = {
   refreshToken: string;
   scope: string;
   email: string;
+  fromSignupCta: boolean;
 };
 
 // Called once during the OAuth callback (the only point at which Supabase

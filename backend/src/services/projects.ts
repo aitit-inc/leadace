@@ -5,6 +5,7 @@ import { projects, projectSettings } from '../db/schema'
 import { getTenantPlan, getPlanLimits } from './plan-limits'
 import { randomFromAlphabet } from '../auth/random-id'
 import { ok, err, type ServiceResult } from './result'
+import { logFunnel } from './funnel'
 import type { Edition } from '../domain/edition'
 import { asProjectId, type ProjectId, type ProjectRef, type TenantId } from '../domain/ids'
 
@@ -130,6 +131,7 @@ export async function createProject(
     createdAt: now,
     updatedAt: now,
   })
+  logFunnel({ event: 'project_created', tenantId, projectId: id })
 
   return ok({ id, name, tenantId, createdAt: now, updatedAt: now })
 }
