@@ -39,38 +39,61 @@ export type IdentityAttentionItem = Extract<
 >
 
 // At most one item per identity — a dead credential explains a failing poll.
+function identityProblem(
+  identity: IdentityHealthInput,
+  now: Date,
+  failingAfterMs: number,
+): IdentityAttentionItem | null {
+  if (identity.authRevokedAt) {
+    return {
+      kind: 'gmail_auth_revoked',
+      fromEmail: identity.fromEmail,
+      since: identity.authRevokedAt.toISOString(),
+    }
+  }
+  if (identity.provider === 'gmail_oauth' && !hasReplyReadScope(identity.scope)) {
+    return { kind: 'reply_collection_scope_missing', fromEmail: identity.fromEmail }
+  }
+  if (identity.pollFailingSince && now.getTime() - identity.pollFailingSince.getTime() >= failingAfterMs) {
+    return {
+      kind: 'reply_collection_failing',
+      fromEmail: identity.fromEmail,
+      since: identity.pollFailingSince.toISOString(),
+      detail: identity.lastPollError,
+    }
+  }
+  return null
+}
+
 export function deriveIdentityAttention(
   identities: IdentityHealthInput[],
   now: Date,
 ): IdentityAttentionItem[] {
-  return identities.flatMap((identity): IdentityAttentionItem[] => {
-    if (identity.authRevokedAt) {
-      return [
-        {
-          kind: 'gmail_auth_revoked',
-          fromEmail: identity.fromEmail,
-          since: identity.authRevokedAt.toISOString(),
-        },
-      ]
-    }
-    if (identity.provider === 'gmail_oauth' && !hasReplyReadScope(identity.scope)) {
-      return [{ kind: 'reply_collection_scope_missing', fromEmail: identity.fromEmail }]
-    }
-    if (
-      identity.pollFailingSince &&
-      now.getTime() - identity.pollFailingSince.getTime() >= POLL_FAILING_ALERT_MS
-    ) {
-      return [
-        {
-          kind: 'reply_collection_failing',
-          fromEmail: identity.fromEmail,
-          since: identity.pollFailingSince.toISOString(),
-          detail: identity.lastPollError,
-        },
-      ]
-    }
-    return []
+  return identities.flatMap((identity) => {
+    const problem = identityProblem(identity, now, POLL_FAILING_ALERT_MS)
+    return problem ? [problem] : []
   })
+}
+
+export type ReplyCollectionInput = IdentityHealthInput & { lastPolledAt: Date | null }
+
+export type ReplyCollectionStatus =
+  | { kind: 'none' }
+  | { kind: 'collecting'; fromEmail: string; lastPolledAt: string | null }
+  | IdentityAttentionItem
+
+export function deriveReplyCollectionStatus(
+  identity: ReplyCollectionInput | null,
+  now: Date,
+): ReplyCollectionStatus {
+  if (identity === null) return { kind: 'none' }
+  const problem = identityProblem(identity, now, 0)
+  if (problem) return problem
+  return {
+    kind: 'collecting',
+    fromEmail: identity.fromEmail,
+    lastPolledAt: identity.lastPolledAt?.toISOString() ?? null,
+  }
 }
 
 export type AttentionInput = {

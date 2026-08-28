@@ -51,13 +51,15 @@ Call `mcp__plugin_leadace_api__get_recent_outreach` with `projectId: "$0"`.
 
 If the tool returns a "Project not found" error, instruct the user to run `/leadace` first and **abort**.
 
+The output opens with the sending mailbox's **reply-collection status**. While it is collecting, replies and bounces to that mailbox are recorded server-side hourly and already counted on the logs (`responseCount`, `latestResponseAt`) — the primary reply source, whichever account Gmail MCP is signed into. Report the line as given; only a non-collecting status is a visibility gap. Never re-record a response a log already counts.
+
 Each log carries recipient identifiers — `prospectName`, `contactName` (nullable), `prospectEmail` (nullable), `organizationDomain` — use these directly for the domain-search step below and for naming prospects in the report; do not infer from message bodies.
 
 Each log also includes inquiry-landing aggregates: `inquirySessionCount`, `inquiryOutcome` (`opened` / `inquired` / `lead` / `signup_clicked` / `unsubscribed` / null — the most-significant outcome ever recorded for this outreach, so a recipient who converts and later re-visits the link is still reported as the converted outcome), `inquiryMeetingSource` (`button` / `chat` / null — only set when `inquiryOutcome === 'lead'`), `inquiryLastVisitAt`. Inquiry-derived `lead`, `signup_clicked`, and `unsubscribed` outcomes are recorded server-side at the moment the recipient acts on the landing page — the skill only **surfaces** them in the report, it does not re-record them. `lead` is the human-sales conversion (recipient asked to talk); `signup_clicked` is the self-serve conversion (recipient opened the project's signup URL — visible only when the project's CTA mode is `signup`, no human follow-up needed).
 
 ### 3. Check Incoming Emails
 
-Use Gmail MCP to perform the following searches:
+Use Gmail MCP for what the server poll does not cover — scheduling notifications, replies landing in the Gmail MCP account instead of the sending mailbox, and everything while the status is not collecting:
 
 **3a. Search for Direct Replies**
 
@@ -209,6 +211,7 @@ Report the following:
 - Response rate (responses / approaches)
 - Response type breakdown (direct reply / scheduling confirmation, etc.)
 - List any low-confidence matches as "Needs confirmation"
+- **Server-side reply collection:** the status line from step 2
 - **Unconfirmed SNS DMs: N** (when SNS checking was skipped; report even if 0)
 - **Reply drafts created: N** (number created in step 6; report even if 0. If drafts exist, guide the user to check Gmail drafts)
 - Summary of notable replies

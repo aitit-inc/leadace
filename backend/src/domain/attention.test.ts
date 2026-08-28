@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   deriveAttentionItems,
   deriveIdentityAttention,
+  deriveReplyCollectionStatus,
   POLL_FAILING_ALERT_MS,
   type AttentionInput,
   type IdentityHealthInput,
@@ -213,5 +214,51 @@ describe('deriveAttentionItems', () => {
       project: null,
     })
     expect(items).toEqual([{ kind: 'mcp_not_connected' }])
+  })
+})
+
+describe('deriveReplyCollectionStatus', () => {
+  it('is none without a sending mailbox', () => {
+    expect(deriveReplyCollectionStatus(null, NOW)).toEqual({ kind: 'none' })
+  })
+
+  it('reports the last poll for a healthy mailbox', () => {
+    const polled = new Date(NOW.getTime() - 60_000)
+    expect(deriveReplyCollectionStatus({ ...gmail(), lastPolledAt: polled }, NOW)).toEqual({
+      kind: 'collecting',
+      fromEmail: 'a@example.com',
+      lastPolledAt: polled.toISOString(),
+    })
+  })
+
+  it('reports a never-polled mailbox as collecting with no poll yet', () => {
+    expect(deriveReplyCollectionStatus({ ...gmail(), lastPolledAt: null }, NOW)).toMatchObject({
+      kind: 'collecting',
+      lastPolledAt: null,
+    })
+  })
+
+  it('reports a poll failure immediately, without the attention-feed debounce', () => {
+    const since = new Date(NOW.getTime() - 60_000)
+    expect(
+      deriveReplyCollectionStatus(
+        { ...gmail({ pollFailingSince: since, lastPollError: 'IMAP LOGIN failed' }), lastPolledAt: null },
+        NOW,
+      ),
+    ).toEqual({
+      kind: 'reply_collection_failing',
+      fromEmail: 'a@example.com',
+      since: since.toISOString(),
+      detail: 'IMAP LOGIN failed',
+    })
+  })
+
+  it('reports a revoked mailbox rather than no mailbox', () => {
+    const revokedAt = new Date(NOW.getTime() - 60_000)
+    expect(deriveReplyCollectionStatus({ ...gmail({ authRevokedAt: revokedAt }), lastPolledAt: null }, NOW)).toEqual({
+      kind: 'gmail_auth_revoked',
+      fromEmail: 'a@example.com',
+      since: revokedAt.toISOString(),
+    })
   })
 })

@@ -6,6 +6,7 @@ import {
   projectProspects,
   prospects,
   responses,
+  sendingIdentities,
   channelEnum,
   skipReasonEnum,
   inquirySessions,
@@ -44,6 +45,7 @@ import {
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { UNDELIVERABLE } from '../domain/email-deliverability'
+import { deriveReplyCollectionStatus, type ReplyCollectionStatus } from '../domain/attention'
 import { verifyAddressBeforeSend } from './email-verify'
 import { isMailboxVerdictFresh } from '../domain/email-verification'
 import { DASHBOARD_PERIODS, periodToWindow } from '../domain/dashboard'
@@ -935,10 +937,43 @@ export async function listRecentOutreach(
   tenantId: TenantId,
   projectRef: ProjectRef,
   query: RecentOutreachQuery,
-): Promise<ServiceResult<{ logs: RecentOutreachLog[]; total: number }>> {
+): Promise<ServiceResult<{ logs: RecentOutreachLog[]; total: number; replyCollection: ReplyCollectionStatus }>> {
   const resolved = await resolveProject(db, tenantId, projectRef)
   if (!resolved.ok) return resolved
-  return listRecentOutreachById(db, tenantId, resolved.value, query)
+  const [listed, replyCollection] = await Promise.all([
+    listRecentOutreachById(db, tenantId, resolved.value, query),
+    loadReplyCollectionStatus(db, tenantId, resolved.value),
+  ])
+  if (!listed.ok) return listed
+  return ok({ ...listed.value, replyCollection })
+}
+
+async function loadReplyCollectionStatus(
+  db: Db,
+  tenantId: TenantId,
+  projectId: ProjectId,
+): Promise<ReplyCollectionStatus> {
+  // Unlike the send path, a revoked default Gmail must still resolve.
+  const identityId = sql<string>`COALESCE(
+    (SELECT sending_identity_id FROM project_settings
+       WHERE tenant_id = ${tenantId} AND project_id = ${projectId}),
+    (SELECT identity_id FROM sending_identities
+       WHERE tenant_id = ${tenantId} AND provider = 'gmail_oauth'
+       ORDER BY auth_revoked_at IS NULL DESC LIMIT 1)
+  )`
+  const [row] = await db
+    .select({
+      fromEmail: sendingIdentities.fromEmail,
+      provider: sendingIdentities.provider,
+      scope: sendingIdentities.scope,
+      authRevokedAt: sendingIdentities.authRevokedAt,
+      pollFailingSince: sendingIdentities.pollFailingSince,
+      lastPollError: sendingIdentities.lastPollError,
+      lastPolledAt: sendingIdentities.lastPolledAt,
+    })
+    .from(sendingIdentities)
+    .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.identityId, identityId)))
+  return deriveReplyCollectionStatus(row ?? null, new Date())
 }
 
 // Funnel-stage event predicates for the dashboard drill-down filter. These MUST

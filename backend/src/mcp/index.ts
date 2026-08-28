@@ -9,6 +9,7 @@ import { BUG_REPORT_CATEGORIES, EMPLOYEE_BANDS, OUTBOUND_CHANNELS, REJECTION_PRI
 import { ALLOWED_SEND_COUNTRIES } from '../domain/country'
 import { discoveryStrategySchema, suggestionKindSchema, variantIdSchema } from '../domain/ids'
 import { localeSchema } from '../domain/locale'
+import type { ReplyCollectionStatus } from '../domain/attention'
 import { SERVER_VERSION } from './version'
 import type { OutreachQuota, OutreachQuotaWindow } from '../services/plan-limits'
 import {
@@ -30,6 +31,21 @@ import {
   isHttpOrHttpsUrl,
   HTTP_OR_HTTPS_ONLY_MSG,
 } from '../domain/url'
+
+function replyCollectionLine(status: ReplyCollectionStatus): string {
+  switch (status.kind) {
+    case 'none':
+      return 'Reply collection: no sending mailbox; nothing is collected server-side.'
+    case 'collecting':
+      return `Reply collection: replies and bounces to ${status.fromEmail} are recorded server-side hourly (last poll ${status.lastPolledAt ?? 'pending'}).`
+    case 'reply_collection_failing':
+      return `Reply collection: polling ${status.fromEmail} has failed since ${status.since}${status.detail ? ` (${status.detail})` : ''}; replies since then are not recorded.`
+    case 'gmail_auth_revoked':
+      return `Reply collection: ${status.fromEmail} authorization revoked at ${status.since}; nothing is collected until it is reconnected.`
+    case 'reply_collection_scope_missing':
+      return `Reply collection: ${status.fromEmail} lacks the read scope; nothing is collected until Gmail is reconnected.`
+  }
+}
 
 type Env = {
   WEB_API_URL: string
@@ -1275,7 +1291,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_recent_outreach',
-    'Recent outreach logs for a project. Confirmed events only (sent / failed / skipped) — pending_review drafts and pre_send rows are excluded; use list_drafts for those. Each log carries recipient identifiers (prospectName, contactName, prospectEmail, organizationDomain) and inquiry-landing aggregates (inquirySessionCount, inquiryOutcome, inquiryMeetingSource, inquiryLastVisitAt).',
+    "Recent outreach logs for a project, preceded by the sending mailbox's server-side reply-collection status (address and last hourly poll, or why it is not collecting). Confirmed events only (sent / failed / skipped) — pending_review drafts and pre_send rows are excluded; use list_drafts for those. Each log carries recipient identifiers (prospectName, contactName, prospectEmail, organizationDomain) and inquiry-landing aggregates (inquirySessionCount, inquiryOutcome, inquiryMeetingSource, inquiryLastVisitAt).",
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       limit: z.number().int().min(1).max(200).default(100),
@@ -1286,11 +1302,11 @@ export function buildToolRegistry(): ToolDef[] {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
       }
-      const { logs } = data as { logs: unknown[] }
+      const { logs, replyCollection } = data as { logs: unknown[]; replyCollection: ReplyCollectionStatus }
       return {
         content: [{
           type: 'text' as const,
-          text: `${logs.length} recent outreach logs.\n${JSON.stringify(logs, null, 2)}`,
+          text: `${replyCollectionLine(replyCollection)}\n${logs.length} recent outreach logs.\n${JSON.stringify(logs, null, 2)}`,
         }],
       }
     },

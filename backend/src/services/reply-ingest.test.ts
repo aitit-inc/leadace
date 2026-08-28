@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { clampReceivedAt, recordFieldsForReply } from './reply-ingest'
+import { clampReceivedAt, pollCapCutsSinceLastPoll, recordFieldsForReply } from './reply-ingest'
 
 // The reply ingest clamps a captured reply's receivedAt into record_response's
 // accepted [now-7d, now] window. A stale or sender-forged Date header that fell
@@ -83,5 +83,22 @@ describe('recordFieldsForReply', () => {
       expect(fields.markDoNotContact).toBe(false)
       expect(fields.rejectionFeedback).toBeUndefined()
     }
+  })
+})
+
+describe('pollCapCutsSinceLastPoll', () => {
+  const lastPoll = new Date('2026-08-28T13:00:00.000Z')
+  const at = (minutesAfterLastPoll: number) => new Date(lastPoll.getTime() + minutesAfterLastPoll * 60_000)
+
+  it('is false below the cap', () => {
+    expect(pollCapCutsSinceLastPoll([at(10), at(20)], 3, lastPoll)).toBe(false)
+  })
+
+  it('is false when the capped batch still reaches back past the last poll', () => {
+    expect(pollCapCutsSinceLastPoll([at(-5), at(10), at(20)], 3, lastPoll)).toBe(false)
+  })
+
+  it('is true when every fetched message arrived after the last poll', () => {
+    expect(pollCapCutsSinceLastPoll([at(1), at(10), at(20)], 3, lastPoll)).toBe(true)
   })
 })

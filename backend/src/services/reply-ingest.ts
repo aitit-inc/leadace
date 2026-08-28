@@ -60,6 +60,7 @@ type IdentityRow = {
   identity_id: string
   provider: 'gmail_oauth' | 'smtp_imap'
   scope: string | null
+  last_polled_at: string | null
 }
 
 // Clamp into record_response's accepted [now-7d, now] so a forged/skewed Date
@@ -69,6 +70,10 @@ export function clampReceivedAt(d: Date, now: number): string {
   const ms = d.getTime()
   const t = Number.isNaN(ms) ? now : Math.min(now, Math.max(now - 7 * DAY_MS, ms))
   return new Date(t).toISOString()
+}
+
+export function pollCapCutsSinceLastPoll(receivedAts: Date[], cap: number, lastPolledAt: Date): boolean {
+  return receivedAts.length >= cap && receivedAts.every((d) => d > lastPolledAt)
 }
 
 export function recordFieldsForReply(
@@ -290,9 +295,13 @@ async function ingestIdentity(
     return
   }
   summary.identitiesPolled++
-  if (polled.replies.length >= MAX_MESSAGES_PER_POLL) {
+  const lastPolledAt = identity.last_polled_at ? new Date(identity.last_polled_at) : null
+  if (
+    lastPolledAt &&
+    pollCapCutsSinceLastPoll(polled.replies.map((r) => r.receivedAt), MAX_MESSAGES_PER_POLL, lastPolledAt)
+  ) {
     console.warn(
-      `[reply-ingest] poll hit ${MAX_MESSAGES_PER_POLL}-message cap identity=${identity.identity_id}; older replies beyond the newest ${MAX_MESSAGES_PER_POLL} may be missed`,
+      `[reply-ingest] ${MAX_MESSAGES_PER_POLL}-message cap cut into the window since the last poll (${lastPolledAt.toISOString()}) identity=${identity.identity_id}; messages in between were not fetched`,
     )
   }
 
@@ -402,7 +411,7 @@ export async function runReplyIngest(db: Db, env: ReplyIngestEnv): Promise<Reply
   }
 
   const identities = await db.execute<IdentityRow>(sql`
-    SELECT tenant_id, identity_id, provider, scope
+    SELECT tenant_id, identity_id, provider, scope, last_polled_at
     FROM sending_identities
   `)
 
