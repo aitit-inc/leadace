@@ -4,11 +4,11 @@
 *.local.env
 *.local.html
 *.local
-.env
-.env.local
-.env.production
-.envrc
-dev.ports.env
+.env*
+.envrc*
+dev.ports.env*
+!.envrc.example
+!dev.ports.env.example
 
 # Dev
 plugin-test/

@@ -129,7 +129,7 @@ function generateId(): string {
   return Array.from(arr, (b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-async function verifyPkce(codeVerifier: string, codeChallenge: string): Promise<boolean> {
+export async function verifyPkce(codeVerifier: string, codeChallenge: string): Promise<boolean> {
   const data = new TextEncoder().encode(codeVerifier)
   const hashBuffer = await crypto.subtle.digest('SHA-256', data)
   const computed = base64UrlEncode(new Uint8Array(hashBuffer))
@@ -178,7 +178,7 @@ export function handleResourceMetadata(baseUrl: string): Response {
 // hosts — the code itself is single-use + PKCE-bound, but the
 // state-channel exposure is needless. Claude Code's loopback handler
 // (http://127.0.0.1:<port>/callback) is preserved.
-function isAllowedRedirectUri(uri: string): boolean {
+export function isAllowedRedirectUri(uri: string): boolean {
   let url: URL
   try {
     url = new URL(uri)
@@ -187,7 +187,9 @@ function isAllowedRedirectUri(uri: string): boolean {
   }
   if (url.protocol === 'https:') return true
   if (url.protocol === 'http:') {
-    return url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1'
+    // WHATWG URL keeps the brackets on an IPv6 hostname, so the literal to
+    // compare against is '[::1]' — a bare '::1' never matches.
+    return url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '[::1]'
   }
   return false
 }

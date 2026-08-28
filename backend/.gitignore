@@ -2,8 +2,11 @@ node_modules/
 .wrangler/
 dist/
 sim/out/
-.dev.vars
-.dev.vars.mcp
+# Globbed so editor/CLI backup copies (.dev.vars.bak-*, .dev.vars.old) are
+# ignored too: the public mirror shares this working tree layout.
+.dev.vars*
+!.dev.vars.example
+!.dev.vars.mcp.example
 *.env
 .env.*
 !.env.example

@@ -1,6 +1,6 @@
 {
   "name": "leadace",
-  "version": "0.7.58",
+  "version": "0.7.59",
   "description": "AI sales rep that runs your outbound from Claude Code. Point it at your homepage: it builds a prospect list, reads each company's site, writes and sends one email per company from your own mailbox (connected Gmail or custom SMTP), and turns every reply and rejection into structured data that sharpens the next round. Free tier, no card. Source-available, self-hostable on Cloudflare Workers + Supabase.",
   "author": {
     "name": "SurpassOne Inc.",
