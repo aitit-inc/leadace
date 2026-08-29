@@ -30,6 +30,7 @@ Otherwise continue. Hold `SERVER_VERSION`, `PLUGIN_VERSION`, `MIN_PLUGIN_VERSION
 Call `mcp__plugin_leadace_leadace__list_projects`. Success proves: MCP reachable, OAuth token valid, user authenticated. Hold the result as `PROJECTS`.
 
 If the call fails:
+- Tool not available (no `mcp__plugin_leadace_leadace__*` tool is listed) → the plugin's MCP connector is not connected. Claude Desktop: Customize → Plugins → LeadAce → Connectors → Connect, then Customize → Connectors → LeadAce → Connect and sign in with Google. Claude Code CLI: `/plugin` → make sure LeadAce is installed and enabled. Then retry. Abort.
 - Network/unreachable → "Cannot reach the LeadAce MCP server. Check network access to https://mcp.leadace.ai (or the `url` in the plugin's `.mcp.json` for self-hosters)." Abort.
 - Auth/401 → "MCP authentication failed. Sign in again at https://app.leadace.ai, then retry; the plugin will re-prompt the OAuth flow." Abort.
 

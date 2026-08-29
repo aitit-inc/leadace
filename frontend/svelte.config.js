@@ -36,6 +36,11 @@ const config = {
 				'connect-src': dev
 					? ['self', 'http://localhost:*', 'ws://localhost:*', 'https:', 'wss:']
 					: prodConnectSrc,
+				'frame-src': [
+					'https://www.youtube.com',
+					'https://www.youtube-nocookie.com',
+					'https://player.vimeo.com'
+				],
 				'frame-ancestors': ['none'],
 				'base-uri': ['self'],
 				'form-action': ['self'],

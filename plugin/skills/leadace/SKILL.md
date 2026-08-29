@@ -67,6 +67,7 @@ Run these in parallel:
 - **Runtime detect** (best-effort): `Bash` `printf '%s|%s|%s\n' "${CLAUDE_PLUGIN_ROOT:-?}" "$(command -v codex 2>/dev/null || echo none)" "$([ -d "$HOME/.claude" ] && echo y || echo n)"`. Classify as `claude_code` (most common — `~/.claude` exists), `codex` (codex command found), or `other`.
 
 If `get_server_version` or `list_projects` fails:
+- Tool not available (no `mcp__plugin_leadace_leadace__*` tool is listed) -> the plugin's MCP connector is not connected. Claude Desktop: Customize -> Plugins -> LeadAce -> Connectors -> Connect, then Customize -> Connectors -> LeadAce -> Connect and sign in with Google. Claude Code CLI: `/plugin` -> make sure LeadAce is installed and enabled. Then retry.
 - Network/unreachable -> "Cannot reach the LeadAce MCP server. Check network access to https://mcp.leadace.ai (or the `url` in the plugin's `.mcp.json` for self-hosters)."
 - Auth/401 -> "MCP authentication failed. Sign in again at https://app.leadace.ai, then retry."
 

@@ -1,6 +1,6 @@
 # LeadAce
 
-Autonomous lead generation plugin for Claude Code. Builds prospect lists, runs
+Autonomous lead generation plugin for Claude Code and Claude Desktop. Builds prospect lists, runs
 outbound outreach, and iterates on strategy — all hands-free.
 
 > **Two ways to run it.** Use the hosted service at [app.leadace.ai](https://app.leadace.ai)
@@ -11,7 +11,7 @@ outbound outreach, and iterates on strategy — all hands-free.
 
 ## Prerequisites
 
-- Claude Code
+- Claude Code or Claude Desktop (Anthropic Pro or Max plan)
 - A LeadAce account (sign up at https://app.leadace.ai — Free tier, no card)
 - A connected Gmail account — for sending email (granted when you sign in with Google, or via the "Connect Gmail" banner in the web app)
 - Gmail MCP (claude.ai built-in) — for checking email replies
@@ -32,6 +32,10 @@ Or, from inside a running Claude Code session:
 /plugin install leadace@leadace
 ```
 
+Or in Claude Desktop: Customize → Plugins → Add from a repository →
+`aitit-inc/leadace` → Install → Connectors → Connect, then Customize →
+Connectors → LeadAce → Connect and sign in with Google.
+
 To update later:
 
 ```
@@ -41,10 +45,11 @@ To update later:
 
 ## Sign in
 
-The first time the plugin calls a LeadAce tool, Claude Code opens a browser
-window to the LeadAce MCP server (`https://mcp.leadace.ai`, or your
+In Claude Code, the first time the plugin calls a LeadAce tool a browser
+window opens to the LeadAce MCP server (`https://mcp.leadace.ai`, or your
 self-hosted URL) for Google sign-in with the same Google account as the web
-app. The token is cached locally for subsequent runs.
+app. The token is cached locally for subsequent runs. In Claude Desktop, sign
+in from Customize → Connectors → LeadAce → Connect.
 
 ### Self-hosting
 

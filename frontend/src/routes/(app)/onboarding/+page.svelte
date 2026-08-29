@@ -60,8 +60,8 @@
 <div class="mx-auto max-w-2xl py-2">
 	<h2 class="text-lg font-semibold text-text">Connect the LeadAce plugin</h2>
 	<p class="mt-1 text-sm text-text-muted">
-		LeadAce runs from Claude Code. This dashboard shows your prospects, drafts, and replies — the
-		plugin does the research, writing, and sending. Two steps and you're set.
+		LeadAce runs from Claude Code or Claude Desktop. This dashboard shows your prospects, drafts, and
+		replies — the plugin does the research, writing, and sending. Two steps and you're set.
 	</p>
 
 	<ol class="mt-8 space-y-5">
@@ -71,7 +71,7 @@
 					class="flex h-5 w-5 items-center justify-center rounded-full bg-surface-2 text-[11px] font-medium text-text"
 					>1</span
 				>
-				<span class="text-sm font-medium text-text">Install it — one line in your terminal</span>
+				<span class="text-sm font-medium text-text">Install it — terminal or Claude Desktop</span>
 			</div>
 			{@render copyRow(installCmd)}
 			<p class="mt-3 text-xs text-text-muted">
@@ -87,6 +87,11 @@
 					class="text-accent underline hover:text-accent-strong">claude.ai/code</a
 				>.
 			</p>
+			<p class="mt-2 text-xs text-text-muted">
+				In Claude Desktop instead: Customize → Plugins → Add from a repository →
+				<code class="font-mono">aitit-inc/leadace</code> → Install → Connectors → Connect, then Customize
+				→ Connectors → LeadAce → Connect and sign in with Google.
+			</p>
 		</li>
 
 		<li class="rounded-md border border-border p-5">
@@ -99,9 +104,10 @@
 			</div>
 			{@render copyRow(setupCmd)}
 			<p class="mt-3 text-xs text-text-muted">
-				Start Claude Code and run this. A browser tab opens once to authorize the MCP connection —
-				sign in with the same Google account. LeadAce then reads your site, drafts your strategy, and
-				shows you everything in one review before saving.
+				Run this in Claude Code or Claude Desktop. Authorize the MCP connection once — a browser tab
+				from Claude Code, or the connector's Connect button in Claude Desktop — with the same Google
+				account. LeadAce then reads your site, drafts your strategy, and shows you everything in one
+				review before saving.
 			</p>
 		</li>
 	</ol>
@@ -125,7 +131,7 @@
 	</div>
 	{#if notDetected}
 		<p class="mt-3 text-xs text-text-muted">
-			No connection detected yet. Run the commands above in Claude Code, then check again.
+			No connection detected yet. Run the commands above in Claude Code or Claude Desktop, then check again.
 		</p>
 	{/if}
 </div>
