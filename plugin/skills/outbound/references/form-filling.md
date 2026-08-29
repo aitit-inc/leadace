@@ -90,9 +90,9 @@ The submission is **definitely successful** if any of:
 
 The row was allocated as `status: "pre_send"` in SKILL.md §4. It is **always** resolved by a follow-up `update_outreach_status` call:
 
-**If submission was successful:** call `mcp__plugin_leadace_api__update_outreach_status` with the `outreachLogId` from SKILL.md §4 and `status: "sent"`. The server flips the prospect to `contacted` and confirms quota consumption.
+**If submission was successful:** call `mcp__plugin_leadace_leadace__update_outreach_status` with the `outreachLogId` from SKILL.md §4 and `status: "sent"`. The server flips the prospect to `contacted` and confirms quota consumption.
 
-**If submission failed (4xx, 5xx, or no POST):** call `mcp__plugin_leadace_api__update_outreach_status` with the `outreachLogId`, `status: "failed"`, and `errorMessage: "<reason>"` (e.g., `"HTTP 422 validation"`, `"no POST observed"`). The in-flight quota reservation is refunded and the server defers the prospect's re-eligibility by the project's no-response recycle window, dropping it out of `get_outbound_targets` for that period.
+**If submission failed (4xx, 5xx, or no POST):** call `mcp__plugin_leadace_leadace__update_outreach_status` with the `outreachLogId`, `status: "failed"`, and `errorMessage: "<reason>"` (e.g., `"HTTP 422 validation"`, `"no POST observed"`). The in-flight quota reservation is refunded and the server defers the prospect's re-eligibility by the project's no-response recycle window, dropping it out of `get_outbound_targets` for that period.
 
 **Important:** Even on failure, do not re-submit to that form. Move on to the next prospect.
 
@@ -165,7 +165,7 @@ Submit Google Forms via a direct POST to the `formResponse` endpoint rather than
    - HTTP 200 without that marker usually means the form re-rendered with a validation error — check the response body.
    - HTTP 302 (redirect to confirmation page) also means success.
 
-3. **Resolve the row.** Always call `mcp__plugin_leadace_api__update_outreach_status` with the `outreachLogId` from SKILL.md §4:
+3. **Resolve the row.** Always call `mcp__plugin_leadace_leadace__update_outreach_status` with the `outreachLogId` from SKILL.md §4:
    - Success (HTTP 200 with the recorded marker, or HTTP 302) → `status: "sent"`.
    - Failure → `status: "failed"` plus a short `errorMessage` (e.g., `"Google Forms validation"` or `"HTTP <code>"`).
 

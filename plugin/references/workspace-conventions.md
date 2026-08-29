@@ -4,7 +4,7 @@ Common rules for all skills and sub-agents.
 
 ## Data Storage
 
-All project data is stored on the server and accessed via MCP tools (`mcp__plugin_leadace_api__*`). There are no local project directories or databases.
+All project data is stored on the server and accessed via MCP tools (`mcp__plugin_leadace_leadace__*`). There are no local project directories or databases.
 
 - **Structured data** (prospects, outreach logs, responses): Dedicated MCP tools (`add_prospects`, `send_email_and_record`, etc.)
 - **Documents** (business info, sales strategy, search notes, cross-stage learnings): `get_document` / `save_document` MCP tools with slugs: `business`, `sales_strategy`, `search_notes`, `learnings`, plus per-strategy `playbook_<strategy-slug>` documents (see "Playbook documents" below)

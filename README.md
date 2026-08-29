@@ -139,7 +139,7 @@ contact leo.uno@surpassone.com.
 ```
 plugin/                          # Claude Code plugin
 ├── .claude-plugin/plugin.json   # Manifest
-├── .mcp.json                    # MCP server config (uses LEADACE_MCP_URL)
+├── .mcp.json                    # MCP server config
 ├── skills/                      # Slash commands (each directory has SKILL.md)
 ├── scripts/fetch_url.py         # Local web fetch helper
 └── references/                  # Shared reference docs

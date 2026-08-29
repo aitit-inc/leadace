@@ -7,7 +7,7 @@ lives in the project's playbook document, not here (see
 
 ## 1. Resolve the playbook
 
-Fetch `mcp__plugin_leadace_api__get_document` with
+Fetch `mcp__plugin_leadace_leadace__get_document` with
 `slug: "playbook_<discoveryStrategy>"` (the prospect's `discoveryStrategy`
 field). No `discoveryStrategy`, no playbook document, or a playbook the tool
 reports as not usable yet (awaiting approval) → **skip the prospect for this
@@ -26,7 +26,7 @@ posting, grounded in its content at `platformUrl`, not a generic pitch.
 
 ## 3. Allocate the row
 
-`mcp__plugin_leadace_api__record_outreach_with_inquiry` with `projectId`,
+`mcp__plugin_leadace_leadace__record_outreach_with_inquiry` with `projectId`,
 `prospectId`, `channel: "platform"`, `body` — same two-phase pattern as
 form/SNS. Platform messages are solicited in-platform responses, so no
 compliance footer is appended: `finalBody` equals the body; submit it as-is.
@@ -39,6 +39,6 @@ compliance footer is appended: `finalBody` equals the body; submit it as-is.
   with Claude in Chrome (logged-in profile — same constraint as SNS). Honor
   the playbook's rate limits / ToS; a block, CAPTCHA, or refusal is a failed
   attempt — never bypass it. Always resolve with
-  `mcp__plugin_leadace_api__update_outreach_status`: success →
+  `mcp__plugin_leadace_leadace__update_outreach_status`: success →
   `status: "sent"`; failure or block → `status: "failed"` + a concise
   `errorMessage`.

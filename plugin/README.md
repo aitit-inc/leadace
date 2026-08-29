@@ -7,7 +7,7 @@ outbound outreach, and iterates on strategy — all hands-free.
 > (Free tier — 5 outreach/day, paid plans from $29/mo), or self-host the
 > backend on your own Cloudflare + Supabase — see
 > [docs/self-host.md](../docs/self-host.md). The plugin is the same in either
-> case; set `LEADACE_MCP_URL` to point it at your own MCP server.
+> case; self-hosters point `.mcp.json` at their own MCP server.
 
 ## Prerequisites
 
@@ -42,27 +42,27 @@ To update later:
 ## Sign in
 
 The first time the plugin calls a LeadAce tool, Claude Code opens a browser
-window to the LeadAce MCP server (`https://mcp.leadace.ai` by default, or your
-`LEADACE_MCP_URL`) for Google sign-in with the same Google account as the web
+window to the LeadAce MCP server (`https://mcp.leadace.ai`, or your
+self-hosted URL) for Google sign-in with the same Google account as the web
 app. The token is cached locally for subsequent runs.
 
 ### Self-hosting
 
-Override the MCP URL by exporting `LEADACE_MCP_URL` before launching Claude
-Code:
+`.mcp.json` carries the MCP URL as a literal — plugin loaders do not expand
+environment variables in it. To point the plugin at your own server, edit the
+`url` in your clone's `plugin/.mcp.json` and load that directory:
 
 ```bash
-export LEADACE_MCP_URL=http://localhost:8788/mcp
+claude --plugin-dir ./plugin
 ```
 
-The default `https://mcp.leadace.ai/mcp` is used when this variable is unset.
+or publish the edited plugin through your own marketplace.
 
 ### Troubleshooting
 
 - **`MCP server unreachable`** — verify network access to
   `https://mcp.leadace.ai` (or your self-hosted URL). For self-hosting, also
-  check that `LEADACE_MCP_URL` is exported in the shell that launched Claude
-  Code.
+  check the `url` in the loaded plugin's `.mcp.json`.
 - **Browser asks to sign in repeatedly** — the cached token expired. Re-running
   any LeadAce command kicks off a fresh OAuth flow.
 - **`401 Unauthorized` from a tool** — the Supabase session expired. Sign out
@@ -118,7 +118,7 @@ monorepo. For repo layout, local dev, and self-hosting, see the top-level
 ```
 plugin/
 ├── .claude-plugin/plugin.json   # Manifest
-├── .mcp.json                    # MCP server config (uses LEADACE_MCP_URL)
+├── .mcp.json                    # MCP server config
 ├── skills/                      # Slash commands (each directory contains SKILL.md)
 ├── scripts/fetch_url.py         # Local web fetch helper
 └── references/                  # Shared reference docs

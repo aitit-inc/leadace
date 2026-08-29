@@ -7,7 +7,7 @@ allowed-tools:
   - Read
   - Write
   - AskUserQuestion
-  - mcp__plugin_leadace_api__list_projects
+  - mcp__plugin_leadace_leadace__list_projects
 ---
 
 # Setup-cron - Schedule Daily Automation
@@ -40,7 +40,6 @@ Every template below must:
 - run `<CLAUDE_PATH> -p "/daily-cycle <PROJECT_NAME>" --permission-mode dontAsk` (plus `--model` if chosen), with `<CLAUDE_PATH>` absolute — schedulers don't inherit shell PATH
 - set `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=10800000` (3 h) — daily-cycle runs its phases as sub-agents, and headless mode otherwise cuts sub-agent waits off at 10 minutes
 - start in the current session's working directory (`<WORKDIR>` = `pwd`) — plugins, MCP servers, and permission rules are discovered from the cwd, so a different start directory can silently lose the LeadAce plugin
-- carry `LEADACE_MCP_URL` into the entry's environment if it is set in the current session (self-host) — schedulers don't read shell rc files. Place it alongside `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` (plist `EnvironmentVariables` / cron line prefix / `.cmd` `set`); omit entirely when unset
 - embed `<PROJECT_SLUG>` in every named artifact — scheduler label/task name, plist/wrapper file, crontab tag, log files — so schedules for several projects coexist and replace/remove operations touch only their own project
 - append stdout/stderr to a log file in the user's home
 

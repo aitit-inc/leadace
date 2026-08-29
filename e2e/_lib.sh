@@ -1,12 +1,10 @@
 # Shared helpers for the local E2E harness.
 # Sourced by login.sh / oauth.sh / run.sh.
 
-# Why staging exists: Claude Code's plugin .mcp.json only substitutes
-# ${user_config.KEY} references at load time — arbitrary ${ENV_VAR} forms
-# (and the bash-style ${VAR:-default}) are NOT expanded, so the literal
-# default in plugin/.mcp.json (https://mcp.leadace.ai/mcp) wins regardless of
-# what we set in the shell. Staging sidesteps the issue: bash itself writes
-# the URL into the staged file, and Claude reads a plain string.
+# Why staging exists: plugin/.mcp.json holds the production URL as a literal
+# (plugin loaders only substitute ${user_config.KEY}, never shell env vars),
+# so the harness writes its own .mcp.json pointing at the local MCP Worker.
+# LEADACE_MCP_URL is a harness-only override read here at staging time.
 build_plugin_staging() {
   local staging="$REPO_ROOT/e2e/.plugin-staging"
   mkdir -p "$staging"
@@ -15,7 +13,7 @@ build_plugin_staging() {
   local mcp_url="${LEADACE_MCP_URL:-http://localhost:8788/mcp}"
   cat > "$staging/.mcp.json" <<EOF
 {
-  "api": {
+  "leadace": {
     "type": "http",
     "url": "$mcp_url"
   }

@@ -7,7 +7,7 @@ description: "Local LeadAce E2E testing skill. Triggers: 'local E2E', 'ローカ
 
 Drive the local stack (Supabase / API Worker / MCP Worker / Frontend) from the host `claude` CLI, isolated under `CLAUDE_CONFIG_DIR=$REPO_ROOT/e2e/.claude-state`, against user-supplied scenarios.
 
-The plugin is rsynced to `e2e/.plugin-staging/` on every run with the staged `.mcp.json` URL hard-coded to `http://localhost:8788/mcp` and loaded via `--plugin-dir`. Claude Code's plugin loader only expands `${user_config.KEY}`, not `${ENV_VAR:-default}`, so an env-var override on the original `plugin/.mcp.json` would not take effect; the staging step writes the literal URL instead. `LEADACE_MCP_URL=...` still works as an override at staging-build time.
+The plugin is rsynced to `e2e/.plugin-staging/` on every run with the staged `.mcp.json` URL hard-coded to `http://localhost:8788/mcp` and loaded via `--plugin-dir`. `plugin/.mcp.json` holds the production URL as a literal (plugin loaders only substitute `${user_config.KEY}`, never shell env vars), so the harness writes its own. `LEADACE_MCP_URL=...` is a harness-only override read at staging-build time.
 
 Concrete test scenarios come from the user. This skill captures the **prerequisites, run procedure, and cleanup** needed to drive them safely.
 

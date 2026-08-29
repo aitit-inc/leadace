@@ -15,18 +15,18 @@ allowed-tools:
   - mcp__claude-in-chrome__computer
   - mcp__claude-in-chrome__javascript_tool
   - mcp__claude-in-chrome__read_network_requests
-  - mcp__plugin_leadace_api__get_outbound_targets
-  - mcp__plugin_leadace_api__send_email_and_record
-  - mcp__plugin_leadace_api__skip_prospect
-  - mcp__plugin_leadace_api__record_outreach_with_inquiry
-  - mcp__plugin_leadace_api__update_outreach_status
-  - mcp__plugin_leadace_api__update_prospect_status
-  - mcp__plugin_leadace_api__get_document
-  - mcp__plugin_leadace_api__get_master_document
-  - mcp__plugin_leadace_api__get_project_settings
-  - mcp__plugin_leadace_api__get_mailbox_health
-  - mcp__plugin_leadace_api__pick_message_variant
-  - mcp__plugin_leadace_api__get_compliance_status
+  - mcp__plugin_leadace_leadace__get_outbound_targets
+  - mcp__plugin_leadace_leadace__send_email_and_record
+  - mcp__plugin_leadace_leadace__skip_prospect
+  - mcp__plugin_leadace_leadace__record_outreach_with_inquiry
+  - mcp__plugin_leadace_leadace__update_outreach_status
+  - mcp__plugin_leadace_leadace__update_prospect_status
+  - mcp__plugin_leadace_leadace__get_document
+  - mcp__plugin_leadace_leadace__get_master_document
+  - mcp__plugin_leadace_leadace__get_project_settings
+  - mcp__plugin_leadace_leadace__get_mailbox_health
+  - mcp__plugin_leadace_leadace__pick_message_variant
+  - mcp__plugin_leadace_leadace__get_compliance_status
 ---
 
 # Outbound - Outbound Sales Execution
@@ -47,12 +47,12 @@ For each prospect, sends a message via an available channel and records the resu
 - Approach count: `$1` (default: 30)
 
 **Compliance pre-flight (run before anything else).** Call
-`mcp__plugin_leadace_api__get_compliance_status`. If `ready: false`, **abort
+`mcp__plugin_leadace_leadace__get_compliance_status`. If `ready: false`, **abort
 immediately** — load nothing else. Report the `missing` fields, point the user at
 `fix_url` (e.g. `https://app.leadace.ai/workspace-settings`), and tell them to
 re-run once saved.
 
-Load `mcp__plugin_leadace_api__get_document` (`projectId: "$0"`) for
+Load `mcp__plugin_leadace_leadace__get_document` (`projectId: "$0"`) for
 `slug: "business"` and `slug: "sales_strategy"`. Sections that matter:
 
 - **Sales channels**: tactical preferences only (ordering, sub-channel, tone). Enablement is owned by `outboundChannels` in project settings, not this section
@@ -66,8 +66,8 @@ Also load `slug: "learnings"`. Its `[body]` / `[timing]` / `[channel]` entries a
 
 Retrieve the uncontacted prospect list and the project's send settings:
 
-- Call `mcp__plugin_leadace_api__get_outbound_targets` with `projectId: "$0"` and `limit: $1` (default 30).
-- Call `mcp__plugin_leadace_api__get_project_settings` with `projectId: "$0"`.
+- Call `mcp__plugin_leadace_leadace__get_outbound_targets` with `projectId: "$0"` and `limit: $1` (default 30).
+- Call `mcp__plugin_leadace_leadace__get_project_settings` with `projectId: "$0"`.
 
 The targets response includes `Outbound mode: send | draft`. **Capture this value** — it decides whether each channel actually delivers (`send`) or only stores a draft the user reviews at https://app.leadace.ai/drafts (`draft`). It applies to every channel.
 
@@ -92,7 +92,7 @@ And for channel selection in step 2:
   is off for this project: report it and stop.
 
 **Mailbox pre-flight (send mode + email enabled).** If outbound mode is `send` and `email`
-is in `outboundChannels`, call `mcp__plugin_leadace_api__get_mailbox_health` (`projectId: "$0"`).
+is in `outboundChannels`, call `mcp__plugin_leadace_leadace__get_mailbox_health` (`projectId: "$0"`).
 It names the mailbox this project sends from (custom SMTP mailbox, else the connected Gmail). A
 no-mailbox answer means email sends will be rejected at send time (HTTP 412) — warn, point the
 user at https://app.leadace.ai, and let form / SNS prospects proceed. Courtesy check only; the
@@ -103,7 +103,7 @@ N/cap sends remaining today` — a per-mailbox daily limit separate from the bil
 protects the sending domain's reputation. Cap **email** sends this run at `N` (the backend
 rejects the rest with HTTP 403); reach further prospects by form / SNS and defer email-only
 ones to a later day. A `⚠️` cap message means it is already reached — skip email entirely this
-run. `mcp__plugin_leadace_api__get_mailbox_health` (`projectId: "$0"`) reports the full warmup
+run. `mcp__plugin_leadace_leadace__get_mailbox_health` (`projectId: "$0"`) reports the full warmup
 state — ramp week, today's cap/used/remaining, any pause — to explain a 403 to the user.
 
 Each prospect in the targets list also carries:
@@ -146,7 +146,7 @@ If the tool returns a "Project not found" error, instruct the user to run `/lead
 
 Pick **one** channel per prospect — never chain channels.
 
-Retrieve the channel ranking policy via `mcp__plugin_leadace_api__get_master_document`
+Retrieve the channel ranking policy via `mcp__plugin_leadace_leadace__get_master_document`
 with `slug: "tpl_channel_policy"` (personal email → LinkedIn → department email → generic
 email → form → X DM; a `platformUrl` prospect goes to step 5b per the policy's in-platform
 exception). It is the **default** order. Apply these inputs, highest precedence first:
@@ -177,7 +177,7 @@ leadership shake-up implying the buyer left, a post-acquisition freeze. When in
 doubt, send: a neutral read is a send, so prospects with no such signal are
 unaffected.
 
-To skip: do NOT send; call `mcp__plugin_leadace_api__skip_prospect` with
+To skip: do NOT send; call `mcp__plugin_leadace_leadace__skip_prospect` with
 `projectId: "$0"`, `prospectId`, the `channel` you were about to use (`email` /
 `form` / `sns_linkedin` / `sns_twitter` / `platform`), `reason: "bad_timing"`, and
 a one-line `note` (e.g. `"layoffs announced last week"`). The server records a
@@ -188,7 +188,7 @@ An explicit user override ("send anyway", "ignore timing") wins — they own the
 
 ### 3. Email Sending
 
-Retrieve email guidelines via `mcp__plugin_leadace_api__get_master_document` with `slug: "tpl_email_guidelines"` and follow them.
+Retrieve email guidelines via `mcp__plugin_leadace_leadace__get_master_document` with `slug: "tpl_email_guidelines"` and follow them.
 
 There is no stored body template: every body is written for the one recipient, from the guidelines' shape, the facts in BUSINESS.md / SALES_STRATEGY.md, and the prospect's own material.
 
@@ -197,7 +197,7 @@ Close with a light sign-off (name + optional role) drawn from the "Sender Inform
 **Message angle variation (weighted draw).** Message angles (subject pattern +
 optional body approach) live server-side in `message_variants`; the server picks
 one per send by a weighted draw (Thompson sampling, recomputed daily by the lever
-tick). Per send, call `mcp__plugin_leadace_api__pick_message_variant` with the
+tick). Per send, call `mcp__plugin_leadace_leadace__pick_message_variant` with the
 project id; it reports the picked variant id and its subject pattern, plus a label
 and a body approach when the variant carries them. Render the subject by
 substituting the `{{org}}` / `{{name}}` / `{{signal}}` placeholders the pattern
@@ -251,7 +251,7 @@ settings at https://app.leadace.ai/workspace-settings before retrying.
 
 **Body personalization.** Refer to each prospect's `overview` and `matchReason`, and write the entire body tailored to the recipient -- not just the opening. Reference specific numbers, achievements, and initiatives of the target company. Generic openers like "I visited your website" alone are insufficient.
 
-Having composed the body, call `mcp__plugin_leadace_api__send_email_and_record`:
+Having composed the body, call `mcp__plugin_leadace_leadace__send_email_and_record`:
 - `projectId: "$0"`
 - `prospectId`: the prospect's id — the server sends to that prospect's stored address
 - `subject`: subject line (rendered from the variant's subject pattern)
@@ -297,7 +297,7 @@ When `cycle.kind === 'no_response'`:
   (whichever is newer), a new product release, a different angle in
   `matchReason`. If you genuinely have no
   new material to add, **skip the prospect**: call
-  `mcp__plugin_leadace_api__skip_prospect` with:
+  `mcp__plugin_leadace_leadace__skip_prospect` with:
   - `projectId: "$0"`, `prospectId`: the prospect's id.
   - `channel`: the channel you were about to use (`email` / `form` /
     `sns_linkedin` / `sns_twitter`).
@@ -341,7 +341,7 @@ Compose the message body per the form's fields and the email guidelines (adapted
 **Allocate the row + inquiry URL.** Before opening the browser or doing any form inspection, call:
 
 ```
-mcp__plugin_leadace_api__record_outreach_with_inquiry
+mcp__plugin_leadace_leadace__record_outreach_with_inquiry
   projectId: "$0"
   prospectId: <id>
   channel: "form"
@@ -367,7 +367,7 @@ If `formType` is null (not yet determined), inspect the page with `read_page` / 
 
 **Filling the form.** Once screening passes, fill the form fields using `finalBody` as the message text (the inquiry URL is already in `finalBody` — submit it verbatim, do not strip or re-embed it), then submit per `references/form-filling.md`.
 
-**After submission verification.** Always call `mcp__plugin_leadace_api__update_outreach_status`:
+**After submission verification.** Always call `mcp__plugin_leadace_leadace__update_outreach_status`:
 - On success → `status: "sent"`. The server flips the prospect to `contacted` and confirms quota consumption.
 - On failure (HTTP 4xx/5xx, no POST observed, no thank-you state, etc.) → `status: "failed"` plus a concise `errorMessage`. The in-flight quota reservation is refunded and the server defers re-eligibility by the project's no-response recycle window. Do not retry the form.
 
@@ -380,7 +380,7 @@ Determine the channel from the prospect's `snsAccounts` field — use `sns_twitt
 **Allocate the row + inquiry URL.** Before opening the browser (in send mode) or anything else, call:
 
 ```
-mcp__plugin_leadace_api__record_outreach_with_inquiry
+mcp__plugin_leadace_leadace__record_outreach_with_inquiry
   projectId: "$0"
   prospectId: <id>
   channel: "sns_twitter" | "sns_linkedin"
@@ -412,7 +412,7 @@ flow and its guardrails.
 
 ### 6. Handle Inactive Prospects
 
-For prospects where approach failed due to a **structural reason** making future approaches impossible, call `mcp__plugin_leadace_api__update_prospect_status` with `status: "inactive"`.
+For prospects where approach failed due to a **structural reason** making future approaches impossible, call `mcp__plugin_leadace_leadace__update_prospect_status` with `status: "inactive"`.
 
 **Cases where `inactive` should be set:**
 - Email address was invalid and bounced (permanent error)
@@ -429,7 +429,7 @@ For prospects where approach failed due to a **structural reason** making future
 After all prospects are processed, if successes fall short of the target count:
 
 1. Shortfall = target count - successes (in draft mode, count `pending_review` records as success — drafts are the intended outcome)
-2. Retrieve additional prospects: call `mcp__plugin_leadace_api__get_outbound_targets` with `limit: <shortfall>`
+2. Retrieve additional prospects: call `mcp__plugin_leadace_leadace__get_outbound_targets` with `limit: <shortfall>`
 3. Repeat steps 2-6 for retrieved prospects
 4. Retry **one round only**. Also end retry if total reachable is 0
 5. Include final target achievement in the report (e.g., "Target 5, achieved 3 (ended due to depleted list)")

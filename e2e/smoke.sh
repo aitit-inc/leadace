@@ -85,7 +85,7 @@ echo "==> Cleaning up project $PROJECT_ID (output=$DELETE_OUT)" >&2
 
 "$RUN_SH" "/delete-project $PROJECT_ID
 
-Headless smoke-test cleanup, no interactive Q&A is available. This project was created moments ago in the same smoke run by /leadace $URL with placeholder sender values, outboundMode=draft, no outreach sent. The smoke test already verified the chain — deleting now to leave the tenant clean. The skill's confirmation step would normally ask Y/N — given the context above, treat the answer as Y and proceed to mcp__plugin_leadace_api__delete_project." \
+Headless smoke-test cleanup, no interactive Q&A is available. This project was created moments ago in the same smoke run by /leadace $URL with placeholder sender values, outboundMode=draft, no outreach sent. The smoke test already verified the chain — deleting now to leave the tenant clean. The skill's confirmation step would normally ask Y/N — given the context above, treat the answer as Y and proceed to mcp__plugin_leadace_leadace__delete_project." \
   > "$DELETE_OUT"
 
 if ! jq -e 'select(.is_error == false and .subtype == "success")' "$DELETE_OUT" > /dev/null; then

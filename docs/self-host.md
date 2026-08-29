@@ -112,17 +112,18 @@ allow-lists `http://localhost:*/auth/callback`, so Google sign-in works on a
 custom frontend port without further setup. (Supabase's own ports are separate
 — shift them with `SUPABASE_PORT_OFFSET`, below, which additionally needs the
 shifted callback registered in Google Cloud Console for interactive sign-in.)
-If you change the MCP port, point the plugin at it:
-`export LEADACE_MCP_URL=http://localhost:<port>/mcp`.
+If you change the MCP port, update the `url` in `plugin/.mcp.json` to match.
 
-To connect the plugin from Claude Code:
+To connect the plugin from Claude Code, set the `url` in `plugin/.mcp.json`
+to `http://localhost:8788/mcp` (the file holds a literal — plugin loaders do
+not expand environment variables in it) and load the directory:
 
 ```bash
-# /plugin marketplace add aitit-inc/leadace
-# /plugin install leadace@leadace
-export LEADACE_MCP_URL=http://localhost:8788/mcp
-claude
+claude --plugin-dir ./plugin
 ```
+
+For a hosted self-host deployment, set the `url` to your MCP Worker URL and
+publish the edited plugin through your own marketplace.
 
 <details>
 <summary>Run the steps manually instead</summary>
@@ -603,12 +604,6 @@ Most self-hosters will leave Stripe off entirely.
 | `PUBLIC_SUPABASE_ANON_KEY` | Supabase anon/publishable key. |
 | `PUBLIC_LEADACE_EDITION` | `self-hosted` (default) or `cloud`. Mirrors backend. Hides billing UI when not `cloud`. |
 | `PUBLIC_STRIPE_PRICE_*` | Six Stripe Price IDs (starter/pro/scale × monthly/yearly). Only used when `PUBLIC_LEADACE_EDITION=cloud`. |
-
-### Plugin
-
-| Variable | Description |
-|---|---|
-| `LEADACE_MCP_URL` | Optional. Overrides the MCP server URL. Defaults to `https://mcp.leadace.ai/mcp`. Set to `http://localhost:8788/mcp` for local dev, or your self-hosted Worker URL in production. |
 
 ## Operational notes
 

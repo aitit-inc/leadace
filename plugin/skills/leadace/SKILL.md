@@ -8,35 +8,35 @@ allowed-tools:
   - WebSearch
   - WebFetch
   - AskUserQuestion
-  - mcp__plugin_leadace_api__get_server_version
-  - mcp__plugin_leadace_api__list_projects
-  - mcp__plugin_leadace_api__get_gmail_status
-  - mcp__plugin_leadace_api__get_mailbox_health
-  - mcp__plugin_leadace_api__setup_project
-  - mcp__plugin_leadace_api__get_document
-  - mcp__plugin_leadace_api__list_documents
-  - mcp__plugin_leadace_api__save_document
-  - mcp__plugin_leadace_api__get_master_document
-  - mcp__plugin_leadace_api__get_project_settings
-  - mcp__plugin_leadace_api__update_project_settings
-  - mcp__plugin_leadace_api__get_eval_data
-  - mcp__plugin_leadace_api__get_lever_state
-  - mcp__plugin_leadace_api__list_suggestions
-  - mcp__plugin_leadace_api__get_tenant_settings
-  - mcp__plugin_leadace_api__list_message_variants
-  - mcp__plugin_leadace_api__upsert_message_variant
-  - mcp__plugin_leadace_api__upsert_discovery_strategy
-  - mcp__plugin_leadace_api__list_project_prospects
-  - mcp__plugin_leadace_api__list_tenant_prospects
-  - mcp__plugin_leadace_api__list_organizations
-  - mcp__plugin_leadace_api__update_prospect
-  - mcp__plugin_leadace_api__update_prospect_status
-  - mcp__plugin_leadace_api__set_prospect_priority
-  - mcp__plugin_leadace_api__set_prospect_do_not_contact
-  - mcp__plugin_leadace_api__create_organization
-  - mcp__plugin_leadace_api__update_organization
-  - mcp__plugin_leadace_api__delete_prospects
-  - mcp__plugin_leadace_api__delete_organizations
+  - mcp__plugin_leadace_leadace__get_server_version
+  - mcp__plugin_leadace_leadace__list_projects
+  - mcp__plugin_leadace_leadace__get_gmail_status
+  - mcp__plugin_leadace_leadace__get_mailbox_health
+  - mcp__plugin_leadace_leadace__setup_project
+  - mcp__plugin_leadace_leadace__get_document
+  - mcp__plugin_leadace_leadace__list_documents
+  - mcp__plugin_leadace_leadace__save_document
+  - mcp__plugin_leadace_leadace__get_master_document
+  - mcp__plugin_leadace_leadace__get_project_settings
+  - mcp__plugin_leadace_leadace__update_project_settings
+  - mcp__plugin_leadace_leadace__get_eval_data
+  - mcp__plugin_leadace_leadace__get_lever_state
+  - mcp__plugin_leadace_leadace__list_suggestions
+  - mcp__plugin_leadace_leadace__get_tenant_settings
+  - mcp__plugin_leadace_leadace__list_message_variants
+  - mcp__plugin_leadace_leadace__upsert_message_variant
+  - mcp__plugin_leadace_leadace__upsert_discovery_strategy
+  - mcp__plugin_leadace_leadace__list_project_prospects
+  - mcp__plugin_leadace_leadace__list_tenant_prospects
+  - mcp__plugin_leadace_leadace__list_organizations
+  - mcp__plugin_leadace_leadace__update_prospect
+  - mcp__plugin_leadace_leadace__update_prospect_status
+  - mcp__plugin_leadace_leadace__set_prospect_priority
+  - mcp__plugin_leadace_leadace__set_prospect_do_not_contact
+  - mcp__plugin_leadace_leadace__create_organization
+  - mcp__plugin_leadace_leadace__update_organization
+  - mcp__plugin_leadace_leadace__delete_prospects
+  - mcp__plugin_leadace_leadace__delete_organizations
 ---
 
 # LeadAce — Entry Point: Onboarding, Setup, Strategy & Routing
@@ -60,14 +60,14 @@ After this skill, day-to-day use needs only `/daily-cycle` (which itself fans ou
 Run these in parallel:
 
 - **Plugin version**: `Read` `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and take `version`.
-- **Server version + min plugin**: `mcp__plugin_leadace_api__get_server_version` -> `{ serverVersion, minPluginVersion }`.
-- **Project list**: `mcp__plugin_leadace_api__list_projects` (may be empty).
-- **Gmail connection** (account-level — a project may send from a custom SMTP mailbox instead): `mcp__plugin_leadace_api__get_gmail_status` -> `{ connected, email? }`.
+- **Server version + min plugin**: `mcp__plugin_leadace_leadace__get_server_version` -> `{ serverVersion, minPluginVersion }`.
+- **Project list**: `mcp__plugin_leadace_leadace__list_projects` (may be empty).
+- **Gmail connection** (account-level — a project may send from a custom SMTP mailbox instead): `mcp__plugin_leadace_leadace__get_gmail_status` -> `{ connected, email? }`.
 - **Current date/time**: `Bash` `date '+%Y-%m-%d %H:%M %Z'`.
 - **Runtime detect** (best-effort): `Bash` `printf '%s|%s|%s\n' "${CLAUDE_PLUGIN_ROOT:-?}" "$(command -v codex 2>/dev/null || echo none)" "$([ -d "$HOME/.claude" ] && echo y || echo n)"`. Classify as `claude_code` (most common — `~/.claude` exists), `codex` (codex command found), or `other`.
 
 If `get_server_version` or `list_projects` fails:
-- Network/unreachable -> "Cannot reach the LeadAce MCP server. Check network access to https://mcp.leadace.ai (or `LEADACE_MCP_URL` for self-hosters)."
+- Network/unreachable -> "Cannot reach the LeadAce MCP server. Check network access to https://mcp.leadace.ai (or the `url` in the plugin's `.mcp.json` for self-hosters)."
 - Auth/401 -> "MCP authentication failed. Sign in again at https://app.leadace.ai, then retry."
 
 Compare plugin version to `minPluginVersion` (split on `.`, parse each as integer, compare component-wise). If plugin version is **less than** `minPluginVersion`, prepend a prominent warning recommending `/plugin update leadace@leadace`. Continue answering — do not abort.

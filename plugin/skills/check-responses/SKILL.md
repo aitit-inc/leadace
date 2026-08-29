@@ -13,11 +13,11 @@ allowed-tools:
   - mcp__claude-in-chrome__read_page
   - mcp__claude-in-chrome__get_page_text
   - mcp__claude_ai_Gmail__create_draft
-  - mcp__plugin_leadace_api__get_recent_outreach
-  - mcp__plugin_leadace_api__record_response
-  - mcp__plugin_leadace_api__update_prospect_status
-  - mcp__plugin_leadace_api__get_document
-  - mcp__plugin_leadace_api__get_master_document
+  - mcp__plugin_leadace_leadace__get_recent_outreach
+  - mcp__plugin_leadace_leadace__record_response
+  - mcp__plugin_leadace_leadace__update_prospect_status
+  - mcp__plugin_leadace_leadace__get_document
+  - mcp__plugin_leadace_leadace__get_master_document
 ---
 
 # Check Responses - Response Collection
@@ -33,8 +33,8 @@ A skill that automatically checks outbound sales responses and records them in t
 - Project ID: `$0` (required)
 
 In parallel, call:
-- `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "sales_strategy"`
-- `mcp__plugin_leadace_api__get_master_document` with `slug: "ref_scheduling_services"` (canonical service-name → notification-domain mapping)
+- `mcp__plugin_leadace_leadace__get_document` with `projectId: "$0"` and `slug: "sales_strategy"`
+- `mcp__plugin_leadace_leadace__get_master_document` with `slug: "ref_scheduling_services"` (canonical service-name → notification-domain mapping)
 
 From the "Response Definition" section of SALES_STRATEGY.md, understand:
 - What counts as a "response"
@@ -47,7 +47,7 @@ From the "Response Definition" section of SALES_STRATEGY.md, understand:
 
 Retrieve metadata for outreach sent within the last 4 business days:
 
-Call `mcp__plugin_leadace_api__get_recent_outreach` with `projectId: "$0"`.
+Call `mcp__plugin_leadace_leadace__get_recent_outreach` with `projectId: "$0"`.
 
 If the tool returns a "Project not found" error, instruct the user to run `/leadace` first and **abort**.
 
@@ -123,7 +123,7 @@ For each strategy with platform outreach, fetch the project's `playbook_<discove
 
 ### 5. Update Database
 
-For each response found, call `mcp__plugin_leadace_api__record_response` with:
+For each response found, call `mcp__plugin_leadace_leadace__record_response` with:
 - `outreachLogId`: the matching outreach log ID from step 2
 - `channel`: the channel the response came through
 - `content`: the response content
@@ -143,7 +143,7 @@ The server automatically determines the prospect status update based on `respons
 
 If they simply declined this project's proposal (e.g., "we'll pass this time"), the server sets `rejected` via the responseType -- do not set `markDoNotContact`.
 
-**Edge case override**: If the automatic status is incorrect (e.g., a negative-sentiment reply that's actually a "not now, try again later"), use `mcp__plugin_leadace_api__update_prospect_status` to set the correct status.
+**Edge case override**: If the automatic status is incorrect (e.g., a negative-sentiment reply that's actually a "not now, try again later"), use `mcp__plugin_leadace_leadace__update_prospect_status` to set the correct status.
 
 #### Rejection feedback inference
 

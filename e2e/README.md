@@ -19,13 +19,11 @@ host.
   is untouched.
 - **Staged plugin with a localhost-pinned `.mcp.json`.** Every script
   rsyncs `plugin/` into `e2e/.plugin-staging/` (gitignored) and overwrites
-  the staged `.mcp.json` to point at `http://localhost:8788/mcp`. Claude
-  Code's plugin loader only does `${user_config.KEY}` substitution; it
-  does NOT expand `${ENV_VAR}` or `${VAR:-default}`, so the production
-  default in `plugin/.mcp.json` would otherwise win even with
-  `LEADACE_MCP_URL` exported. Staging sidesteps this by having bash write
-  the URL into the staged file, leaving Claude with a plain literal.
-  `LEADACE_MCP_URL=...` still works as an override at staging-build time.
+  the staged `.mcp.json` to point at `http://localhost:8788/mcp`.
+  `plugin/.mcp.json` holds the production URL as a literal (plugin loaders
+  only substitute `${user_config.KEY}`, never shell env vars), so the
+  harness writes its own. `LEADACE_MCP_URL=...` is a harness-only override
+  read at staging-build time.
 - **Real Google OAuth, real Supabase Auth.** No backdoor or mock auth
   paths in the production code. The cost is a one-time setup of a Google
   Cloud OAuth client; the win is that what the harness exercises and what
@@ -444,7 +442,7 @@ The wrapper passes:
   with a marketplace-installed copy in your normal `~/.claude/`.
 - `--add-dir $REPO_ROOT` — allow tool access to the repo
 - `--settings $REPO_ROOT/e2e/settings.json` — minimal allowlist for
-  `mcp__api__*` and shell utilities
+  `mcp__plugin_leadace_leadace__*` and shell utilities
 - `--setting-sources user` — ignore the project-level `.claude/settings.json`
   so the harness is isolated
 - `--permission-mode dontAsk` — respect the allowlist; deny everything

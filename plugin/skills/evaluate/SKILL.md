@@ -6,17 +6,17 @@ allowed-tools:
   - Bash
   - Read
   - WebSearch
-  - mcp__plugin_leadace_api__get_eval_data
-  - mcp__plugin_leadace_api__get_rejection_feedback_summary
-  - mcp__plugin_leadace_api__get_lever_state
-  - mcp__plugin_leadace_api__get_lever_decisions
-  - mcp__plugin_leadace_api__list_message_variants
-  - mcp__plugin_leadace_api__upsert_message_variant
-  - mcp__plugin_leadace_api__upsert_discovery_strategy
-  - mcp__plugin_leadace_api__record_suggestion
-  - mcp__plugin_leadace_api__get_document
-  - mcp__plugin_leadace_api__save_document
-  - mcp__plugin_leadace_api__get_master_document
+  - mcp__plugin_leadace_leadace__get_eval_data
+  - mcp__plugin_leadace_leadace__get_rejection_feedback_summary
+  - mcp__plugin_leadace_leadace__get_lever_state
+  - mcp__plugin_leadace_leadace__get_lever_decisions
+  - mcp__plugin_leadace_leadace__list_message_variants
+  - mcp__plugin_leadace_leadace__upsert_message_variant
+  - mcp__plugin_leadace_leadace__upsert_discovery_strategy
+  - mcp__plugin_leadace_leadace__record_suggestion
+  - mcp__plugin_leadace_leadace__get_document
+  - mcp__plugin_leadace_leadace__save_document
+  - mcp__plugin_leadace_leadace__get_master_document
 ---
 
 # Evaluate - PDCA Evaluation & Improvement
@@ -32,10 +32,10 @@ A skill that analyzes sales activity result data, reports on performance, and ap
 - Project ID: `$0` (required)
 
 In parallel, call:
-- `mcp__plugin_leadace_api__get_eval_data` with `projectId: "$0"`
-- `mcp__plugin_leadace_api__get_rejection_feedback_summary` with `projectId: "$0"`, `windowDays: 30`, `scope: "tactical"`
-- `mcp__plugin_leadace_api__get_lever_state` with `projectId: "$0"` — current message-variant draw weights, channel affinity, targeting lifts, per-variant maturity, and the discovery block (`discovery.strategies`: slug / approach / archived state; `discovery.weights`: the tick's strategy draw weights; `discovery.needsReplenishment`) (read-only)
-- `mcp__plugin_leadace_api__get_lever_decisions` with `projectId: "$0"` — the daily tick's decision history (newest first) for trend narration
+- `mcp__plugin_leadace_leadace__get_eval_data` with `projectId: "$0"`
+- `mcp__plugin_leadace_leadace__get_rejection_feedback_summary` with `projectId: "$0"`, `windowDays: 30`, `scope: "tactical"`
+- `mcp__plugin_leadace_leadace__get_lever_state` with `projectId: "$0"` — current message-variant draw weights, channel affinity, targeting lifts, per-variant maturity, and the discovery block (`discovery.strategies`: slug / approach / archived state; `discovery.weights`: the tick's strategy draw weights; `discovery.needsReplenishment`) (read-only)
+- `mcp__plugin_leadace_leadace__get_lever_decisions` with `projectId: "$0"` — the daily tick's decision history (newest first) for trend narration
 
 If `get_eval_data` returns a "Project not found" error, instruct the user to run `/leadace` first and **abort**.
 
@@ -62,14 +62,14 @@ If `get_rejection_feedback_summary` errors, continue with the eval data only and
 
 Load documents via MCP:
 
-Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "business"`.
-Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "sales_strategy"`.
+Call `mcp__plugin_leadace_leadace__get_document` with `projectId: "$0"` and `slug: "business"`.
+Call `mcp__plugin_leadace_leadace__get_document` with `projectId: "$0"` and `slug: "sales_strategy"`.
 
-Call `mcp__plugin_leadace_api__get_document` with `projectId: "$0"` and `slug: "learnings"` to load the current Learnings Log — the distilled, evidence-cited learnings this skill routes to build-list and outbound, and the single memory of what has been tried and whether it worked (its `[retired]` tombstones record disproven claims so they are not re-adopted). You will reconcile and update it in step 4, and cross-reference it when deciding improvement actions. Skip if missing (you may create it in step 4).
+Call `mcp__plugin_leadace_leadace__get_document` with `projectId: "$0"` and `slug: "learnings"` to load the current Learnings Log — the distilled, evidence-cited learnings this skill routes to build-list and outbound, and the single memory of what has been tried and whether it worked (its `[retired]` tombstones record disproven claims so they are not re-adopted). You will reconcile and update it in step 4, and cross-reference it when deciding improvement actions. Skip if missing (you may create it in step 4).
 
 ### 3. Multi-angle Analysis
 
-Retrieve analysis frameworks via `mcp__plugin_leadace_api__get_master_document` with `slug: "tpl_analysis_frameworks"` and analyze from the following perspectives:
+Retrieve analysis frameworks via `mcp__plugin_leadace_leadace__get_master_document` with `slug: "tpl_analysis_frameworks"` and analyze from the following perspectives:
 
 **Response Rate Analysis:**
 - Overall response rate
@@ -142,7 +142,7 @@ Before deciding on improvement actions, review the Learnings Log loaded in step 
 
 Do **not** edit messaging (subject line / body) or channel priority here — those are optimized deterministically by the daily lever tick (message-variant draw weights, channel affinity). Report their measured performance in Step 5; do not encode it as prose. (Tone/sub-channel preferences a user wrote in SALES_STRATEGY stay as their authored hints; evaluate just doesn't rewrite them.)
 
-Save the updated document via `mcp__plugin_leadace_api__save_document` with `projectId: "$0"`, `slug: "sales_strategy"`, and the full markdown content.
+Save the updated document via `mcp__plugin_leadace_leadace__save_document` with `projectId: "$0"`, `slug: "sales_strategy"`, and the full markdown content.
 
 **Update search keywords:**
 - Add keywords related to high-response segments
@@ -156,7 +156,7 @@ Evaluate supplies and narrates this lever; the daily tick owns reply-based selec
 - **Never reuse a slug for a different idea** — a slug is the arm's measured identity; archive instead. Refining the same idea may update the same slug's `approach`. Playbook-driven strategies get the same archive treatment; leave their `approach`'s playbook reference intact
 
 **Suggest playbook-driven means (persist + report, never self-add):**
-When a promising means needs user setup (platform account, login, ToS), don't register it as a strategy yourself — call `mcp__plugin_leadace_api__record_suggestion` with `projectId: "$0"`, `kind: "add-means"`, `dedupeKey` = tentative strategy slug, short `title`, `body` citing the evidence, and a `command` runnable verbatim like `/leadace <project> add <platform> as an outreach means` (working language is fine).
+When a promising means needs user setup (platform account, login, ToS), don't register it as a strategy yourself — call `mcp__plugin_leadace_leadace__record_suggestion` with `projectId: "$0"`, `kind: "add-means"`, `dedupeKey` = tentative strategy slug, short `title`, `body` citing the evidence, and a `command` runnable verbatim like `/leadace <project> add <platform> as an outreach means` (working language is fine).
 - Suggest only what the user alone can do — never what this skill or the loop can do itself.
 - The server never resurrects a dismissed/done suggestion; if the confirmation says it was left untouched, drop it from next actions.
 - add_means completion closes the suggestion automatically.
@@ -181,7 +181,7 @@ Each entry is one line: `[stage] [YYYY-MM-DD] claim — evidence: metric=<name>,
 - Re-check each existing entry's cited metric against this cycle. If its direction no longer reproduces, retire it: replace its leading tag with `[retired]`, keeping the rest of the line (`[retired] [YYYY-MM-DD] claim — evidence: …`). `[retired]` is a tombstone, not a stage tag — readers skip it; it stays only so a disproven claim isn't re-added. Cheap because the metric + n is already on the line.
 - Keep ≤15 active (non-retired) entries; over the cap, retire weakest-evidence or oldest first.
 
-Save the full list via `mcp__plugin_leadace_api__save_document` with `projectId: "$0"` and `slug: "learnings"`. When `dataSufficiency` is insufficient, do not write — an empty / unchanged log is the correct early state.
+Save the full list via `mcp__plugin_leadace_leadace__save_document` with `projectId: "$0"` and `slug: "learnings"`. When `dataSufficiency` is insufficient, do not write — an empty / unchanged log is the correct early state.
 
 **Boundary:** learnings *steer* downstream LLM authoring and collection; they are never deterministic selectors and never edit SALES_STRATEGY messaging or channel priority (the levers own those). Frame each as "what the data shows."
 
