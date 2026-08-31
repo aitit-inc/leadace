@@ -34,14 +34,14 @@ This skill never creates new prospects or organizations. To gather brand-new pro
 
 ### 1. Resolve the project
 
-If `$0` is provided, use it as `PROJECT_NAME`. Otherwise call `mcp__plugin_leadace_leadace__list_projects`:
+If `$0` is provided, use it as `PROJECT_NAME`. Otherwise call `list_projects`:
 - exactly one project → use it
 - multiple → ask via `AskUserQuestion`
 - none → abort: "No projects yet. Run `/leadace <your-homepage-URL>` first."
 
 ### 2. Load the current project's strategy
 
-Call `mcp__plugin_leadace_leadace__get_document` with `slug: "business"` and again with `slug: "sales_strategy"`.
+Call `get_document` with `slug: "business"` and again with `slug: "sales_strategy"`.
 
 If either is missing, abort: "Ask `/leadace` to draft the strategy for `<PROJECT_NAME>` first — match-prospects needs SALES_STRATEGY.md to evaluate fit."
 
@@ -52,7 +52,7 @@ Read both. Extract:
 
 ### 3. Pull tenant prospects
 
-Call `mcp__plugin_leadace_leadace__list_tenant_prospects`:
+Call `list_tenant_prospects`:
 
 ```
 excludeProjectId: PROJECT_NAME   # omit prospects already linked to this project
@@ -98,7 +98,7 @@ If the user says "drop some", iterate once with another `AskUserQuestion` listin
 
 ### 6. Link the approved prospects
 
-Call `mcp__plugin_leadace_leadace__link_existing_prospects_to_project`:
+Call `link_existing_prospects_to_project`:
 
 ```
 projectId: PROJECT_NAME

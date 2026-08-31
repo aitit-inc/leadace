@@ -31,7 +31,7 @@ When `MODE = A` and Step 4-0 yields a URL, treat the rest of Step 4 as `MODE = B
 
 Project ID: `$0` (required, set by the caller).
 
-Call `mcp__plugin_leadace_leadace__list_projects`. If `$0` does not exist:
+Call `list_projects`. If `$0` does not exist:
 - Mode A → when run via `/leadace` the project is already resolved; if `$0` does not exist, abort and tell the user to run `/leadace <url>` to set it up first.
 - Mode B → the onboarding chain just created the project in env_check Step 3; this branch is unreachable. If reached, abort with internal error and ask the user to re-run.
 
@@ -54,10 +54,10 @@ Use `ENV_SUMMARY` for three things only:
 ## Step 3. Check Existing Documents & Determine Sub-mode
 
 Call in parallel:
-- `mcp__plugin_leadace_leadace__get_document` with `slug: "business"`
-- `mcp__plugin_leadace_leadace__get_document` with `slug: "sales_strategy"`
-- `mcp__plugin_leadace_leadace__get_project_settings`
-- `mcp__plugin_leadace_leadace__get_tenant_settings`
+- `get_document` with `slug: "business"`
+- `get_document` with `slug: "sales_strategy"`
+- `get_project_settings`
+- `get_tenant_settings`
 
 If any document call returns "Project not found", abort and instruct the user to run `/leadace <url>` to set up the project.
 
@@ -215,7 +215,7 @@ Both stay in SALES_STRATEGY.md "Sender Information". The sender identity recipie
 
 Save the values the user actually chose:
 ```
-mcp__plugin_leadace_leadace__update_project_settings
+update_project_settings
   projectId: "$0"
   outboundChannels: ["email", ...]   # a NON-EMPTY subset; see guard below. Omit to keep the all-channels default
   targetCountries: ["US", ...]       # omit entirely unless the user is restricting delivery
@@ -228,7 +228,7 @@ Guards:
 #### 4-9. Scheduling and Response Definition
 - Scheduling link(s) (Calendly / Cal.com / HubSpot Meetings — URL; "None" if N/A; multiple OK).
 - Response definition: what counts as a "response". Options: (1) Direct email reply, (2) Scheduling completion notification, (3) Reply via contact form. Confirm or extend.
-- Scheduling service name(s). **Auto-resolve notification domain**: call `mcp__plugin_leadace_leadace__get_master_document` with `slug: "ref_scheduling_services"`, look up each named service, record the domain in SALES_STRATEGY.md without asking (e.g., `Calendly — calendly.com`). Only ask if not in the reference list.
+- Scheduling service name(s). **Auto-resolve notification domain**: call `get_master_document` with `slug: "ref_scheduling_services"`, look up each named service, record the domain in SALES_STRATEGY.md without asking (e.g., `Calendly — calendly.com`). Only ask if not in the reference list.
 - "Up to you" → defaults: (1)(2)(3).
 
 #### 4-10. Inquiry Landing Extras
@@ -283,7 +283,7 @@ One thing the review must not fudge:
 
 Write the approved setup in one pass. **Include a field only when it has a value; never send `null`** — an omitted field keeps whatever is stored, a `null` clears it.
 ```
-mcp__plugin_leadace_leadace__update_project_settings
+update_project_settings
   projectId: "$0"
   outboundChannels: ["email"]     # BROWSER_AUTOMATION: other → ["email","form"]; none/unsure → ["email"]; chrome → omit (all). Never []
   targetLanguage: "ja"            # only for a Japanese audience; omit for the "en" default
@@ -309,12 +309,12 @@ If the caller's `allowed-tools` does not include `WebSearch`, skip this step.
 
 ## Step 6. Generate / Update BUSINESS.md
 
-- **Initial** (both modes): Retrieve template via `mcp__plugin_leadace_leadace__get_master_document` with `slug: "tpl_business"`. Generate document following its structure, filled from collected/inferred data.
+- **Initial** (both modes): Retrieve template via `get_master_document` with `slug: "tpl_business"`. Generate document following its structure, filled from collected/inferred data.
 - **Update** (Mode A only): Use existing content from Step 3 `get_document`. Reflect changes / additions only. Keep unchanged sections.
 
 Save:
 ```
-mcp__plugin_leadace_leadace__save_document
+save_document
   projectId: "$0"
   slug: "business"
   content: <full markdown>
@@ -336,7 +336,7 @@ Also retrieve via `get_master_document` to improve quality:
 
 Save:
 ```
-mcp__plugin_leadace_leadace__save_document
+save_document
   projectId: "$0"
   slug: "sales_strategy"
   content: <full markdown>
@@ -346,7 +346,7 @@ mcp__plugin_leadace_leadace__save_document
 
 Register the 3-6 named strategies from 4-6 into the project's strategy registry — one call each:
 ```
-mcp__plugin_leadace_leadace__upsert_discovery_strategy
+upsert_discovery_strategy
   projectId: "$0"
   slug: <kebab-case slug>
   approach: <where/how to search and why it should work, 2-5 lines>
@@ -384,7 +384,7 @@ Mode A flow when generating: draft **both** the brief and the one-liner per the 
 
 Save:
 ```
-mcp__plugin_leadace_leadace__update_project_settings
+update_project_settings
   projectId: "$0"
   inquiryChatBrief: <brief>
   inquiryOneLiner: <one-liner>
@@ -409,11 +409,11 @@ Tell the user once: "You can edit the brief / one-liner later in the Web UI → 
 
 **Procedure (when seeding applies):**
 
-1. Read existing variants: `mcp__plugin_leadace_leadace__list_message_variants` with `projectId: "$0"`. If `active.length >= 2` and the sub-mode is anything other than the user explicitly asking for new angles (or a pivot), skip the rest of this step. On a pivot, keep the current active set (each one's `variantId`, `subjectPattern`, `label`) in hand for the archive step.
+1. Read existing variants: `list_message_variants` with `projectId: "$0"`. If `active.length >= 2` and the sub-mode is anything other than the user explicitly asking for new angles (or a pivot), skip the rest of this step. On a pivot, keep the current active set (each one's `variantId`, `subjectPattern`, `label`) in hand for the archive step.
 2. **(Pivot only) Archive the old active set**: for each, call `upsert_message_variant` with its **`variantId` plus its existing `subjectPattern` echoed back unchanged** (both are required on every call — a different / empty `subjectPattern` would rewrite the historic pattern and corrupt that slug's `/evaluate` labels), and `archived: true`.
 3. Generate enough fresh angles to bring the active board to 4 (non-pivot with survivors: `4 − active.length`; pivot: 4) and upsert each:
    ```
-   mcp__plugin_leadace_leadace__upsert_message_variant
+   upsert_message_variant
      projectId: "$0"
      variantId: <stable slug, e.g. "problem_direct" / "proof_led">
      subjectPattern: <pattern>

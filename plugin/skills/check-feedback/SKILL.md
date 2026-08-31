@@ -25,7 +25,7 @@ Return an error if `$0` is empty.
 
 ### 2. Fetch Two Windows in Parallel
 
-Call `mcp__plugin_leadace_leadace__get_rejection_feedback_summary` twice in parallel, both with `scope: "pmf"`:
+Call `get_rejection_feedback_summary` twice in parallel, both with `scope: "pmf"`:
 
 1. `projectId: "$0"`, `windowDays: 30`, `scope: "pmf"` -> recent
 2. `projectId: "$0"`, `scope: "pmf"` (no `windowDays`) -> all-time

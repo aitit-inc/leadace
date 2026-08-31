@@ -78,7 +78,7 @@ Options:
 
 If the user picks **Link to a project**:
 - if `$1` is given, use it as `PROJECT_NAME`.
-- otherwise call `mcp__plugin_leadace_leadace__list_projects` and ask via `AskUserQuestion` (or use the only project if there's just one).
+- otherwise call `list_projects` and ask via `AskUserQuestion` (or use the only project if there's just one).
 - if there are zero projects, abort: "No projects yet. Run `/leadace <your-homepage-URL>` first, or re-run this skill in tenant-asset mode."
 
 If the user picks **Save as tenant assets only**, set `PROJECT_NAME = null` and skip every project-resolution step below.
@@ -106,7 +106,7 @@ For each source column, decide what canonical column it corresponds to. Do not i
   - **Tenant-only mode**: omit the `matchReason` column entirely from the canonical CSV. Don't ask the user — `/match-prospects` will write fresh per-project reasons later.
   - **Project-linked mode**: if the source has no usable `matchReason`, ask the user once for a default ("Why is this list a fit for this project?") and apply it to every row.
 - **`country`** (recommended): map it when the source carries it, with `countrySource` `manual` (source/user-given) or `ai_inferred` (you derived it). If the source has no country at all, don't leave it blank silently — fetch `list_country_codes` (recognized codes + send-allowed flags) and ask the user once whether to apply one default country to all rows or leave them blank. Present that fetched list; don't invent one.
-- **`industry`**: source labels rarely match the controlled vocabulary verbatim — fetch `tpl_industries` via `mcp__plugin_leadace_leadace__get_master_document` and map each source value to its closest entry (`Other` when none fits). Leave the cell blank rather than passing a free-form label through; unmapped values reject the row.
+- **`industry`**: source labels rarely match the controlled vocabulary verbatim — fetch `tpl_industries` via `get_master_document` and map each source value to its closest entry (`Other` when none fits). Leave the cell blank rather than passing a free-form label through; unmapped values reject the row.
 - **`doNotContact` mapping (important)**: if the source has any do-not-contact-like column — common names: `do_not_contact`, `dnc`, `opted_out`, `opt_out`, `unsubscribed`, `unsubscribe`, `is_unsubscribed`, `subscribed=false` — map it to canonical `doNotContact`. Emit `1` for truthy values and leave the cell blank for falsy ones. **Do not silently drop these rows.** They must be imported with the flag set; otherwise `/build-list` may rediscover the same organisation later and the user will outreach to someone who already opted out. Truthy: `1`, `true`, `yes`, `on`, `unsubscribed`, `opted out`. Falsy: `0`, `false`, `no`, `off`, `subscribed`, `active`, blank. If the semantics are ambiguous, ask the user once before mapping.
 - If a row has none of email / contactFormUrl / snsAccounts.* — drop it and report it in the per-row error summary.
 
@@ -139,7 +139,7 @@ If `$2` is `skip` or `overwrite`, use it directly. Otherwise ask via `AskUserQue
 
 ### 7. Upload
 
-`Read` the canonical CSV file back into a string and call `mcp__plugin_leadace_leadace__import_prospects_from_csv`:
+`Read` the canonical CSV file back into a string and call `import_prospects_from_csv`:
 
 - **Project-linked mode**: pass `projectId: PROJECT_NAME` plus `csvText` and `dedupPolicy`.
 - **Tenant-only mode**: omit `projectId` entirely. Pass only `csvText` and `dedupPolicy`. Do not pass an empty string — leave the field out.

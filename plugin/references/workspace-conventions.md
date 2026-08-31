@@ -4,7 +4,7 @@ Common rules for all skills and sub-agents.
 
 ## Data Storage
 
-All project data is stored on the server and accessed via MCP tools (`mcp__plugin_leadace_leadace__*`). There are no local project directories or databases.
+All project data lives on the server behind LeadAce MCP tools. Prose names them by base name (`get_document`); the runtime prefixes them (`mcp__plugin_leadace_leadace__` in Claude Code, `mcp__leadace__` in Cowork, `mcp__claude_ai_leadace__` via a claude.ai connector) — call the prefixed form your tool list shows. Frontmatter tool lists keep full names. There are no local project directories or databases.
 
 - **Structured data** (prospects, outreach logs, responses): Dedicated MCP tools (`add_prospects`, `send_email_and_record`, etc.)
 - **Documents** (business info, sales strategy, search notes, cross-stage learnings): `get_document` / `save_document` MCP tools with slugs: `business`, `sales_strategy`, `search_notes`, `learnings`, plus per-strategy `playbook_<strategy-slug>` documents (see "Playbook documents" below)

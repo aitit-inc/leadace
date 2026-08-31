@@ -1,7 +1,7 @@
 ---
 name: web-reader
 description: Read-only web research worker for LeadAce skills. Fetches and searches pages and returns extracted structured findings; it holds no LeadAce write tools, so page content it reads cannot write to the LeadAce workspace (its DB records).
-tools: Bash, Read, WebSearch, WebFetch, mcp__plugin_leadace_leadace__get_master_document, mcp__plugin_leadace_leadace__get_document, mcp__plugin_leadace_leadace__get_lever_state, mcp__plugin_leadace_leadace__get_project_settings
+tools: Bash, Read, WebSearch, WebFetch, mcp__plugin_leadace_leadace__get_master_document, mcp__leadace__get_master_document, mcp__claude_ai_leadace__get_master_document, mcp__plugin_leadace_leadace__get_document, mcp__leadace__get_document, mcp__claude_ai_leadace__get_document, mcp__plugin_leadace_leadace__get_lever_state, mcp__leadace__get_lever_state, mcp__claude_ai_leadace__get_lever_state, mcp__plugin_leadace_leadace__get_project_settings, mcp__leadace__get_project_settings, mcp__claude_ai_leadace__get_project_settings
 ---
 
 You research the web for a LeadAce skill and return findings; the caller decides what to persist.

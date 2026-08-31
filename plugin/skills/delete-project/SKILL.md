@@ -30,7 +30,7 @@ If the user declines, abort.
 
 ### 3. Delete Project
 
-Call `mcp__plugin_leadace_leadace__delete_project` with `projectId: "$0"`.
+Call `delete_project` with `projectId: "$0"`.
 
 If the tool returns a "Project not found" error, report that the project does not exist and exit.
 

@@ -9,13 +9,13 @@ The caller (the SKILL.md that `Read`s this file) provides:
 - An optional `$0` argument (project name)
 - An optional `$URL` (the user's homepage URL). Its presence means "this is the onboarding chain": it names the project (3-2) and suppresses every prompt here (2-2, 2-2b, 2-3), because the chain asks the user once, later, in one place.
 
-This procedure is authoritative — execute the steps verbatim. Tools used: `mcp__plugin_leadace_leadace__*`, `Read`, `AskUserQuestion`, `Bash`.
+This procedure is authoritative — execute the steps verbatim. Tools used: LeadAce MCP tools, `Read`, `AskUserQuestion`, `Bash`.
 
 ## Step 1. Verify MCP Connection & Plugin Version
 
 ### 1-1. Server version & plugin compatibility
 
-Call `mcp__plugin_leadace_leadace__get_server_version`. The response is `{ serverVersion, minPluginVersion }`.
+Call `get_server_version`. The response is `{ serverVersion, minPluginVersion }`.
 
 `Read` `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and take the `version` field.
 
@@ -27,10 +27,10 @@ Otherwise continue. Hold `SERVER_VERSION`, `PLUGIN_VERSION`, `MIN_PLUGIN_VERSION
 
 ### 1-2. Auth & reachability
 
-Call `mcp__plugin_leadace_leadace__list_projects`. Success proves: MCP reachable, OAuth token valid, user authenticated. Hold the result as `PROJECTS`.
+Call `list_projects`. Success proves: MCP reachable, OAuth token valid, user authenticated. Hold the result as `PROJECTS`.
 
 If the call fails:
-- Tool not available (no `mcp__plugin_leadace_leadace__*` tool is listed) → the plugin's MCP connector is not connected. Claude Desktop: Customize → Plugins → LeadAce → Connectors → Connect, then Customize → Connectors → LeadAce → Connect and sign in with Google. Claude Code CLI: `/plugin` → make sure LeadAce is installed and enabled. Then retry. Abort.
+- No LeadAce tool listed (nothing ends in `__list_projects`) → connector not connected. Claude Desktop: Customize → Plugins → LeadAce → Connectors → Connect, then Customize → Connectors → LeadAce → Connect. Claude Code: `/plugin` → install/enable LeadAce. Abort.
 - Network/unreachable → "Cannot reach the LeadAce MCP server. Check network access to https://mcp.leadace.ai (or the `url` in the plugin's `.mcp.json` for self-hosters)." Abort.
 - Auth/401 → "MCP authentication failed. Sign in again at https://app.leadace.ai, then retry; the plugin will re-prompt the OAuth flow." Abort.
 
@@ -40,7 +40,7 @@ Run automatic detection first, then ask the user only what cannot be detected.
 
 ### 2-1. Gmail SaaS connection (auto)
 
-Call `mcp__plugin_leadace_leadace__get_gmail_status`. Record `connected` (boolean) and `email` (when connected) as `GMAIL_STATUS`.
+Call `get_gmail_status`. Record `connected` (boolean) and `email` (when connected) as `GMAIL_STATUS`.
 
 If not connected: "Open https://app.leadace.ai — a 'Connect Gmail' banner is shown at the top of the page while disconnected; connect to enable email sending. Without this, no emails can be sent unless a custom SMTP mailbox is assigned to the project in the Web UI — you can still proceed with form-only or SNS-only outreach." Do **not** abort.
 
@@ -50,7 +50,7 @@ Use `AskUserQuestion`: "Have you connected the Gmail MCP in claude.ai? (Required
 
 ### 2-2b. Workspace identity / compliance footer (read)
 
-Call `mcp__plugin_leadace_leadace__get_tenant_settings`. Hold the response as `TENANT_SETTINGS`.
+Call `get_tenant_settings`. Hold the response as `TENANT_SETTINGS`.
 
 `legalName`, `physicalAddress`, and `defaultSenderCountry` are mandatory for sending — the first two render into every outgoing message's compliance footer (CAN-SPAM § 5(a)(5), CASL § 6 sender identification), `defaultSenderCountry` is workspace metadata (the sender's own country, unrelated to message language). While any is `(not set)`, every send-side endpoint refuses with HTTP 412. They are set in the Web UI only: https://app.leadace.ai/workspace-settings — never ask for the values in chat.
 
@@ -83,7 +83,7 @@ The script uses standard-library only (no `pip install`), so a working `python3`
 ### 3-1. With `$0` (project name provided)
 
 - If `$0` matches an existing project from `PROJECTS` → use it as-is. Set `PROJECT_NAME = $0`.
-- If `$0` does not exist → call `mcp__plugin_leadace_leadace__setup_project` with `name: "$0"`.
+- If `$0` does not exist → call `setup_project` with `name: "$0"`.
   - On `Project limit reached` → tell the user "Free plan allows 1 project. Delete the existing one with `/delete-project` or upgrade your plan." and **abort**.
   - Set `PROJECT_NAME = $0`.
 

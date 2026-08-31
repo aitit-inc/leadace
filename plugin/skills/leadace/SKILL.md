@@ -60,14 +60,14 @@ After this skill, day-to-day use needs only `/daily-cycle` (which itself fans ou
 Run these in parallel:
 
 - **Plugin version**: `Read` `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and take `version`.
-- **Server version + min plugin**: `mcp__plugin_leadace_leadace__get_server_version` -> `{ serverVersion, minPluginVersion }`.
-- **Project list**: `mcp__plugin_leadace_leadace__list_projects` (may be empty).
-- **Gmail connection** (account-level — a project may send from a custom SMTP mailbox instead): `mcp__plugin_leadace_leadace__get_gmail_status` -> `{ connected, email? }`.
+- **Server version + min plugin**: `get_server_version` -> `{ serverVersion, minPluginVersion }`.
+- **Project list**: `list_projects` (may be empty).
+- **Gmail connection** (account-level — a project may send from a custom SMTP mailbox instead): `get_gmail_status` -> `{ connected, email? }`.
 - **Current date/time**: `Bash` `date '+%Y-%m-%d %H:%M %Z'`.
 - **Runtime detect** (best-effort): `Bash` `printf '%s|%s|%s\n' "${CLAUDE_PLUGIN_ROOT:-?}" "$(command -v codex 2>/dev/null || echo none)" "$([ -d "$HOME/.claude" ] && echo y || echo n)"`. Classify as `claude_code` (most common — `~/.claude` exists), `codex` (codex command found), or `other`.
 
 If `get_server_version` or `list_projects` fails:
-- Tool not available (no `mcp__plugin_leadace_leadace__*` tool is listed) -> the plugin's MCP connector is not connected. Claude Desktop: Customize -> Plugins -> LeadAce -> Connectors -> Connect, then Customize -> Connectors -> LeadAce -> Connect and sign in with Google. Claude Code CLI: `/plugin` -> make sure LeadAce is installed and enabled. Then retry.
+- No LeadAce tool listed (nothing ends in `__list_projects`) -> connector not connected. Claude Desktop: Customize -> Plugins -> LeadAce -> Connectors -> Connect, then Customize -> Connectors -> LeadAce -> Connect. Claude Code: `/plugin` -> install/enable LeadAce. Retry.
 - Network/unreachable -> "Cannot reach the LeadAce MCP server. Check network access to https://mcp.leadace.ai (or the `url` in the plugin's `.mcp.json` for self-hosters)."
 - Auth/401 -> "MCP authentication failed. Sign in again at https://app.leadace.ai, then retry."
 
