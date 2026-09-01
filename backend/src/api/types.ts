@@ -22,7 +22,7 @@ export type Env = {
   UNSUBSCRIBE_TOKEN_SECRET: string
   APP_URL: string
   OPENAI_API_KEY: string
-  // Google AI Studio key for the daily org-signal refresh cron.
+  // Google AI Studio key: daily org-signal refresh cron + onboarding web preview.
   GEMINI_API_KEY: string
   // Absent leaves only the free DNS half of the send-time address check.
   EMAILABLE_API_KEY?: string
@@ -39,6 +39,9 @@ export type Env = {
   // Cloud-only daily KPI digest → Google Chat incoming webhook. Unset everywhere
   // else, where the beta-stats cron no-ops.
   BETA_STATS_WEBHOOK_URL?: string
+  // Project whose numbers the public GET /api/live scoreboard shows (the
+  // operator's own dogfooding project). Unset → /api/live is 404.
+  SHOWCASE_PROJECT_ID?: string
 }
 
 export type Variables = {

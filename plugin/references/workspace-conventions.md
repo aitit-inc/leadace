@@ -7,7 +7,7 @@ Common rules for all skills and sub-agents.
 All project data lives on the server behind LeadAce MCP tools. Prose names them by base name (`get_document`); the runtime prefixes them (`mcp__plugin_leadace_leadace__` in Claude Code, `mcp__leadace__` in Cowork, `mcp__claude_ai_leadace__` via a claude.ai connector) — call the prefixed form your tool list shows. Frontmatter tool lists keep full names. There are no local project directories or databases.
 
 - **Structured data** (prospects, outreach logs, responses): Dedicated MCP tools (`add_prospects`, `send_email_and_record`, etc.)
-- **Documents** (business info, sales strategy, search notes, cross-stage learnings): `get_document` / `save_document` MCP tools with slugs: `business`, `sales_strategy`, `search_notes`, `learnings`, plus per-strategy `playbook_<strategy-slug>` documents (see "Playbook documents" below)
+- **Documents** (business info, sales strategy, search notes, cross-stage learnings): `get_document` / `save_document` MCP tools with slugs: `business`, `sales_strategy`, `search_notes`, `learnings`, plus per-strategy `playbook_<strategy-slug>` documents (see "Playbook documents" below). `public_journal` is the one public document: the daily cycle's wrap-up writes it (one version per cycle) while the project's `publicScoreboardEnabled` setting is on, and the `/live` page shows the latest version
 - **Master documents** (templates, guidelines, frameworks): `get_master_document` MCP tool with slugs like `tpl_business`, `tpl_email_guidelines`, etc. These are shared across all users and updated centrally
 - **Local files**: Only plugin SKILL.md files, local-operation references (claude-in-chrome-guide, form-filling), and scripts in `${CLAUDE_PLUGIN_ROOT}/`
 
@@ -61,7 +61,7 @@ When calling `save_document` (or any MCP tool that persists user-visible documen
 Generated project documents (`business`, `sales_strategy`, `search_notes`, `learnings`) are design / reference artifacts, not activity logs. Keep them lean:
 
 - **Soft length targets** — a document materially past its target is carrying filler or data that belongs elsewhere; trim or relocate. `business` ~60 lines, `sales_strategy` ~180 lines, `search_notes` ~80 lines. `learnings` is bounded by entry count instead (≤15 active; evaluate retires the rest each cycle).
-- **Never persist runtime actuals or per-run history into a document.** Send / draft / response counts, rates, and per-cycle logs live in structured storage (`outreach_logs`, `responses`) and are surfaced in the Web UI (`/evaluations`, `/drafts`, `/outreach`). The `sales_strategy` `## KPI` section holds *target* metrics (the reverse-calc tree) only — never an actuals / KPI-history table. A document that grows an append-only metrics table is a bug.
+- **Never persist runtime actuals or per-run history into a document.** Send / draft / response counts, rates, and per-cycle logs live in structured storage (`outreach_logs`, `responses`) and are surfaced in the Web UI (`/evaluations`, `/drafts`, `/outreach`). The `sales_strategy` `## KPI` section holds *target* metrics (the reverse-calc tree) only — never an actuals / KPI-history table. A document that grows an append-only metrics table is a bug. (`public_journal` is a per-cycle public entry, not a log: each version holds one cycle's day and is never appended to.)
 
 ## Explore wide, output narrow
 

@@ -593,6 +593,7 @@ Most self-hosters will leave Stripe off entirely.
 | `GEMINI_API_KEY` | API | yes | Google AI Studio key (paid tier). Powers the daily org-signal refresh, which reads company pages via Gemini. The daily cron fails without it. |
 | `EMAILABLE_API_KEY` | API | no | Emailable key (pay-as-you-go credits, no subscription). Verifies recipient mailboxes ahead of sending and refuses addresses that provably do not accept mail. Absent leaves only the free DNS half of that check, which still catches domains that went dark after the address was collected. |
 | `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | API | cloud only | Required only when `LEADACE_EDITION=cloud`. Ignored otherwise. |
+| `SHOWCASE_PROJECT_ID` | API | no | Project id the public `/live` scoreboard shows (`GET /api/live`). Only that project's settings show the "Publish a public scoreboard" switch, and it must be on. Unset keeps `/live` off. |
 
 ### Frontend (`frontend/.env` for local; GitHub Variables for production)
 

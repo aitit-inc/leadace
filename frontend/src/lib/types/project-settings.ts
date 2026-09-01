@@ -42,6 +42,9 @@ export type ProjectSettings = {
   inquiryDarkBackground: boolean;
   inquiryCtaType: InquiryCtaType;
   inquiryCtaUrl: string | null;
+  publicScoreboardEnabled: boolean;
+  // Only the project bound to the deployment's SHOWCASE_PROJECT_ID may publish.
+  publicScoreboardEligible: boolean;
   followUpSequence: FollowUpSequence;
   outboundChannels: OutboundChannel[];
   targetCountries: AllowedSendCountry[];

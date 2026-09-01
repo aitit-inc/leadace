@@ -15,7 +15,12 @@ projectSettingsRouter.get(
   '/projects/:id/settings',
   zValidator('param', projectRefParamSchema),
   async (c) => {
-    const result = await getProjectSettings(c.get('db'), c.get('tenantId'), c.req.valid('param').id)
+    const result = await getProjectSettings(
+      c.get('db'),
+      c.get('tenantId'),
+      c.req.valid('param').id,
+      c.env.SHOWCASE_PROJECT_ID ?? null,
+    )
     if (!result.ok) return respondWithError(c, result)
     return c.json(result.value)
   },
@@ -32,6 +37,7 @@ projectSettingsRouter.put(
       c.get('caller'),
       c.req.valid('param').id,
       c.req.valid('json'),
+      c.env.SHOWCASE_PROJECT_ID ?? null,
     )
     if (!result.ok) return respondWithError(c, result)
     return c.json(result.value)

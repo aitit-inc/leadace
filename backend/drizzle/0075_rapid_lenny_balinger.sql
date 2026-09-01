@@ -1,0 +1,1 @@
+ALTER TABLE "project_settings" ADD COLUMN "public_scoreboard_enabled" boolean DEFAULT false NOT NULL;

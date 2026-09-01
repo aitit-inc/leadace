@@ -123,6 +123,9 @@
         outboundChannels: projectSettings.outboundChannels,
         targetCountries: projectSettings.targetCountries,
         targetLanguage: projectSettings.targetLanguage,
+        ...(projectSettings.publicScoreboardEligible
+          ? { publicScoreboardEnabled: projectSettings.publicScoreboardEnabled }
+          : {}),
       };
       await updateProjectSettings<ProjectSettingsData>(
         data.projectId,
@@ -563,6 +566,28 @@
           (quota), so an N-email sequence multiplies send volume by N.
         </p>
       </div>
+
+      {#if s.publicScoreboardEligible}
+        <div class="flex items-start gap-2">
+          <input
+            id="public-scoreboard-enabled"
+            type="checkbox"
+            bind:checked={s.publicScoreboardEnabled}
+            class="mt-0.5"
+          />
+          <label for="public-scoreboard-enabled" class="text-sm text-text">
+            Publish a public scoreboard for this project
+            <span class="block text-xs text-text-secondary">
+              Shows this project's outbound numbers (sends, human replies, reply and bounce
+              rates) and the agent's daily public journal on the unauthenticated
+              <a href="/live" class="underline hover:text-text">/live</a> page. The daily cycle
+              writes the journal only while this is on; third-party names in it are replaced
+              by industry and size, once by the agent and once more on the server. Turning it
+              off takes the page down within five minutes.
+            </span>
+          </label>
+        </div>
+      {/if}
 
       <div class="flex items-center gap-3 pt-2">
         <button

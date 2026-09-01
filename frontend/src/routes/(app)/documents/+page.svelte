@@ -15,6 +15,7 @@
     sales_strategy: 'Sales Strategy',
     search_notes: 'Search Notes',
     learnings: 'Learnings Log',
+    public_journal: 'Public Journal',
   };
 
   let { data }: PageProps = $props();

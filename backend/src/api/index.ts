@@ -29,9 +29,11 @@ import { authRouter } from './routes/auth'
 import { notificationsRouter } from './routes/notifications'
 import { accountRouter } from './routes/account'
 import { bugReportsRouter } from './routes/bug-reports'
+import { webPreviewRouter } from './routes/web-preview'
 import { stripeWebhookRouter } from './routes/stripe-webhook'
 import { unsubscribeRouter } from './routes/unsubscribe'
 import { inquiryRouter } from './routes/inquiry'
+import { liveRouter } from './routes/live'
 import { createDb } from '../db/connection'
 import { runDailySignalRefresh } from '../services/org-signals'
 import { runDailyBetaStats } from '../services/beta-stats'
@@ -63,6 +65,10 @@ app.route('/api', unsubscribeRouter)
 // short_id as auth; `/inquiry/preview` re-attaches auth+rls inline.
 app.route('/api', inquiryRouter)
 
+// Public scoreboard — no auth; serves only the SHOWCASE_PROJECT_ID project and
+// only while that project opted in (publicScoreboardEnabled).
+app.route('/api', liveRouter)
+
 // All routes below require authentication + tenant-scoped RLS
 app.use('/api/*', authMiddleware)
 app.use('/api/*', rlsMiddleware)
@@ -91,6 +97,7 @@ app.route('/api', authRouter)
 app.route('/api', notificationsRouter)
 app.route('/api', accountRouter)
 app.route('/api', bugReportsRouter)
+app.route('/api', webPreviewRouter)
 
 app.onError((err, c) => {
   console.error(err)

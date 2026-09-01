@@ -12,8 +12,13 @@ import { playbookStrategySlug } from '../domain/discovery-sources'
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { resolveAddMeansSuggestion } from './suggestions'
+import { PUBLIC_JOURNAL_SLUG } from './public-scoreboard'
+import { redactPublicJournal } from './public-journal'
+import type { OpenAIEnv } from './openai'
 
-const DOCUMENT_SLUGS = ['business', 'sales_strategy', 'search_notes', 'learnings'] as const
+// public_journal: one version per daily cycle, served on /live while the
+// project's publicScoreboardEnabled setting is on.
+const DOCUMENT_SLUGS = ['business', 'sales_strategy', 'search_notes', 'learnings', PUBLIC_JOURNAL_SLUG] as const
 
 function isWritableSlug(slug: string): boolean {
   return (DOCUMENT_SLUGS as readonly string[]).includes(slug) || playbookStrategySlug(slug) !== null
@@ -167,6 +172,7 @@ export async function saveDocument(
   db: Db,
   tenantId: TenantId,
   caller: 'browser' | 'mcp',
+  env: OpenAIEnv,
   param: DocumentParam,
   input: SaveDocumentInput,
 ): Promise<ServiceResult<SaveDocumentResult>> {
@@ -182,10 +188,14 @@ export async function saveDocument(
   if (!resolved.ok) return resolved
   const projectId = resolved.value
 
+  const content =
+    slug === PUBLIC_JOURNAL_SLUG ? await redactPublicJournal(env, input.content) : ok(input.content)
+  if (!content.ok) return content
+
   const approvedAt = caller === 'browser' ? new Date() : null
   const [doc] = await db
     .insert(projectDocuments)
-    .values({ tenantId, projectId, slug, content: input.content, approvedAt })
+    .values({ tenantId, projectId, slug, content: content.value, approvedAt })
     .returning({
       id: projectDocuments.id,
       createdAt: projectDocuments.createdAt,

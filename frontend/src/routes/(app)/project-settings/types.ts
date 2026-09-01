@@ -16,6 +16,8 @@ export type ProjectSettingsData = {
   footerOverride: string | null;
   footerDefault: string | null;
   inquiryLandingEnabled: boolean;
+  publicScoreboardEnabled: boolean;
+  publicScoreboardEligible: boolean;
   followUpSequence: FollowUpSequence;
   outboundChannels: OutboundChannel[];
   targetCountries: AllowedSendCountry[];

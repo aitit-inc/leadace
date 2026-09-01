@@ -52,6 +52,7 @@ export const updateSettingsSchema = z
     inquiryDarkBackground: z.boolean().optional(),
     inquiryCtaType: z.enum(INQUIRY_CTA_TYPES).optional(),
     inquiryCtaUrl: z.url().max(500).refine(isHttpsUrl, HTTPS_ONLY_MSG).nullable().optional(),
+    publicScoreboardEnabled: z.boolean().optional(),
     // Bounds keep the skill / SaaS UI from pathological values that would
     // either spam (low) or freeze pipelines (very high).
     maxReapproachCycles: z.coerce.number().int().min(1).max(10).optional(),
@@ -91,6 +92,7 @@ const UI_ONLY_SETTINGS = [
   'inquiryDarkBackground',
   'inquiryCtaType',
   'inquiryCtaUrl',
+  'publicScoreboardEnabled',
 ] as const satisfies readonly (keyof UpdateSettingsPatch)[]
 
 // The settings row is seeded on project creation and backfilled for existing
@@ -122,6 +124,7 @@ const settingsCols = {
   inquiryDarkBackground: projectSettings.inquiryDarkBackground,
   inquiryCtaType: projectSettings.inquiryCtaType,
   inquiryCtaUrl: projectSettings.inquiryCtaUrl,
+  publicScoreboardEnabled: projectSettings.publicScoreboardEnabled,
   maxReapproachCycles: projectSettings.maxReapproachCycles,
   unspecifiedRecontactWindowMonths: projectSettings.unspecifiedRecontactWindowMonths,
   noResponseRecycleDays: projectSettings.noResponseRecycleDays,
@@ -154,6 +157,10 @@ export type ProjectSettingsRow = {
   inquiryDarkBackground: boolean
   inquiryCtaType: InquiryCtaType
   inquiryCtaUrl: string | null
+  publicScoreboardEnabled: boolean
+  // True only for the project GET /api/live is bound to (SHOWCASE_PROJECT_ID);
+  // the Web UI shows the publish switch to that project alone.
+  publicScoreboardEligible: boolean
   maxReapproachCycles: number
   unspecifiedRecontactWindowMonths: number
   noResponseRecycleDays: number
@@ -312,6 +319,7 @@ export async function getProjectSettings(
   db: Db,
   tenantId: TenantId,
   projectRef: ProjectRef,
+  showcaseProjectId: string | null,
 ): Promise<ServiceResult<ProjectSettingsRow>> {
   const resolved = await resolveProject(db, tenantId, projectRef)
   if (!resolved.ok) return resolved
@@ -329,6 +337,7 @@ export async function getProjectSettings(
     ...r,
     projectId: r.projectId as ProjectId,
     footerDefault: footerDefault.value,
+    publicScoreboardEligible: projectId === showcaseProjectId,
     outboundChannels: r.outboundChannels as OutboundChannel[],
     followUpSequence: followUpSequenceSchema.parse(r.followUpSequence),
   })
@@ -340,6 +349,7 @@ export async function updateProjectSettings(
   caller: 'browser' | 'mcp',
   projectRef: ProjectRef,
   patch: UpdateSettingsPatch,
+  showcaseProjectId: string | null,
 ): Promise<ServiceResult<ProjectSettingsRow>> {
   if (caller === 'mcp') {
     const blocked = UI_ONLY_SETTINGS.filter((k) => patch[k] !== undefined)
@@ -350,6 +360,14 @@ export async function updateProjectSettings(
   const resolved = await resolveProject(db, tenantId, projectRef)
   if (!resolved.ok) return resolved
   const projectId = resolved.value
+
+  if (patch.publicScoreboardEnabled === true && projectId !== showcaseProjectId) {
+    return err(
+      'UNPROCESSABLE',
+      'Only the showcase project can publish a scoreboard',
+      'GET /api/live serves the project named by SHOWCASE_PROJECT_ID; this project is not it.',
+    )
+  }
 
   // type='signup' requires a URL. The pre-load gives a friendly 400 in the
   // single-writer case; the atomic guarantee is chk_inquiry_cta_signup_requires_url
@@ -435,6 +453,9 @@ export async function updateProjectSettings(
     ...(patch.inquiryDarkBackground !== undefined ? { inquiryDarkBackground: patch.inquiryDarkBackground } : {}),
     ...(patch.inquiryCtaType !== undefined ? { inquiryCtaType: patch.inquiryCtaType } : {}),
     ...(patch.inquiryCtaUrl !== undefined ? { inquiryCtaUrl: patch.inquiryCtaUrl } : {}),
+    ...(patch.publicScoreboardEnabled !== undefined
+      ? { publicScoreboardEnabled: patch.publicScoreboardEnabled }
+      : {}),
     ...(patch.maxReapproachCycles !== undefined ? { maxReapproachCycles: patch.maxReapproachCycles } : {}),
     ...(patch.unspecifiedRecontactWindowMonths !== undefined ? { unspecifiedRecontactWindowMonths: patch.unspecifiedRecontactWindowMonths } : {}),
     ...(patch.noResponseRecycleDays !== undefined ? { noResponseRecycleDays: patch.noResponseRecycleDays } : {}),
@@ -476,6 +497,7 @@ export async function updateProjectSettings(
     ...r,
     projectId: r.projectId as ProjectId,
     footerDefault: footerDefault.value,
+    publicScoreboardEligible: projectId === showcaseProjectId,
     outboundChannels: r.outboundChannels as OutboundChannel[],
     followUpSequence: followUpSequenceSchema.parse(r.followUpSequence),
   })

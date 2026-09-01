@@ -510,6 +510,10 @@ export const projectSettings = pgTable('project_settings', {
   // notify-only. For 'signup' mode this is the SaaS signup page URL and
   // is required (the route layer rejects 'signup' + null).
   inquiryCtaUrl: text('inquiry_cta_url'),
+  // Publishes this project's outbound numbers and its `public_journal`
+  // document on the unauthenticated /live page; the daily cycle writes the
+  // journal only while this is on. Web UI only.
+  publicScoreboardEnabled: boolean('public_scoreboard_enabled').notNull().default(false),
   // Hard cap on rejection cycles before forcing 'rejected' + DNC ratchet.
   maxReapproachCycles: smallint('max_reapproach_cycles').notNull().default(3),
   // Months to defer when rejection feedback's preferred_recontact_window is
@@ -1093,9 +1097,9 @@ export const inquiryMessages = pgTable('inquiry_messages', {
 ])
 
 // Fixed-window abuse counters (LLM-backed chat endpoints, operator notifications).
-// 'inquiry_link' keys by short_id; 'preview' and 'notification' key by the
-// tenant id.
-export type ChatRateScope = 'inquiry_link' | 'preview' | 'notification'
+// 'inquiry_link' keys by short_id; 'preview', 'notification' and
+// 'web_preview' key by the tenant id.
+export type ChatRateScope = 'inquiry_link' | 'preview' | 'notification' | 'web_preview'
 
 export const chatRateWindows = pgTable('chat_rate_windows', {
   tenantId: text('tenant_id')
@@ -1112,13 +1116,29 @@ export const chatRateWindows = pgTable('chat_rate_windows', {
   }),
 ])
 
+// One row per generated onboarding web preview (URL -> ICP + first cold
+// emails); the newest row is what /onboarding re-renders after a reload or
+// an OAuth round trip. `result` mirrors services/web-preview.ts WebPreviewResult.
+export const webPreviews = pgTable('web_previews', {
+  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  url: text('url').notNull(),
+  result: jsonb('result').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_web_previews_latest').on(table.tenantId, table.createdAt),
+])
+
 export const projectDocuments = pgTable('project_documents', {
   id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
   tenantId: text('tenant_id')
     .notNull()
     .references(() => tenants.id, { onDelete: 'cascade' }),
   projectId: text('project_id').notNull(),
-  // Known values: "business", "sales_strategy", "search_notes".
+  // Known values: "business", "sales_strategy", "search_notes", "learnings",
+  // "public_journal", "playbook_<strategy-slug>" (allowlist: services/documents.ts).
   slug: text('slug').notNull(),
   content: text('content').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),

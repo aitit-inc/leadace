@@ -85,3 +85,8 @@ STRIPE_WEBHOOK_SECRET=""
 # send + receive loop without touching real prospects. Leave empty for
 # normal local dev so emails go to their actual recipients.
 E2E_RECIPIENT_OVERRIDE=""
+
+# --- Public scoreboard (optional) ---
+# Project id shown on the unauthenticated /live page (GET /api/live). Leave
+# empty to keep /live off.
+SHOWCASE_PROJECT_ID=""

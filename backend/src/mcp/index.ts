@@ -1444,7 +1444,7 @@ export function buildToolRegistry(): ToolDef[] {
     'Get the latest version of a project document by slug. For playbook_<strategy-slug> the latest version the user approved in the Web UI; a playbook with only unapproved versions answers that it is not usable yet.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
-      slug: z.string().describe('Document slug: "business", "sales_strategy", "search_notes", "learnings", or "playbook_<strategy-slug>"'),
+      slug: z.string().describe('Document slug: "business", "sales_strategy", "search_notes", "learnings", "public_journal", or "playbook_<strategy-slug>"'),
     },
     async ({ projectId, slug }, { apiUrl, authHeader }) => {
       const { ok, status, data } = await callApi('GET', `/projects/${encodeURIComponent(projectId)}/documents/${slug}`, null, apiUrl, authHeader)
@@ -1466,10 +1466,10 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'save_document',
-    'Save a project document by slug as a new immutable version; prior versions preserved. A playbook_<strategy-slug> version saved here stays pending until the user approves it in the Web UI → Documents; skills follow only approved playbook versions.',
+    'Save a project document by slug as a new immutable version; prior versions preserved. A playbook_<strategy-slug> version saved here stays pending until the user approves it in the Web UI → Documents; skills follow only approved playbook versions. public_journal is anonymized server-side (third-party names → industry + role/size) before it is stored.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
-      slug: z.string().describe('Document slug: "business", "sales_strategy", "search_notes", "learnings", or "playbook_<strategy-slug>"'),
+      slug: z.string().describe('Document slug: "business", "sales_strategy", "search_notes", "learnings", "public_journal", or "playbook_<strategy-slug>"'),
       content: z.string().describe('Full markdown content of the document'),
     },
     async ({ projectId, slug, content }, { apiUrl, authHeader }) => {
@@ -1660,7 +1660,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_project_settings',
-    'Get user-editable project settings as JSON (outboundMode, sender identity, unsubscribeEnabled, footerOverride, inquiry-landing config, follow-up/recycle windows, outboundChannels, targetCountries, targetLanguage). Fields the user never set carry their column defaults; 404 when the project does not exist.',
+    'Get user-editable project settings as JSON (outboundMode, sender identity, unsubscribeEnabled, footerOverride, inquiry-landing config, publicScoreboardEnabled, follow-up/recycle windows, outboundChannels, targetCountries, targetLanguage). Fields the user never set carry their column defaults; 404 when the project does not exist.',
     { projectId: z.string().min(1).describe('Project name or ID') },
     async ({ projectId }, { apiUrl, authHeader }) => {
       const { ok, data } = await callApi('GET', `/projects/${encodeURIComponent(projectId)}/settings`, null, apiUrl, authHeader)
@@ -1674,7 +1674,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'update_project_settings',
-    'Update the project settings the agent owns. Any omitted field keeps its current value; null clears nullable fields. Outbound mode, sender identity, footer override and the landing CTA / media / branding are Web UI only (Project / Inquiry settings) — propose them to the user instead.',
+    'Update the project settings the agent owns. Any omitted field keeps its current value; null clears nullable fields. Outbound mode, sender identity, footer override, the landing CTA / media / branding and publicScoreboardEnabled are Web UI only (Project / Inquiry settings) — propose them to the user instead.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       unsubscribeEnabled: z.boolean().optional()

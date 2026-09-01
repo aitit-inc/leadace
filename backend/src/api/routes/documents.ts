@@ -68,6 +68,7 @@ documentsRouter.put(
       c.get('db'),
       c.get('tenantId'),
       c.get('caller'),
+      { OPENAI_API_KEY: c.env.OPENAI_API_KEY },
       c.req.valid('param'),
       c.req.valid('json'),
     )

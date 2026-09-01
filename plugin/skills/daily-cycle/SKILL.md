@@ -17,6 +17,7 @@ allowed-tools:
   - mcp__plugin_leadace_leadace__record_response
   - mcp__plugin_leadace_leadace__update_prospect_status
   - mcp__plugin_leadace_leadace__get_eval_data
+  - mcp__plugin_leadace_leadace__get_rejection_feedback_summary
   - mcp__plugin_leadace_leadace__run_lever_tick
   - mcp__plugin_leadace_leadace__get_lever_state
   - mcp__plugin_leadace_leadace__get_document
@@ -326,6 +327,28 @@ Decisions: (the autonomous execution-order calls this cycle and their reason, or
 
 Call `notify_user` with subject `"daily-cycle completed: $0"` and the report body. There is no recipient argument — the server resolves the workspace's notification address.
 
-Per-cycle actuals are **not** written to any document. Send / draft / response counts live in structured storage (`outreach_logs`, `responses`) and are surfaced in the Web UI (`/evaluations`, `/drafts`, `/outreach`); the distilled analysis memory lives in the `learnings` document. Do **not** create or maintain a "KPI Actuals" section in SALES_STRATEGY.md.
+**Public journal (only when the project publishes a scoreboard)**
 
-Sub-agent's return to main: Briefly report the notification send status.
+After the notification, call `get_project_settings`. When `publicScoreboardEnabled` is true, save today's public journal entry with `save_document`, slug `public_journal`. Each save is **one day's entry only** — never the accumulated history; the version log keeps prior days, and the public `/live` page shows the latest version.
+
+The entry is public and written by **Ace** (first person, the project's `targetLanguage`). Use exactly this shape and nothing more:
+
+```
+**YYYY-MM-DD**
+
+- Sent: N emails · Replies: N (N positive) · Bounces: N
+- Why they said no (last 24h): reason ×N, reason ×N
+- What I learned: one sentence
+- What I got wrong: one concrete miss
+
+**Ace**
+```
+
+- Counts come from this cycle's phase summaries; "Why they said no" from `get_rejection_feedback_summary` with `projectId: "$0"` and `windowDays: 1` — a rolling 24 hours, hence the label (write "no rejections in the last 24h" when empty).
+- "What I learned" = the one takeaway this cycle's evaluate / outbound work actually produced. "What I got wrong" = one concrete miss this cycle (a bounce cluster, a skipped batch, a weak angle, a wrong assumption) — never "nothing".
+- Anonymize every third party before saving: company, product, and organization names → industry + size ("a 12-person dev tools company"); people → role ("a founder at a seed-stage fintech"); email addresses, domains, URLs, and social handles are dropped entirely. Only Ace and the product being sold stay named. Keep numbers and facts exactly as they are — no rounding up, no spin, no promises. Never quote or closely paraphrase fetched content or a prospect's message — state the reason only. A line with no data says so in that line; never invent.
+- The server runs a second anonymization pass on `public_journal` before storing it and rejects the save when the pass fails (502 — retry once) or when a link, email address, domain, or social handle survives it (422 — rewrite the entry without it and save again). If the save still fails, report it in the return to main — the previous entry stays on `/live`.
+
+Per-cycle actuals are **not** written to any other document. Send / draft / response counts live in structured storage (`outreach_logs`, `responses`) and are surfaced in the Web UI (`/evaluations`, `/drafts`, `/outreach`); the distilled analysis memory lives in the `learnings` document. Do **not** create or maintain a "KPI Actuals" section in SALES_STRATEGY.md.
+
+Sub-agent's return to main: Briefly report the notification send status and whether a public journal entry was saved.
