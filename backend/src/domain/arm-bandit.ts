@@ -6,6 +6,7 @@ export type ArmStat = {
 
 export type ArmArchiveDecision = {
   armId: string
+  // Dominance archive: P(best) among the mature arms; stagnation: among all active arms.
   pBest: number
   n: number
   // Absent = dominance archive (P(best) below threshold at maturity).
@@ -118,21 +119,25 @@ const posteriorMean = (a: ArmStat): number =>
 
 // The floor rescues an arm sunk by early bad luck: a low-P(best) arm with
 // n < minSamplePerArm can never reach the archive gate, and without a floor
-// it would draw ~no sends and stay a zombie forever.
+// it would draw ~no sends and stay a zombie forever. The floor is a share of
+// the final vector: every survivor keeps at least `floor`, the remainder is
+// apportioned by P(best). Flooring before normalizing let the share sink as
+// arms accumulated (four arms at 0.1 came out at 0.087).
 export function floorAndNormalize(
   survivors: ArmStat[],
   pBest: Record<string, number>,
   floor: number,
 ): Record<string, number> {
-  const raw: Record<string, number> = {}
-  for (const a of survivors) raw[a.armId] = Math.max(pBest[a.armId]!, floor)
-  const total = survivors.reduce((acc, a) => acc + raw[a.armId]!, 0)
+  const k = survivors.length
+  if (k === 0) return {}
   // Uniform, not throw: dividing would persist NaN weights that silently
   // wedge weightedDraw on the last arm.
-  if (total <= 0) {
-    return Object.fromEntries(survivors.map((a) => [a.armId, 1 / survivors.length]))
-  }
-  return Object.fromEntries(survivors.map((a) => [a.armId, raw[a.armId]! / total]))
+  const uniform = (): Record<string, number> => Object.fromEntries(survivors.map((a) => [a.armId, 1 / k]))
+  const remainder = 1 - k * floor
+  if (remainder <= 0) return uniform()
+  const total = survivors.reduce((acc, a) => acc + pBest[a.armId]!, 0)
+  if (total <= 0) return uniform()
+  return Object.fromEntries(survivors.map((a) => [a.armId, floor + remainder * (pBest[a.armId]! / total)]))
 }
 
 // An id absent from the stored vector (registered since the last tick) enters
@@ -163,12 +168,20 @@ export function computeArmWeights(
 
   const pBest = computePBest(sorted, rng, samples)
 
-  // Archive on mature data only; never below 2 active arms. When more arms
-  // qualify than may go, shed the worst P(best) first; clear losers often tie
-  // at P(best) = 0, so the posterior mean breaks the tie deterministically.
-  const candidates = sorted
-    .filter((a) => a.total >= params.minSamplePerArm && pBest[a.armId]! < params.archiveThreshold)
-    .map((a) => ({ decision: { armId: a.armId, pBest: pBest[a.armId]!, n: a.total }, mean: posteriorMean(a) }))
+  // The archive verdict compares mature arms only. An immature arm's posterior
+  // is mostly prior (Beta(1, 1) at n = 0 draws around 0.5), and against it
+  // every measured arm at a realistic reply rate is a sure loser — one unsent
+  // strategy was enough to archive the only arm with replies. Never below 2
+  // active arms. When more arms qualify than may go, shed the worst P(best)
+  // first; clear losers often tie at P(best) = 0, so the posterior mean breaks
+  // the tie deterministically.
+  const mature = sorted.filter((a) => a.total >= params.minSamplePerArm)
+  // Same population → same estimate: a re-roll on the advanced stream could
+  // disagree with the audited pBest right at the threshold.
+  const pBestMature = mature.length === sorted.length ? pBest : computePBest(mature, rng, samples)
+  const candidates = mature
+    .filter((a) => pBestMature[a.armId]! < params.archiveThreshold)
+    .map((a) => ({ decision: { armId: a.armId, pBest: pBestMature[a.armId]!, n: a.total }, mean: posteriorMean(a) }))
   const maxArchivable = Math.max(0, k - 2)
   const toArchive: ArmArchiveDecision[] = (
     candidates.length > maxArchivable
