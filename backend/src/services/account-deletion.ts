@@ -8,6 +8,7 @@ import {
 } from '../db/schema'
 import { createDb, type Db } from '../db/connection'
 import type { TenantId } from '../domain/ids'
+import { revokeUserFamilies } from './mcp-sessions'
 import { ok, err, type ServiceResult } from './result'
 import { stripeApiRequest } from './stripe-api'
 
@@ -40,6 +41,7 @@ export type DeleteAccountConfig = {
   // against their own Supabase. tenant cascade still runs.
   adminKey: string | null
   stripeKey: string | null
+  mcpOauthStore: KVNamespace
 }
 
 // Stripe cancel → DB cascade → auth.users delete. auth.users is best-effort
@@ -91,6 +93,14 @@ export async function deleteOwnAccount(
     })
   } catch (e) {
     console.error('account-deletion: survey insert failed', e)
+  }
+
+  // Best-effort like the auth.users delete below: a plugin left configured
+  // would otherwise keep refreshing its MCP token for up to 30 days.
+  try {
+    await revokeUserFamilies(cfg.mcpOauthStore, userId)
+  } catch (e) {
+    console.error('account-deletion: MCP session revoke failed', { userId, e })
   }
 
   if (cfg.adminKey) {

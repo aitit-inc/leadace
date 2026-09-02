@@ -40,6 +40,7 @@ accountRouter.delete(
         supabaseUrl: c.env.SUPABASE_URL,
         stripeKey,
         adminKey,
+        mcpOauthStore: c.env.MCP_OAUTH_STORE,
       },
       c.get('db'),
       c.get('tenantId'),

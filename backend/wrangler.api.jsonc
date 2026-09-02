@@ -22,8 +22,10 @@
   //   STRIPE_SECRET_KEY
   //   STRIPE_WEBHOOK_SECRET
   //   SUPABASE_SERVICE_ROLE_KEY   (cloud only; REQUIRED on cloud for DELETE
-  //                                /me/account. Self-host can omit. Supabase
-  //                                Dashboard → Settings → API → service_role.)
+  //                                /me/account and for refusing to provision a
+  //                                tenant for a deleted auth user. Self-host can
+  //                                omit. Supabase Dashboard → Settings → API →
+  //                                service_role.)
   //   GOOGLE_CLIENT_ID            (Google Cloud Console → OAuth Client → Web application)
   //   GOOGLE_CLIENT_SECRET        (paired with GOOGLE_CLIENT_ID, used for refresh_token exchange)
   //   GMAIL_TOKEN_ENCRYPTION_KEY  (random 32+ char passphrase; used as pgp_sym_encrypt key)
@@ -42,6 +44,15 @@
   //   SENTRY_DSN                  (cloud-only error tracking. Set on the hosted deploy to send
   //                                unhandled errors to Sentry; unset for local/self-host, where
   //                                Sentry is a no-op — see src/api/index.ts withSentry wrapper.)
+  // Same namespace as lead-ace-mcp: DELETE /me/account revokes the user's MCP
+  // token families here so a plugin left configured stops refreshing. Local dev:
+  // wrangler simulates KV regardless of the id.
+  "kv_namespaces": [
+    {
+      "binding": "MCP_OAUTH_STORE",
+      "id": "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+    }
+  ],
   // Daily org-signal refresh: runs the signal extractor across all stale
   // organizations once a day. The handler is `scheduled` in src/api/index.ts.
   // 03:00 UTC stays out of US/EU business hours; the per-run cap inside

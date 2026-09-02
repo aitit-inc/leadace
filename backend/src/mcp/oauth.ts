@@ -20,6 +20,7 @@
 import { SignJWT } from 'jose'
 import { z } from 'zod'
 import { MCP_AUDIENCE, verifyJwt } from '../auth/verify-jwt'
+import { isFamilyRevoked, kvJson, mcpFamilies, mcpUserFamilies, revokeFamily } from '../services/mcp-sessions'
 
 // Supabase tokens carry `aud: 'authenticated'`; MCP-minted ones `aud: 'mcp'`
 // — lets /authorize/finalize and /sessions* refuse MCP-issued tokens.
@@ -55,26 +56,6 @@ interface McpRefreshTombstone {
   familyId: string
 }
 
-// Per-family metadata for revocation + the Settings page session list.
-// One family is created per /authorize → /token exchange and persists
-// across rotations within that session.
-interface McpFamily {
-  ownerUserId: string
-  clientId: string
-  clientName: string | null
-  createdAt: number
-  lastSeenAt: number
-  // Once set, every token in the family is rejected on next refresh.
-  revokedAt?: number
-  revokedReason?: 'reuse' | 'revoke_endpoint' | 'user_revoke'
-}
-
-// Per-user index of family IDs, for the Settings page session list. KV
-// doesn't support efficient list-by-user, so we maintain this manually.
-interface McpUserFamilies {
-  familyIds: string[]
-}
-
 interface RegisteredClient {
   client_id: string
   redirect_uris: string[]
@@ -94,27 +75,13 @@ const REFRESH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30
 // align with REFRESH_TOKEN_TTL_SECONDS so reuse is detectable for the full
 // lifetime of any sibling token.
 const REFRESH_TOMBSTONE_TTL_SECONDS = REFRESH_TOKEN_TTL_SECONDS
-const FAMILY_TTL_SECONDS = 60 * 60 * 24 * 30
-const USER_FAMILY_INDEX_TTL_SECONDS = 60 * 60 * 24 * 30
 const ACCESS_TOKEN_TTL_SECONDS = 60 * 60
-
-function kvJson<T>(prefix: string, ttlSeconds: number) {
-  const k = (id: string) => `${prefix}:${id}`
-  return {
-    get: (kv: KVNamespace, id: string) => kv.get<T>(k(id), 'json'),
-    put: (kv: KVNamespace, id: string, value: T) =>
-      kv.put(k(id), JSON.stringify(value), { expirationTtl: ttlSeconds }),
-    del: (kv: KVNamespace, id: string) => kv.delete(k(id)),
-  }
-}
 
 const authCodes = kvJson<AuthCode>('code', AUTH_CODE_TTL_SECONDS)
 const authSessions = kvJson<AuthSession>('session', AUTH_SESSION_TTL_SECONDS)
 const registeredClients = kvJson<RegisteredClient>('client', CLIENT_TTL_SECONDS)
 const mcpRefreshes = kvJson<McpRefresh>('mcprefresh', REFRESH_TOKEN_TTL_SECONDS)
 const mcpRefreshTombs = kvJson<McpRefreshTombstone>('mcprefreshtomb', REFRESH_TOMBSTONE_TTL_SECONDS)
-const mcpFamilies = kvJson<McpFamily>('mcpfamily', FAMILY_TTL_SECONDS)
-const mcpUserFamilies = kvJson<McpUserFamilies>('mcpuserfam', USER_FAMILY_INDEX_TTL_SECONDS)
 
 function oauthError(code: string, status: number, description?: string): Response {
   return Response.json(
@@ -519,22 +486,6 @@ async function touchUserFamily(kv: KVNamespace, userId: string, familyId: string
   await mcpUserFamilies.put(kv, userId, { familyIds })
 }
 
-async function revokeFamily(
-  kv: KVNamespace,
-  familyId: string,
-  reason: NonNullable<McpFamily['revokedReason']>,
-): Promise<void> {
-  const family = await mcpFamilies.get(kv, familyId)
-  if (!family) return
-  if (family.revokedAt) return
-  await mcpFamilies.put(kv, familyId, {
-    ...family,
-    revokedAt: Date.now(),
-    revokedReason: reason,
-  })
-  console.log('[oauth.family] revoked', { familyId, reason, ownerUserId: family.ownerUserId })
-}
-
 async function handleRefreshGrant(
   body: Record<string, string>,
   kv: KVNamespace,
@@ -584,9 +535,9 @@ async function handleRefreshGrant(
   }
 
   const family = await mcpFamilies.get(kv, familyId)
-  if (family?.revokedAt) {
+  if (await isFamilyRevoked(kv, familyId, family)) {
     await mcpRefreshes.del(kv, refreshToken)
-    console.log('[oauth.refresh] family revoked', { inFp, familyId, reason: family.revokedReason })
+    console.log('[oauth.refresh] family revoked', { inFp, familyId, reason: family?.revokedReason })
     return oauthError('invalid_grant', 400, 'Refresh token family revoked')
   }
 
@@ -692,7 +643,7 @@ export async function handleListSessions(
   const liveIds: string[] = []
   for (const { id, family } of families) {
     if (!family) continue
-    if (family.revokedAt) continue
+    if (await isFamilyRevoked(kv, id, family)) continue
     if (family.ownerUserId !== userId) continue
     live.push({
       familyId: id,

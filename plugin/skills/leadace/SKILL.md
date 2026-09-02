@@ -367,7 +367,7 @@ Three tiers — daily use only needs the first two. Print under sub-headings so 
 | `/import-prospects` | Load prospects from a file (CSV / Excel / SQLite / text) — either as tenant assets or linked to a project. |
 | `/match-prospects` | Pull existing tenant-wide prospects into a project that fits the targeting. |
 | `/check-feedback` | PMF-oriented review of rejection feedback (Pro-tier introspection). |
-| `/setup-cron` | Install an OS-level schedule (LaunchAgent / Task Scheduler / cron) that runs `/daily-cycle` daily. |
+| `/setup-cron` | Schedule `/daily-cycle` daily: a Claude Cowork scheduled task (default, cloud), a Claude Code Desktop task (local), or an OS scheduler as a last resort. |
 
 **Maintenance**
 

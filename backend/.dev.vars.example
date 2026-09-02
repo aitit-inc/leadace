@@ -22,8 +22,9 @@ SUPABASE_URL="http://127.0.0.1:54321"
 SUPABASE_ANON_KEY="your-supabase-anon-key-here"
 # From `npx supabase status` (Dashboard → Settings → API → service_role).
 # Required on cloud installs (DELETE /me/account uses it to drop the auth.users
-# row). Self-host can leave empty — tenant data is still wiped, but the operator
-# deletes the auth.users row against their own Supabase.
+# row, and the auth middleware uses it to refuse provisioning a tenant for a
+# deleted auth user). Self-host can leave empty — tenant data is still wiped,
+# but the operator deletes the auth.users row against their own Supabase.
 SUPABASE_SERVICE_ROLE_KEY=""
 ENVIRONMENT="development"
 # 'cloud' enables Stripe routes and plan caps. 'self-hosted' (default)

@@ -13,9 +13,13 @@ export type Env = {
   STRIPE_SECRET_KEY?: string
   STRIPE_WEBHOOK_SECRET?: string
   // Cloud-only, for DELETE /me/account (removes the auth.users row after the
-  // tenant cascade). Self-host leaves it unset — the admin call is gated behind
-  // requireCloudEdition.
+  // tenant cascade) and for the auth middleware's deleted-user guard before
+  // provisioning a tenant. Self-host leaves it unset — the admin delete is
+  // gated behind requireCloudEdition and the guard is skipped.
   SUPABASE_SERVICE_ROLE_KEY?: string
+  // Same KV namespace as the MCP Worker; DELETE /me/account revokes the
+  // user's MCP token families through it.
+  MCP_OAUTH_STORE: KVNamespace
   GOOGLE_CLIENT_ID: string
   GOOGLE_CLIENT_SECRET: string
   GMAIL_TOKEN_ENCRYPTION_KEY: string

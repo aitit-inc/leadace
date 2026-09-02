@@ -6,6 +6,7 @@ import { createDb } from '../../db/connection'
 import { tenantMembers, tenantPlans, tenants } from '../../db/schema'
 import { asTenantId } from '../../domain/ids'
 import { logFunnel } from '../../services/funnel'
+import { lookupAuthUser } from '../../services/supabase-admin'
 import type { Env, Variables } from '../types'
 
 export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: Variables }>(
@@ -47,6 +48,17 @@ export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: Varia
       tenantId = membership.tenantId
       mcpStamped = membership.firstMcpConnectedAt !== null
     } else {
+      // A still-valid token (MCP-minted, ≤1h; or one refreshed from KV) can
+      // outlive the account: without this the deleted user's plugin would
+      // re-provision an empty tenant on its next call. Fails closed — a
+      // tenant is provisioned once per user, so deferring it during an auth
+      // outage costs a retry, while a ghost tenant would be permanent. Cloud
+      // only (needs the service role key); self-host provisions unconditionally.
+      if (c.env.SUPABASE_SERVICE_ROLE_KEY) {
+        const lookup = await lookupAuthUser(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY, userId)
+        if (lookup === 'deleted') return c.json({ error: 'Account no longer exists' }, 401)
+        if (lookup === 'unavailable') return c.json({ error: 'Auth service unavailable' }, 503)
+      }
       // Wrapped in a transaction so a UNIQUE(user_id) violation on tenant_members
       // (race against a concurrent first request) rolls back the tenant/plan rows too.
       const newTenantId = generateId()

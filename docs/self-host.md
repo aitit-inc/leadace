@@ -273,15 +273,17 @@ upserts.
 
 ### 3. Create the MCP OAuth KV namespace
 
-The MCP Worker uses Cloudflare KV to store short-lived OAuth state.
-Create a namespace and replace the placeholder ID in
-`wrangler.mcp.jsonc`:
+The MCP Worker uses Cloudflare KV to store short-lived OAuth state, and
+the API Worker reaches into the same namespace to revoke a user's MCP
+sessions when they delete their account. Create one namespace and
+replace the placeholder ID in both configs:
 
 ```bash
 cd backend
 npx wrangler kv namespace create MCP_OAUTH_STORE
 # → outputs an `id` value. Paste it into the top-level `kv_namespaces`
-# block in wrangler.mcp.jsonc, replacing the placeholder id.
+# block of wrangler.mcp.jsonc AND wrangler.api.jsonc, replacing the
+# placeholder id (same id in both).
 ```
 
 ### 4. Set wrangler secrets
@@ -585,7 +587,7 @@ Most self-hosters will leave Stripe off entirely.
 | `FRONTEND_URL` | MCP | yes | URL of the frontend. Used by the OAuth handshake. |
 | `ENVIRONMENT` | API + MCP | yes | `development` or `production`. |
 | `LEADACE_EDITION` | API | no | `self-hosted` (default) or `cloud`. Anything other than `cloud` disables Stripe routes and runs every tenant on the unlimited tier. |
-| `MCP_OAUTH_STORE` | MCP | yes | Cloudflare KV binding for OAuth state. Bound in `wrangler.mcp.jsonc` — replace the placeholder `id` with your own. |
+| `MCP_OAUTH_STORE` | API + MCP | yes | Cloudflare KV binding for MCP OAuth state; the API Worker uses it to revoke MCP sessions on account deletion. Bound in both `wrangler.mcp.jsonc` and `wrangler.api.jsonc` — replace the placeholder `id` in both with the same namespace. |
 | `GMAIL_TOKEN_ENCRYPTION_KEY` | API | for outbound | 32+ char passphrase. `pgp_sym_encrypt` key for stored Gmail tokens. |
 | `UNSUBSCRIBE_TOKEN_SECRET` | API | for outbound | 32+ char passphrase. HMAC key for `/unsubscribe/:token` links — **never rotate** once emails have been sent. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | API | for outbound | OAuth refresh-token exchange for Gmail send. |

@@ -2,7 +2,7 @@
 
 ![Status: Public Beta](https://img.shields.io/badge/status-Public_Beta-E8755E) ![License](https://img.shields.io/badge/license-Apache_2.0_modified-6EADB0) [![Listed on mcpservers.org](https://mcpservers.org/badge.svg)](https://mcpservers.org/servers/aitit-inc/leadace)
 
-Autonomous lead generation plugin for Claude Code and Claude Desktop.
+Autonomous lead generation plugin for Claude Cowork and Claude Code.
 Builds prospect lists, runs outbound outreach, and iterates on strategy — all hands-free.
 
 Website: https://leadace.ai
@@ -13,15 +13,19 @@ Website: https://leadace.ai
 
 ### Prerequisites
 
-- Claude Code or Claude Desktop (Anthropic Pro or Max plan)
+- Claude Cowork (in the Claude Desktop app) or Claude Code, on an Anthropic Pro or Max plan — verified on macOS; by default `/setup-cron` runs the daily cycle as a Cowork scheduled task in Anthropic's cloud
 - A LeadAce account at https://app.leadace.ai (Free tier — no card)
 - A connected Gmail account — for sending email (granted when you sign in with Google, or via the "Connect Gmail" banner in the web app)
 - Gmail MCP (claude.ai built-in) — for checking email replies
-- claude-in-chrome MCP — for form submission and SNS DMs (forms can alternatively use any other browser-automation MCP you configure yourself, e.g. Playwright; SNS DMs require claude-in-chrome)
+- A browser, only for browser channels — contact forms run on Cowork's built-in browser or any browser-automation MCP you configure (e.g. Playwright); SNS DMs and SNS reply checking require Claude in Chrome. A scheduled run reaches the browser only while Claude Desktop is open, with its default browser chosen beforehand
 
 ### Installation
 
-One line in your terminal:
+In Claude Desktop: Customize → Plugins → Add from a repository →
+`aitit-inc/leadace` → Install → Connectors → Connect, then Customize →
+Connectors → LeadAce → Connect and sign in with Google.
+
+Or one line in your terminal (Claude Code):
 
 ```bash
 claude plugin marketplace add aitit-inc/leadace && claude plugin install leadace@leadace
@@ -33,10 +37,6 @@ Or, from inside a running Claude Code session:
 /plugin marketplace add aitit-inc/leadace
 /plugin install leadace@leadace
 ```
-
-Or in Claude Desktop: Customize → Plugins → Add from a repository →
-`aitit-inc/leadace` → Install → Connectors → Connect, then Customize →
-Connectors → LeadAce → Connect and sign in with Google.
 
 To update later:
 
@@ -55,6 +55,7 @@ troubleshooting.
 ### Usage
 
 Most commands take your project name as the first argument (chosen during `/leadace` onboarding); `/leadace` itself takes a free-form question or homepage URL.
+Run them in a Cowork session (the Cowork tab, not Chat — `/daily-cycle` runs sub-agents, which Chat can't start) or in Claude Code.
 
 | Command | Purpose |
 |---|---|
@@ -72,7 +73,7 @@ Most commands take your project name as the first argument (chosen during `/lead
 | `/check-feedback <name>` | Surface PMF signals from rejection feedback (feature gaps, competitor presence) — ad-hoc product reflection |
 | **Automation** | |
 | `/daily-cycle <name> [count]` | One-shot bundle: check-responses → evaluate → outbound + build-list |
-| `/setup-cron <name>` | Schedule `/daily-cycle` on the OS (LaunchAgent / Task / cron) |
+| `/setup-cron <name>` | Schedule `/daily-cycle` daily (Cowork scheduled task, Claude Code Desktop task, or an OS scheduler as a last resort) |
 | **Maintenance** | |
 | `/delete-project <name>` | Permanently delete a project and all its data |
 
@@ -102,7 +103,7 @@ flowchart TD
   CF -. revisit strategy .-> LA
 
   DC["/daily-cycle<br/>check + outbound + build, one shot"]
-  SC["/setup-cron<br/>OS schedule"] --> DC
+  SC["/setup-cron<br/>daily schedule"] --> DC
   DC -. replaces manual loop .-> P
 
   DEL["/delete-project"]

@@ -118,12 +118,14 @@ restore_and_exit() {
   [[ -n "${TOKEN_B:-}" && -n "${PROJECT_B_ID:-}" ]] && api "$TOKEN_B" DELETE "/api/projects/$PROJECT_B_ID" > /dev/null 2>&1 || true
   psql_local "DELETE FROM prospects WHERE email LIKE '%$RUN_TAG%';" > /dev/null 2>&1 || true
   psql_local "DELETE FROM organizations WHERE domain LIKE '$RUN_TAG-%';" > /dev/null 2>&1 || true
-  # Delete the synthetic auth user B (cascades any remaining tenant rows). Tolerant
-  # of 404 if the account-deletion leg already removed the tenant (auth.users row
-  # survives on self-host, so this is still required).
+  # Drop B's tenant before the GoTrue user: tenant_members.user_id has no FK to
+  # auth.users, so deleting the auth user alone leaves an orphan tenant behind.
+  # Both are no-ops when the account-deletion leg already ran (the auth.users
+  # row survives it on self-host, so the Admin delete is still required).
   if [[ -n "$USER_B_ID" ]]; then
+    psql_local "DELETE FROM tenants WHERE id IN (SELECT tenant_id FROM tenant_members WHERE user_id = '$USER_B_ID');" > /dev/null 2>&1 || true
     curl -sS -X DELETE "$SUPA_URL/auth/v1/admin/users/$USER_B_ID" -H "Authorization: Bearer $SVC" -H "apikey: $SVC" > /dev/null 2>&1 || true
-    say "deleted GoTrue user B"
+    say "deleted tenant + GoTrue user B"
   fi
   say "dropped run-tagged rows ($RUN_TAG)"
   exit "$rc"

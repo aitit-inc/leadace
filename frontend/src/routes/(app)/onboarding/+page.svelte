@@ -219,9 +219,9 @@
 	<div id="run-it" class="mt-12">
 		<h2 class="text-lg font-semibold text-text">Run it for real</h2>
 		<p class="mt-1 text-sm text-text-muted">
-			The agent runs from Claude Code or Claude Desktop. This dashboard shows your prospects,
-			drafts, and replies — the plugin does the research, writing, and sending. Three steps and
-			the first emails go out.
+			The agent runs in Claude Cowork (in the Claude Desktop app) or Claude Code. This dashboard
+			shows your prospects, drafts, and replies — the plugin does the research, writing, and
+			sending. Three steps and the first emails go out.
 		</p>
 
 		<ol class="mt-6 space-y-5">
@@ -231,26 +231,26 @@
 						class="flex h-5 w-5 items-center justify-center rounded-full bg-surface-2 text-[11px] font-medium text-text"
 						>1</span
 					>
-					<span class="text-sm font-medium text-text">Install it — terminal or Claude Desktop</span>
+					<span class="text-sm font-medium text-text">Install it — Claude Desktop or terminal</span>
 				</div>
+				<p class="text-xs text-text-muted">
+					In Claude Desktop: Customize → Plugins → Add from a repository →
+					<code class="font-mono">aitit-inc/leadace</code> → Install → Connectors → Connect, then Customize
+					→ Connectors → LeadAce → Connect and sign in with Google. No Claude Desktop yet? Get it at
+					<a
+						href="https://claude.ai/download"
+						target="_blank"
+						rel="noopener noreferrer"
+						class="text-accent underline hover:text-accent-strong">claude.ai/download</a
+					>.
+				</p>
+				<p class="mt-3 mb-2 text-xs text-text-muted">Or from a terminal, with Claude Code:</p>
 				{@render copyRow(installCmd)}
 				<p class="mt-3 text-xs text-text-muted">
 					Already inside Claude Code? Run <code class="font-mono">/plugin marketplace add
 						aitit-inc/leadace</code
 					>
-					then <code class="font-mono">/plugin install leadace@leadace</code> instead. No Claude Code
-					yet? Get it at
-					<a
-						href="https://claude.ai/code"
-						target="_blank"
-						rel="noopener noreferrer"
-						class="text-accent underline hover:text-accent-strong">claude.ai/code</a
-					>.
-				</p>
-				<p class="mt-2 text-xs text-text-muted">
-					In Claude Desktop instead: Customize → Plugins → Add from a repository →
-					<code class="font-mono">aitit-inc/leadace</code> → Install → Connectors → Connect, then Customize
-					→ Connectors → LeadAce → Connect and sign in with Google.
+					then <code class="font-mono">/plugin install leadace@leadace</code> instead.
 				</p>
 			</li>
 
@@ -264,9 +264,9 @@
 				</div>
 				{@render copyRow(setupCmd)}
 				<p class="mt-3 text-xs text-text-muted">
-					Run this in Claude Code or Claude Desktop. Authorize the MCP connection once — a browser
-					tab from Claude Code, or the connector's Connect button in Claude Desktop — with the same
-					Google account. LeadAce then reads your site, drafts your strategy, and shows you
+					Run this in a Cowork session or in Claude Code. Authorize the MCP connection once — the
+					connector's Connect button in Claude Desktop, or a browser tab from Claude Code — with the
+					same Google account. LeadAce then reads your site, drafts your strategy, and shows you
 					everything in one review before saving.
 				</p>
 			</li>
@@ -282,11 +282,14 @@
 				{@render copyRow(cycleCmd)}
 				<p class="mt-3 text-xs text-text-muted">
 					One command runs the whole loop — researches prospects, writes and sends today's batch,
-					checks replies — and emails you a report. The argument is the project name
+					checks replies — and emails you a report. Use the Cowork tab, not Chat: the cycle runs
+					sub-agents, which Chat can't start. The argument is the project name
 					<code class="font-mono">/leadace</code> prints when it creates the project
 					{projectGuess ? `(“${projectGuess}” for your site)` : '(“Example” for example.com)'}; the
 					dashboard's project switcher shows it too. Run it each day, or schedule it with
-					<code class="font-mono">/setup-cron</code>.
+					<code class="font-mono">/setup-cron</code> — by default a Cowork scheduled task that runs
+					it in Anthropic's cloud: email needs no machine on; contact forms and SNS DMs need Claude
+					Desktop open at that hour, with its default browser chosen beforehand.
 				</p>
 			</li>
 		</ol>
@@ -310,8 +313,8 @@
 		</div>
 		{#if notDetected}
 			<p class="mt-3 text-xs text-text-muted">
-				No connection detected yet. Run the commands above in Claude Code or Claude Desktop, then
-				check again.
+				No connection detected yet. Run the commands above in Cowork or Claude Code, then check
+				again.
 			</p>
 		{/if}
 	</div>

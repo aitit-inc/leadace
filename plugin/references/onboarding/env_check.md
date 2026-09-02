@@ -60,7 +60,7 @@ Mention the recipient-delivery scope once in the completion report (outbound cur
 
 ### 2-3. Browser automation backend — ask
 
-Use `AskUserQuestion`: "For `/outbound` browser automation, which do you have? Claude in Chrome handles **contact forms and SNS DMs** (plus SNS reply checking in `/check-responses`); any other browser-automation MCP you've configured (e.g. Playwright) handles **contact forms only**." — options: `Claude in Chrome` / `Other browser MCP` / `neither` / `unsure`. Record as `BROWSER_AUTOMATION` (`chrome` | `other` | `none` | `unsure`; pick `chrome` if the user has both). Capability: `chrome` → form + SNS; `other` → form only; `none`/`unsure` → email only.
+Use `AskUserQuestion`: "For `/outbound` browser automation, which do you have? Claude in Chrome handles **contact forms and SNS DMs** (plus SNS reply checking in `/check-responses`); any other browser automation — Cowork's built-in browser, or a browser MCP you've configured (e.g. Playwright) — handles **contact forms only**." — options: `Claude in Chrome` / `Other browser` / `neither` / `unsure`. Record as `BROWSER_AUTOMATION` (`chrome` | `other` | `none` | `unsure`; pick `chrome` if the user has both). Capability: `chrome` → form + SNS; `other` → form only; `none`/`unsure` → email only.
 
 **When `$URL` is set** (the onboarding chain), 2-2 and 2-3 are not asked — record both as `unsure` and report the assumption in the Step 4 hand-off. A first run must not open with a quiz about tools the user can connect later, and `/leadace` re-checks the environment on request.
 
