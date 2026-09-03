@@ -11,8 +11,8 @@ When response rates fall below expectations, examine the following 6 causes in o
 - Owned by the lever (report-only): subject selection is a weighted draw across the seeded `subject_variants`; the bandit learns from replies. Report which variants underperform (`variantResponseRate` + the lever weights) — do not rewrite subjects. If every variant is weak, suggest the user seed fresher patterns (shorter, numbers, recipient's company name, curiosity-driven) via `upsert_subject_variant`
 
 ### 2. Targeting Problem (Wrong Audience)
-- Symptoms: Zero responses despite high volume
-- Remedies: Revisit target definition, analyze common traits among companies that did respond
+- Symptoms: Zero responses despite high volume, or replies / rejections from people who fail the Target's Prerequisites
+- Remedies: Check the premise before the copy — does the source select for the Prerequisites? — then the target definition and the traits of companies that did respond
 
 ### 3. Body Content Problem (Read but No Action)
 - Symptoms: Some responses come in but positive rate is low
@@ -45,17 +45,4 @@ For message elements no lever owns (body length, CTA phrasing, tone, hook), the 
 
 ## Targeting Accuracy Verification
 
-Once send data has accumulated, perform the following analyses:
-
-### Analysis of Common Traits Among Responding Companies
-- Industry, size, region, search keywords, priority score
-- Traits common to responding companies but absent in non-responding companies
-
-### Analysis of Common Traits Among Non-Responding Companies
-- Traits common to companies with no response
-- Identify segments to exclude
-
-### Actions
-- Update target definition in SALES_STRATEGY.md
-- Add/remove search keywords
-- Selection order is lever-owned (measured targeting lifts re-score the outbound ordering daily); report segment findings, do not encode them as priority edits
+Once send data has accumulated: traits (industry, size, region, keywords, priority) shared by responding companies and absent in non-responders → the Target definition and search keywords in SALES_STRATEGY.md; segments that never respond → `Not a fit`. Selection order is lever-owned (measured targeting lifts re-score the outbound ordering daily) — report segment findings, do not encode them as priority edits.

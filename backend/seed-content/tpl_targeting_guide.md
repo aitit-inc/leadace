@@ -14,6 +14,8 @@ Targets should be defined at the following level of specificity — not vague de
 5. **Budget**: Budget range available for adoption
 6. **Trigger for meeting**: What would spark interest (e.g., regulatory changes, labor shortage, DX push)
 7. **Search keywords**: 5 or more search queries to find them online
+8. **Prerequisites**: what must already be true to use the product (stack, tooling, jurisdiction) and where that is publicly observable (repositories, registries, job posts, filings)
+9. **Not a fit**: who resembles the target but cannot use it or has no reason to buy
 
 ### How to Split Primary / Secondary
 - **Primary**: Segment with the highest response rate and easiest to close
@@ -69,3 +71,4 @@ SALES_STRATEGY.md should list at least 10 search keywords. Cover the following p
 - Challenge-based (e.g., "digital transformation SMB", "labor shortage manufacturing")
 - Competitor customers (e.g., "{competitor name} users", "{competitor name} case studies")
 - Industry associations/directories (e.g., "{industry} association member list")
+- Evidence of the Prerequisites (e.g., "{tool} plugin" repositories, "{stack}" job posts) — selects for people who can use the product, not for companies that exist

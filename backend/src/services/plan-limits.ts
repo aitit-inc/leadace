@@ -13,7 +13,15 @@ import type { createDb } from '../db/connection'
 import { ok, err, type ServiceError, type ServiceResult } from '../services/result'
 import type { Edition } from '../domain/edition'
 import { type SendingIdentityId, type TenantId } from '../domain/ids'
-import { DEFAULT_WARMUP, mailboxDailyStatus } from '../domain/warmup'
+import {
+  BOUNCE_RATE_WINDOW_DAYS,
+  DEFAULT_WARMUP,
+  mailboxBounceWindow,
+  mailboxDailyStatus,
+  type MailboxBounceCounts,
+  type MailboxBounceWindow,
+  type MailboxDailyStatus,
+} from '../domain/warmup'
 
 // 'unlimited' is internal-only (no Stripe price), set manually in the DB for
 // staff / complimentary accounts. The Stripe webhook must never overwrite it.
@@ -415,36 +423,25 @@ export function formatMailboxQuotaError(quota: MailboxDailyQuota): string {
 // operators can't see ramp progress from it.
 export type MailboxHealth =
   | { kind: 'no_mailbox' }
-  | {
+  | ({
       kind: 'active'
       email: string
       warmupStartedAt: Date | null
       dailyCapOverride: number | null
-      pausedUntil: Date | null
-      rampWeek: number
-      rampWeeks: number
-      steadyStatePerDay: number
-      cap: number
-      used: number
-      remaining: number
-      bounceWindowDays: number
-      sentInWindow: number
-      bounced: number
-      bounceRate: number
-    }
+    } & MailboxDailyStatus &
+      MailboxBounceWindow)
 
-// Matches the reply-ingest attribution window: a bounce is only attributed within 30d.
-const BOUNCE_RATE_WINDOW_DAYS = 30
-
-async function countMailboxBounceWindow(
+// Grouped like countMailboxEmailSendsTodayByIdentity: one query serves both the
+// single-mailbox health read and the per-identity list.
+export async function countMailboxBounceWindowByIdentity(
   db: Db,
   tenantId: TenantId,
-  identityId: SendingIdentityId,
-  now: Date,
-): Promise<{ sentInWindow: number; bounced: number }> {
+  now: Date = new Date(),
+): Promise<Map<string, MailboxBounceCounts>> {
   const sinceIso = new Date(now.getTime() - BOUNCE_RATE_WINDOW_DAYS * 86_400_000).toISOString()
-  const [row] = await db
+  const rows = await db
     .select({
+      identityId: outreachLogs.sendingIdentityId,
       sentInWindow: sql<number>`COUNT(DISTINCT ${outreachLogs.id})::int`,
       bounced: sql<number>`COUNT(DISTINCT ${outreachLogs.id}) FILTER (WHERE ${responses.responseType} = 'bounce')::int`,
     })
@@ -455,13 +452,17 @@ async function countMailboxBounceWindow(
     )
     .where(and(
       eq(outreachLogs.tenantId, tenantId),
-      eq(outreachLogs.sendingIdentityId, identityId),
       eq(outreachLogs.channel, 'email'),
       eq(outreachLogs.status, 'sent'),
       isNotNull(outreachLogs.messageId),
       sql`${outreachLogs.sentAt} >= ${sinceIso}::timestamptz`,
     ))
-  return { sentInWindow: row?.sentInWindow ?? 0, bounced: row?.bounced ?? 0 }
+    .groupBy(outreachLogs.sendingIdentityId)
+  const byIdentity = new Map<string, MailboxBounceCounts>()
+  for (const r of rows) {
+    if (r.identityId) byIdentity.set(r.identityId, { sentInWindow: r.sentInWindow, bounced: r.bounced })
+  }
+  return byIdentity
 }
 
 export async function getMailboxHealth(
@@ -484,24 +485,17 @@ export async function getMailboxHealth(
 
   if (!mailbox) return { kind: 'no_mailbox' }
 
-  const [used, bounceWindow] = await Promise.all([
+  const [used, bounceByIdentity] = await Promise.all([
     countMailboxEmailSendsToday(db, tenantId, identityId, now),
-    countMailboxBounceWindow(db, tenantId, identityId, now),
+    countMailboxBounceWindowByIdentity(db, tenantId, now),
   ])
-  const status = mailboxDailyStatus(mailbox, used, DEFAULT_WARMUP, now)
   return {
     kind: 'active',
     email: mailbox.email,
     warmupStartedAt: mailbox.warmupStartedAt,
     dailyCapOverride: mailbox.dailyCapOverride,
-    ...status,
-    bounceWindowDays: BOUNCE_RATE_WINDOW_DAYS,
-    sentInWindow: bounceWindow.sentInWindow,
-    bounced: bounceWindow.bounced,
-    bounceRate:
-      bounceWindow.sentInWindow === 0
-        ? 0
-        : Math.round((bounceWindow.bounced / bounceWindow.sentInWindow) * 1000) / 10,
+    ...mailboxDailyStatus(mailbox, used, DEFAULT_WARMUP, now),
+    ...mailboxBounceWindow(bounceByIdentity.get(identityId)),
   }
 }
 

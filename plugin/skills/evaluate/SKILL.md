@@ -89,6 +89,7 @@ These feed the Step 5 report and the `[body]` entries of the Learnings Log (step
 - Industries and sizes with good responses — ground these in the measured `industryResponseRate` / `sizeResponseRate` / `countryResponseRate` splits (mature sends only), not impressions from reading bodies
 - Segments with poor responses
 - Unexpected response patterns
+- Premise check: `notRelevantNotes` and reply texts against the Target's `Prerequisites` — report it even on insufficient data; step 4 acts
 
 **Discovery Strategy Analysis (evaluate owns the registry side, acted on in step 4; reply-rate selection is the tick's):**
 - Per-strategy sends and reply rate from `discoveryStrategyResponseRate`: which named strategies produce prospects that actually respond, which only produce volume
@@ -136,7 +137,8 @@ Before deciding on improvement actions, review the Learnings Log loaded in step 
 - Continue and deepen the direction of measures that were effective before
 - If proposing the same improvement as before, state why different results are expected this time
 
-**Update SALES_STRATEGY.md (targeting & KPI only):**
+**Update SALES_STRATEGY.md (targeting & KPI only) — premise first:**
+The Target section is a hypothesis about who can use and buy the product — judge it by that, not by reply rate. It is failing when `not_relevant` rejecters or reply texts show senders who cannot use the product, when replies never become positive sentiment or inquiry outcomes, or when active strategies' `approach` does not select for the `Prerequisites`. Then fix upstream — rewrite Target (`Prerequisites`, `Not a fit`) and point discovery at sources where the Prerequisites are observable — before any messaging change; the stability discipline gates this too. Redefining the target within what the business sells is this skill's call; an audience beyond what the business serves is the user's — `record_suggestion` (`revisit-strategy`, below).
 - Narrow or broaden targeting
 - Update KPI goals
 
@@ -150,9 +152,9 @@ Save the updated document via `save_document` with `projectId: "$0"`, `slug: "sa
 
 **Update the discovery-strategy portfolio (registry, via `upsert_discovery_strategy`):**
 Evaluate supplies and narrates this lever; the daily tick owns reply-based selection — it re-weights active strategies (Thompson draw weights in step 1's `get_lever_state` → `discovery.weights`) and archives dominated ones, never below two active. The current portfolio is `discovery.strategies`:
-- **Demote**: archive a strategy (`archived: true`, resending its current `approach` unchanged) only on evidence the tick cannot see: a clearly elevated `bounceRate` (source finds unreachable people — wasteful and reputation-harming; bounces read earlier than replies), or a source that no longer exists or can no longer be searched. Reply-rate underperformance is the tick's call — narrate it, don't act on it
+- **Demote**: archive a strategy (`archived: true`, resending its current `approach` unchanged) only on evidence the tick cannot see: a clearly elevated `bounceRate` (source finds unreachable people — wasteful and reputation-harming; bounces read earlier than replies), a source whose `approach` cannot select for the Target's `Prerequisites`, or a source that no longer exists or can no longer be searched. Reply-rate underperformance is the tick's call — narrate it, don't act on it
 - **Promote / keep**: outperformers stay active (no write needed); cite the evidence in the report
-- **Hypothesize**: when step 1's `get_lever_state` → `discovery.needsReplenishment` is true (active strategies below target, usually after the tick archived a loser), register 1-2 new strategies — fresh slug + `approach` (where/how to search and why it should work, 2-5 lines) — derived from business / sales_strategy context and rejection feedback. New strategies start active with no history — that is the point: they need sends to become measurable. Hypothesize search/crawl strategies only — playbook-driven means need user setup; propose those via the suggestion block below. A refused upsert (400, active cap) means the portfolio is full — archive an underperformer first
+- **Hypothesize**: when step 1's `get_lever_state` → `discovery.needsReplenishment` is true (active strategies below target, usually after the tick archived a loser), or the premise check reoriented the Target, register 1-2 new strategies — fresh slug + `approach` (where/how to search and why it should work, 2-5 lines) — derived from business / sales_strategy context and rejection feedback. New strategies start active with no history — that is the point: they need sends to become measurable. Hypothesize search/crawl strategies only — playbook-driven means need user setup; propose those via the suggestion block below. A refused upsert (400, active cap) means the portfolio is full — archive an underperformer first
 - **Never reuse a slug for a different idea** — a slug is the arm's measured identity; archive instead. Refining the same idea may update the same slug's `approach`. Playbook-driven strategies get the same archive treatment; leave their `approach`'s playbook reference intact
 
 **Suggest playbook-driven means (persist + report, never self-add):**
@@ -193,7 +195,7 @@ The lever tick prunes and re-weights message variants but never *generates* new 
 - **Boundary (report-only intact):** this hands the bandit a new arm to *test* — it does not assert the new angle is better and does not edit SALES_STRATEGY messaging. Frame it as "an angle to test," not "a better message."
 
 **Escalate a slump that messaging can't fix (suggest, never self-pivot):**
-The loop's own escape hatch is the angle rotation above — use it, don't suggest it. But when the long-horizon signal says the problem is bigger than message angles — low performance **across every channel and every discovery strategy** persisting through repeated rotations and fresh angles — the remaining moves (repositioning, new targeting thesis, a full messaging reset) involve direction preferences only the user can set. Record that once via `record_suggestion`: `kind: "revisit-strategy"`, a stable `dedupeKey` naming the diagnosis (e.g. `cross-channel-slump`), `title` + `body` citing the measured evidence (per-channel and per-strategy rates, the rotation history), and a runnable `command` — `/leadace <project> refine strategy`, or `/leadace <project> reset messaging` when the evidence points at the message pool itself. Same rules as the add-means suggestions: dismissed/done is final, don't re-raise.
+The loop's own escape hatch is the angle rotation above — use it, don't suggest it. But when the long-horizon signal says the problem is bigger than message angles — low performance **across every channel and every discovery strategy** persisting through repeated rotations and fresh angles — the remaining moves (repositioning, an audience beyond what the business serves, a full messaging reset) involve direction preferences only the user can set. Record that once via `record_suggestion`: `kind: "revisit-strategy"`, a stable `dedupeKey` naming the diagnosis (e.g. `cross-channel-slump`), `title` + `body` citing the measured evidence (per-channel and per-strategy rates, the rotation history), and a runnable `command` — `/leadace <project> refine strategy`, or `/leadace <project> reset messaging` when the evidence points at the message pool itself. Same rules as the add-means suggestions: dismissed/done is final, don't re-raise.
 
 ### 5. Results Report
 

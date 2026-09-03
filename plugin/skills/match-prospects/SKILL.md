@@ -48,7 +48,7 @@ If either is missing, abort: "Ask `/leadace` to draft the strategy for `<PROJECT
 Read both. Extract:
 - the target industry / segment / size / region from SALES_STRATEGY
 - the value proposition and the prospect's likely pain points
-- any "do not target" constraints (industries, business models, regions to avoid)
+- the Target's `Prerequisites` (must hold) and `Not a fit` (must not match)
 
 ### 3. Pull tenant prospects
 

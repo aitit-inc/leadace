@@ -81,7 +81,7 @@ Check completeness of each section in existing `SALES_STRATEGY.md`:
 |---|---|
 | Elevator pitch | Specific content present |
 | Problems solved | Problem and solution clearly stated |
-| Target | Primary and secondary specific by industry, scale, role |
+| Target | Primary and secondary specific by industry, scale, role; Prerequisites and Not a fit stated |
 | Value proposition | Content present |
 | Track record / social proof | At least 1 specific achievement or number |
 | Outbound mode | send / draft is set in project settings |
@@ -100,7 +100,7 @@ Classify sections:
 | evaluate-managed | targeting, KPI, search keywords (when already populated) | **Do not touch by default** |
 | Static settings | Sender info, response def, track record, messaging, channels | Update only if user explicitly requests |
 
-`/evaluate` auto-tunes targeting / KPI / search keywords once a project has activity, so treat those sections as evaluate-managed whenever they already carry content. An empty such section is simply "not set" and is fillable here. (Discovery strategies live in the registry, not this document — `get_lever_state` → `discovery.strategies`; same evaluate-managed rule applies once populated.)
+`/evaluate` auto-tunes targeting / KPI / search keywords once a project has activity, so treat those sections as evaluate-managed whenever they already carry content. An empty such section is simply "not set" and is fillable here; missing `Prerequisites` / `Not a fit` count as not set even when the rest of Target is populated. (Discovery strategies live in the registry, not this document — `get_lever_state` → `discovery.strategies`; same evaluate-managed rule applies once populated.)
 
 **Template update detection:** Compare section headings in `tpl_sales_strategy` master document with the existing file. Sections present in template but missing in file → report as "possibly added by an update".
 
@@ -166,9 +166,8 @@ Business / service / product overview (what the org does, what to sell).
 - If vague: "Specifically, what problem does it solve for what type of customer?"
 
 #### 4-2. Target Customers
-Who to sell to (industry, size, role, characteristics).
-- Use 4-1 content to suggest typical personas.
-- "Up to you" → infer most rational target and propose.
+Who to sell to (industry, size, role, characteristics), the Prerequisites (what must already be true for them to use it, and where that is publicly observable) and Not a fit.
+- Propose a full profile from 4-1; ask only where it is uncertain — a wrong premise wastes every send after it.
 
 #### 4-3. Features, Differentiation, Competition
 Features, selling points, differentiation from competitors.
@@ -193,7 +192,8 @@ Price range or pricing structure + current sales challenges.
 
 #### 4-6. Prospect Discovery Sources
 Where to find prospect candidates (depends on target market, industry, region). Registered as 3-6 *named strategies* via `upsert_discovery_strategy` in Step 7 (kebab-case slug + `approach`: where/how to search and why it should work) — /build-list executes them and /evaluate measures reply rate per strategy. Diversify source types.
-- Source examples to draw from: PR sites (PR Newswire, Business Wire, GlobeNewswire, TechCrunch), company DBs (LinkedIn, Crunchbase, Apollo, ZoomInfo, industry assoc.), startup/VC DBs (Crunchbase, AngelList, PitchBook, Product Hunt), trade-show / event lists, code/product platforms (GitHub, Product Hunt), country/region directories.
+- Source examples: PR wires, company / startup DBs, industry associations, trade-show / event lists, code / product platforms, regional directories.
+- Prefer sources where the 4-2 Prerequisites are observable (individuals' code, registries, posts, job ads) over ones that only prove a company exists.
 - "Up to you" → reasonable defaults by target market, formulated as named strategies.
 
 #### 4-7. Sender Information
@@ -251,7 +251,7 @@ Hold the result as `URL_CONTENT`.
 For each of the following, draft a 1-3 sentence value from `URL_CONTENT`. Do **not** ask the user for these — §4B-3's review is where they get confirmed.
 
 - Business overview (4-1 equivalent)
-- Target customers (4-2 equivalent) — if not stated on the site, infer from the product nature
+- Target customers (4-2 equivalent), including Prerequisites and Not a fit — if not stated on the site, infer from the product nature
 - Features / differentiation (4-3 equivalent)
 - Track record / social proof (4-4 equivalent) — if absent, leave a placeholder note "Add 1 trust foundation later"
 - Pricing (4-5 equivalent) — if absent, mark as "TBD"

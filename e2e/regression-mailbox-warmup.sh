@@ -26,6 +26,10 @@
 # (updateMailboxWarmup) — step 6: override / partial patch / pause / resume / no
 # started_at write / 400s.
 #
+# And the trailing-30d bounce window (countMailboxBounceWindowByIdentity) — step 7:
+# only email sends carrying a message_id are threadable, a threaded bounce counts
+# once per send, and GET /me/sending-identities mirrors the health read.
+#
 # Baseline-robust: the tenant may already have EMAIL sends today (the cap is
 # per-tenant, not per-project). Tests that need an exact threshold disable the
 # ramp and set daily_cap_override relative to the measured baseline, so a
@@ -270,6 +274,27 @@ assert_eq "6f warmup_started_at untouched by writes" "$(started_null)" "f"
 assert_eq "6g empty patch → 400" "$(put_warmup_status '{}')" "400"
 assert_eq "6g negative override → 400" "$(put_warmup_status '{"dailyCapOverride":-1}')" "400"
 assert_eq "6g removed warmupEnabled field → 400" "$(put_warmup_status '{"warmupEnabled":false}')" "400"
+
+step "7. bounce window: threaded bounces among threadable sends (health + per-identity list)"
+# e1/e2 were recorded without a Message-ID (not threadable) and the form send is
+# another channel, so none of them is in the window yet. Baseline-robust: the
+# tenant may already hold threadable sends in the trailing 30 days.
+B_SENT="$(mh sentInWindow)"; B_BOUNCED="$(mh bounced)"
+assert_eq "7a bounceWindowDays=30" "$(mh bounceWindowDays)" "30"
+psql_local "UPDATE outreach_logs SET message_id='<'||id||'.$RUN_TAG@example>' WHERE tenant_id='$TENANT_ID' AND project_id='$PROJECT_ID' AND channel='email' AND status='sent';" >/dev/null
+assert_eq "7b stamped email sends enter the window (+2)" "$(mh sentInWindow)" "$((B_SENT + 2))"
+assert_eq "7b no bounces yet" "$(mh bounced)" "$B_BOUNCED"
+LOG_E1="$(psql_local "SELECT id FROM outreach_logs WHERE tenant_id='$TENANT_ID' AND project_id='$PROJECT_ID' AND prospect_id=$P_E1 AND channel='email' AND status='sent' LIMIT 1;")"
+[[ -n "$LOG_E1" ]] || { echo "could not resolve e1 outreach_log id" >&2; exit 1; }
+bounce_e1() { psql_local "INSERT INTO responses (tenant_id, outreach_log_id, channel, content, sentiment, response_type) VALUES ('$TENANT_ID', $LOG_E1, 'email', 'e2e bounce', 'neutral', 'bounce');" >/dev/null; }
+bounce_e1
+assert_eq "7c one threaded bounce counted (+1)" "$(mh bounced)" "$((B_BOUNCED + 1))"
+EXPECT_RATE="$(jq -n --argjson b "$((B_BOUNCED + 1))" --argjson s "$((B_SENT + 2))" '(($b / $s) * 1000 | round) / 10')"
+assert_eq "7c bounceRate = bounced / sentInWindow to 0.1%" "$(mh bounceRate)" "$EXPECT_RATE"
+bounce_e1
+assert_eq "7d a second bounce on the same send does not double count" "$(mh bounced)" "$((B_BOUNCED + 1))"
+LIST_BOUNCE="$(api GET /api/me/sending-identities | jq -c --arg id "$GMAIL_IDENTITY_ID" '.identities[] | select(.identityId==$id) | {sentInWindow, bounced, bounceRate}')"
+assert_eq "7e per-identity list mirrors health" "$LIST_BOUNCE" "$(jq -nc --argjson s "$((B_SENT + 2))" --argjson b "$((B_BOUNCED + 1))" --argjson r "$EXPECT_RATE" '{sentInWindow:$s, bounced:$b, bounceRate:$r}')"
 
 step "summary"
 echo "  PASS=$PASS  FAIL=$FAIL" >&2

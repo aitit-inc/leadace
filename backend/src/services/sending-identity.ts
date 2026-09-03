@@ -7,8 +7,19 @@ import { parseSendingIdentitySecret, smtpImapSecretPayloadSchema } from '../doma
 import { verifySmtpCredentials } from './smtp-send'
 import { asSendingIdentityId, type SendingIdentityId, type TenantId } from '../domain/ids'
 import type { Edition } from '../domain/edition'
-import { DEFAULT_WARMUP, mailboxDailyStatus, type MailboxDailyStatus } from '../domain/warmup'
-import { canRegisterSmtpIdentity, countMailboxEmailSendsTodayByIdentity, getTenantPlan } from './plan-limits'
+import {
+  DEFAULT_WARMUP,
+  mailboxBounceWindow,
+  mailboxDailyStatus,
+  type MailboxBounceWindow,
+  type MailboxDailyStatus,
+} from '../domain/warmup'
+import {
+  canRegisterSmtpIdentity,
+  countMailboxBounceWindowByIdentity,
+  countMailboxEmailSendsTodayByIdentity,
+  getTenantPlan,
+} from './plan-limits'
 import { ok, err, type ServiceResult } from './result'
 
 export const registerSmtpIdentitySchema = z.object({
@@ -32,18 +43,10 @@ export type SendingIdentitySummary = {
   fromEmail: string
   warmupStartedAt: Date | null
   dailyCapOverride: number | null
-  // Derived per-mailbox daily-cap health (domain/warmup.ts mailboxDailyStatus):
-  // future-only pause + today's cap/used/remaining + ramp progress.
-  pausedUntil: Date | null
-  cap: number
-  used: number
-  remaining: number
-  rampWeek: number
-  rampWeeks: number
-  steadyStatePerDay: number
   grantedAt: Date
   smtp: SmtpConnectionView | null
-}
+} & MailboxDailyStatus &
+  MailboxBounceWindow
 
 const summaryColumns = {
   identityId: sendingIdentities.identityId,
@@ -69,6 +72,7 @@ function toSummary(
   row: SummaryRow,
   smtp: SmtpConnectionView | null,
   status: MailboxDailyStatus,
+  bounce: MailboxBounceWindow,
 ): SendingIdentitySummary {
   return {
     identityId: asSendingIdentityId(row.identityId),
@@ -76,15 +80,10 @@ function toSummary(
     fromEmail: row.fromEmail,
     warmupStartedAt: row.warmupStartedAt,
     dailyCapOverride: row.dailyCapOverride,
-    pausedUntil: status.pausedUntil,
-    cap: status.cap,
-    used: status.used,
-    remaining: status.remaining,
-    rampWeek: status.rampWeek,
-    rampWeeks: status.rampWeeks,
-    steadyStatePerDay: status.steadyStatePerDay,
     grantedAt: row.grantedAt,
     smtp,
+    ...status,
+    ...bounce,
   }
 }
 
@@ -112,10 +111,13 @@ export async function listSendingIdentities(
     .from(sendingIdentities)
     .where(eq(sendingIdentities.tenantId, tenantId))
     .orderBy(asc(sendingIdentities.grantedAt))
-  const usedByIdentity = await countMailboxEmailSendsTodayByIdentity(db, tenantId, now)
+  const [usedByIdentity, bounceByIdentity] = await Promise.all([
+    countMailboxEmailSendsTodayByIdentity(db, tenantId, now),
+    countMailboxBounceWindowByIdentity(db, tenantId, now),
+  ])
   return rows.map(({ secret, ...row }) => {
     const status = mailboxDailyStatus(row, usedByIdentity.get(row.identityId) ?? 0, DEFAULT_WARMUP, now)
-    return toSummary(row, smtpView(row.provider, secret), status)
+    return toSummary(row, smtpView(row.provider, secret), status, mailboxBounceWindow(bounceByIdentity.get(row.identityId)))
   })
 }
 
@@ -190,7 +192,7 @@ export async function registerSmtpIdentity(
     .from(sendingIdentities)
     .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.identityId, identityId)))
   if (!created) return err('INTERNAL_ERROR', 'Failed to load created sending identity')
-  // A just-registered mailbox has no sends today; its status is the warmup
+  // A just-registered mailbox has no sends at all; its status is the warmup
   // default (week 0, no override) computed from the freshly-inserted columns.
   const status = mailboxDailyStatus(created, 0, DEFAULT_WARMUP, new Date())
   return ok(
@@ -204,6 +206,7 @@ export async function registerSmtpIdentity(
         username: input.username,
       },
       status,
+      mailboxBounceWindow(),
     ),
   )
 }

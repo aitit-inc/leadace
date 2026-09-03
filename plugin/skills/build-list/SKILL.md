@@ -227,7 +227,7 @@ exhausted angle just spends quota on duplicates.
 
 ### 5. Priority and Match Reason Assessment
 
-For each prospect, assign a match reason (why they're appropriate as a target, including their challenges and needs) and priority (1-5) based on SALES_STRATEGY.md criteria:
+For each prospect, assign a match reason (why they're appropriate as a target, including their challenges and needs) and priority (1-5) based on SALES_STRATEGY.md criteria — a candidate matching the Target's `Not a fit` (an organization-level judgment, never about which address was found) is dropped, not registered, whatever its priority:
 - 1: Top priority (perfectly matches target, needs are clear)
 - 2: High priority (broadly matches target)
 - 3: Standard (within target range)

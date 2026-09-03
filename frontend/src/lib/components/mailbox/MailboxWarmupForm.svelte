@@ -109,7 +109,19 @@
       Warmup — ramps to {identity.steadyStatePerDay}/day once you send the first email
     {/if}
   </dd>
+  <dt class="text-text-muted">Bounces (last {identity.bounceWindowDays} days)</dt>
+  <dd class="text-text">
+    {#if identity.sentInWindow === 0}
+      No threadable email sends yet
+    {:else}
+      {identity.bounced} / {identity.sentInWindow} ({identity.bounceRate}%)
+    {/if}
+  </dd>
 </dl>
+<p class="mt-2 text-xs text-text-muted">
+  Only bounces that thread back to a sent message are counted, so the rate is a lower bound. If it
+  climbs, review your list sources or pause this mailbox below.
+</p>
 
 {#if identity.pausedUntil}
   <p class="mt-4 rounded border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">

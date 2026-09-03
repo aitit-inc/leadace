@@ -101,7 +101,7 @@ Examine `$0` (the user's free-form input) together with `PROJECTS` and `GMAIL`. 
 | `delegate_import` | "CSV", "file", "ファイル", "取り込み", "import" | Suggest `/import-prospects` (Step 3c) |
 | `delegate_match` | "existing prospects", "tenant assets", "プロジェクトに移動" | Suggest `/match-prospects` (Step 3c) |
 | `delegate_check_feedback` | "feedback", "PMF", "feature gap", "competitor" | Suggest `/check-feedback` (Step 3c) |
-| `data_maintenance` | Direct data operations outside the sales cycle: "delete prospects", "削除", "clean up the list", "整理", "fix this organization's name", "change status/priority of ...", "mark do-not-contact" | Data maintenance (Step 3g) |
+| `data_maintenance` | Direct data operations outside the sales cycle: "delete prospects", "削除", "clean up the list", "整理", "fix this organization's name", "change status/priority of ...", "mark do-not-contact"; or a discovery strategy to revive / retire by slug ("戦略 `<slug>` を戻して") | Data maintenance (Step 3g) |
 | `out_of_scope` | Unrelated to LeadAce (e.g., "write me a poem") | One-line reject (Step 3d) |
 
 Bias rules:
@@ -109,6 +109,7 @@ Bias rules:
 - URL + ≥1 project -> ask via `AskUserQuestion`: "Use this URL to (a) create a new project, or (b) something else?" Default to `onboarding` on (a).
 - Quoted phrases like "list X" or "send to Y" -> consider the verb, not the object.
 - "Messaging" is ambiguous: a request scoped to the outbound message angles / tone / subjects -> `message_reset` or `message_steer`; reworking the strategy documents (positioning, targeting, value prop) -> `run_strategy`.
+- A discovery-strategy slug + a revive / retire verb -> `data_maintenance`, not `run_strategy`.
 - Ambiguous + projects exist -> `info_overview` (safe default).
 
 Hold the chosen label as `INTENT`.
@@ -209,6 +210,11 @@ touching more than a handful of records):
 Single-record, clearly-stated edits ("fix this org's name to X") may run directly —
 still report what changed. Never fall back to raw SQL; these tools are the supported
 surface.
+
+Discovery-strategy revive / retire by slug lives here too (single-record rule):
+`upsert_discovery_strategy` with the `approach` from `get_lever_state` echoed unchanged
+(`archived: true` retires) — rewriting an approach is `/evaluate`'s job. Report a cap
+refusal instead of archiving another strategy to make room.
 
 #### 3h. add_means — Define a Playbook-Driven Means
 

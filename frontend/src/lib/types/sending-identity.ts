@@ -11,14 +11,9 @@ export type SmtpConnectionView = {
   username: string;
 };
 
-export type SendingIdentity = {
-  identityId: string;
-  provider: SendingIdentityProvider;
-  fromEmail: string;
-  warmupStartedAt: string | null;
-  dailyCapOverride: number | null;
-  // Derived per-mailbox daily-cap health (mirrors backend mailboxDailyStatus):
-  // future-only pause + today's cap/used/remaining + ramp progress.
+// Mirrors backend domain/warmup.ts MailboxDailyStatus: future-only pause +
+// today's cap/used/remaining + ramp progress.
+export type MailboxDailyStatus = {
   pausedUntil: string | null;
   cap: number;
   used: number;
@@ -26,9 +21,28 @@ export type SendingIdentity = {
   rampWeek: number;
   rampWeeks: number;
   steadyStatePerDay: number;
+};
+
+// Mirrors backend domain/warmup.ts MailboxBounceWindow: bounces among the
+// threadable sends of a trailing window — a lower bound, since only bounces
+// that thread back to a sent message are attributed.
+export type MailboxBounceWindow = {
+  bounceWindowDays: number;
+  sentInWindow: number;
+  bounced: number;
+  bounceRate: number;
+};
+
+export type SendingIdentity = {
+  identityId: string;
+  provider: SendingIdentityProvider;
+  fromEmail: string;
+  warmupStartedAt: string | null;
+  dailyCapOverride: number | null;
   grantedAt: string;
   smtp: SmtpConnectionView | null;
-};
+} & MailboxDailyStatus &
+  MailboxBounceWindow;
 
 // Body for POST /me/sending-identities (smtp_imap only). imapHost/imapPort are
 // stored for future reply collection (P3); P1 sending uses SMTP only.
@@ -55,15 +69,5 @@ export type MailboxHealth = {
   email: string;
   warmupStartedAt: string | null;
   dailyCapOverride: number | null;
-  pausedUntil: string | null;
-  cap: number;
-  used: number;
-  remaining: number;
-  rampWeek: number;
-  rampWeeks: number;
-  steadyStatePerDay: number;
-  bounceWindowDays: number;
-  sentInWindow: number;
-  bounced: number;
-  bounceRate: number;
-};
+} & MailboxDailyStatus &
+  MailboxBounceWindow;

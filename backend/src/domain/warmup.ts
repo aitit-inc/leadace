@@ -1,3 +1,5 @@
+import { replyRate } from './dashboard'
+
 export interface WarmupConfig {
   startPerDay: number
   rampWeeks: number
@@ -78,5 +80,30 @@ export function mailboxDailyStatus(
     rampWeek: warmupWeeksElapsed(state, config, now),
     rampWeeks: config.rampWeeks,
     steadyStatePerDay: config.steadyStatePerDay,
+  }
+}
+
+// Matches the reply-ingest attribution window: a bounce is only attributed within 30d.
+export const BOUNCE_RATE_WINDOW_DAYS = 30
+
+export type MailboxBounceCounts = {
+  sentInWindow: number
+  bounced: number
+}
+
+// Bounces reach us only by threading back to a sent message, so the rate is a
+// lower bound. sentInWindow counts the threadable sends (email with a message_id).
+export type MailboxBounceWindow = MailboxBounceCounts & {
+  bounceWindowDays: number
+  bounceRate: number
+}
+
+const NO_SENDS_IN_WINDOW: MailboxBounceCounts = { sentInWindow: 0, bounced: 0 }
+
+export function mailboxBounceWindow(counts: MailboxBounceCounts = NO_SENDS_IN_WINDOW): MailboxBounceWindow {
+  return {
+    bounceWindowDays: BOUNCE_RATE_WINDOW_DAYS,
+    ...counts,
+    bounceRate: replyRate(counts.bounced, counts.sentInWindow),
   }
 }
