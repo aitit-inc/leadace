@@ -12,11 +12,13 @@ export const liveQuerySchema = z.object({
   // Campaign tag carried by share links (?ref=hn1). Slug-only so the funnel
   // log never carries free text.
   ref: z.string().regex(/^[A-Za-z0-9_-]{1,32}$/).optional(),
+  embed: z.literal('1').optional(),
 })
 export type LiveQuery = z.infer<typeof liveQuerySchema>
 
 export const PUBLIC_JOURNAL_SLUG = 'public_journal'
 export const LIVE_TREND_DAYS = 7
+export const LIVE_RECENT_DAYS = 30
 const CACHE_TTL_MS = 5 * 60 * 1000
 
 export type LiveDay = { date: string; sent: number; replies: number }
@@ -33,6 +35,7 @@ export type LiveScoreboard = {
   replies: { total: number; positive: number }
   // Percent of sent emails that got a human reply, one decimal.
   replyRate: number
+  recent: { days: number; sent: number; replyRate: number }
   // Percent of bounce-eligible (threadable email) sends that bounced, one decimal.
   bounceRate: number
   // Platform signups (tenants). Cloud only — meaningless on a self-hosted install.
@@ -51,6 +54,8 @@ type TotalsRow = {
   sent_today: string | number
   replied: string | number
   positive: string | number
+  sent_recent: string | number
+  replied_recent: string | number
   bounce_eligible: string | number
   bounced: string | number
   first_sent_day: string | null
@@ -112,9 +117,10 @@ async function computeScoreboard(
   now: Date,
 ): Promise<ServiceResult<LiveScoreboard>> {
   const todayStartIso = startOfTodayUtc(now).toISOString()
-  const trendSinceIso = new Date(
-    startOfTodayUtc(now).getTime() - (LIVE_TREND_DAYS - 1) * 86_400_000,
-  ).toISOString()
+  const sinceIso = (days: number) =>
+    new Date(startOfTodayUtc(now).getTime() - (days - 1) * 86_400_000).toISOString()
+  const trendSinceIso = sinceIso(LIVE_TREND_DAYS)
+  const recentSinceIso = sinceIso(LIVE_RECENT_DAYS)
 
   const raw = async <T extends Record<string, unknown>>(q: ReturnType<typeof sql>): Promise<T[]> =>
     Array.from(await db.execute<T>(q)) as T[]
@@ -145,6 +151,8 @@ async function computeScoreboard(
         COUNT(*) FILTER (WHERE s.sent_at >= ${todayStartIso}::timestamptz)::int AS sent_today,
         COUNT(h.outreach_log_id)::int AS replied,
         COUNT(*) FILTER (WHERE h.positive)::int AS positive,
+        COUNT(*) FILTER (WHERE s.sent_at >= ${recentSinceIso}::timestamptz)::int AS sent_recent,
+        COUNT(h.outreach_log_id) FILTER (WHERE s.sent_at >= ${recentSinceIso}::timestamptz)::int AS replied_recent,
         COUNT(*) FILTER (WHERE s.bounce_eligible)::int AS bounce_eligible,
         COUNT(b.outreach_log_id) FILTER (WHERE s.bounce_eligible)::int AS bounced,
         (MIN(s.sent_at) AT TIME ZONE 'UTC')::date::text AS first_sent_day
@@ -188,6 +196,7 @@ async function computeScoreboard(
 
   if (!totals) return err('INTERNAL_ERROR', 'Scoreboard totals query returned no row')
   const sentTotal = num(totals.sent_total)
+  const sentRecent = num(totals.sent_recent)
   const signups = signupRows[0]
   return ok({
     projectName,
@@ -196,6 +205,11 @@ async function computeScoreboard(
     sent: { today: num(totals.sent_today), total: sentTotal },
     replies: { total: num(totals.replied), positive: num(totals.positive) },
     replyRate: replyRate(num(totals.replied), sentTotal),
+    recent: {
+      days: LIVE_RECENT_DAYS,
+      sent: sentRecent,
+      replyRate: replyRate(num(totals.replied_recent), sentRecent),
+    },
     bounceRate: replyRate(num(totals.bounced), num(totals.bounce_eligible)),
     signups: signups ? { today: num(signups.today), total: num(signups.total) } : null,
     daily: buildDaily(sentByDay, repliesByDay, now),

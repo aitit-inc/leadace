@@ -19,6 +19,7 @@ liveRouter.get('/live', zValidator('query', liveQuerySchema), async (c) => {
   const db = createDb(c.env.DATABASE_URL)
   const result = await getCachedPublicScoreboard(db, projectId, c.get('edition'))
   if (!result.ok) return respondWithError(c, result)
-  logFunnel({ event: 'live_viewed', projectId, ref: c.req.valid('query').ref ?? null })
+  const query = c.req.valid('query')
+  if (!query.embed) logFunnel({ event: 'live_viewed', projectId, ref: query.ref ?? null })
   return c.json(result.value)
 })

@@ -35,7 +35,7 @@ A skill that sequentially reaches out to prospects on the sales list via email, 
 
 For each prospect, sends a message via an available channel and records the result in the DB. After all processing, generates a summary report.
 
-**Pace sends serially — don't parallelize.** Sub-agents for sub-tasks (drafting, page / form inspection) are encouraged; concurrent sends are not — they trip provider rate limits. A strong default, not a hard rule.
+**Pace sends serially — don't parallelize, and don't burst.** Sub-agents for sub-tasks (drafting, page / form inspection) are encouraged; concurrent sends are not — they trip provider rate limits. Keep email sends **at least 30 seconds apart per mailbox**: the interval starts when `send_email_and_record` returns **sent** (`sleep` the remainder; drafting meanwhile is fine); **drafted** and form / SNS / platform results start none.
 
 **Before starting:** `Read` `${CLAUDE_PLUGIN_ROOT}/references/workspace-conventions.md` and follow the cross-cutting conventions there (data storage, MCP error handling, document writes, output discipline).
 
@@ -218,13 +218,10 @@ add angles via `upsert_message_variant` (or `/leadace`'s strategy onboarding ste
 Do not fabricate a SALES_STRATEGY.md "Subject Line Patterns" section; that content
 is not an authoritative source.
 
-**Signal-aware opening.** If the prospect has signal material — `recentSignals`, or
-a `## Recent Signals` section in `overview` with at least one entry — the email's
-**first sentence** must reference the most recent / most relevant signal in concrete
-terms ("Saw the Series B announcement on TechCrunch last week — congrats on…").
-When both sources exist, pick by entry date. One signal mention, then move to the
-actual ask. If neither has an entry, do not invent one; open per SALES_STRATEGY's
-normal pattern.
+**Signal-aware personalization.** Use the most recent relevant entry from `recentSignals` or
+`overview`'s `## Recent Signals` in concrete terms ("Saw the Series B announcement on TechCrunch
+last week — congrats on…"). Place it per the picked variant's opener policy; otherwise follow
+the email guidelines. Never invent a signal.
 
 **Inquiry-aware CTA branch.** When `inquiryLandingEnabled === true` (step 1):
 - The primary CTA invites the recipient to spend ~5 minutes on the inquiry-landing

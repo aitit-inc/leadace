@@ -41,7 +41,7 @@ The server refuses a send that breaks the mechanical half of these — an unfill
 
 50–110 words excluding sign-off and footer; a peer note is often 50–70. Cut anything that is not about the recipient or one concrete point about your offer.
 
-Lead with their situation, never the product, and say what the offer does *for them* in one concrete sentence — never a feature list. Include a proof point (from SALES_STRATEGY.md "Track Record / Social Proof") only when one genuinely fits; a short honest ask beats forced credentials.
+Whatever the opener — a variant's brief or the shapes above — say what you offer and why this recipient within the first few sentences. By default lead with their situation, never the product, and say what the offer does *for them* in one concrete sentence — never a feature list. Include a proof point (from SALES_STRATEGY.md "Track Record / Social Proof") only when one genuinely fits; a short honest ask beats forced credentials.
 
 Personalization comes from the prospect's `overview` and `matchReason`, woven through the whole body — an email with only its opening changed reads as not written for them.
 

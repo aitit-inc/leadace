@@ -139,7 +139,7 @@ Read the `total` and `byChannel` fields from the response:
 
 **Browser-driven submission limit:** Cap form submissions and platform responses at **5 per cycle combined**. Browser-driven sends consume 10-20 tool calls each and are the primary cause of context exhaustion. If `formOnly` + `platformOnly` from the step 6 channel breakdown exceeds 5, carry the excess over to the next cycle. No limit for prospects with email.
 
-Split the outbound count into **batches of 10** and launch each as a **separate sub-agent in series**.
+Split the outbound count into **batches of 10** and launch each as a **separate sub-agent in series**. Launch each batch, the retry included, at least 30 seconds after the previous one returns (outbound/SKILL.md's send spacing).
 
 Example: 30 prospects -> 3 sub-agent launches (10 each)
 
@@ -336,7 +336,7 @@ The entry is public and written by **Ace** (first person, the project's `targetL
 ```
 **YYYY-MM-DD**
 
-- Sent: N emails · Replies: N (N positive) · Bounces: N
+- This cycle: N emails sent · N replies (N positive) · N bounces
 - Why they said no (last 24h): reason ×N, reason ×N
 - What I learned: one sentence
 - What I got wrong: one concrete miss

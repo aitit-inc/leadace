@@ -122,14 +122,7 @@ Avoid every keyword listed under `## Exhausted Keywords` in `search_notes`
 (those previously returned ≥ 70% duplicates). Pick a synonym or different
 angle instead.
 
-Types of search queries (choose appropriate ones based on target type):
-- Search by target industry + region
-- Member lists of industry associations, federations
-- Prospect collection from industry media and news sites
-- Exhibitor lists from trade shows and events
-- Client case studies from competitors
-- Target exploration on job sites
-- Directories or public databases of schools and corporations
+Choose query types for the target: industry + region; association / federation member lists; industry media and news; trade-show exhibitor lists; competitors' client case studies; job sites; school / corporate directories and public databases.
 
 Strategies may be search-driven (WebSearch queries) or **crawl-driven** — walking a
 directory, association member list, exhibitor list, or GitHub topic/org page with
@@ -138,7 +131,11 @@ usually out-yield search on structured sources; step 4's tooling applies to both
 
 A crawl-driven source may keep publishing, or hold more than one pass can take. When
 it is worth revisiting, note in `search_notes` what lets the next pass resume;
-re-registering an org already held is dedup'd server-side.
+re-registering an org already held is dedup'd server-side. **A source fetched with no in-target
+candidate is a miss**: note `misses: 1` on its `## Useful Sources` line; on a consecutive miss move it
+to `## Dead Sources` and never plan it again (fill the strategy from another source it names, else
+record the shortfall). Any in-target yield clears the miss; fetch failures and duplicate / `plan_limit`
+rejections are not misses.
 
 **Playbook-driven strategies (user-defined means).** A strategy may reference a
 `playbook_<strategy-slug>` document (see workspace-conventions.md → "Playbook
@@ -486,6 +483,9 @@ entry: `keyword — reason — date`.
 ## Useful Sources
 - (Portal sites or listing page URLs that haven't been fully explored yet)
 
+## Dead Sources
+- (Two consecutive zero-yield runs — never plan again. `URL or name — strategy slug — dates`)
+
 ## Directions to Try Next Time
 - (Search methods not attempted this time, regions or angles not yet explored)
 
@@ -493,8 +493,8 @@ entry: `keyword — reason — date`.
 - (Areas where prospects were found unexpectedly, insights for next time)
 ```
 
-If the previous version already has `## Coverage Matrix` / `## Exhausted
-Keywords` sections, **merge into them** — don't overwrite. Only mark a
+If the previous version already has any of these sections, **merge into
+them** — don't overwrite. Only mark a
 cell `exhausted` when this run's data confirms it; old `exhausted` entries
 should be re-tested if the user asks for a sweep across previously-skipped
 cells.

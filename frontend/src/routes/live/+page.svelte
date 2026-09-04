@@ -104,7 +104,11 @@
             String(board.replies.total),
             `${board.replies.positive} positive`,
           )}
-          {@render stat('Reply rate', pct(board.replyRate), 'of emails sent')}
+          {@render stat(
+            'Reply rate',
+            pct(board.recent.replyRate),
+            `last ${board.recent.days} days (${board.recent.sent} sent) · all time ${pct(board.replyRate)}`,
+          )}
           {@render stat('Bounce rate', pct(board.bounceRate), 'of tracked sends')}
           {#if board.signups}
             {@render stat('Signups today', String(board.signups.today), null)}
@@ -199,7 +203,7 @@
     </section>
 
     <footer class="mt-10 text-xs text-text-muted">
-      Reply rate = human replies ÷ emails sent (bounces and auto-replies excluded). Bounce rate =
+      Reply rate = human replies ÷ emails sent in the window shown (bounces and auto-replies excluded). Bounce rate =
       bounces ÷ sends with a tracked message id (a bounce can only be matched to those). Signups
       count LeadAce accounts created.
       {#if board}
