@@ -85,14 +85,14 @@ const documentCols = {
 // A playbook is followed as procedure (it may carry scripts), so the agent
 // reads only versions a human approved in the Web UI. Every other slug, and
 // the Web UI itself, reads the newest version.
-function agentReadsApprovedOnly(caller: 'browser' | 'mcp', slug: string): boolean {
-  return caller === 'mcp' && playbookStrategySlug(slug) !== null
+function agentReadsApprovedOnly(caller: 'browser' | 'agent', slug: string): boolean {
+  return caller === 'agent' && playbookStrategySlug(slug) !== null
 }
 
 export async function getDocument(
   db: Db,
   tenantId: TenantId,
-  caller: 'browser' | 'mcp',
+  caller: 'browser' | 'agent',
   param: DocumentParam,
 ): Promise<ServiceResult<DocumentRow>> {
   const { id: projectRef, slug } = param
@@ -133,7 +133,7 @@ export async function getDocument(
 export async function getDocumentHistory(
   db: Db,
   tenantId: TenantId,
-  caller: 'browser' | 'mcp',
+  caller: 'browser' | 'agent',
   param: DocumentParam,
   query: DocumentHistoryQuery,
 ): Promise<ServiceResult<{ history: Array<{ id: number; content: string; createdAt: Date; approvedAt: Date | null }> }>> {
@@ -171,7 +171,7 @@ export type SaveDocumentResult = {
 export async function saveDocument(
   db: Db,
   tenantId: TenantId,
-  caller: 'browser' | 'mcp',
+  caller: 'browser' | 'agent',
   env: OpenAIEnv,
   param: DocumentParam,
   input: SaveDocumentInput,
@@ -215,7 +215,7 @@ export async function saveDocument(
 export async function approveDocumentVersion(
   db: Db,
   tenantId: TenantId,
-  caller: 'browser' | 'mcp',
+  caller: 'browser' | 'agent',
   param: DocumentParam,
   input: ApproveDocumentInput,
 ): Promise<ServiceResult<SaveDocumentResult>> {

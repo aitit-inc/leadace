@@ -6,6 +6,9 @@
   "vars": {
     "ENVIRONMENT": "development",
     "APP_URL": "http://localhost:5273",
+    // This Worker's own public origin. Hosted-agent jobs build unsubscribe /
+    // inquiry link hosts from it (a request-bound send derives it from the URL).
+    "API_URL": "http://localhost:8787",
     // Default for local dev. Production env redeclares this as "cloud".
     // Anything other than "cloud" disables Stripe routes and resolves every
     // tenant to the 'unlimited' plan. See backend/src/domain/edition.ts.
@@ -37,8 +40,8 @@
   //                                platform.openai.com. Used by services/inquiry-chat.ts +
   //                                inquiry-summarize.ts; chat is disabled if absent.)
   //   GEMINI_API_KEY              (REQUIRED — Google AI Studio key, paid tier. Powers the daily
-  //                                org-signal refresh and the onboarding web preview, both of
-  //                                which read pages via Gemini; the cron throws when unset.)
+  //                                org-signal refresh, the onboarding web preview, and every
+  //                                hosted-agent stage (jobs + chat); the cron throws when unset.)
   //   SHOWCASE_PROJECT_ID         (optional — project id the public GET /api/live scoreboard
   //                                shows. Unset → /api/live answers 404.)
   //   SENTRY_DSN                  (cloud-only error tracking. Set on the hosted deploy to send
@@ -51,6 +54,16 @@
     {
       "binding": "MCP_OAUTH_STORE",
       "id": "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+    }
+  ],
+  // Hosted-agent jobs: one Workflow instance per jobs row (src/jobs/workflow.ts).
+  // The hourly cron and the chat / Web UI / MCP start instances through the
+  // `JOBS` binding; the class is exported from src/api/index.ts.
+  "workflows": [
+    {
+      "name": "lead-ace-jobs",
+      "binding": "JOBS",
+      "class_name": "LeadAceJobWorkflow"
     }
   ],
   // Daily org-signal refresh: runs the signal extractor across all stale

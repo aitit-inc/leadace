@@ -16,13 +16,23 @@
 // Run: npx tsx src/mcp/stdio.ts
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { buildToolRegistry, type ToolCtx } from './index'
+import { buildToolRegistry, type ToolCtx } from '../tools/registry'
 import { SERVER_VERSION } from './version'
 
 // Trailing slash stripped: callApi builds `${apiUrl}/api${path}`.
 const apiUrl = (process.env.LEADACE_API_URL ?? 'https://api.leadace.ai').replace(/\/+$/, '')
 const token = process.env.LEADACE_ACCESS_TOKEN
-const ctx: ToolCtx = { apiUrl, authHeader: token ? `Bearer ${token}` : '' }
+const authHeader = token ? `Bearer ${token}` : ''
+const ctx: ToolCtx = {
+  callApi: async (method, path, body) => {
+    const res = await fetch(`${apiUrl}/api${path}`, {
+      method,
+      headers: { 'Content-Type': 'application/json', Authorization: authHeader },
+      body: body != null ? JSON.stringify(body) : undefined,
+    })
+    return { ok: res.ok, status: res.status, data: await res.json() }
+  },
+}
 
 const server = new McpServer({ name: 'lead-ace', version: SERVER_VERSION })
 for (const tool of buildToolRegistry()) {

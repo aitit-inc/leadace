@@ -45,6 +45,10 @@ export type ProjectSettings = {
   publicScoreboardEnabled: boolean;
   // Only the project bound to the deployment's SHOWCASE_PROJECT_ID may publish.
   publicScoreboardEligible: boolean;
+  // Server-run daily cycle and the UTC hour the hourly cron starts it.
+  hostedCycleEnabled: boolean;
+  hostedCycleHourUtc: number;
+  hostedCycleOutboundCount: number;
   followUpSequence: FollowUpSequence;
   outboundChannels: OutboundChannel[];
   targetCountries: AllowedSendCountry[];

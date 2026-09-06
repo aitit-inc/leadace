@@ -9,7 +9,7 @@ import type { RequestHandler } from './$types';
 const NEXT_COOKIE = 'lp-next';
 const SIGNUP_COOKIE = 'lp-signup';
 const DEFAULT_DEST = '/dashboard';
-const ONBOARDING_DEST = '/onboarding';
+const ONBOARDING_DEST = '/chat';
 
 // `signup=1` rides along so a retry after a failed attempt keeps the landing
 // attribution (the login page re-sets the cookie from the query param).
@@ -111,8 +111,8 @@ export const GET: RequestHandler = async ({ url, cookies, fetch, locals }) => {
 	let dest = next;
 	if (next === DEFAULT_DEST) {
 		try {
-			const { mcpConnected } = await getOnboardingStatus(fetch, session.access_token);
-			if (!mcpConnected) dest = ONBOARDING_DEST;
+			const { hasProject } = await getOnboardingStatus(fetch, session.access_token);
+			if (!hasProject) dest = ONBOARDING_DEST;
 		} catch {
 			// keep the default dashboard
 		}

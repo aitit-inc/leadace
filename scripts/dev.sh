@@ -96,7 +96,8 @@ echo "==> Starting API (:$API_PORT), MCP (:$MCP_PORT), frontend (:$FRONTEND_PORT
 launch api "$C_API" backend ./node_modules/.bin/wrangler dev \
   --config wrangler.api.jsonc --test-scheduled \
   --port "$API_PORT" --inspector-port "$API_INSPECTOR" \
-  --var "APP_URL:http://localhost:$FRONTEND_PORT"
+  --var "APP_URL:http://localhost:$FRONTEND_PORT" \
+  --var "API_URL:http://localhost:$API_PORT"
 launch mcp "$C_MCP" backend ./node_modules/.bin/wrangler dev \
   --config wrangler.mcp.jsonc \
   --port "$MCP_PORT" --inspector-port "$MCP_INSPECTOR" \

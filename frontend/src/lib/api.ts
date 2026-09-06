@@ -55,6 +55,21 @@ function formatDetail(detail: unknown): string | undefined {
   return String(detail);
 }
 
+// The one non-2xx path: 401 on an authenticated call routes to /login (the
+// route group already gates on session, so the backend rejected an otherwise
+// valid one); everything else becomes a displayable ApiError.
+export async function throwApiError(res: Response, auth: 'required' | 'none'): Promise<never> {
+  const err = (await res.json().catch(() => ({}))) as { error?: string; detail?: unknown };
+  if (res.status === 401 && auth === 'required') {
+    if (browser) {
+      void handleUnauthorizedClient();
+    } else {
+      throw kitError(401, err.error ?? 'Unauthorized');
+    }
+  }
+  throw new ApiError(res.status, err.error ?? `Request failed (${res.status})`, formatDetail(err.detail));
+}
+
 // 'required' attaches a Supabase JWT and routes 401s to /login (unauthenticated
 // session means there's nothing else useful to render). 'none' is for the
 // public token-authenticated routes (inquiry landing, unsubscribe) where the
@@ -111,20 +126,7 @@ export async function request<T>(
     body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
   });
 
-  if (!res.ok) {
-    const err = (await res.json().catch(() => ({}))) as { error?: string; detail?: unknown };
-    if (res.status === 401 && opts.auth === 'required') {
-      // The route group already gates on session, so a 401 here means the
-      // backend rejected an otherwise-valid Supabase session.
-      if (browser) {
-        void handleUnauthorizedClient();
-      } else {
-        throw kitError(401, err.error ?? 'Unauthorized');
-      }
-    }
-    const label = err.error ?? `Request failed (${res.status})`;
-    throw new ApiError(res.status, label, formatDetail(err.detail));
-  }
+  if (!res.ok) await throwApiError(res, opts.auth);
   // Callers of 204 endpoints are typed Promise<void>; res.json() on the empty body would reject.
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;

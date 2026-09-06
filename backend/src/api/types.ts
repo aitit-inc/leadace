@@ -1,6 +1,7 @@
 import type { Db } from '../db/connection'
 import type { Edition } from '../domain/edition'
 import type { TenantId } from '../domain/ids'
+import type { JobOrigin } from '../domain/jobs'
 
 export type Env = {
   DATABASE_URL: string
@@ -25,6 +26,9 @@ export type Env = {
   GMAIL_TOKEN_ENCRYPTION_KEY: string
   UNSUBSCRIBE_TOKEN_SECRET: string
   APP_URL: string
+  // This Worker's public origin; hosted-agent jobs use it where a request
+  // handler would read `new URL(c.req.url).origin`.
+  API_URL: string
   OPENAI_API_KEY: string
   // Google AI Studio key: daily org-signal refresh cron + onboarding web preview.
   GEMINI_API_KEY: string
@@ -46,13 +50,20 @@ export type Env = {
   // Project whose numbers the public GET /api/live scoreboard shows (the
   // operator's own dogfooding project). Unset → /api/live is 404.
   SHOWCASE_PROJECT_ID?: string
+  // Hosted-agent jobs (jobs/workflow.ts). One instance per jobs row.
+  JOBS: Workflow<{ jobId: string; tenantId: string }>
 }
 
 export type Variables = {
   userId: string
-  // Which credential authenticated the request: a browser session or an MCP
-  // token (JWT audience). Lets a service keep a field UI-only.
-  caller: 'browser' | 'mcp'
+  // Who is acting: a person in the Web UI ('browser'), or an agent — an MCP
+  // token (JWT audience) or the hosted chat agent dispatching in-process
+  // (api/internal-dispatch.ts). Lets a service keep a field UI-only; 'agent'
+  // only ever narrows what a request may do.
+  caller: 'browser' | 'agent'
+  // Which entry point is acting, for the jobs ledger: the Web UI, an MCP
+  // client, or the hosted chat. Never 'cron' here — cron has no request.
+  origin: Exclude<JobOrigin, 'cron'>
   tenantId: TenantId
   db: Db
   // Set by editionMiddleware on every request (incl. unauthenticated public

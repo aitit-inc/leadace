@@ -20,6 +20,7 @@
     X,
     TriangleAlert,
     Rocket,
+    Bot,
   } from '@lucide/svelte';
   import type { Component } from 'svelte';
   import { connectGmail } from '$lib/gmail-oauth';
@@ -54,6 +55,7 @@
 
   type NavItem = { href: string; label: string; icon: Component };
   const nav: NavItem[] = [
+    { href: '/chat', label: 'Chat', icon: Bot },
     { href: '/dashboard', label: 'Home', icon: LayoutDashboard },
     { href: '/prospects', label: 'Prospects', icon: Users },
     { href: '/organizations', label: 'Orgs', icon: Building2 },
@@ -71,6 +73,7 @@
   // projects.length === 0 — the +layout.server.ts reconciliation guarantees
   // activeProjectId is non-null whenever any project exists.
   const tenantScopedPaths = [
+    '/chat',
     '/onboarding',
     '/organizations',
     '/workspace-settings',
@@ -173,15 +176,15 @@
       <AlertBell items={bellItems} />
     </header>
 
-    {#if !data.mcpConnected && page.url.pathname !== '/onboarding' && page.url.pathname !== '/dashboard'}
+    {#if data.projects.length === 0 && page.url.pathname !== '/chat' && page.url.pathname !== '/dashboard'}
       <div class="border-b border-accent/40 bg-accent/10 px-4 py-2 md:px-6">
         <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
           <div class="flex items-center gap-2 text-sm text-text">
             <Rocket size={16} class="text-accent" />
-            <span>Connect the LeadAce plugin in Claude Code to start finding and emailing prospects.</span>
+            <span>Paste your website URL in the chat to set up your first project.</span>
           </div>
           <a
-            href="/onboarding"
+            href="/chat"
             class="rounded border border-accent/60 bg-page px-3 py-1 text-xs font-medium text-accent hover:bg-accent/10"
           >
             Finish setup
@@ -224,15 +227,15 @@
           <div class="text-center">
             <p class="text-sm text-text">No projects yet</p>
             <p class="text-xs text-text-muted mt-1">
-              Create your first project to start tracking prospects and outreach.
+              Paste your website URL in the chat — Ace proposes who to contact and what to say.
             </p>
           </div>
-          <button
-            onclick={() => (showCreate = true)}
-            class="rounded bg-text px-4 py-1.5 text-xs font-medium text-page hover:bg-text/90 transition-colors disabled:opacity-50"
+          <a
+            href="/chat"
+            class="rounded bg-text px-4 py-1.5 text-xs font-medium text-page hover:bg-text/90 transition-colors"
           >
-            Create your first project
-          </button>
+            Set up in chat
+          </a>
         </div>
       {/if}
     </main>

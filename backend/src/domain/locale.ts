@@ -5,3 +5,9 @@ import { z } from 'zod'
 // client-reported page language on the public inquiry / unsubscribe pages.
 export const localeSchema = z.enum(['en', 'ja'])
 export type Locale = z.infer<typeof localeSchema>
+
+// The language name a prompt names when it asks the model to write in a locale.
+const LANGUAGE_NAMES: Record<Locale, string> = { en: 'English', ja: 'Japanese' }
+export function languageNameOf(locale: Locale): string {
+  return LANGUAGE_NAMES[locale]
+}

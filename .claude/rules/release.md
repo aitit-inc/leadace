@@ -64,7 +64,7 @@ A `main` push also triggers `sync-public.yml`, which mirrors the OSS-publishable
 
 ## MIN_PLUGIN_VERSION
 
-`backend/src/mcp/index.ts` defines `MIN_PLUGIN_VERSION`. The `/leadace` skill calls `get_server_version`, reads `plugin/.claude-plugin/plugin.json`, and aborts with a `/plugin update` message if the plugin is older.
+`backend/src/tools/registry.ts` defines `MIN_PLUGIN_VERSION`. The `/leadace` skill calls `get_server_version`, reads `plugin/.claude-plugin/plugin.json`, and aborts with a `/plugin update` message if the plugin is older.
 
 Bump `MIN_PLUGIN_VERSION` to the just-released plugin version only when the backend now requires plugin behavior the old plugin lacks — e.g.:
 

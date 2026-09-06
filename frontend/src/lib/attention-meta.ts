@@ -49,14 +49,14 @@ export function attentionMeta(item: AttentionItem): AttentionMeta {
 				ctaLabel: 'Review',
 				href: '/drafts',
 			};
-		case 'mcp_not_connected':
+		case 'no_project':
 			return {
 				icon: Rocket,
 				tone: 'accent',
-				title: 'Connect the LeadAce plugin',
-				desc: 'Connect in Claude Code to start finding and emailing prospects',
-				ctaLabel: 'Set up',
-				href: '/onboarding',
+				title: 'Finish setting up',
+				desc: 'Paste your website URL in the chat and Ace proposes who to contact and what to say',
+				ctaLabel: 'Open chat',
+				href: '/chat',
 			};
 		case 'compliance_incomplete':
 			return {

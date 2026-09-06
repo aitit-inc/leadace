@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { eq } from 'drizzle-orm'
-import { tenants } from '../db/schema'
+import { projects, tenants } from '../db/schema'
 import type { Db } from '../db/connection'
 import type { TenantId } from '../domain/ids'
 import type { Locale } from '../domain/locale'
@@ -69,14 +69,14 @@ export async function loadTenantSettings(
 export async function updateTenantSettings(
   db: Db,
   tenantId: TenantId,
-  caller: 'browser' | 'mcp',
+  caller: 'browser' | 'agent',
   patch: UpdateTenantSettingsPatch,
 ): Promise<ServiceResult<TenantSettingsRow>> {
   // Every field here bounds what the agent may do (the compliance footer's
   // identity, the notification recipient), so a prompt-injected or misjudging
   // agent holding the MCP token must not be able to move them. The Web UI is
   // the only writer.
-  if (caller === 'mcp') {
+  if (caller === 'agent') {
     return err('FORBIDDEN', 'Workspace settings are set from the Web UI only')
   }
   const updateSet = {
@@ -197,19 +197,16 @@ export async function getTenantComplianceStatus(
   return ok({ ready: missing.length === 0, missing })
 }
 
+// Setup is done once the tenant has a project — the chat creates it from a
+// URL, the plugin from setup_project; either way nothing can run before.
 export type OnboardingStatus = {
-  mcpConnected: boolean
+  hasProject: boolean
 }
 
 export async function getOnboardingStatus(
   db: Db,
   tenantId: TenantId,
 ): Promise<ServiceResult<OnboardingStatus>> {
-  const [row] = await db
-    .select({ firstMcpConnectedAt: tenants.firstMcpConnectedAt })
-    .from(tenants)
-    .where(eq(tenants.id, tenantId))
-    .limit(1)
-  if (!row) return err('INTERNAL_ERROR', 'Tenant row missing')
-  return ok({ mcpConnected: row.firstMcpConnectedAt !== null })
+  const [row] = await db.select({ id: projects.id }).from(projects).where(eq(projects.tenantId, tenantId)).limit(1)
+  return ok({ hasProject: row !== undefined })
 }

@@ -2,7 +2,7 @@ import { request, type RequestFetch } from '../api';
 
 // Mirrors backend services/tenants.ts OnboardingStatus.
 export type OnboardingStatus = {
-  mcpConnected: boolean;
+  hasProject: boolean;
 };
 
 export function getOnboardingStatus(

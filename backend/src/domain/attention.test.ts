@@ -108,7 +108,7 @@ describe('deriveIdentityAttention', () => {
 
 describe('deriveAttentionItems', () => {
   const clean: AttentionInput = {
-    mcpConnected: true,
+    hasProject: true,
     compliance: { ready: true, missing: [] },
     gmailConnected: true,
     identities: [],
@@ -136,7 +136,7 @@ describe('deriveAttentionItems', () => {
   it('orders opportunity → send blockers → degradation → review queue', () => {
     const items = deriveAttentionItems({
       ...clean,
-      mcpConnected: false,
+      hasProject: false,
       compliance: { ready: false, missing: ['legalName'] },
       gmailConnected: false,
       identities: [
@@ -154,7 +154,7 @@ describe('deriveAttentionItems', () => {
     })
     expect(items.map((i) => i.kind)).toEqual([
       'hot_leads',
-      'mcp_not_connected',
+      'no_project',
       'compliance_incomplete',
       'gmail_disconnected',
       'no_outbound_channels',
@@ -210,10 +210,10 @@ describe('deriveAttentionItems', () => {
   it('emits no project items for the tenant-wide feed (project: null)', () => {
     const items = deriveAttentionItems({
       ...clean,
-      mcpConnected: false,
+      hasProject: false,
       project: null,
     })
-    expect(items).toEqual([{ kind: 'mcp_not_connected' }])
+    expect(items).toEqual([{ kind: 'no_project' }])
   })
 })
 

@@ -64,7 +64,7 @@ export async function loadTenantAttentionInput(
 
   const quota = planRes.value.outreach
   return ok({
-    mcpConnected: onboardingRes.value.mcpConnected,
+    hasProject: onboardingRes.value.hasProject,
     compliance: { ready: complianceRes.value.ready, missing: complianceRes.value.missing },
     gmailConnected: gmailRes.value.connected,
     identities,

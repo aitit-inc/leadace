@@ -30,6 +30,9 @@ import { notificationsRouter } from './routes/notifications'
 import { accountRouter } from './routes/account'
 import { bugReportsRouter } from './routes/bug-reports'
 import { webPreviewRouter } from './routes/web-preview'
+import { jobsRouter, jobRunner } from './routes/jobs'
+import { strategyDraftRouter } from './routes/strategy-draft'
+import { chatRouter, createChatStreamRouter } from './routes/chat'
 import { stripeWebhookRouter } from './routes/stripe-webhook'
 import { unsubscribeRouter } from './routes/unsubscribe'
 import { inquiryRouter } from './routes/inquiry'
@@ -39,6 +42,7 @@ import { runDailySignalRefresh } from '../services/org-signals'
 import { runDailyBetaStats } from '../services/beta-stats'
 import { runReplyIngest } from '../services/reply-ingest'
 import { watchVerifierBalance } from '../services/email-verify'
+import { startDueDailyCycles } from '../services/jobs'
 import type { Env, Variables } from './types'
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>()
@@ -69,6 +73,13 @@ app.route('/api', inquiryRouter)
 // only while that project opted in (publicScoreboardEnabled).
 app.route('/api', liveRouter)
 
+// Streaming chat turns: auth, then their own RLS transaction per stream —
+// the request-scoped one below would close before the stream ends. The
+// agent's tool calls re-enter this same app through `dispatch`.
+app.use('/api/chat/threads/:id/messages', authMiddleware)
+app.use('/api/chat/threads/:id/confirm', authMiddleware)
+app.route('/api', createChatStreamRouter((request, env, ctx) => Promise.resolve(app.fetch(request, env, ctx))))
+
 // All routes below require authentication + tenant-scoped RLS
 app.use('/api/*', authMiddleware)
 app.use('/api/*', rlsMiddleware)
@@ -98,6 +109,9 @@ app.route('/api', notificationsRouter)
 app.route('/api', accountRouter)
 app.route('/api', bugReportsRouter)
 app.route('/api', webPreviewRouter)
+app.route('/api', jobsRouter)
+app.route('/api', strategyDraftRouter)
+app.route('/api', chatRouter)
 
 app.onError((err, c) => {
   console.error(err)
@@ -154,6 +168,16 @@ const handler = {
 
     if (controller.cron === REPLY_INGEST_CRON) {
       ctx.waitUntil(
+        startDueDailyCycles(db, jobRunner(env), new Date(controller.scheduledTime))
+          .then((s) => {
+            console.log(`[scheduled] hosted-cycles started=${s.started} skipped=${s.skipped} failed=${s.failed}`)
+          })
+          .catch((e: unknown) => {
+            console.error('[scheduled] hosted-cycles failed', e)
+            Sentry.captureException(e)
+          }),
+      )
+      ctx.waitUntil(
         runReplyIngest(db, env)
           .then((s) => {
             console.log(
@@ -184,3 +208,6 @@ export default Sentry.withSentry(
   (env: Env) => sentryOptions(env.SENTRY_DSN, env.ENVIRONMENT),
   handler,
 )
+
+// Workflow class the `JOBS` binding in wrangler.api.jsonc points at.
+export { LeadAceJobWorkflow } from '../jobs/workflow'

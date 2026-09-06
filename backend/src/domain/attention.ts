@@ -7,7 +7,7 @@ export type QuotaConstraint = 'daily' | 'lifetime' | 'monthly'
 // banners, dashboard) renders a view of this list, none judges on its own.
 export type AttentionItem =
   | { kind: 'hot_leads'; count: number }
-  | { kind: 'mcp_not_connected' }
+  | { kind: 'no_project' }
   | { kind: 'compliance_incomplete'; missing: string[] }
   | { kind: 'gmail_disconnected' }
   | { kind: 'gmail_auth_revoked'; fromEmail: string; since: string }
@@ -97,7 +97,7 @@ export function deriveReplyCollectionStatus(
 }
 
 export type AttentionInput = {
-  mcpConnected: boolean
+  hasProject: boolean
   compliance: { ready: boolean; missing: string[] }
   gmailConnected: boolean
   identities: IdentityHealthInput[]
@@ -123,7 +123,7 @@ export function deriveAttentionItems(input: AttentionInput): AttentionItem[] {
   if (input.project && input.project.hotLeadsRecent > 0) {
     items.push({ kind: 'hot_leads', count: input.project.hotLeadsRecent })
   }
-  if (!input.mcpConnected) items.push({ kind: 'mcp_not_connected' })
+  if (!input.hasProject) items.push({ kind: 'no_project' })
   if (!input.compliance.ready) {
     items.push({ kind: 'compliance_incomplete', missing: input.compliance.missing })
   }

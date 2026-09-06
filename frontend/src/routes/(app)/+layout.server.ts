@@ -10,8 +10,7 @@ import type { LayoutServerLoad } from './$types';
 // the server can pre-render the right project on first paint, without waiting
 // for client localStorage reconciliation.
 export const load: LayoutServerLoad = async ({ fetch, locals, cookies, depends }) => {
-	// 'app:onboarding' = the onboarding page's "check now" button.
-	depends('app:active-project', 'app:projects', 'app:plan', 'app:onboarding', 'app:attention');
+	depends('app:active-project', 'app:projects', 'app:plan', 'app:attention');
 
 	const session = locals.session;
 	if (!session) {
@@ -37,8 +36,6 @@ export const load: LayoutServerLoad = async ({ fetch, locals, cookies, depends }
 	]);
 	const plan: PlanInfo | null = planResult.ok ? planResult.plan : null;
 	const planError: string | null = planResult.ok ? null : planResult.message;
-	// A failed attention load reads as "connected" — never trap the user in onboarding.
-	const mcpConnected = !attention.some((i) => i.kind === 'mcp_not_connected');
 
 	const stored = cookies.get(ACTIVE_PROJECT_COOKIE) ?? null;
 	const next = stored && projects.some((p) => p.id === stored)
@@ -62,5 +59,5 @@ export const load: LayoutServerLoad = async ({ fetch, locals, cookies, depends }
 		}
 	}
 
-	return { activeProjectId: next, projects, plan, planError, attention, mcpConnected };
+	return { activeProjectId: next, projects, plan, planError, attention };
 };

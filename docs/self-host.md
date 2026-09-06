@@ -212,8 +212,9 @@ of the open-source mirror, so you wire up your own:
 - **Runtime vars:** edit the top-level `vars` for a real deployment —
   `APP_URL` in `wrangler.api.jsonc` and `FRONTEND_URL` in
   `wrangler.mcp.jsonc` default to `http://localhost:5273`; point them at
-  your frontend URL. `LEADACE_EDITION` is already `self-hosted`, which is
-  what you want.
+  your frontend URL. `API_URL` in `wrangler.api.jsonc` defaults to
+  `http://localhost:8787`; point it at the API Worker's own public URL.
+  `LEADACE_EDITION` is already `self-hosted`, which is what you want.
 - **Custom domain (optional):** add a `routes` block to the config or
   attach the domain in the Cloudflare dashboard. Without one, the Workers
   are reachable on `*.workers.dev`.
@@ -312,7 +313,8 @@ npx wrangler secret put GOOGLE_CLIENT_SECRET  --config wrangler.api.jsonc
 # API Worker — for inquiry-landing AI chat (optional)
 npx wrangler secret put OPENAI_API_KEY        --config wrangler.api.jsonc
 
-# API Worker — reads company pages for org signals (required; the daily cron fails without it)
+# API Worker — every Gemini-backed feature: org signals, onboarding from a URL,
+# the hosted chat agent and every hosted job stage (required)
 npx wrangler secret put GEMINI_API_KEY        --config wrangler.api.jsonc
 
 # API Worker — verifies the recipient mailbox just before sending (optional)
@@ -584,6 +586,8 @@ Most self-hosters will leave Stripe off entirely.
 | `SUPABASE_ANON_KEY` | MCP | yes | Supabase publishable/anon key (used by the MCP OAuth handler). |
 | `WEB_API_URL` | MCP | yes | URL of the API Worker (e.g. `https://api.<your-domain>`). |
 | `APP_URL` | API | yes | URL of the frontend. Used in outbound-email links. |
+| `API_URL` | API | yes | Public URL of the API Worker itself (e.g. `https://api.<your-domain>`). Hosted-agent jobs build unsubscribe / inquiry link hosts from it. |
+| `JOBS` | API | yes | Cloudflare Workflows binding (`wrangler.api.jsonc` → `workflows`, class `LeadAceJobWorkflow`). Runs the hosted agent's jobs (daily cycle, prospect discovery, drafting, sending, evaluation). Created on first `wrangler deploy`; available on the Workers Free plan. |
 | `FRONTEND_URL` | MCP | yes | URL of the frontend. Used by the OAuth handshake. |
 | `ENVIRONMENT` | API + MCP | yes | `development` or `production`. |
 | `LEADACE_EDITION` | API | no | `self-hosted` (default) or `cloud`. Anything other than `cloud` disables Stripe routes and runs every tenant on the unlimited tier. |

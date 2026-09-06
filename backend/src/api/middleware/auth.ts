@@ -8,6 +8,7 @@ import { asTenantId } from '../../domain/ids'
 import { logFunnel } from '../../services/funnel'
 import { lookupAuthUser } from '../../services/supabase-admin'
 import type { Env, Variables } from '../types'
+import { INTERNAL_DISPATCH_HEADER, internalDispatchToken } from '../internal-dispatch'
 
 export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: Variables }>(
   async (c, next) => {
@@ -25,10 +26,12 @@ export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: Varia
 
     const userId = verified.sub
     const isMcp = verified.aud === MCP_AUDIENCE
-    const caller = isMcp ? 'mcp' : 'browser'
+    const origin = isMcp ? 'mcp' : c.req.header(INTERNAL_DISPATCH_HEADER) === internalDispatchToken() ? 'chat' : 'ui'
+    const caller = origin === 'ui' ? 'browser' : 'agent'
 
     c.set('userId', userId)
     c.set('caller', caller)
+    c.set('origin', origin)
 
     // Runs as postgres superuser — bypasses RLS (intentional for tenant resolution)
     const db = createDb(c.env.DATABASE_URL)
@@ -72,7 +75,7 @@ export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: Varia
         tenantId = newTenantId
         // An MCP-first signup is stamped by the shared post-block below, not inline.
         mcpStamped = false
-        logFunnel({ event: 'tenant_created', tenantId: asTenantId(newTenantId), caller })
+        logFunnel({ event: 'tenant_created', tenantId: asTenantId(newTenantId), caller: isMcp ? 'mcp' : 'browser' })
       } catch (e) {
         // Only the UNIQUE(user_id) race is recoverable by re-reading the winner's
         // tenantId; anything else rethrows so it surfaces as a real 500.

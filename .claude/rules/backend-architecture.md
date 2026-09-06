@@ -16,16 +16,28 @@ before adding an endpoint.
 ```
 routes/    HTTP adapter: bind URL → service, validate input, map result to HTTP
 services/  Orchestration + DB I/O + external APIs
+  pipeline/  Hosted-agent stages (discover / enrich / draft / evaluate / journal / strategy-draft): LLM calls + existing services
+  chat/      Hosted chat agent: thread store, system prompt, the Gemini function-calling loop
 domain/    Branded types, state machines, pure rules. No I/O.
 db/        drizzle schema (single source of truth). No repository layer.
+tools/     The agent tool surface shared by the MCP worker and the chat agent; each tool calls the API through an injected callApi
+jobs/      Cloudflare Workflow entrypoint + stage runners: puts pipeline stages into steps
 ```
 
 | Layer | May import | Must not import |
 |---|---|---|
-| `routes/` | `services/`, `services/result` (types), `domain/ids`, `api/respond`, `api/zvalidator`, schema types/enums, hono | `drizzle-orm`, `db/connection`, table objects, raw zod, `@hono/zod-validator` directly |
-| `services/` | `db/connection`, `db/schema`, `drizzle-orm`, `domain/`, `auth/`, other services, zod | `routes/`, `mcp/`, `api/*`, `hono` |
+| `routes/` | `services/`, `services/result` (types), `domain/ids`, `api/respond`, `api/zvalidator`, schema types/enums, hono, `tools/` (chat routes only) | `drizzle-orm`, `db/connection`, table objects, raw zod, `@hono/zod-validator` directly |
+| `services/` | `db/connection`, `db/schema`, `drizzle-orm`, `domain/`, `auth/`, other services, zod | `routes/`, `mcp/`, `api/*`, `hono`, `tools/` |
 | `domain/` | schema **types only**, zod, stdlib | drizzle, I/O, `services/`, `routes/`, `mcp/` |
 | `middleware/` | `db/connection`, `db/schema`, `services/` | `routes/` |
+| `tools/` | `domain/`, schema enums/types, zod, MCP SDK types, `mcp/version`, `services/` **types only** | `services/` runtime (tools reach the API only through `ToolCtx.callApi`), `db/`, `routes/` |
+| `jobs/` | `services/`, `db/connection`, `db/rls`, `domain/`, `api/types` (types only), `cloudflare:workers` / `cloudflare:workflows` | `routes/`, `api/*` runtime, `hono` |
+
+Hosted-agent specifics:
+- A stage in `services/pipeline/` is a service: `(db, tenantId, env, projectId, …)` → `ServiceResult`. It never knows whether a Workflow step or a chat turn invoked it. Every LLM call goes through `services/gemini.ts` with a zod schema as the response constraint (`callGeminiJson` / `callGeminiUrlContextJson`); a stage that reads pages treats an empty `retrievedUrls` as "nothing was read".
+- `jobs/` wraps stages in `step.do` — all side effects inside a step, step results serializable, one step per prospect where sends happen (`step.sleep` spaces them). The job path has no request transaction: a DB-only step body runs inside `tenantTx` (= `runWithRls` on the raw connection), and a pipeline stage that interleaves model calls with writes wraps each mutating service call in `runWithRls` on its own — one call, one transaction, RLS on — never the model call. `strategy-draft.ts` is request-served and must not (its caller's transaction is already open).
+- `Variables.caller` is `'browser' | 'agent'`: an MCP token or the chat's in-process dispatch (marked with the per-isolate token in `api/internal-dispatch.ts`, which no outside client can present) is an agent and only ever loses privileges (approved playbooks only, UI-only settings and workspace identity refused). `Variables.origin` (`ui | mcp | chat`) is the jobs ledger's `started_by`.
+- The chat's streaming routes run outside `rlsMiddleware` (the request transaction would close before the stream ends) and open their own RLS transaction with `runWithRls`; the agent's tool calls re-enter the app via the injected dispatch and go through the normal auth + RLS stack.
 
 Enforced by review (no lint rule yet).
 
@@ -58,9 +70,12 @@ Enforced by review (no lint rule yet).
   `createDb()` is only for callers with no logged-in user where bypassing RLS
   is intentional: auth middleware, Stripe webhook, public token-authenticated
   routes (unsubscribe, inquiry) — there the URL token IS the auth.
-- **Never call `db.transaction(...)` inside a service** — the request is
-  already one transaction, and postgres-js turns nested transactions into
-  SAVEPOINTs, breaking outer-rollback semantics.
+- **Never call `db.transaction(...)` inside a request-served service** — the
+  request is already one transaction, and postgres-js turns nested
+  transactions into SAVEPOINTs, breaking outer-rollback semantics. The one
+  sanctioned form is `runWithRls` (`db/rls.ts`) on a raw connection: the
+  request middleware, the chat stream, and the job path (see Hosted-agent
+  specifics).
 - Prospect registration requires ≥1 contact channel (email, contactFormUrl,
   or snsAccounts) — enforced in the service layer.
 

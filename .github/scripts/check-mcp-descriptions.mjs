@@ -30,7 +30,7 @@ import { readFileSync } from 'node:fs'
 //     shape, so nothing to match on. What matters is whether the agent can
 //     recover the value, which is not decidable by a regex.
 
-const SRC = new URL('../../backend/src/mcp/index.ts', import.meta.url)
+const SRC = new URL('../../backend/src/tools/registry.ts', import.meta.url)
 const src = readFileSync(SRC, 'utf8')
 const lines = src.split('\n')
 
@@ -39,7 +39,7 @@ for (let i = 0; i < lines.length; i++) {
   if (lines[i].trim() === 'defineTool(') starts.push(i)
 }
 if (starts.length === 0) {
-  console.error('found no defineTool( blocks — has backend/src/mcp/index.ts been restructured?')
+  console.error('found no defineTool( blocks — has backend/src/tools/registry.ts been restructured?')
   process.exit(1)
 }
 
@@ -88,7 +88,7 @@ if (shapeOffenders.length > 0) {
   console.error('These tools format a string — their handler never JSON.stringify()s — yet their')
   console.error('description promises a JSON shape the model will never receive:\n')
   for (const o of shapeOffenders) {
-    console.error(`  backend/src/mcp/index.ts:${o.line}  ${o.name}  →  ${o.hit}`)
+    console.error(`  backend/src/tools/registry.ts:${o.line}  ${o.name}  →  ${o.hit}`)
   }
   console.error('\nDescribe the information the tool reports instead. Naming a label that appears')
   console.error('verbatim in the emitted text is fine; JSON-shape notation is not.\n')
@@ -98,7 +98,7 @@ if (wrapperOffenders.length > 0) {
   console.error('These tools stringify a property but describe it wrapped back inside an object')
   console.error('the model never receives:\n')
   for (const o of wrapperOffenders) {
-    console.error(`  backend/src/mcp/index.ts:${o.line}  ${o.name}  →  emits JSON.stringify(${o.expr}), claims { ${o.key}: … }`)
+    console.error(`  backend/src/tools/registry.ts:${o.line}  ${o.name}  →  emits JSON.stringify(${o.expr}), claims { ${o.key}: … }`)
   }
   console.error('\nDescribe the stringified value itself, not a wrapper around it.\n')
 }

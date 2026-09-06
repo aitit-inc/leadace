@@ -14,6 +14,19 @@ export interface VerifiedJwt {
   aud: string | undefined
 }
 
+// jose caches keys per JWKS instance (10 min, 30 s cooldown); one instance
+// per URL keeps that cache across requests instead of refetching per verify.
+const jwksByUrl = new Map<string, ReturnType<typeof createRemoteJWKSet>>()
+function jwksFor(supabaseUrl: string) {
+  const url = new URL('/auth/v1/.well-known/jwks.json', supabaseUrl).href
+  let set = jwksByUrl.get(url)
+  if (!set) {
+    set = createRemoteJWKSet(new URL(url))
+    jwksByUrl.set(url, set)
+  }
+  return set
+}
+
 function decode(payload: JWTPayload): VerifiedJwt | null {
   const sub = payload['sub']
   if (typeof sub !== 'string') return null
@@ -34,11 +47,9 @@ export async function verifyJwt(
 ): Promise<VerifiedJwt | null> {
   if (supabaseUrl) {
     try {
-      const jwksUrl = new URL('/auth/v1/.well-known/jwks.json', supabaseUrl)
-      const JWKS = createRemoteJWKSet(jwksUrl)
       // Issuer intentionally unpinned: a custom auth domain makes `iss`
       // config-dependent, and a mismatch would reject every login.
-      const { payload } = await jwtVerify(token, JWKS, { algorithms: ['ES256'] })
+      const { payload } = await jwtVerify(token, jwksFor(supabaseUrl), { algorithms: ['ES256'] })
       return decode(payload)
     } catch {
       // JWKS attempt failed; fall through to HS256 below.

@@ -126,6 +126,9 @@
         ...(projectSettings.publicScoreboardEligible
           ? { publicScoreboardEnabled: projectSettings.publicScoreboardEnabled }
           : {}),
+        hostedCycleEnabled: projectSettings.hostedCycleEnabled,
+        hostedCycleHourUtc: projectSettings.hostedCycleHourUtc,
+        hostedCycleOutboundCount: projectSettings.hostedCycleOutboundCount,
       };
       await updateProjectSettings<ProjectSettingsData>(
         data.projectId,
@@ -565,6 +568,32 @@
           unsubscribe (auto-replies don't stop it). Each follow-up consumes 1 outreach action
           (quota), so an N-email sequence multiplies send volume by N.
         </p>
+      </div>
+
+      <div class="flex items-start gap-2">
+        <input id="hosted-cycle-enabled" type="checkbox" bind:checked={s.hostedCycleEnabled} class="mt-0.5" />
+        <label for="hosted-cycle-enabled" class="text-sm text-text">
+          Run the daily cycle on the server
+          <span class="block text-xs text-text-secondary">
+            Every day at
+            <select bind:value={s.hostedCycleHourUtc} class="mx-1 rounded border border-border bg-page px-1 py-0.5 text-xs text-text">
+              {#each Array.from({ length: 24 }, (_, h) => h) as h (h)}
+                <option value={h}>{String(h).padStart(2, '0')}:00</option>
+              {/each}
+            </select>
+            UTC: evaluate results, tune the levers, draft (or send, per the outbound mode above) outreach to
+            the next
+            <input
+              type="number"
+              min="1"
+              max="200"
+              bind:value={s.hostedCycleOutboundCount}
+              class="mx-1 w-16 rounded border border-border bg-page px-1 py-0.5 text-xs text-text"
+            />
+            prospects (your plan's quota still caps sends), and find new ones when the list runs low. You can
+            also start any stage from the <a href="/chat" class="underline hover:text-text">chat</a>.
+          </span>
+        </label>
       </div>
 
       {#if s.publicScoreboardEligible}

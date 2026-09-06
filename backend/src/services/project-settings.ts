@@ -53,6 +53,10 @@ export const updateSettingsSchema = z
     inquiryCtaType: z.enum(INQUIRY_CTA_TYPES).optional(),
     inquiryCtaUrl: z.url().max(500).refine(isHttpsUrl, HTTPS_ONLY_MSG).nullable().optional(),
     publicScoreboardEnabled: z.boolean().optional(),
+    // Server-run daily cycle: on/off and the UTC hour the hourly cron starts it.
+    hostedCycleEnabled: z.boolean().optional(),
+    hostedCycleHourUtc: z.coerce.number().int().min(0).max(23).optional(),
+    hostedCycleOutboundCount: z.coerce.number().int().min(1).max(200).optional(),
     // Bounds keep the skill / SaaS UI from pathological values that would
     // either spam (low) or freeze pipelines (very high).
     maxReapproachCycles: z.coerce.number().int().min(1).max(10).optional(),
@@ -93,6 +97,9 @@ const UI_ONLY_SETTINGS = [
   'inquiryCtaType',
   'inquiryCtaUrl',
   'publicScoreboardEnabled',
+  'hostedCycleEnabled',
+  'hostedCycleHourUtc',
+  'hostedCycleOutboundCount',
 ] as const satisfies readonly (keyof UpdateSettingsPatch)[]
 
 // The settings row is seeded on project creation and backfilled for existing
@@ -125,6 +132,9 @@ const settingsCols = {
   inquiryCtaType: projectSettings.inquiryCtaType,
   inquiryCtaUrl: projectSettings.inquiryCtaUrl,
   publicScoreboardEnabled: projectSettings.publicScoreboardEnabled,
+  hostedCycleEnabled: projectSettings.hostedCycleEnabled,
+  hostedCycleHourUtc: projectSettings.hostedCycleHourUtc,
+  hostedCycleOutboundCount: projectSettings.hostedCycleOutboundCount,
   maxReapproachCycles: projectSettings.maxReapproachCycles,
   unspecifiedRecontactWindowMonths: projectSettings.unspecifiedRecontactWindowMonths,
   noResponseRecycleDays: projectSettings.noResponseRecycleDays,
@@ -161,6 +171,9 @@ export type ProjectSettingsRow = {
   // True only for the project GET /api/live is bound to (SHOWCASE_PROJECT_ID);
   // the Web UI shows the publish switch to that project alone.
   publicScoreboardEligible: boolean
+  hostedCycleEnabled: boolean
+  hostedCycleHourUtc: number
+  hostedCycleOutboundCount: number
   maxReapproachCycles: number
   unspecifiedRecontactWindowMonths: number
   noResponseRecycleDays: number
@@ -346,12 +359,12 @@ export async function getProjectSettings(
 export async function updateProjectSettings(
   db: Db,
   tenantId: TenantId,
-  caller: 'browser' | 'mcp',
+  caller: 'browser' | 'agent',
   projectRef: ProjectRef,
   patch: UpdateSettingsPatch,
   showcaseProjectId: string | null,
 ): Promise<ServiceResult<ProjectSettingsRow>> {
-  if (caller === 'mcp') {
+  if (caller === 'agent') {
     const blocked = UI_ONLY_SETTINGS.filter((k) => patch[k] !== undefined)
     if (blocked.length > 0) {
       return err('FORBIDDEN', `${blocked.join(', ')}: set from the Web UI (Project / Inquiry settings) only`)
@@ -456,6 +469,9 @@ export async function updateProjectSettings(
     ...(patch.publicScoreboardEnabled !== undefined
       ? { publicScoreboardEnabled: patch.publicScoreboardEnabled }
       : {}),
+    ...(patch.hostedCycleEnabled !== undefined ? { hostedCycleEnabled: patch.hostedCycleEnabled } : {}),
+    ...(patch.hostedCycleHourUtc !== undefined ? { hostedCycleHourUtc: patch.hostedCycleHourUtc } : {}),
+    ...(patch.hostedCycleOutboundCount !== undefined ? { hostedCycleOutboundCount: patch.hostedCycleOutboundCount } : {}),
     ...(patch.maxReapproachCycles !== undefined ? { maxReapproachCycles: patch.maxReapproachCycles } : {}),
     ...(patch.unspecifiedRecontactWindowMonths !== undefined ? { unspecifiedRecontactWindowMonths: patch.unspecifiedRecontactWindowMonths } : {}),
     ...(patch.noResponseRecycleDays !== undefined ? { noResponseRecycleDays: patch.noResponseRecycleDays } : {}),

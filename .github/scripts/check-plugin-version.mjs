@@ -10,10 +10,10 @@ import { readFileSync } from 'node:fs'
 // release bump lands plugin.json on the same version right before main.
 
 const pluginVersion = JSON.parse(readFileSync('plugin/.claude-plugin/plugin.json', 'utf8')).version
-const src = readFileSync('backend/src/mcp/index.ts', 'utf8')
+const src = readFileSync('backend/src/tools/registry.ts', 'utf8')
 const match = src.match(/^const MIN_PLUGIN_VERSION\s*=\s*'([^']*)'/m)
 if (!match) {
-  console.error('could not find MIN_PLUGIN_VERSION in backend/src/mcp/index.ts')
+  console.error('could not find MIN_PLUGIN_VERSION in backend/src/tools/registry.ts')
   process.exit(1)
 }
 const minVersion = match[1]

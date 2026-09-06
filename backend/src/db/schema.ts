@@ -26,6 +26,10 @@ import type { ChannelAffinityMap, ChannelCoarseStat } from '../domain/channel-af
 import type { CoarseIndustry } from '../domain/coarse-industry'
 import type { TargetingAxisStat, TargetingLifts } from '../domain/targeting-score'
 import type { VitalsAssessment } from '../domain/vital-signs'
+import type { JobParams, JobProgress, JobResult } from '../domain/jobs'
+import { JOB_KINDS, JOB_ORIGINS, JOB_STATUSES } from '../domain/jobs'
+import type { ChatContent, PendingCall } from '../domain/chat'
+import { CHAT_ROLES } from '../domain/chat'
 
 const bytea = customType<{ data: Uint8Array; driverData: Uint8Array }>({
   dataType() {
@@ -149,8 +153,8 @@ export const outboundModeEnum = pgEnum('outbound_mode', OUTBOUND_MODES)
 
 // Mirrors channelEnum; stored as text[] in project_settings, no DB enum.
 // 'platform' is deliberately absent from the column default below.
-export const OUTBOUND_CHANNELS = ['email', 'form', 'sns_twitter', 'sns_linkedin', 'platform'] as const
-export type OutboundChannel = (typeof OUTBOUND_CHANNELS)[number]
+import { OUTBOUND_CHANNELS, type OutboundChannel } from '../domain/outbound-channel'
+export { OUTBOUND_CHANNELS, type OutboundChannel }
 
 // Outcome semantics and the responses-row write rules: design §6.3.
 // 'signup_clicked' is the self-serve counterpart to 'lead' — landing CTA
@@ -540,10 +544,20 @@ export const projectSettings = pgTable('project_settings', {
   // Outbound-message language. A content setting, not a targeting filter —
   // independent of target_countries. Mirrors localeSchema (domain/locale.ts).
   targetLanguage: text('target_language').$type<Locale>().notNull().default('en'),
+  // Server-run daily cycle (jobs/daily-cycle). Off until the person turns it
+  // on in the Web UI or chat; the hourly cron starts a `daily_cycle` job for
+  // every enabled project whose hour matches. UTC hour, not local: the send
+  // window is a weak lever and one clock keeps the cron trivial.
+  hostedCycleEnabled: boolean('hosted_cycle_enabled').notNull().default(false),
+  hostedCycleHourUtc: smallint('hosted_cycle_hour_utc').notNull().default(13),
+  // Prospects one hosted cycle works through (the plan's quota still caps sends).
+  hostedCycleOutboundCount: smallint('hosted_cycle_outbound_count').notNull().default(30),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   index('idx_project_settings_tenant').on(table.tenantId),
+  check('chk_hosted_cycle_hour', sql`${table.hostedCycleHourUtc} BETWEEN 0 AND 23`),
+  check('chk_hosted_cycle_outbound_count', sql`${table.hostedCycleOutboundCount} BETWEEN 1 AND 200`),
   // Composite FK ties project_id + tenant_id together so a settings row
   // cannot reference a project in a different tenant (defense-in-depth on
   // top of RLS).
@@ -1097,9 +1111,9 @@ export const inquiryMessages = pgTable('inquiry_messages', {
 ])
 
 // Fixed-window abuse counters (LLM-backed chat endpoints, operator notifications).
-// 'inquiry_link' keys by short_id; 'preview', 'notification' and
-// 'web_preview' key by the tenant id.
-export type ChatRateScope = 'inquiry_link' | 'preview' | 'notification' | 'web_preview'
+// 'inquiry_link' keys by short_id; 'preview', 'notification', 'web_preview',
+// 'main_chat' and 'strategy_draft' key by the tenant id.
+export type ChatRateScope = 'inquiry_link' | 'preview' | 'notification' | 'web_preview' | 'main_chat' | 'strategy_draft'
 
 export const chatRateWindows = pgTable('chat_rate_windows', {
   tenantId: text('tenant_id')
@@ -1276,3 +1290,81 @@ export const accountDeletionSurveys = pgTable('account_deletion_surveys', {
   detail: text('detail'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 })
+
+// One row per hosted-agent job; the Workflow instance carries the same id.
+// Every stage of the daily cycle is a job kind of its own so cron, chat, the
+// Web UI and MCP all start work through this one table (domain/jobs.ts).
+export const jobKindEnum = pgEnum('job_kind', JOB_KINDS)
+export const jobStatusEnum = pgEnum('job_status', JOB_STATUSES)
+export const jobOriginEnum = pgEnum('job_origin', JOB_ORIGINS)
+
+export const jobs = pgTable('jobs', {
+  id: text('id').primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  projectId: text('project_id').notNull(),
+  kind: jobKindEnum('kind').notNull(),
+  params: jsonb('params').$type<JobParams>().notNull(),
+  status: jobStatusEnum('status').notNull().default('queued'),
+  progress: jsonb('progress').$type<JobProgress>(),
+  result: jsonb('result').$type<JobResult>(),
+  error: text('error'),
+  startedBy: jobOriginEnum('started_by').notNull(),
+  // Chat thread to notify on completion; NULL for cron / UI / MCP starts.
+  threadId: text('thread_id'),
+  // `${projectId}:${utcDate}` for the daily cycle so a cron retry or a manual
+  // start on the same day is refused, not doubled. NULL for ad-hoc jobs.
+  idempotencyKey: text('idempotency_key'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  startedAt: timestamp('started_at', { withTimezone: true }),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+}, (table) => [
+  foreignKey({
+    columns: [table.projectId, table.tenantId],
+    foreignColumns: [projects.id, projects.tenantId],
+    name: 'fk_jobs_project_tenant',
+  }).onDelete('cascade'),
+  unique('uq_jobs_idempotency_key').on(table.idempotencyKey),
+  index('idx_jobs_project_created').on(table.projectId, table.createdAt),
+  index('idx_jobs_tenant').on(table.tenantId),
+])
+
+// Hosted chat agent conversations. A thread belongs to a project once one
+// exists; onboarding chats start with NULL project_id.
+export const chatRoleEnum = pgEnum('chat_role', CHAT_ROLES)
+
+export const chatThreads = pgTable('chat_threads', {
+  id: text('id').primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  // Plain FK, not the composite (project_id, tenant_id) one: SET NULL on a
+  // composite key would null tenant_id too and fail its NOT NULL. RLS and the
+  // tenant predicate on every read keep the isolation.
+  projectId: text('project_id').references(() => projects.id, { onDelete: 'set null' }),
+  title: text('title').notNull(),
+  // The agent's tool call awaiting approval (domain/chat.ts PendingCall);
+  // NULL when the thread is free to take the next message.
+  pendingCall: jsonb('pending_call').$type<PendingCall>(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_chat_threads_tenant_updated').on(table.tenantId, table.updatedAt),
+])
+
+export const chatMessages = pgTable('chat_messages', {
+  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  threadId: text('thread_id')
+    .notNull()
+    .references(() => chatThreads.id, { onDelete: 'cascade' }),
+  role: chatRoleEnum('role').notNull(),
+  content: jsonb('content').$type<ChatContent>().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_chat_messages_thread').on(table.threadId, table.id),
+  index('idx_chat_messages_tenant').on(table.tenantId),
+])

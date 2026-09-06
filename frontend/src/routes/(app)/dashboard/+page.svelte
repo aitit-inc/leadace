@@ -101,7 +101,7 @@
 
   // Opportunity/queue/degradation kinds don't stop sending — autopilot stays "on".
   const SENDING_BLOCKERS: AttentionItem['kind'][] = [
-    'mcp_not_connected',
+    'no_project',
     'compliance_incomplete',
     'gmail_disconnected',
     'gmail_auth_revoked',

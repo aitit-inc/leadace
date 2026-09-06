@@ -1,0 +1,2 @@
+ALTER TABLE "project_settings" ADD COLUMN "hosted_cycle_outbound_count" smallint DEFAULT 30 NOT NULL;--> statement-breakpoint
+ALTER TABLE "project_settings" ADD CONSTRAINT "chk_hosted_cycle_outbound_count" CHECK ("project_settings"."hosted_cycle_outbound_count" BETWEEN 1 AND 200);

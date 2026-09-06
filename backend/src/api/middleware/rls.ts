@@ -1,6 +1,5 @@
 import { createMiddleware } from 'hono/factory'
-import { sql } from 'drizzle-orm'
-import type { Db } from '../../db/connection'
+import { runWithRls } from '../../db/rls'
 import type { Env, Variables } from '../types'
 
 /**
@@ -17,11 +16,9 @@ export const rlsMiddleware = createMiddleware<{ Bindings: Env; Variables: Variab
     const tenantId = c.get('tenantId')
     const db = c.get('db')
 
-    await db.transaction(async (tx) => {
-      await tx.execute(sql`SET LOCAL ROLE app_rls`)
-      await tx.execute(sql`SELECT set_config('app.tenant_id', ${tenantId}, true)`)
+    await runWithRls(db, tenantId, async (tx) => {
       // Overwrite context with the transaction (same query API as Db)
-      c.set('db', tx as unknown as Db)
+      c.set('db', tx)
       await next()
     })
   },

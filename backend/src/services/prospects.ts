@@ -126,6 +126,13 @@ export async function requireProspect(
 
 export const reachableQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
+  // Restrict to these prospects (still subject to every reachability gate) —
+  // "send to these ten" from the chat. Comma-separated on the wire.
+  prospectIds: z
+    .string()
+    .transform((s) => s.split(',').map((v) => v.trim()).filter((v) => v !== '').map(Number))
+    .pipe(z.array(z.number().int().positive()).min(1).max(200))
+    .optional(),
 })
 export type ReachableQuery = z.infer<typeof reachableQuerySchema>
 
@@ -343,13 +350,16 @@ export async function listReachable(
   quota: Awaited<ReturnType<typeof getRemainingOutreachQuota>>
   mailboxQuota: MailboxDailyQuota
   outboundMode: OutboundMode
+  // True when no outbound can run today whatever the list holds (quota
+  // exhausted, no channel enabled); `message` then carries the reason.
+  outboundBlocked: boolean
   message?: string
 }>> {
   const resolved = await resolveProject(db, tenantId, projectRef)
   if (!resolved.ok) return resolved
   const projectId = resolved.value
 
-  const { limit } = query
+  const { limit, prospectIds: onlyProspectIds } = query
 
   const [quota, mailboxQuota, outboundMode, allowlist, leverConfig, stateRows, activeStrategySlugs] = await Promise.all([
     getRemainingOutreachQuota(db, tenantId, edition),
@@ -380,6 +390,7 @@ export async function listReachable(
       quota,
       mailboxQuota,
       outboundMode,
+      outboundBlocked: true,
       message: formatOutreachQuotaError(quota),
     })
   }
@@ -395,6 +406,7 @@ export async function listReachable(
       quota,
       mailboxQuota,
       outboundMode,
+      outboundBlocked: true,
       message: 'Automated outbound is paused for this project (no channels enabled in project settings).',
     })
   }
@@ -449,6 +461,7 @@ export async function listReachable(
   const reachableCondition = and(
     eq(projectProspects.projectId, projectId),
     eq(projectProspects.tenantId, tenantId),
+    onlyProspectIds ? inArray(projectProspects.prospectId, onlyProspectIds) : undefined,
     eq(prospects.doNotContact, false),
     eq(organizations.doNotContact, false),
     or(
@@ -662,6 +675,7 @@ export async function listReachable(
     quota,
     mailboxQuota,
     outboundMode,
+    outboundBlocked: false,
     ...(mailboxCappedNote ? { message: mailboxCappedNote } : {}),
   })
 }

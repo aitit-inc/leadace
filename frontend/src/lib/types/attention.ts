@@ -3,7 +3,7 @@ export type QuotaConstraint = 'daily' | 'lifetime' | 'monthly';
 
 export type AttentionItem =
 	| { kind: 'hot_leads'; count: number }
-	| { kind: 'mcp_not_connected' }
+	| { kind: 'no_project' }
 	| { kind: 'compliance_incomplete'; missing: string[] }
 	| { kind: 'gmail_disconnected' }
 	| { kind: 'gmail_auth_revoked'; fromEmail: string; since: string }
