@@ -5,7 +5,7 @@ import type { WorkflowStep } from 'cloudflare:workers'
 import { NonRetryableError } from 'cloudflare:workflows'
 import type { Env } from '../api/types'
 import { createDb, type Db } from '../db/connection'
-import { runWithRls } from '../db/rls'
+import { runWithRls, withTenantConnection } from '../db/rls'
 import type { ProjectId, TenantId } from '../domain/ids'
 import type { DiscoverCandidate, JobParamsOf, JobResult } from '../domain/jobs'
 import type { ServiceResult } from '../services/result'
@@ -52,7 +52,7 @@ type Ids = { tenantId: TenantId; projectId: ProjectId }
 
 // DB-only step bodies run as one tenant transaction (the job path's request).
 export function tenantTx<T>(ctx: StageCtx, fn: (tx: Db) => Promise<T>): Promise<T> {
-  return runWithRls(createDb(ctx.env.DATABASE_URL), ctx.job.tenantId, fn)
+  return withTenantConnection(ctx.env.DATABASE_URL, ctx.job.tenantId, fn)
 }
 
 // A cancel that reached the row while the instance kept running: checked

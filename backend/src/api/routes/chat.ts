@@ -13,11 +13,11 @@ import {
   messageBodySchema,
   confirmBodySchema,
 } from '../../services/chat/threads'
-import { runChatTurn, type ToolExecutor, type ChatTurnInput } from '../../services/chat/agent'
+import { runChatTurn, type ToolExecutor, type ChatTurnInput, type ChatTurnDeps } from '../../services/chat/agent'
 import { buildToolRegistry, type ToolDef } from '../../tools/registry'
 import { buildFunctionDeclarations, parseToolArgs } from '../../tools/declarations'
 import { respondWithError } from '../respond'
-import { runWithRls } from '../../db/rls'
+import { withTenantConnection } from '../../db/rls'
 import { INTERNAL_DISPATCH_HEADER, internalDispatchToken } from '../internal-dispatch'
 import type { Env, Variables } from '../types'
 
@@ -53,8 +53,7 @@ chatRouter.delete('/chat/threads/:id', zValidator('param', threadIdParamSchema),
 
 // --- Streaming turns. These run outside rlsMiddleware: the request's RLS
 // transaction would close when the handler returns the Response, while the
-// stream keeps working. The agent opens a short RLS transaction per
-// persistence call instead, so no connection is held across a model call.
+// stream keeps working. Persistence takes its own connection per call.
 
 export type InternalDispatch = (request: Request, env: Env, ctx: ExecutionContext) => Promise<Response>
 
@@ -106,11 +105,10 @@ function toolExecutor(c: ChatCtx, dispatch: InternalDispatch): ToolExecutor {
 }
 
 function streamTurn(c: ChatCtx, dispatch: InternalDispatch, threadId: string, input: ChatTurnInput) {
-  const db = c.get('db')
   const tenantId = c.get('tenantId')
   const userId = c.get('userId')
   const tools = toolExecutor(c, dispatch)
-  const run = <T>(fn: (tx: typeof db) => Promise<T>) => runWithRls(db, tenantId, fn)
+  const run: ChatTurnDeps['run'] = (fn) => withTenantConnection(c.env.DATABASE_URL, tenantId, fn)
   return streamSSE(c, async (stream) => {
     // A throw here would close the stream mid-way and read as a finished
     // turn; the client requires a terminal event, so failures become one.

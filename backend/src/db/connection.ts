@@ -4,8 +4,20 @@ import * as schema from './schema'
 
 export type Db = ReturnType<typeof createDb>
 
-export function createDb(databaseUrl: string): ReturnType<typeof drizzle<typeof schema>> {
+function connect(databaseUrl: string) {
   // prepare: false is required for transaction poolers (Supabase Supavisor)
-  const client = postgres(databaseUrl, { prepare: false })
-  return drizzle(client, { schema })
+  return postgres(databaseUrl, { prepare: false })
+}
+
+export function createDb(databaseUrl: string): ReturnType<typeof drizzle<typeof schema>> {
+  return drizzle(connect(databaseUrl), { schema })
+}
+
+export async function withDb<T>(databaseUrl: string, fn: (db: Db) => Promise<T>): Promise<T> {
+  const client = connect(databaseUrl)
+  try {
+    return await fn(drizzle(client, { schema }))
+  } finally {
+    await client.end()
+  }
 }

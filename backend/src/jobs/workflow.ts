@@ -4,7 +4,7 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers'
 import type { Env } from '../api/types'
 import { createDb } from '../db/connection'
-import { runWithRls } from '../db/rls'
+import { withTenantConnection } from '../db/rls'
 import type { JobResult } from '../domain/jobs'
 import { asTenantId } from '../domain/ids'
 import { finishJob, loadJobForRun, markJobRunning } from '../services/jobs'
@@ -65,7 +65,7 @@ export class LeadAceJobWorkflow extends WorkflowEntrypoint<Env, JobWorkflowParam
     if (job.threadId) {
       const threadId = job.threadId
       await step.do('notify-thread', async () => {
-        await runWithRls(createDb(this.env.DATABASE_URL), job.tenantId, (tx) =>
+        await withTenantConnection(this.env.DATABASE_URL, job.tenantId, (tx) =>
           appendJobNotice(tx, job.tenantId, threadId, {
             jobId: job.id,
             kind: job.kind,
