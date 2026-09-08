@@ -74,6 +74,7 @@ export async function runJournal(
 
   const compose = async (objection: string | null) =>
     callGeminiJson({
+      op: 'journal',
       apiKey: env.GEMINI_API_KEY,
       model: HOSTED_MODEL,
       prompt: `You are Ace writing today's public journal entry (first person, ${language}) for a live page anyone can read. Today is ${today}.

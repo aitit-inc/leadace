@@ -14,7 +14,7 @@
 
 {#if content.role === 'user'}
   <div class="flex justify-end">
-    <div class="max-w-[80%] whitespace-pre-wrap rounded-lg bg-text px-3 py-2 text-sm text-page">
+    <div class="max-w-[80%] whitespace-pre-wrap rounded-lg bg-text px-3 py-2 text-base text-page">
       {content.parts.map((p) => p.text).join('')}
     </div>
   </div>
@@ -23,7 +23,7 @@
   {@const calls = content.parts.flatMap((p) => ('functionCall' in p ? [p.functionCall] : []))}
   <div class="max-w-[85%] space-y-1">
     {#if text}
-      <div class="prose-chat text-sm text-text">{@html renderChatMarkdown(text)}</div>
+      <div class="prose-chat text-base text-text">{@html renderChatMarkdown(text)}</div>
     {/if}
     {#each calls as call (call.id)}
       <div class="inline-flex items-center gap-1 rounded bg-surface px-2 py-0.5 font-mono text-[11px] text-text-secondary">

@@ -127,6 +127,7 @@ export async function generateWebPreview(
   let read: Awaited<ReturnType<typeof callGeminiUrlContext>>
   try {
     read = await callGeminiUrlContext({
+      op: 'web-preview',
       apiKey: env.GEMINI_API_KEY,
       model: WEB_PREVIEW_MODEL,
       prompt: buildPrompt(input.url, guidelines, new Date().toISOString().slice(0, 10)),

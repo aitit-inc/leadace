@@ -49,6 +49,7 @@ export async function classifyReply(
 ): Promise<ReplyClassification | null> {
   try {
     const raw = await callGeminiStructured({
+      op: 'reply-classify',
       apiKey: env.GEMINI_API_KEY,
       model: GEMINI_CLASSIFY_MODEL,
       prompt: prompt(args.subject, args.bodyText),

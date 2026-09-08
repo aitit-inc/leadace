@@ -178,6 +178,7 @@ export async function runDiscover(
     try {
       searchText = (
         await callGeminiGroundedText({
+          op: 'discover.search',
           apiKey: env.GEMINI_API_KEY,
           model: HOSTED_MODEL,
           prompt: searchPrompt({
@@ -199,6 +200,7 @@ export async function runDiscover(
     let extracted: z.infer<typeof extractionSchema>
     try {
       extracted = await callGeminiJson({
+        op: 'discover.extract',
         apiKey: env.GEMINI_API_KEY,
         model: HOSTED_MODEL,
         prompt: extractionPrompt({ searchText, industries, priorNotes: notes, today, strategySlug: entry.slug }),

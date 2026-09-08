@@ -54,26 +54,6 @@ export type PendingCall = {
   remaining: Array<{ callId: string; name: string; args: Record<string, unknown> }>
 }
 
-// Tool calls that send, delete, or reshape the workspace wait for the person.
-export const CONFIRM_TOOLS: ReadonlySet<string> = new Set([
-  'delete_project',
-  'delete_prospects',
-  'delete_organizations',
-  'discard_drafts',
-  'send_email_and_record',
-  'set_prospect_do_not_contact',
-  'update_prospect_status',
-  'apply_strategy_draft',
-])
-// start_job is gated only for kinds that can send real mail.
-export const CONFIRM_JOB_KINDS: ReadonlySet<string> = new Set(['send', 'draft', 'daily_cycle'])
-
-export function needsConfirmation(name: string, args: Record<string, unknown>): boolean {
-  if (CONFIRM_TOOLS.has(name)) return true
-  if (name === 'start_job') {
-    const params = args['params']
-    const kind = typeof params === 'object' && params !== null ? (params as { kind?: unknown }).kind : undefined
-    return typeof kind === 'string' && CONFIRM_JOB_KINDS.has(kind)
-  }
-  return false
-}
+export type ToolEffect =
+  | { kind: 'job_started'; jobId: string; jobKind: string }
+  | { kind: 'project_created'; projectId: string }

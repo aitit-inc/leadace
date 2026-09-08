@@ -234,7 +234,7 @@
       {#if messages.length === 0 && !streamingText}
         <div class="mx-auto max-w-lg py-10 text-center">
           <h2 class="text-base font-semibold text-text">Ask Ace anything about your outreach</h2>
-          <p class="mt-2 text-sm text-text-muted">
+          <p class="mt-2 text-base text-text-muted">
             {#if data.activeProjectId}
               Find prospects, draft outreach, run the daily cycle, or ask how the numbers look.
             {:else}
@@ -256,7 +256,7 @@
       {#if streamingText || liveTools.length > 0}
         <div class="max-w-[85%] space-y-1">
           {#if streamingText}
-            <p class="whitespace-pre-wrap text-sm text-text">{streamingText}</p>
+            <p class="whitespace-pre-wrap text-base text-text">{streamingText}</p>
           {/if}
           {#each liveTools as t (t.callId)}
             <div class="inline-flex items-center gap-1 rounded bg-surface px-2 py-0.5 font-mono text-[11px] text-text-secondary">
@@ -309,12 +309,12 @@
               send(input);
             }
           }}
-          class="min-w-0 flex-1 resize-none rounded border border-border bg-page px-3 py-2 text-sm text-text focus:border-accent focus:outline-none disabled:opacity-60"
+          class="min-w-0 flex-1 resize-none rounded border border-border bg-page px-3 py-2 text-base text-text focus:border-accent focus:outline-none disabled:opacity-60"
         ></textarea>
         <button
           type="submit"
           disabled={busy || !input.trim()}
-          class="self-end rounded bg-accent px-4 py-2 text-sm font-medium text-page hover:bg-accent-strong disabled:opacity-50"
+          class="self-end rounded bg-accent px-4 py-2 text-base font-medium text-page hover:bg-accent-strong disabled:opacity-50"
         >
           Send
         </button>

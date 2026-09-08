@@ -3,6 +3,7 @@
 // DB: each one calls the LeadAce API through the injected ToolCtx.callApi and
 // formats the answer as the text block an agent reads.
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
+import type { ToolEffect } from '../domain/chat'
 import { z } from 'zod'
 import { BUG_REPORT_CATEGORIES, EMPLOYEE_BANDS, OUTBOUND_CHANNELS, REJECTION_PRIMARY_REASONS, REJECTION_RECONTACT_WINDOWS, SUGGESTION_STATUSES, prospectStatusEnum, prioritySchema } from '../db/schema'
 import { ALLOWED_SEND_COUNTRIES } from '../domain/country'
@@ -12,7 +13,7 @@ import type { ReplyCollectionStatus } from '../domain/attention'
 import { isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG } from '../domain/url'
 import type { OutreachQuota, OutreachQuotaWindow } from '../services/plan-limits'
 import { SERVER_VERSION } from '../mcp/version'
-import { JOB_KINDS, JOB_STATUSES, jobParamsSchema } from '../domain/jobs'
+import { JOB_KINDS, JOB_STATUSES, jobParamsSchema, type JobKind } from '../domain/jobs'
 import { applyStrategyDraftSchema, strategyDraftInputSchema } from '../domain/strategy-draft'
 
 // MIN_PLUGIN_VERSION is the gate: any plugin older than this MUST be told to
@@ -55,11 +56,15 @@ export type ToolCtx = {
   callApi: (method: string, path: string, body: unknown) => Promise<{ ok: boolean; status: number; data: unknown }>
 }
 
+export type ToolCallResult = CallToolResult & { effect?: ToolEffect }
+
 export type ToolDef = {
   name: string
   description: string
   schema: z.ZodRawShape
-  handler: (args: Record<string, unknown>, ctx: ToolCtx) => Promise<CallToolResult> | CallToolResult
+  // Decided on parsed arguments.
+  confirm: (args: Record<string, unknown>) => boolean
+  handler: (args: Record<string, unknown>, ctx: ToolCtx) => Promise<ToolCallResult> | ToolCallResult
 }
 
 // Building the tool schemas once per isolate keeps the MCP fetch path off the
@@ -70,9 +75,16 @@ export function buildToolRegistry(): ToolDef[] {
     name: string,
     description: string,
     schema: S,
-    handler: (args: z.infer<z.ZodObject<S>>, ctx: ToolCtx) => Promise<CallToolResult> | CallToolResult,
+    handler: (args: z.infer<z.ZodObject<S>>, ctx: ToolCtx) => Promise<ToolCallResult> | ToolCallResult,
+    opts: { confirm: true | ((args: z.infer<z.ZodObject<S>>) => boolean) } = { confirm: () => false },
   ): void => {
-    tools.push({ name, description, schema, handler: handler as ToolDef['handler'] })
+    tools.push({
+      name,
+      description,
+      schema,
+      confirm: opts.confirm === true ? () => true : (opts.confirm as ToolDef['confirm']),
+      handler: handler as ToolDef['handler'],
+    })
   }
 
   defineTool(
@@ -146,7 +158,10 @@ export function buildToolRegistry(): ToolDef[] {
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}${err.detail ? ` — ${err.detail}` : ''}` }], isError: true }
       }
       const result = data as { id: string; name: string }
-      return { content: [{ type: 'text' as const, text: `Project "${name}" created (id: ${result.id}).` }] }
+      return {
+        content: [{ type: 'text' as const, text: `Project "${name}" created (id: ${result.id}).` }],
+        effect: { kind: 'project_created', projectId: result.id },
+      }
     },
   )
 
@@ -162,6 +177,7 @@ export function buildToolRegistry(): ToolDef[] {
       }
       return { content: [{ type: 'text' as const, text: `Project "${projectId}" deleted.` }] }
     },
+    { confirm: true },
   )
 
   defineTool(
@@ -832,6 +848,7 @@ export function buildToolRegistry(): ToolDef[] {
         : `Draft created (outreach id: ${result.outreachId}). User reviews and sends from https://app.leadace.ai/drafts.`
       return { content: [{ type: 'text' as const, text }] }
     },
+    { confirm: true },
   )
 
   defineTool(
@@ -872,6 +889,7 @@ export function buildToolRegistry(): ToolDef[] {
         }],
       }
     },
+    { confirm: true },
   )
 
   defineTool(
@@ -946,6 +964,7 @@ export function buildToolRegistry(): ToolDef[] {
       }
       return { content: [{ type: 'text' as const, text: `Status updated to "${status}".` }] }
     },
+    { confirm: true },
   )
 
   defineTool(
@@ -1086,6 +1105,7 @@ export function buildToolRegistry(): ToolDef[] {
       }
       return { content: [{ type: 'text' as const, text: parts.join('\n') }] }
     },
+    { confirm: true },
   )
 
   defineTool(
@@ -1121,6 +1141,7 @@ export function buildToolRegistry(): ToolDef[] {
       }
       return { content: [{ type: 'text' as const, text: parts.join('\n') }] }
     },
+    { confirm: true },
   )
 
   defineTool(
@@ -1191,6 +1212,7 @@ export function buildToolRegistry(): ToolDef[] {
       }
       return { content: [{ type: 'text' as const, text: `Prospect ${prospectId}: do_not_contact = ${doNotContact}.` }] }
     },
+    { confirm: true },
   )
 
   defineTool(
@@ -1618,6 +1640,9 @@ export function buildToolRegistry(): ToolDef[] {
   // --- Hosted-agent jobs. A job is a server-run stage of the daily cycle (or
   // the whole cycle); these tools start and watch them.
 
+  // draft sends when the project's outbound mode says so.
+  const SENDING_JOB_KINDS: ReadonlySet<JobKind> = new Set(['send', 'draft', 'daily_cycle'])
+
   type JobWire = {
     id: string
     projectId: string
@@ -1650,8 +1675,13 @@ export function buildToolRegistry(): ToolDef[] {
         const e = data as { error: string; detail?: string }
         return { content: [{ type: 'text' as const, text: `Error: ${e.detail ? `${e.error}: ${e.detail}` : e.error}` }], isError: true }
       }
-      return { content: [{ type: 'text' as const, text: `Started: ${jobLine(data as JobWire)}` }] }
+      const job = data as JobWire
+      return {
+        content: [{ type: 'text' as const, text: `Started: ${jobLine(job)}` }],
+        effect: { kind: 'job_started', jobId: job.id, jobKind: job.kind },
+      }
     },
+    { confirm: ({ params }) => SENDING_JOB_KINDS.has(params.kind) },
   )
 
   defineTool(
@@ -1740,6 +1770,7 @@ export function buildToolRegistry(): ToolDef[] {
       const { saved } = data as { saved: string[] }
       return { content: [{ type: 'text' as const, text: `Saved: ${saved.join(', ')}.` }] }
     },
+    { confirm: true },
   )
 
   return tools

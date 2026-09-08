@@ -79,8 +79,9 @@ function inRetrieved(url: string, retrieved: string[]): boolean {
   return retrieved.some((r) => norm(r) === target)
 }
 
-async function readPages(env: HostedEnv, prompt: string) {
+async function readPages(env: HostedEnv, op: 'enrich.site' | 'enrich.pages', prompt: string) {
   return callGeminiUrlContextJson({
+    op,
     apiKey: env.GEMINI_API_KEY,
     model: HOSTED_MODEL,
     prompt,
@@ -110,7 +111,7 @@ export async function enrichCandidate(
   }
   let first
   try {
-    first = await readPages(env, readPrompt({ candidate, urls: [candidate.websiteUrl], ...ctx }))
+    first = await readPages(env, 'enrich.site', readPrompt({ candidate, urls: [candidate.websiteUrl], ...ctx }))
   } catch (e) {
     if (e instanceof GeminiError) return { ...empty, notes: `site read failed: ${e.message}` }
     throw e
@@ -131,7 +132,7 @@ export async function enrichCandidate(
     .slice(0, 4)
   if (read.noSolicitationText === null && read.emails.length === 0 && followUps.length > 0) {
     try {
-      const second = await readPages(env, readPrompt({ candidate, urls: followUps, ...ctx }))
+      const second = await readPages(env, 'enrich.pages', readPrompt({ candidate, urls: followUps, ...ctx }))
       if (second.retrievedUrls.length > 0) {
         retrieved = [...retrieved, ...second.retrievedUrls]
         read = {

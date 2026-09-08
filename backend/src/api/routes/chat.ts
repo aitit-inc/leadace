@@ -92,6 +92,12 @@ function toolExecutor(c: ChatCtx, dispatch: InternalDispatch): ToolExecutor {
   }
   return {
     declarations,
+    needsConfirmation: (name, args) => {
+      const tool = byName.get(name)
+      if (!tool) return false
+      const parsed = parseToolArgs(tool, args)
+      return parsed.ok && tool.confirm(parsed.value)
+    },
     execute: async (name, args) => {
       const tool = byName.get(name)
       if (!tool) return { ok: false, text: `Unknown tool ${name}` }
@@ -99,7 +105,7 @@ function toolExecutor(c: ChatCtx, dispatch: InternalDispatch): ToolExecutor {
       if (!parsed.ok) return { ok: false, text: `Invalid arguments: ${parsed.error}` }
       const result = await tool.handler(parsed.value, ctx)
       const text = result.content.map((p) => (p.type === 'text' ? p.text : '')).join('\n')
-      return { ok: !result.isError, text }
+      return { ok: !result.isError, text, ...(result.effect ? { effect: result.effect } : {}) }
     },
   }
 }

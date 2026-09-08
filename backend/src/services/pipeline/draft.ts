@@ -230,6 +230,7 @@ export async function draftOne(
   try {
     composed = toComposition(
       await callGeminiJson({
+        op: 'draft',
         apiKey: env.GEMINI_API_KEY,
         model: HOSTED_MODEL,
         prompt: compositionPrompt({ p, channel, variant, ctx, today: utcDateKey() }),

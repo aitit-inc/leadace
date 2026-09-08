@@ -208,6 +208,7 @@ export async function summarizeSignalTrends(
   if (updates.length === 0) return null
   try {
     return await callGeminiText({
+      op: 'beta-stats',
       apiKey: env.GEMINI_API_KEY,
       model: TREND_MODEL,
       prompt: trendPrompt(updates),

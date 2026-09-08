@@ -118,6 +118,7 @@ message variants: ${JSON.stringify(variants.value.variants)}
   let out: z.infer<typeof evaluationSchema>
   try {
     out = await callGeminiJson({
+      op: 'evaluate',
       apiKey: env.GEMINI_API_KEY,
       model: HOSTED_MODEL,
       prompt,

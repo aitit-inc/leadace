@@ -370,6 +370,7 @@ async function readSignalsViaUrlContext(env: GeminiEnv, org: StaleOrg): Promise<
     const urls = await resolveSignalUrls(org.domain)
     if (urls.length === 0) return { ok: false, reason: 'not_retrieved' }
     const read = await callGeminiUrlContext({
+      op: 'org-signals',
       apiKey: env.GEMINI_API_KEY,
       model: GEMINI_SIGNAL_MODEL,
       prompt: signalReadPrompt(org, urls, now.toISOString().slice(0, 10)),

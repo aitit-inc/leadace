@@ -74,6 +74,7 @@ ${targetingGuide}
   let read: Awaited<ReturnType<typeof callGeminiUrlContextJson<StrategyDraft>>>
   try {
     read = await callGeminiUrlContextJson({
+      op: 'strategy-draft',
       apiKey: env.GEMINI_API_KEY,
       model: HOSTED_MODEL,
       prompt,

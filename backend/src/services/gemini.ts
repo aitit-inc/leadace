@@ -4,7 +4,9 @@ import {
   ApiError,
   GoogleGenAI,
   type Content,
+  type ContentListUnion,
   type FunctionDeclaration,
+  type GenerateContentConfig,
   type GenerateContentResponse,
   type Schema,
   ThinkingLevel,
@@ -15,13 +17,10 @@ export type GeminiEnv = {
   GEMINI_API_KEY: string
 }
 
-type GeminiToolCallArgs = {
+type GeminiCall = {
+  op: string
   apiKey: string
   model: string
-  prompt: string
-  responseSchema: Schema
-  temperature: number
-  maxOutputTokens: number
 }
 
 export class GeminiError extends Error {
@@ -33,115 +32,106 @@ export class GeminiError extends Error {
   }
 }
 
-export type GeminiUrlContextResult = {
-  text: string
-  retrievedUrls: string[]
+// Billing: input = input + toolInput (cachedInput is the discounted part),
+// output = output + thoughts, search queries priced per query.
+function logUsage(call: GeminiCall, response: GenerateContentResponse): void {
+  const u = response.usageMetadata
+  console.log({
+    message: `[llm] ${call.op}`,
+    op: call.op,
+    model: call.model,
+    input: u?.promptTokenCount ?? 0,
+    cachedInput: u?.cachedContentTokenCount ?? 0,
+    toolInput: u?.toolUsePromptTokenCount ?? 0,
+    output: u?.candidatesTokenCount ?? 0,
+    thoughts: u?.thoughtsTokenCount ?? 0,
+    searchQueries: response.candidates?.[0]?.groundingMetadata?.webSearchQueries?.length ?? 0,
+  })
 }
 
-export async function callGeminiUrlContext(
-  args: GeminiToolCallArgs,
-): Promise<GeminiUrlContextResult> {
-  const ai = new GoogleGenAI({ apiKey: args.apiKey })
-  let text: string | undefined
-  let retrievedUrls: string[] = []
+function toGeminiError(e: unknown, call: GeminiCall, phase: 'request' | 'stream'): never {
+  if (e instanceof ApiError) {
+    console.error(`Gemini ${phase} non-2xx`, { op: call.op, status: e.status, detail: e.message })
+    throw new GeminiError(`upstream LLM ${phase} failed`, e.status)
+  }
+  throw e
+}
+
+async function generate(
+  call: GeminiCall,
+  contents: ContentListUnion,
+  config: GenerateContentConfig,
+): Promise<GenerateContentResponse> {
+  const ai = new GoogleGenAI({ apiKey: call.apiKey })
+  let response: GenerateContentResponse
   try {
-    const response = await ai.models.generateContent({
-      model: args.model,
-      contents: args.prompt,
-      config: {
-        tools: [{ urlContext: {} }],
-        temperature: args.temperature,
-        maxOutputTokens: args.maxOutputTokens,
-        responseMimeType: 'application/json',
-        responseSchema: args.responseSchema,
-      },
-    })
-    text = response.text?.trim()
-    retrievedUrls = (response.candidates?.[0]?.urlContextMetadata?.urlMetadata ?? [])
-      .filter((m) => m.urlRetrievalStatus === 'URL_RETRIEVAL_STATUS_SUCCESS')
-      .flatMap((m) => (m.retrievedUrl === undefined ? [] : [m.retrievedUrl]))
+    response = await ai.models.generateContent({ model: call.model, contents, config })
   } catch (e) {
-    if (e instanceof ApiError) {
-      console.error('Gemini generateContent non-2xx', { status: e.status, detail: e.message })
-      throw new GeminiError('upstream LLM request failed', e.status)
-    }
-    throw e
+    toGeminiError(e, call, 'request')
   }
-  if (!text) {
-    throw new GeminiError('upstream LLM returned empty output', 502)
-  }
-  return { text, retrievedUrls }
+  logUsage(call, response)
+  return response
 }
 
-type GeminiStructuredArgs = {
-  apiKey: string
-  model: string
+function textOf(response: GenerateContentResponse): string {
+  const text = response.text?.trim()
+  if (!text) throw new GeminiError('upstream LLM returned empty output', 502)
+  return text
+}
+
+function retrievedUrlsOf(response: GenerateContentResponse): string[] {
+  return (response.candidates?.[0]?.urlContextMetadata?.urlMetadata ?? [])
+    .filter((m) => m.urlRetrievalStatus === 'URL_RETRIEVAL_STATUS_SUCCESS')
+    .flatMap((m) => (m.retrievedUrl === undefined ? [] : [m.retrievedUrl]))
+}
+
+type GeminiSchemaArgs = GeminiCall & {
   prompt: string
   responseSchema: Schema
   temperature: number
   maxOutputTokens: number
 }
 
-export async function callGeminiStructured(args: GeminiStructuredArgs): Promise<string> {
-  const ai = new GoogleGenAI({ apiKey: args.apiKey })
-  let text: string | undefined
-  try {
-    const response = await ai.models.generateContent({
-      model: args.model,
-      contents: args.prompt,
-      config: {
-        temperature: args.temperature,
-        maxOutputTokens: args.maxOutputTokens,
-        responseMimeType: 'application/json',
-        responseSchema: args.responseSchema,
-      },
-    })
-    text = response.text?.trim()
-  } catch (e) {
-    if (e instanceof ApiError) {
-      console.error('Gemini generateContent non-2xx', { status: e.status, detail: e.message })
-      throw new GeminiError('upstream LLM request failed', e.status)
-    }
-    throw e
-  }
-  if (!text) {
-    throw new GeminiError('upstream LLM returned empty output', 502)
-  }
-  return text
+export type GeminiUrlContextResult = {
+  text: string
+  retrievedUrls: string[]
 }
 
-type GeminiTextArgs = {
-  apiKey: string
-  model: string
+export async function callGeminiUrlContext(
+  args: GeminiSchemaArgs,
+): Promise<GeminiUrlContextResult> {
+  const response = await generate(args, args.prompt, {
+    tools: [{ urlContext: {} }],
+    temperature: args.temperature,
+    maxOutputTokens: args.maxOutputTokens,
+    responseMimeType: 'application/json',
+    responseSchema: args.responseSchema,
+  })
+  return { text: textOf(response), retrievedUrls: retrievedUrlsOf(response) }
+}
+
+export async function callGeminiStructured(args: GeminiSchemaArgs): Promise<string> {
+  const response = await generate(args, args.prompt, {
+    temperature: args.temperature,
+    maxOutputTokens: args.maxOutputTokens,
+    responseMimeType: 'application/json',
+    responseSchema: args.responseSchema,
+  })
+  return textOf(response)
+}
+
+type GeminiTextArgs = GeminiCall & {
   prompt: string
   temperature: number
   maxOutputTokens: number
 }
 
 export async function callGeminiText(args: GeminiTextArgs): Promise<string> {
-  const ai = new GoogleGenAI({ apiKey: args.apiKey })
-  let text: string | undefined
-  try {
-    const response = await ai.models.generateContent({
-      model: args.model,
-      contents: args.prompt,
-      config: {
-        temperature: args.temperature,
-        maxOutputTokens: args.maxOutputTokens,
-      },
-    })
-    text = response.text?.trim()
-  } catch (e) {
-    if (e instanceof ApiError) {
-      console.error('Gemini generateContent non-2xx', { status: e.status, detail: e.message })
-      throw new GeminiError('upstream LLM request failed', e.status)
-    }
-    throw e
-  }
-  if (!text) {
-    throw new GeminiError('upstream LLM returned empty output', 502)
-  }
-  return text
+  const response = await generate(args, args.prompt, {
+    temperature: args.temperature,
+    maxOutputTokens: args.maxOutputTokens,
+  })
+  return textOf(response)
 }
 
 // Every hosted-agent stage and the chat agent run on one model; cost tuning
@@ -154,9 +144,7 @@ function thinkingConfig(level: HostedThinking | undefined) {
   return level ? { thinkingConfig: { thinkingLevel: level === 'LOW' ? ThinkingLevel.LOW : ThinkingLevel.MEDIUM } } : {}
 }
 
-type GeminiGroundedTextArgs = {
-  apiKey: string
-  model: string
+type GeminiGroundedTextArgs = GeminiCall & {
   prompt: string
   thinking?: HostedThinking
   maxOutputTokens: number
@@ -172,38 +160,18 @@ export type GeminiGroundedTextResult = {
 // the model can open what it finds. Text out — grounding tools and JSON mode
 // are separate calls; the caller structures the text with callGeminiStructured.
 export async function callGeminiGroundedText(args: GeminiGroundedTextArgs): Promise<GeminiGroundedTextResult> {
-  const ai = new GoogleGenAI({ apiKey: args.apiKey })
-  try {
-    const response = await ai.models.generateContent({
-      model: args.model,
-      contents: args.prompt,
-      config: {
-        tools: [{ googleSearch: {} }, { urlContext: {} }],
-        ...thinkingConfig(args.thinking),
-        maxOutputTokens: args.maxOutputTokens,
-      },
-    })
-    const text = response.text?.trim()
-    if (!text) throw new GeminiError('upstream LLM returned empty output', 502)
-    const candidate = response.candidates?.[0]
-    const read = (candidate?.urlContextMetadata?.urlMetadata ?? [])
-      .filter((m) => m.urlRetrievalStatus === 'URL_RETRIEVAL_STATUS_SUCCESS')
-      .flatMap((m) => (m.retrievedUrl === undefined ? [] : [m.retrievedUrl]))
-    const cited = (candidate?.groundingMetadata?.groundingChunks ?? [])
-      .flatMap((c) => (c.web?.uri === undefined ? [] : [c.web.uri]))
-    return { text, sources: [...new Set([...read, ...cited])] }
-  } catch (e) {
-    if (e instanceof ApiError) {
-      console.error('Gemini generateContent non-2xx', { status: e.status, detail: e.message })
-      throw new GeminiError('upstream LLM request failed', e.status)
-    }
-    throw e
-  }
+  const response = await generate(args, args.prompt, {
+    tools: [{ googleSearch: {} }, { urlContext: {} }],
+    ...thinkingConfig(args.thinking),
+    maxOutputTokens: args.maxOutputTokens,
+  })
+  const text = textOf(response)
+  const cited = (response.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [])
+    .flatMap((c) => (c.web?.uri === undefined ? [] : [c.web.uri]))
+  return { text, sources: [...new Set([...retrievedUrlsOf(response), ...cited])] }
 }
 
-export type GeminiChatArgs = {
-  apiKey: string
-  model: string
+export type GeminiChatArgs = GeminiCall & {
   systemInstruction: string
   contents: Content[]
   functionDeclarations: FunctionDeclaration[]
@@ -213,6 +181,7 @@ export type GeminiChatArgs = {
 
 // One model turn of the chat agent, streamed. The caller drives the
 // function-calling loop (execute calls, append responses, call again).
+// Usage arrives on the chunks; the last one carrying it holds the totals.
 export async function* streamGeminiChat(args: GeminiChatArgs): AsyncGenerator<GenerateContentResponse> {
   const ai = new GoogleGenAI({ apiKey: args.apiKey })
   let stream: AsyncGenerator<GenerateContentResponse>
@@ -228,20 +197,18 @@ export async function* streamGeminiChat(args: GeminiChatArgs): AsyncGenerator<Ge
       },
     })
   } catch (e) {
-    if (e instanceof ApiError) {
-      console.error('Gemini generateContentStream non-2xx', { status: e.status, detail: e.message })
-      throw new GeminiError('upstream LLM request failed', e.status)
-    }
-    throw e
+    toGeminiError(e, args, 'request')
   }
+  let last: GenerateContentResponse | undefined
   try {
-    for await (const chunk of stream) yield chunk
-  } catch (e) {
-    if (e instanceof ApiError) {
-      console.error('Gemini stream failed', { status: e.status, detail: e.message })
-      throw new GeminiError('upstream LLM stream failed', e.status)
+    for await (const chunk of stream) {
+      if (chunk.usageMetadata) last = chunk
+      yield chunk
     }
-    throw e
+  } catch (e) {
+    toGeminiError(e, args, 'stream')
+  } finally {
+    if (last) logUsage(args, last)
   }
 }
 
@@ -270,9 +237,7 @@ function parseStructured<T>(text: string, schema: z.ZodType<T>): T {
   return parsed.data
 }
 
-type GeminiJsonArgs<T> = {
-  apiKey: string
-  model: string
+type GeminiJsonArgs<T> = GeminiCall & {
   prompt: string
   schema: z.ZodType<T>
   thinking?: HostedThinking
@@ -280,29 +245,13 @@ type GeminiJsonArgs<T> = {
 }
 
 export async function callGeminiJson<T>(args: GeminiJsonArgs<T>): Promise<T> {
-  const ai = new GoogleGenAI({ apiKey: args.apiKey })
-  let text: string | undefined
-  try {
-    const response = await ai.models.generateContent({
-      model: args.model,
-      contents: args.prompt,
-      config: {
-        ...thinkingConfig(args.thinking),
-        maxOutputTokens: args.maxOutputTokens,
-        responseMimeType: 'application/json',
-        responseJsonSchema: toResponseJsonSchema(args.schema),
-      },
-    })
-    text = response.text?.trim()
-  } catch (e) {
-    if (e instanceof ApiError) {
-      console.error('Gemini generateContent non-2xx', { status: e.status, detail: e.message })
-      throw new GeminiError('upstream LLM request failed', e.status)
-    }
-    throw e
-  }
-  if (!text) throw new GeminiError('upstream LLM returned empty output', 502)
-  return parseStructured(text, args.schema)
+  const response = await generate(args, args.prompt, {
+    ...thinkingConfig(args.thinking),
+    maxOutputTokens: args.maxOutputTokens,
+    responseMimeType: 'application/json',
+    responseJsonSchema: toResponseJsonSchema(args.schema),
+  })
+  return parseStructured(textOf(response), args.schema)
 }
 
 export type GeminiUrlJsonResult<T> = { value: T; retrievedUrls: string[] }
@@ -311,32 +260,12 @@ export type GeminiUrlJsonResult<T> = { value: T; retrievedUrls: string[] }
 // schema. `retrievedUrls` is the evidence of what was actually read — callers
 // treat an answer with none as invented.
 export async function callGeminiUrlContextJson<T>(args: GeminiJsonArgs<T>): Promise<GeminiUrlJsonResult<T>> {
-  const ai = new GoogleGenAI({ apiKey: args.apiKey })
-  let text: string | undefined
-  let retrievedUrls: string[] = []
-  try {
-    const response = await ai.models.generateContent({
-      model: args.model,
-      contents: args.prompt,
-      config: {
-        tools: [{ urlContext: {} }],
-        ...thinkingConfig(args.thinking),
-        maxOutputTokens: args.maxOutputTokens,
-        responseMimeType: 'application/json',
-        responseJsonSchema: toResponseJsonSchema(args.schema),
-      },
-    })
-    text = response.text?.trim()
-    retrievedUrls = (response.candidates?.[0]?.urlContextMetadata?.urlMetadata ?? [])
-      .filter((m) => m.urlRetrievalStatus === 'URL_RETRIEVAL_STATUS_SUCCESS')
-      .flatMap((m) => (m.retrievedUrl === undefined ? [] : [m.retrievedUrl]))
-  } catch (e) {
-    if (e instanceof ApiError) {
-      console.error('Gemini generateContent non-2xx', { status: e.status, detail: e.message })
-      throw new GeminiError('upstream LLM request failed', e.status)
-    }
-    throw e
-  }
-  if (!text) throw new GeminiError('upstream LLM returned empty output', 502)
-  return { value: parseStructured(text, args.schema), retrievedUrls }
+  const response = await generate(args, args.prompt, {
+    tools: [{ urlContext: {} }],
+    ...thinkingConfig(args.thinking),
+    maxOutputTokens: args.maxOutputTokens,
+    responseMimeType: 'application/json',
+    responseJsonSchema: toResponseJsonSchema(args.schema),
+  })
+  return { value: parseStructured(textOf(response), args.schema), retrievedUrls: retrievedUrlsOf(response) }
 }

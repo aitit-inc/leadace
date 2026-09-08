@@ -7,7 +7,7 @@ import type { Content, FunctionDeclaration, Part } from '@google/genai'
 import type { Db } from '../../db/connection'
 import { asProjectId, type TenantId } from '../../domain/ids'
 import { utcDateKey } from '../../domain/time'
-import { needsConfirmation, type ChatContent, type ChatModelPart, type PendingCall } from '../../domain/chat'
+import type { ChatContent, ChatModelPart, PendingCall, ToolEffect } from '../../domain/chat'
 import type { GeminiEnv } from '../gemini'
 import { GeminiError, HOSTED_MODEL, streamGeminiChat } from '../gemini'
 import { takeChatRateSlot, MAIN_CHAT_TURNS_PER_TENANT_PER_DAY } from '../chat-rate-limit'
@@ -27,7 +27,8 @@ import { buildSystemInstruction } from './system-prompt'
 
 export type ToolExecutor = {
   declarations: FunctionDeclaration[]
-  execute: (name: string, args: Record<string, unknown>) => Promise<{ ok: boolean; text: string }>
+  needsConfirmation: (name: string, args: Record<string, unknown>) => boolean
+  execute: (name: string, args: Record<string, unknown>) => Promise<ToolResult>
 }
 
 export type ChatTurnInput =
@@ -58,7 +59,7 @@ export type ChatTurnDeps = {
 
 const MAX_TOOL_ROUNDS = 12
 
-type ToolResult = { ok: boolean; text: string }
+type ToolResult = { ok: boolean; text: string; effect?: ToolEffect }
 type Call = { id: string; name: string; args: Record<string, unknown> }
 type ToolResponse = { id: string; name: string; response: Record<string, unknown> }
 type ToolPart = { functionResponse: ToolResponse }
@@ -119,9 +120,6 @@ export function toContents(messages: MessageView[]): Content[] {
   return contents
 }
 
-const STARTED_JOB = /^Started: (\S+) (\S+) /
-const CREATED_PROJECT = /created \(id: ([A-Za-z0-9]+)\)/
-
 async function buildContext(deps: ChatTurnDeps, threadProjectId: string | null): Promise<string> {
   const [projects, gmail, compliance] = await deps.run((db) =>
     Promise.all([
@@ -144,24 +142,25 @@ function withThread(call: Call, threadId: string): Record<string, unknown> {
   return call.name === 'start_job' ? { ...call.args, threadId } : call.args
 }
 
-// Runs one call and yields its events; side effects some tools imply (a job
-// started, a project created in this thread) are applied here.
+// Runs one call and yields its events; the effect a tool reports (a job
+// started, a project created in this thread) is applied here.
 async function* executeCall(deps: ChatTurnDeps, threadId: string, call: Call): AsyncGenerator<ChatEvent, ToolResult> {
   yield { type: 'tool_call', callId: call.id, name: call.name, args: call.args }
   // A tool that throws (dispatch failure, non-JSON body) is an error result
   // for the model, not the end of the turn.
-  const result = await deps.tools.execute(call.name, withThread(call, threadId)).catch((e: unknown) => {
+  const result = await deps.tools.execute(call.name, withThread(call, threadId)).catch((e: unknown): ToolResult => {
     console.error(`[chat] tool ${call.name} threw`, e)
     return { ok: false, text: `Tool failed: ${e instanceof Error ? e.message : String(e)}` }
   })
   yield { type: 'tool_result', callId: call.id, name: call.name, ok: result.ok, text: result.text }
-  if (result.ok && call.name === 'start_job') {
-    const m = STARTED_JOB.exec(result.text)
-    if (m) yield { type: 'job_started', jobId: m[1]!, kind: m[2]! }
-  }
-  if (result.ok && call.name === 'setup_project') {
-    const m = CREATED_PROJECT.exec(result.text)
-    if (m) await deps.run((db) => setThreadProject(db, deps.tenantId, threadId, asProjectId(m[1]!)))
+  const effect = result.effect
+  switch (effect?.kind) {
+    case 'job_started':
+      yield { type: 'job_started', jobId: effect.jobId, kind: effect.jobKind }
+      break
+    case 'project_created':
+      await deps.run((db) => setThreadProject(db, deps.tenantId, threadId, asProjectId(effect.projectId)))
+      break
   }
   return result
 }
@@ -181,7 +180,7 @@ async function* settleCalls(
       responses.push(toolResponse(call, INTERRUPTED))
       continue
     }
-    if (needsConfirmation(call.name, call.args)) {
+    if (deps.tools.needsConfirmation(call.name, call.args)) {
       gated.push(call)
       continue
     }
@@ -282,6 +281,7 @@ export async function* runChatTurn(deps: ChatTurnDeps, threadId: string, input: 
     const calls: Array<Call & { thoughtSignature?: string }> = []
     try {
       for await (const chunk of streamGeminiChat({
+        op: 'chat',
         apiKey: deps.env.GEMINI_API_KEY,
         model: HOSTED_MODEL,
         systemInstruction,

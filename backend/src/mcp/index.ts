@@ -101,7 +101,10 @@ function createMcpServer(ctx: ToolCtx): McpServer {
   toolRegistry ??= buildToolRegistry()
   const server = new McpServer({ name: 'lead-ace', version: SERVER_VERSION })
   for (const tool of toolRegistry) {
-    server.tool(tool.name, tool.description, tool.schema, (args) => tool.handler(args, ctx))
+    server.tool(tool.name, tool.description, tool.schema, async (args) => {
+      const { effect: _, ...result } = await tool.handler(args, ctx)
+      return result
+    })
   }
   return server
 }
