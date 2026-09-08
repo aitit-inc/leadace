@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Wrench } from '@lucide/svelte';
-  import { renderInquiryMarkdown } from '$lib/markdown';
+  import { renderChatMarkdown } from '$lib/chat-markdown';
   import type { ChatContent } from '$lib/types/chat';
 
   let { content }: { content: ChatContent } = $props();
@@ -23,7 +23,7 @@
   {@const calls = content.parts.flatMap((p) => ('functionCall' in p ? [p.functionCall] : []))}
   <div class="max-w-[85%] space-y-1">
     {#if text}
-      <div class="prose-chat text-sm text-text">{@html renderInquiryMarkdown(text)}</div>
+      <div class="prose-chat text-sm text-text">{@html renderChatMarkdown(text)}</div>
     {/if}
     {#each calls as call (call.id)}
       <div class="inline-flex items-center gap-1 rounded bg-surface px-2 py-0.5 font-mono text-[11px] text-text-secondary">
@@ -60,5 +60,66 @@
   }
   .prose-chat :global(ol) {
     list-style: decimal;
+  }
+  .prose-chat :global(h1),
+  .prose-chat :global(h2),
+  .prose-chat :global(h3) {
+    margin: 0.7rem 0 0.3rem;
+    font-weight: 600;
+  }
+  .prose-chat :global(h1) {
+    font-size: 1.15em;
+  }
+  .prose-chat :global(h2) {
+    font-size: 1.05em;
+  }
+  .prose-chat :global(a) {
+    text-decoration: underline;
+  }
+  .prose-chat :global(code) {
+    border-radius: 0.2rem;
+    background: var(--color-surface);
+    padding: 0.05rem 0.25rem;
+    font-family: ui-monospace, monospace;
+    font-size: 0.9em;
+  }
+  .prose-chat :global(pre) {
+    margin: 0 0 0.5rem;
+    overflow-x: auto;
+    border-radius: 0.3rem;
+    background: var(--color-surface);
+    padding: 0.5rem;
+  }
+  .prose-chat :global(pre code) {
+    background: none;
+    padding: 0;
+  }
+  /* block, so a wide table scrolls inside the bubble instead of widening it */
+  .prose-chat :global(table) {
+    display: block;
+    overflow-x: auto;
+    margin: 0 0 0.5rem;
+    border-collapse: collapse;
+  }
+  .prose-chat :global(th),
+  .prose-chat :global(td) {
+    border: 1px solid var(--color-border);
+    padding: 0.2rem 0.45rem;
+    text-align: left;
+    white-space: nowrap;
+  }
+  .prose-chat :global(th) {
+    font-weight: 600;
+  }
+  .prose-chat :global(blockquote) {
+    margin: 0 0 0.5rem;
+    border-left: 2px solid var(--color-border);
+    padding-left: 0.6rem;
+    color: var(--color-text-secondary);
+  }
+  .prose-chat :global(hr) {
+    margin: 0.7rem 0;
+    border: 0;
+    border-top: 1px solid var(--color-border);
   }
 </style>

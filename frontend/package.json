@@ -29,6 +29,7 @@
 		"@supabase/supabase-js": "^2.110.2",
 		"@sveltejs/adapter-cloudflare": "^7.2.9",
 		"@tailwindcss/vite": "^4.3.2",
+		"marked": "^18.0.12",
 		"tailwindcss": "^4.2.2"
 	}
 }
