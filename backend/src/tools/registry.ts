@@ -62,6 +62,7 @@ export type ToolDef = {
   name: string
   description: string
   schema: z.ZodRawShape
+  surface: 'shared' | 'chat'
   // Decided on parsed arguments.
   confirm: (args: Record<string, unknown>) => boolean
   handler: (args: Record<string, unknown>, ctx: ToolCtx) => Promise<ToolCallResult> | ToolCallResult
@@ -76,13 +77,14 @@ export function buildToolRegistry(): ToolDef[] {
     description: string,
     schema: S,
     handler: (args: z.infer<z.ZodObject<S>>, ctx: ToolCtx) => Promise<ToolCallResult> | ToolCallResult,
-    opts: { confirm: true | ((args: z.infer<z.ZodObject<S>>) => boolean) } = { confirm: () => false },
+    opts: { confirm?: true | ((args: z.infer<z.ZodObject<S>>) => boolean); surface?: ToolDef['surface'] } = {},
   ): void => {
     tools.push({
       name,
       description,
       schema,
-      confirm: opts.confirm === true ? () => true : (opts.confirm as ToolDef['confirm']),
+      surface: opts.surface ?? 'shared',
+      confirm: opts.confirm === true ? () => true : ((opts.confirm ?? (() => false)) as ToolDef['confirm']),
       handler: handler as ToolDef['handler'],
     })
   }
@@ -1751,6 +1753,23 @@ export function buildToolRegistry(): ToolDef[] {
       }
       return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] }
     },
+  )
+
+  defineTool(
+    'propose_sender_identity',
+    'Web chat only. Hands the legal name, postal address and sender country the site shows to the confirmation card in the chat; the person edits and saves them there. Writes nothing — answers with what was handed over.',
+    {
+      legalName: z.string().min(1).max(200).nullable().describe('Legal entity name as the site shows it, or null.'),
+      postalAddress: z.string().min(5).max(500).nullable().describe('Postal address as the site shows it, or null.'),
+      senderCountry: z.string().regex(/^[A-Z]{2}$/).nullable().describe('ISO 3166-1 alpha-2 of that address, or null.'),
+    },
+    ({ legalName, postalAddress, senderCountry }) => ({
+      content: [{
+        type: 'text' as const,
+        text: `Handed to the confirmation card: legal name ${legalName ?? '(none found)'}, address ${postalAddress ?? '(none found)'}, country ${senderCountry ?? '(none found)'}. Saved only when the person confirms it.`,
+      }],
+    }),
+    { surface: 'chat' },
   )
 
   defineTool(

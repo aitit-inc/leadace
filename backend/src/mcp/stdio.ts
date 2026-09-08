@@ -36,6 +36,7 @@ const ctx: ToolCtx = {
 
 const server = new McpServer({ name: 'lead-ace', version: SERVER_VERSION })
 for (const tool of buildToolRegistry()) {
+  if (tool.surface === 'chat') continue
   server.tool(tool.name, tool.description, tool.schema, (args) => tool.handler(args, ctx))
 }
 

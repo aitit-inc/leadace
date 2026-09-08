@@ -7,6 +7,7 @@
   import MessageItem from '$lib/components/chat/MessageItem.svelte';
   import JobCard from '$lib/components/chat/JobCard.svelte';
   import ConfirmCard from '$lib/components/chat/ConfirmCard.svelte';
+  import SenderIdentityCard, { type SenderIdentityProposal } from '$lib/components/chat/SenderIdentityCard.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import type { ChatEvent, ChatMessage, PendingCall } from '$lib/types/chat';
   import { TERMINAL_JOB_STATUSES, type Job } from '$lib/types/jobs';
@@ -63,6 +64,26 @@
     void streamingText;
     bottom?.scrollIntoView({ block: 'end' });
   });
+
+  let proposal = $derived.by((): SenderIdentityProposal => {
+    const calls = messages.flatMap((m) =>
+      m.content.role === 'model' ? m.content.parts.flatMap((p) => ('functionCall' in p ? [p.functionCall] : [])) : [],
+    );
+    const call = calls.findLast((c) => c.name === 'propose_sender_identity');
+    const text = (k: string) => {
+      const v = call?.args[k];
+      return typeof v === 'string' ? v : null;
+    };
+    return { callId: call?.id ?? null, legalName: text('legalName'), postalAddress: text('postalAddress'), senderCountry: text('senderCountry') };
+  });
+  let showIdentityCard = $derived(
+    data.attention.some((a) => a.kind === 'compliance_incomplete') && (data.thread?.projectId ?? data.activeProjectId) !== null,
+  );
+
+  async function identitySaved() {
+    await Promise.all([invalidate('app:chat'), invalidate('app:attention')]);
+    send('Sender identity saved.');
+  }
 
   // Tools after which the layout's project list (and the active project a
   // fresh tenant has none of) must be reloaded.
@@ -269,6 +290,11 @@
       {/if}
       {#if pending}
         <ConfirmCard {pending} {busy} onrespond={respond} />
+      {/if}
+      {#if showIdentityCard}
+        {#key proposal.callId}
+          <SenderIdentityCard {proposal} {token} onsaved={identitySaved} />
+        {/key}
       {/if}
       {#if error}
         <p class="text-xs text-danger">{error}</p>

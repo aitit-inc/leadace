@@ -101,6 +101,7 @@ function createMcpServer(ctx: ToolCtx): McpServer {
   toolRegistry ??= buildToolRegistry()
   const server = new McpServer({ name: 'lead-ace', version: SERVER_VERSION })
   for (const tool of toolRegistry) {
+    if (tool.surface === 'chat') continue
     server.tool(tool.name, tool.description, tool.schema, async (args) => {
       const { effect: _, ...result } = await tool.handler(args, ctx)
       return result

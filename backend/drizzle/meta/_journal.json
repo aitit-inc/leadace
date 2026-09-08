@@ -561,6 +561,13 @@
       "when": 1788614106925,
       "tag": "0079_slow_boomerang",
       "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1788864756010,
+      "tag": "0080_rainy_joseph",
+      "breakpoints": true
     }
   ]
 }

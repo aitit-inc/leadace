@@ -201,12 +201,17 @@ export async function getTenantComplianceStatus(
 // URL, the plugin from setup_project; either way nothing can run before.
 export type OnboardingStatus = {
   hasProject: boolean
+  complianceReady: boolean
 }
 
 export async function getOnboardingStatus(
   db: Db,
   tenantId: TenantId,
 ): Promise<ServiceResult<OnboardingStatus>> {
-  const [row] = await db.select({ id: projects.id }).from(projects).where(eq(projects.tenantId, tenantId)).limit(1)
-  return ok({ hasProject: row !== undefined })
+  const [[row], compliance] = await Promise.all([
+    db.select({ id: projects.id }).from(projects).where(eq(projects.tenantId, tenantId)).limit(1),
+    getTenantComplianceStatus(db, tenantId),
+  ])
+  if (!compliance.ok) return compliance
+  return ok({ hasProject: row !== undefined, complianceReady: compliance.value.ready })
 }

@@ -3,6 +3,7 @@
   import { updateWorkspaceSettings } from '$lib/api/workspace-settings';
   import type { PageProps } from './$types';
   import type { TenantSettings } from '$lib/types/tenants';
+  import { SUPPORTED_COUNTRIES } from '$lib/countries';
 
   let { data }: PageProps = $props();
   let token = $derived(data.session?.access_token);
@@ -15,15 +16,6 @@
   let saving = $state(false);
   let saveMessage = $state('');
   let validationErrors = $state<Partial<Record<keyof TenantSettings, string>>>({});
-
-  // Matches backend/src/domain/country.ts:ALLOWED_SEND_COUNTRIES. Anything
-  // outside this list is accepted by the backend (the column is free-form
-  // ISO 3166-1 alpha-2) but the send-time guardrail will block it.
-  const SUPPORTED_COUNTRIES: { code: string; label: string }[] = [
-    { code: 'US', label: 'United States (US)' },
-    { code: 'CA', label: 'Canada (CA)' },
-    { code: 'JP', label: 'Japan (JP)' },
-  ];
 
   function validate(s: TenantSettings): boolean {
     const errors: Partial<Record<keyof TenantSettings, string>> = {};

@@ -3,6 +3,7 @@ import { request, type RequestFetch } from '../api';
 // Mirrors backend services/tenants.ts OnboardingStatus.
 export type OnboardingStatus = {
   hasProject: boolean;
+  complianceReady: boolean;
 };
 
 export function getOnboardingStatus(

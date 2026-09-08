@@ -1111,9 +1111,9 @@ export const inquiryMessages = pgTable('inquiry_messages', {
 ])
 
 // Fixed-window abuse counters (LLM-backed chat endpoints, operator notifications).
-// 'inquiry_link' keys by short_id; 'preview', 'notification', 'web_preview',
-// 'main_chat' and 'strategy_draft' key by the tenant id.
-export type ChatRateScope = 'inquiry_link' | 'preview' | 'notification' | 'web_preview' | 'main_chat' | 'strategy_draft'
+// 'inquiry_link' keys by short_id; 'preview', 'notification', 'main_chat' and
+// 'strategy_draft' key by the tenant id.
+export type ChatRateScope = 'inquiry_link' | 'preview' | 'notification' | 'main_chat' | 'strategy_draft'
 
 export const chatRateWindows = pgTable('chat_rate_windows', {
   tenantId: text('tenant_id')
@@ -1128,21 +1128,6 @@ export const chatRateWindows = pgTable('chat_rate_windows', {
     columns: [table.tenantId, table.scope, table.key, table.windowStart],
     name: 'pk_chat_rate_windows',
   }),
-])
-
-// One row per generated onboarding web preview (URL -> ICP + first cold
-// emails); the newest row is what /onboarding re-renders after a reload or
-// an OAuth round trip. `result` mirrors services/web-preview.ts WebPreviewResult.
-export const webPreviews = pgTable('web_previews', {
-  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
-  tenantId: text('tenant_id')
-    .notNull()
-    .references(() => tenants.id, { onDelete: 'cascade' }),
-  url: text('url').notNull(),
-  result: jsonb('result').notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-}, (table) => [
-  index('idx_web_previews_latest').on(table.tenantId, table.createdAt),
 ])
 
 export const projectDocuments = pgTable('project_documents', {

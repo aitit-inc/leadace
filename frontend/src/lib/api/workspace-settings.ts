@@ -15,7 +15,7 @@ export function getWorkspaceSettings(
   });
 }
 
-export type UpdateWorkspaceSettingsPatch = Omit<TenantSettings, 'id'>;
+export type UpdateWorkspaceSettingsPatch = Partial<Omit<TenantSettings, 'id'>>;
 
 export function updateWorkspaceSettings(
   patch: UpdateWorkspaceSettingsPatch,

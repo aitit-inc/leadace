@@ -111,8 +111,8 @@ export const GET: RequestHandler = async ({ url, cookies, fetch, locals }) => {
 	let dest = next;
 	if (next === DEFAULT_DEST) {
 		try {
-			const { hasProject } = await getOnboardingStatus(fetch, session.access_token);
-			if (!hasProject) dest = ONBOARDING_DEST;
+			const { hasProject, complianceReady } = await getOnboardingStatus(fetch, session.access_token);
+			if (!hasProject || !complianceReady) dest = ONBOARDING_DEST;
 		} catch {
 			// keep the default dashboard
 		}

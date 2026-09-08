@@ -1,8 +1,8 @@
 // Deterministic detector for what public-facing generated text must never
-// carry: links, email addresses, bare domains, social handles. Both callers
-// (the public journal after its anonymization pass, the web preview's email
-// contract) sit behind an LLM whose instructions a hostile input can override,
-// so this rule is enforced here rather than in a prompt.
+// carry: links, email addresses, bare domains, social handles. The caller (the
+// public journal after its anonymization pass) sits behind an LLM whose
+// instructions a hostile input can override, so this rule is enforced here
+// rather than in a prompt.
 
 export type LinkOrContactKind = 'url' | 'email' | 'domain' | 'handle'
 

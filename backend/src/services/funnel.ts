@@ -11,7 +11,6 @@ export type FunnelEvent =
   | { event: 'project_created'; tenantId: TenantId; projectId: ProjectId }
   | { event: 'mcp_connected'; tenantId: TenantId }
   | { event: 'mailbox_first_send'; tenantId: TenantId; identityId: SendingIdentityId }
-  | { event: 'web_preview_generated'; tenantId: TenantId }
   // Public scoreboard page view. `ref` is the campaign tag from ?ref= (validated
   // slug, never free text) so each post's reach is countable.
   | { event: 'live_viewed'; projectId: ProjectId; ref: string | null }

@@ -29,7 +29,6 @@ import { authRouter } from './routes/auth'
 import { notificationsRouter } from './routes/notifications'
 import { accountRouter } from './routes/account'
 import { bugReportsRouter } from './routes/bug-reports'
-import { webPreviewRouter } from './routes/web-preview'
 import { jobsRouter, jobRunner } from './routes/jobs'
 import { strategyDraftRouter } from './routes/strategy-draft'
 import { chatRouter, createChatStreamRouter } from './routes/chat'
@@ -108,7 +107,6 @@ app.route('/api', authRouter)
 app.route('/api', notificationsRouter)
 app.route('/api', accountRouter)
 app.route('/api', bugReportsRouter)
-app.route('/api', webPreviewRouter)
 app.route('/api', jobsRouter)
 app.route('/api', strategyDraftRouter)
 app.route('/api', chatRouter)

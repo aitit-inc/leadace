@@ -30,7 +30,7 @@ export type Env = {
   // handler would read `new URL(c.req.url).origin`.
   API_URL: string
   OPENAI_API_KEY: string
-  // Google AI Studio key: daily org-signal refresh cron + onboarding web preview.
+  // Google AI Studio key: daily org-signal refresh cron + hosted-agent stages.
   GEMINI_API_KEY: string
   // Absent leaves only the free DNS half of the send-time address check.
   EMAILABLE_API_KEY?: string
