@@ -9,6 +9,8 @@ export type LiveScoreboard = {
   replies: { total: number; positive: number };
   replyRate: number;
   recent: { days: number; sent: number; replyRate: number };
+  delivered: number;
+  bounced: number;
   bounceRate: number;
   signups: { today: number; total: number } | null;
   daily: LiveDay[];

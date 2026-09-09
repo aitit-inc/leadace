@@ -24,24 +24,31 @@ describe('computeDeltaPct', () => {
 
 describe('buildFunnel', () => {
   it('computes each stage conversion relative to the stage above', () => {
-    const f = buildFunnel({ sent: 100, reached: 25, engaged: 10, won: 2 })
-    expect(f.map((s) => s.key)).toEqual(['sent', 'reached', 'engaged', 'won'])
+    const f = buildFunnel({ sent: 100, delivered: 90, reached: 25, engaged: 10, won: 2 }, true)
+    expect(f.map((s) => s.key)).toEqual(['sent', 'delivered', 'reached', 'engaged', 'won'])
     expect(f[0]).toEqual({ key: 'sent', count: 100, conversionFromPrev: null })
-    expect(f[1]).toEqual({ key: 'reached', count: 25, conversionFromPrev: 25 })
-    expect(f[2]).toEqual({ key: 'engaged', count: 10, conversionFromPrev: 40 })
-    expect(f[3]).toEqual({ key: 'won', count: 2, conversionFromPrev: 20 })
+    expect(f[1]).toEqual({ key: 'delivered', count: 90, conversionFromPrev: 90 })
+    expect(f[2]).toEqual({ key: 'reached', count: 25, conversionFromPrev: 28 })
+    expect(f[3]).toEqual({ key: 'engaged', count: 10, conversionFromPrev: 40 })
+    expect(f[4]).toEqual({ key: 'won', count: 2, conversionFromPrev: 20 })
+  })
+
+  it('drops the inquiry-landing stage and rechains engaged onto delivered when the landing is off', () => {
+    const f = buildFunnel({ sent: 100, delivered: 90, reached: 0, engaged: 9, won: 2 }, false)
+    expect(f.map((s) => s.key)).toEqual(['sent', 'delivered', 'engaged', 'won'])
+    expect(f[2]).toEqual({ key: 'engaged', count: 9, conversionFromPrev: 10 })
   })
 
   it('returns null conversion (not NaN/Infinity) when the prior stage is zero', () => {
-    const f = buildFunnel({ sent: 0, reached: 0, engaged: 0, won: 0 })
+    const f = buildFunnel({ sent: 0, delivered: 0, reached: 0, engaged: 0, won: 0 }, true)
     expect(f.every((s) => s.count === 0)).toBe(true)
     expect(f[1]!.conversionFromPrev).toBeNull()
-    expect(f[3]!.conversionFromPrev).toBeNull()
+    expect(f[4]!.conversionFromPrev).toBeNull()
   })
 
   it('caps conversion at 100% when a later stage exceeds the prior (lagged attribution)', () => {
-    const f = buildFunnel({ sent: 100, reached: 10, engaged: 20, won: 1 })
-    expect(f[2]!.conversionFromPrev).toBe(100)
+    const f = buildFunnel({ sent: 100, delivered: 100, reached: 10, engaged: 20, won: 1 }, true)
+    expect(f[3]!.conversionFromPrev).toBe(100)
   })
 })
 

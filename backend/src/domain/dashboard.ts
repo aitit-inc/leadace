@@ -10,7 +10,7 @@ export type KpiValue = {
   deltaPct: number | null
 }
 
-export type FunnelStageKey = 'sent' | 'reached' | 'engaged' | 'won'
+export type FunnelStageKey = 'sent' | 'delivered' | 'reached' | 'engaged' | 'won'
 
 export type FunnelStage = {
   key: FunnelStageKey
@@ -180,6 +180,8 @@ export type DashboardSummary = {
   period: DashboardPeriod
   kpis: {
     approached: KpiValue
+    // Prospects with at least one send no bounce came back for.
+    delivered: KpiValue
     reached: KpiValue
     engaged: KpiValue
     won: KpiValue
@@ -230,18 +232,23 @@ function rate(count: number, prev: number): number | null {
   return Math.min(100, Math.round((count / prev) * 100))
 }
 
-export function buildFunnel(counts: {
-  sent: number
-  reached: number
-  engaged: number
-  won: number
-}): FunnelStage[] {
-  return [
-    { key: 'sent', count: counts.sent, conversionFromPrev: null },
-    { key: 'reached', count: counts.reached, conversionFromPrev: rate(counts.reached, counts.sent) },
-    { key: 'engaged', count: counts.engaged, conversionFromPrev: rate(counts.engaged, counts.reached) },
-    { key: 'won', count: counts.won, conversionFromPrev: rate(counts.won, counts.engaged) },
-  ]
+export type FunnelCounts = Record<FunnelStageKey, number>
+
+// 'reached' is the inquiry-landing open. With the landing off the event cannot
+// occur at all, so the stage is dropped rather than reported as a zero — and
+// 'engaged' then converts from 'delivered'.
+export function buildFunnel(counts: FunnelCounts, inquiryLandingEnabled: boolean): FunnelStage[] {
+  const keys: FunnelStageKey[] = inquiryLandingEnabled
+    ? ['sent', 'delivered', 'reached', 'engaged', 'won']
+    : ['sent', 'delivered', 'engaged', 'won']
+  return keys.map((key, i) => {
+    const prev = keys[i - 1]
+    return {
+      key,
+      count: counts[key],
+      conversionFromPrev: prev === undefined ? null : rate(counts[key], counts[prev]),
+    }
+  })
 }
 
 export function replyRate(numerator: number, denominator: number): number {

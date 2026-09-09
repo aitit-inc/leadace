@@ -264,9 +264,7 @@ export async function draftOne(
       }),
     )
     if (!sent.ok) return { kind: 'failed', error: `${sent.error}${sent.detail ? ` — ${typeof sent.detail === 'string' ? sent.detail : JSON.stringify(sent.detail)}` : ''}` }
-    return sent.value.mode === 'sent'
-      ? { kind: 'sent', outreachId: sent.value.outreachId, channel, variantId }
-      : { kind: 'drafted', outreachId: sent.value.outreachId, channel, variantId }
+    return { kind: sent.value.mode, outreachId: sent.value.outreachId, channel, variantId }
   }
   // Form / SNS only reach here in draft mode (pickChannel), so the row lands
   // as pending_review with the footer baked in for the person to submit.

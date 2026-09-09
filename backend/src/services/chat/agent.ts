@@ -7,7 +7,7 @@ import type { Content, FunctionDeclaration, Part } from '@google/genai'
 import type { Db } from '../../db/connection'
 import { asProjectId, type TenantId } from '../../domain/ids'
 import { utcDateKey } from '../../domain/time'
-import type { ChatContent, ChatModelPart, PendingCall, ToolEffect } from '../../domain/chat'
+import type { ChatModelPart, PendingCall, ToolEffect } from '../../domain/chat'
 import type { GeminiEnv } from '../gemini'
 import { GeminiError, HOSTED_MODEL, streamGeminiChat } from '../gemini'
 import { takeChatRateSlot, MAIN_CHAT_TURNS_PER_TENANT_PER_DAY } from '../chat-rate-limit'
@@ -152,8 +152,6 @@ function runCall(deps: ChatTurnDeps, threadId: string, call: Call): Promise<Tool
   })
 }
 
-// The result, then the effect the tool reported (a job started, a project
-// created in this thread).
 async function* reportCall(deps: ChatTurnDeps, threadId: string, call: Call, result: ToolResult): AsyncGenerator<ChatEvent, void> {
   yield { type: 'tool_result', callId: call.id, name: call.name, ok: result.ok, text: result.text }
   const effect = result.effect
@@ -174,27 +172,23 @@ async function* executeCall(deps: ChatTurnDeps, threadId: string, call: Call): A
   return result
 }
 
-// How many reads share a moment. The model chooses how many calls a turn
-// makes; each one dispatches into the API and opens its own connection and
-// RLS transaction, so the fan-out is capped here rather than by the model.
+// The model chooses how many calls a turn makes; each one opens its own
+// connection and RLS transaction, so the fan-out is capped here, not there.
 const READ_BATCH = 4
 
 // Every gated call in a model turn waits for the person, one at a time; the
-// ungated ones run now. Returns the tool message when nothing is pending.
+// ungated ones run now.
 async function* settleCalls(
   deps: ChatTurnDeps,
   threadId: string,
   modelMessageId: number,
   calls: Call[],
 ): AsyncGenerator<ChatEvent, ToolPart[] | { pending: PendingCall }> {
-  // Read-only tools write nothing and hold no order against each other, so a
-  // turn that asks for several at once gets them together. One write in the
-  // batch and the whole turn stays sequential: order is part of what a write
-  // means, and a confirmation gate has to hold the turn where it sits.
+  // One write in the batch and the whole turn stays sequential: order is part
+  // of what a write means, and a gate has to hold the turn where it sits.
   if (calls.length > 1 && !deps.aborted() && calls.every((c) => deps.tools.isReadOnly(c.name))) {
     for (const call of calls) yield { type: 'tool_call', callId: call.id, name: call.name, args: call.args }
-    // Each yield above waited on the client; the person may have left in the
-    // meantime, and the sequential path would have run nothing more either.
+    // The yields above waited on the client, who may have left during them.
     if (deps.aborted()) return calls.map((call) => ({ functionResponse: toolResponse(call, INTERRUPTED) }))
     const done: Array<{ call: Call; result: ToolResult }> = []
     for (let i = 0; i < calls.length; i += READ_BATCH) {
@@ -363,9 +357,8 @@ export async function* runChatTurn(deps: ChatTurnDeps, threadId: string, input: 
       yield* holdPending(deps, threadId, settled.pending)
       return
     }
-    const toolContent: ChatContent = { role: 'tool', parts: settled }
     yield* persistTool(deps, threadId, settled)
-    contents.push({ role: 'user', parts: toolContent.parts })
+    contents.push({ role: 'user', parts: settled })
     if (deps.aborted()) return
   }
   yield { type: 'done' }

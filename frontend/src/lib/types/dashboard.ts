@@ -13,7 +13,7 @@ export interface KpiValue {
   deltaPct: number | null;
 }
 
-export type FunnelStageKey = 'sent' | 'reached' | 'engaged' | 'won';
+export type FunnelStageKey = 'sent' | 'delivered' | 'reached' | 'engaged' | 'won';
 
 export interface FunnelStage {
   key: FunnelStageKey;
@@ -124,6 +124,7 @@ export interface DashboardSummary {
   period: DashboardPeriod;
   kpis: {
     approached: KpiValue;
+    delivered: KpiValue;
     reached: KpiValue;
     engaged: KpiValue;
     won: KpiValue;

@@ -1,11 +1,18 @@
 <script lang="ts">
   import { goto, invalidate } from '$app/navigation';
   import type { PageProps } from './$types';
-  import type { AttentionItem, DashboardActivityKind, JournalEvent } from '$lib/types/dashboard';
+  import type {
+    AttentionItem,
+    DashboardActivityKind,
+    FunnelStageKey,
+    JournalEvent,
+  } from '$lib/types/dashboard';
+  import type { FunnelStageFilter } from '$lib/types/outreach';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import SuggestionsSection from '$lib/components/dashboard/SuggestionsSection.svelte';
   import {
     Send,
+    MailCheck,
     MousePointerClick,
     MessagesSquare,
     Trophy,
@@ -40,21 +47,32 @@
 
   // One card per funnel stage: KPI count + period delta + conversion from the
   // previous stage, linking to the /outreach drill-down for the same events.
-  // `key` indexes summary.funnel; `stage` indexes summary.kpis and is the
-  // /outreach?stage= param.
-  const STAGE_DEFS = [
-    { key: 'sent', stage: 'approached', label: 'Approached', icon: Send, sub: 'prospects contacted', prevLabel: null, highlight: false },
-    { key: 'reached', stage: 'reached', label: 'Reached', icon: MousePointerClick, sub: 'opened their page', prevLabel: 'approached', highlight: false },
-    { key: 'engaged', stage: 'engaged', label: 'Engaged', icon: MessagesSquare, sub: 'replied, chatted, or signed up', prevLabel: 'reached', highlight: false },
-    { key: 'won', stage: 'won', label: 'Won', icon: Trophy, sub: 'meetings + signups', prevLabel: 'engaged', highlight: true },
-  ] as const;
+  // summary.funnel owns which stages exist — it drops 'reached' when the project
+  // sends no inquiry link, so the card row follows it rather than a fixed list.
+  // `stage` indexes summary.kpis and is the /outreach?stage= param.
+  const STAGE_DEFS: Record<
+    FunnelStageKey,
+    { stage: FunnelStageFilter; label: string; icon: typeof Send; sub: string; highlight: boolean }
+  > = {
+    sent: { stage: 'approached', label: 'Approached', icon: Send, sub: 'prospects contacted', highlight: false },
+    delivered: { stage: 'delivered', label: 'Delivered', icon: MailCheck, sub: 'no bounce came back', highlight: false },
+    reached: { stage: 'reached', label: 'Reached', icon: MousePointerClick, sub: 'opened their page', highlight: false },
+    engaged: { stage: 'engaged', label: 'Engaged', icon: MessagesSquare, sub: 'replied, chatted, or signed up', highlight: false },
+    won: { stage: 'won', label: 'Won', icon: Trophy, sub: 'meetings + signups', highlight: true },
+  };
   let stageCards = $derived(
     summary
-      ? STAGE_DEFS.map((def) => ({
-          ...def,
-          value: summary.kpis[def.stage],
-          conversion: summary.funnel.find((s) => s.key === def.key)?.conversionFromPrev ?? null,
-        }))
+      ? summary.funnel.map((s, i) => {
+          const def = STAGE_DEFS[s.key];
+          const prev = summary.funnel[i - 1];
+          return {
+            ...def,
+            key: s.key,
+            value: summary.kpis[def.stage],
+            conversion: s.conversionFromPrev,
+            prevLabel: prev ? STAGE_DEFS[prev.key].label.toLowerCase() : null,
+          };
+        })
       : [],
   );
 
@@ -251,8 +269,10 @@
       {/if}
     </div>
 
-    <section class="grid grid-cols-2 gap-3 lg:grid-cols-4">
-      {#each stageCards as card}
+    <section
+      class="grid grid-cols-2 gap-3 {stageCards.length === 5 ? 'lg:grid-cols-5' : 'lg:grid-cols-4'}"
+    >
+      {#each stageCards as card (card.key)}
         {@const Icon = card.icon}
         <a
           href={stageHref(card.stage)}

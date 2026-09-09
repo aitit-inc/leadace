@@ -179,7 +179,7 @@ const handler = {
         runReplyIngest(db, env)
           .then((s) => {
             console.log(
-              `[scheduled] reply-ingest polled=${s.identitiesPolled} skipped=${s.identitiesSkipped} errors=${s.pollErrors} authRevoked=${s.identitiesAuthRevoked} recorded=${s.recorded} deduped=${s.deduped} unattributed=${s.unattributed} recordErrors=${s.recordErrors} bouncesThreaded=${s.bouncesThreaded} bouncesUnthreaded=${s.bouncesUnthreaded}`,
+              `[scheduled] reply-ingest polled=${s.identitiesPolled} skipped=${s.identitiesSkipped} errors=${s.pollErrors} authRevoked=${s.identitiesAuthRevoked} recorded=${s.recorded} deduped=${s.deduped} unattributed=${s.unattributed} unattributedSameDomain=${s.unattributedSameDomain} recordErrors=${s.recordErrors}`,
             )
           })
           .catch((e: unknown) => {

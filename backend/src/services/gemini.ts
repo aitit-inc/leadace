@@ -21,9 +21,8 @@ type GeminiCall = {
   op: string
   apiKey: string
   model: string
-  // Every call is bounded: an unbounded one burns its Workflow step's whole
-  // budget (a url_context read once stalled for 7 minutes) or leaves a chat
-  // turn hanging. The value is the op's own realistic ceiling.
+  // A call with no deadline burns its Workflow step's whole budget — a
+  // url_context read once stalled for seven minutes. Sized per op.
   timeoutMs: number
 }
 
@@ -159,25 +158,16 @@ type GeminiGroundedTextArgs = GeminiCall & {
   maxOutputTokens: number
 }
 
-export type GeminiGroundedTextResult = {
-  text: string
-  // Pages the model actually read (url_context) or cited (search grounding).
-  sources: string[]
-}
-
 // Search-grounded reading: Google Search for discovery plus url_context so
 // the model can open what it finds. Text out — grounding tools and JSON mode
 // are separate calls; the caller structures the text with callGeminiStructured.
-export async function callGeminiGroundedText(args: GeminiGroundedTextArgs): Promise<GeminiGroundedTextResult> {
+export async function callGeminiGroundedText(args: GeminiGroundedTextArgs): Promise<string> {
   const response = await generate(args, args.prompt, {
     tools: [{ googleSearch: {} }, { urlContext: {} }],
     ...thinkingConfig(args.thinking),
     maxOutputTokens: args.maxOutputTokens,
   })
-  const text = textOf(response)
-  const cited = (response.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [])
-    .flatMap((c) => (c.web?.uri === undefined ? [] : [c.web.uri]))
-  return { text, sources: [...new Set([...retrievedUrlsOf(response), ...cited])] }
+  return textOf(response)
 }
 
 export type GeminiChatArgs = GeminiCall & {

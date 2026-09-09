@@ -5,7 +5,7 @@ import { asTenantId, type TenantId } from '../domain/ids'
 import { hasReplyReadScope, parseSendingIdentitySecret } from '../domain/sending-identity'
 import {
   attributeReply,
-  bounceMatchesFinalRecipient,
+  fromDomainMatchesRecentSend,
   toInboundReply,
   type CapturedReply,
   type OutreachCandidate,
@@ -44,14 +44,10 @@ export type ReplyIngestSummary = {
   deduped: number
   unattributed: number
   recordErrors: number
-  // Bounce attribution instrumentation (option A recall measurement). Both span
-  // every bounce in the poll's lookback window — per-poll SNAPSHOTS, comparable to
-  // each other within one run, not unique counts to sum across runs. threaded =
-  // bound to our Message-ID (recorded + DNC); unthreaded = a DSN whose
-  // Final-Recipient matched a real recent send but carried no Message-ID we
-  // generated, so it is dropped (the recall A trades for spoof-safety).
-  bouncesThreaded: number
-  bouncesUnthreaded: number
+  // Subset of `unattributed`, bounces excluded: the upper bound on what a
+  // domain-level fallback could recover. A per-poll snapshot like `unattributed`
+  // — re-counted every run, never summed across runs.
+  unattributedSameDomain: number
   identitiesAuthRevoked: number
 }
 
@@ -315,39 +311,28 @@ async function ingestIdentity(
 
   const seen = await alreadyRecorded(db, tenantId, inbound.map((x) => x.reply.messageId))
   const candidates = await loadCandidates(db, tenantId, identity.identity_id)
-  // Attribute against the trusted poll time, not the sender-controlled Date header.
   const now = new Date()
 
   for (const { captured, reply } of inbound) {
     const det = detectDeterministicType(captured.email)
     const attribution = attributeReply(reply, candidates, ATTRIBUTION_WINDOW_DAYS, now)
 
-    // Counted before the dedup short-circuit so both bounce counters span the
-    // same population (semantics documented on ReplyIngestSummary).
-    if (det === 'bounce') {
-      if (attribution?.binding === 'threaded') {
-        summary.bouncesThreaded++
-      } else if (
-        reply.dsn &&
-        bounceMatchesFinalRecipient(reply.dsn.finalRecipients, candidates, ATTRIBUTION_WINDOW_DAYS, now)
-      ) {
-        summary.bouncesUnthreaded++
-      }
-    }
-
     if (seen.has(reply.messageId)) {
       summary.deduped++
       continue
     }
 
-    // Trust gate: a bounce records (forces DNC) only when bound to a Message-ID we
-    // generated. A bounce attributed only by sender / Final-Recipient is forgeable,
-    // so it is dropped — closing the spoofed-DNC vector (option A).
+    // A bounce forces DNC, so it records only when bound to a Message-ID we
+    // generated; a sender-only match is forgeable and would hand anyone a
+    // spoofed-DNC vector.
     if (det === 'bounce' && attribution?.binding !== 'threaded') {
       summary.unattributed++
       continue
     }
     if (attribution === null) {
+      if (fromDomainMatchesRecentSend(reply.fromEmail, candidates, ATTRIBUTION_WINDOW_DAYS, now)) {
+        summary.unattributedSameDomain++
+      }
       summary.unattributed++
       continue
     }
@@ -405,8 +390,7 @@ export async function runReplyIngest(db: Db, env: ReplyIngestEnv): Promise<Reply
     deduped: 0,
     unattributed: 0,
     recordErrors: 0,
-    bouncesThreaded: 0,
-    bouncesUnthreaded: 0,
+    unattributedSameDomain: 0,
     identitiesAuthRevoked: 0,
   }
 

@@ -3,7 +3,7 @@ import { PAGE_SIZE, parsePageNumber } from '$lib/pagination';
 import type { FunnelStageFilter } from '$lib/types/outreach';
 import type { PageServerLoad } from './$types';
 
-const STAGES: readonly FunnelStageFilter[] = ['approached', 'reached', 'engaged', 'won'];
+const STAGES: readonly FunnelStageFilter[] = ['approached', 'delivered', 'reached', 'engaged', 'won'];
 
 function parseStage(raw: string | null): FunnelStageFilter | '' {
   return raw && (STAGES as string[]).includes(raw) ? (raw as FunnelStageFilter) : '';

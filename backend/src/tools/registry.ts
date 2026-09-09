@@ -65,9 +65,8 @@ export type ToolDef = {
   surface: 'shared' | 'chat'
   // Decided on parsed arguments.
   confirm: (args: Record<string, unknown>) => boolean
-  // Writes nothing and carries no ordering against a sibling call, so the
-  // chat agent may run several of these at once. Never true for a tool that
-  // takes a confirmation.
+  // Writes nothing and holds no order against a sibling call, so the chat
+  // agent may run several at once.
   readOnly: boolean
   handler: (args: Record<string, unknown>, ctx: ToolCtx) => Promise<ToolCallResult> | ToolCallResult
 }

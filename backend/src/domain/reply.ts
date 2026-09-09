@@ -1,9 +1,4 @@
-// Attribution is threading-first (an unforgeable match on a Message-ID we
-// generated) with a sender-recency fallback; the returned `binding` tells the
-// caller how much to trust it (the bounce→DNC path requires 'threaded').
-
 import { getHeader, parseAddress, parseMessageIdList, type ParsedEmail } from './email-message'
-import type { ParsedDsn } from './dsn'
 
 export type InboundReply = {
   messageId: string
@@ -11,15 +6,16 @@ export type InboundReply = {
   subject: string | null
   bodyText: string
   receivedAt: Date
-  // Message-IDs this message threads to; a match against a sent outreach's
-  // message_id is unforgeable — a spoofer can't echo our token.
   referencedMessageIds: string[]
-  dsn: ParsedDsn | null
 }
 
-export type CapturedReply = { email: ParsedEmail; receivedAt: Date; dsn: ParsedDsn | null }
+export type CapturedReply = {
+  email: ParsedEmail
+  receivedAt: Date
+  dsnOriginalMessageId: string | null
+}
 
-// null when the message lacks a Message-ID (no idempotency key) or a From.
+// A Message-ID is the dedup key for ingestion, so a message without one is unusable.
 export function toInboundReply(captured: CapturedReply): InboundReply | null {
   const messageId = getHeader(captured.email.headers, 'message-id')
   const fromRaw = getHeader(captured.email.headers, 'from')
@@ -29,7 +25,7 @@ export function toInboundReply(captured: CapturedReply): InboundReply | null {
   const referencedMessageIds = [
     ...parseMessageIdList(getHeader(captured.email.headers, 'in-reply-to')),
     ...parseMessageIdList(getHeader(captured.email.headers, 'references')),
-    ...(captured.dsn?.originalMessageId ? [captured.dsn.originalMessageId] : []),
+    ...(captured.dsnOriginalMessageId ? [captured.dsnOriginalMessageId] : []),
   ]
   return {
     messageId,
@@ -38,7 +34,6 @@ export function toInboundReply(captured: CapturedReply): InboundReply | null {
     bodyText: captured.email.bodyText,
     receivedAt: captured.receivedAt,
     referencedMessageIds,
-    dsn: captured.dsn,
   }
 }
 
@@ -59,15 +54,14 @@ export function normalizeEmailForMatch(email: string): string {
   return email.trim().toLowerCase()
 }
 
-// Strip the `<>` wrapper and lower-case so a domain re-cased by an MSA still
-// matches; the 32-char random local-part carries the uniqueness regardless.
+// An MSA may re-case the domain in transit; the 32-char random local-part
+// carries the uniqueness regardless.
 export function normalizeMessageId(id: string): string {
   return id.trim().replace(/^<|>$/g, '').trim().toLowerCase()
 }
 
 // `now` is the trusted poll time (not the sender-controlled Date header), so a
-// forged clock can't escape the window. Threading wins over sender-recency;
-// ties break to the later send, then later id, for determinism.
+// forged clock can't escape the window.
 export function attributeReply(
   reply: InboundReply,
   candidates: OutreachCandidate[],
@@ -106,22 +100,28 @@ function isMoreRecent(c: OutreachCandidate, best: OutreachCandidate): boolean {
   return sent > bestSent || (sent === bestSent && c.outreachLogId > best.outreachLogId)
 }
 
-// Instrumentation for option A's recall gap: would Final-Recipient attribution
-// (option C) have bound this bounce to a real recent send? True = a bounce we
-// drop today (not threaded) but C would have recorded. The hourly cron logs the
-// count so the A→C trade-off stays data-driven on real bounces.
-export function bounceMatchesFinalRecipient(
-  finalRecipients: string[],
+// Instrumentation: we mail info@ and a colleague answers from their own address,
+// so neither threading nor From matches and the reply is dropped. An upper bound
+// on that gap — unrelated mail from a domain we mailed matches too. Bounces are
+// the caller's to exclude (a DSN names the recipient's own domain).
+export function fromDomainMatchesRecentSend(
+  fromEmail: string,
   candidates: OutreachCandidate[],
   windowDays: number,
   now: Date,
 ): boolean {
-  if (finalRecipients.length === 0) return false
-  const recipients = new Set(finalRecipients.map(normalizeEmailForMatch))
+  const domain = emailDomain(fromEmail)
+  if (domain === null) return false
   const nowMs = now.getTime()
   const earliest = nowMs - windowDays * 24 * 60 * 60 * 1000
   return candidates.some((c) => {
     const sent = c.sentAt.getTime()
-    return recipients.has(normalizeEmailForMatch(c.prospectEmail)) && sent <= nowMs && sent >= earliest
+    return emailDomain(c.prospectEmail) === domain && sent <= nowMs && sent >= earliest
   })
+}
+
+function emailDomain(email: string): string | null {
+  const normalized = normalizeEmailForMatch(email)
+  const at = normalized.lastIndexOf('@')
+  return at > 0 && at < normalized.length - 1 ? normalized.slice(at + 1) : null
 }

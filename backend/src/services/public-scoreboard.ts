@@ -36,7 +36,14 @@ export type LiveScoreboard = {
   // Percent of sent emails that got a human reply, one decimal.
   replyRate: number
   recent: { days: number; sent: number; replyRate: number }
+  // Every send a bounce came back for, and the rest of sent.total. An untracked
+  // send can still carry an agent-recorded bounce, so these count all of them —
+  // `delivered` is an upper bound only because a silent drop leaves no bounce.
+  delivered: number
+  bounced: number
   // Percent of bounce-eligible (threadable email) sends that bounced, one decimal.
+  // Both ends are restricted to tracked sends — a different base from `bounced`, so
+  // the two never share a line. Consumed by the landing strip, not by /live.
   bounceRate: number
   // Platform signups (tenants). Cloud only — meaningless on a self-hosted install.
   signups: { today: number; total: number } | null
@@ -58,6 +65,7 @@ type TotalsRow = {
   replied_recent: string | number
   bounce_eligible: string | number
   bounced: string | number
+  bounced_all: string | number
   first_sent_day: string | null
 }
 type DayRow = { day: string; count: string | number }
@@ -155,6 +163,7 @@ async function computeScoreboard(
         COUNT(h.outreach_log_id) FILTER (WHERE s.sent_at >= ${recentSinceIso}::timestamptz)::int AS replied_recent,
         COUNT(*) FILTER (WHERE s.bounce_eligible)::int AS bounce_eligible,
         COUNT(b.outreach_log_id) FILTER (WHERE s.bounce_eligible)::int AS bounced,
+        COUNT(b.outreach_log_id)::int AS bounced_all,
         (MIN(s.sent_at) AT TIME ZONE 'UTC')::date::text AS first_sent_day
       FROM s
       LEFT JOIN b ON b.outreach_log_id = s.id
@@ -210,6 +219,8 @@ async function computeScoreboard(
       sent: sentRecent,
       replyRate: replyRate(num(totals.replied_recent), sentRecent),
     },
+    delivered: sentTotal - num(totals.bounced_all),
+    bounced: num(totals.bounced_all),
     bounceRate: replyRate(num(totals.bounced), num(totals.bounce_eligible)),
     signups: signups ? { today: num(signups.today), total: num(signups.total) } : null,
     daily: buildDaily(sentByDay, repliesByDay, now),

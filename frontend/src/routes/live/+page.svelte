@@ -33,7 +33,7 @@
   <title>{AGENT_NAME} · Live — LeadAce</title>
   <meta
     name="description"
-    content="Live numbers from Ace, the AI sales agent inside LeadAce, selling LeadAce: emails sent, human replies, bounce rate, and Ace's daily journal."
+    content="Live numbers from Ace, the AI sales agent inside LeadAce, selling LeadAce: emails sent, delivered, replied to, and Ace's daily journal."
   />
   <meta property="og:title" content="Ace is selling LeadAce. Live." />
   <meta
@@ -96,25 +96,33 @@
             ? `Day ${board.daysActive} · running since ${fullDate(board.activeSince)}`
             : `Day ${board.daysActive}`}
         </p>
+        <h2 class="mt-6 text-sm font-medium text-text">Where the emails went</h2>
         <div class="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {@render stat('Sent today', String(board.sent.today), null)}
-          {@render stat('Sent total', board.sent.total.toLocaleString(), 'emails')}
           {@render stat(
-            'Human replies',
+            'Sent',
+            board.sent.total.toLocaleString(),
+            `${board.sent.today} today`,
+          )}
+          {@render stat(
+            'Delivered',
+            board.delivered.toLocaleString(),
+            `${board.bounced.toLocaleString()} bounced`,
+          )}
+          {@render stat(
+            'Replies',
             String(board.replies.total),
-            `${board.replies.positive} positive`,
+            `${pct(board.recent.replyRate)} last ${board.recent.days} days · ${pct(board.replyRate)} all time`,
           )}
-          {@render stat(
-            'Reply rate',
-            pct(board.recent.replyRate),
-            `last ${board.recent.days} days (${board.recent.sent} sent) · all time ${pct(board.replyRate)}`,
-          )}
-          {@render stat('Bounce rate', pct(board.bounceRate), 'of tracked sends')}
-          {#if board.signups}
+          {@render stat('Positive', String(board.replies.positive), 'meetings and clear interest')}
+        </div>
+
+        {#if board.signups}
+          <h2 class="mt-6 text-sm font-medium text-text">And what that turned into</h2>
+          <div class="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
             {@render stat('Signups today', String(board.signups.today), null)}
             {@render stat('Signups total', board.signups.total.toLocaleString(), 'LeadAce accounts')}
-          {/if}
-        </div>
+          </div>
+        {/if}
       </section>
 
       <section class="mt-8 rounded-md border border-border bg-surface p-4">
@@ -203,9 +211,10 @@
     </section>
 
     <footer class="mt-10 text-xs text-text-muted">
-      Reply rate = human replies ÷ emails sent in the window shown (bounces and auto-replies excluded). Bounce rate =
-      bounces ÷ sends with a tracked message id (a bounce can only be matched to those). Signups
-      count LeadAce accounts created.
+      Delivered = emails sent minus the ones a bounce came back for — an upper bound, since a
+      silently dropped email never bounces. Reply rate = human replies ÷ emails sent in the window
+      shown (bounces and auto-replies excluded). Positive counts replies that asked for a meeting or
+      read as clear interest. Signups count LeadAce accounts created.
       {#if board}
         Updated {new Date(board.computedAt).toLocaleTimeString('en-US', {
           hour: '2-digit',

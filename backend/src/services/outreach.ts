@@ -74,7 +74,7 @@ import { buildSkipAuditBody } from '../domain/outreach-skip'
 import { isPublicHttpsUrl } from '../domain/url'
 import type { Edition } from '../domain/edition'
 
-export const funnelStageSchema = z.enum(['approached', 'reached', 'engaged', 'won'])
+export const funnelStageSchema = z.enum(['approached', 'delivered', 'reached', 'engaged', 'won'])
 export type FunnelStageFilter = z.infer<typeof funnelStageSchema>
 
 export const recentOutreachQuerySchema = z.object({
@@ -989,6 +989,8 @@ function funnelStageCondition(stage: FunnelStageFilter, since: Date | null): SQL
       return since
         ? sql`(${outreachLogs.status} = 'sent' AND ${outreachLogs.sentAt} >= ${since.toISOString()}::timestamptz)`
         : sql`${outreachLogs.status} = 'sent'`
+    case 'delivered':
+      return sql`(${funnelStageCondition('approached', since)} AND NOT EXISTS (SELECT 1 FROM responses r WHERE r.outreach_log_id = ${outreachLogs.id} AND r.response_type = 'bounce'))`
     case 'reached':
       return sql`EXISTS (SELECT 1 FROM inquiry_sessions s WHERE s.outreach_log_id = ${outreachLogs.id}${opened})`
     case 'engaged':

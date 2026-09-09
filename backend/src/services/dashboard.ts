@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { and, desc, eq, sql } from 'drizzle-orm'
-import { outreachLogs, projectDocuments } from '../db/schema'
+import { outreachLogs, projectDocuments, projectSettings } from '../db/schema'
 import type { Db } from '../db/connection'
 import type { Edition } from '../domain/edition'
 import type { ProjectRef, TenantId } from '../domain/ids'
@@ -81,6 +81,8 @@ export async function getDashboardSummary(
 
   const [
     approachedRows,
+    deliveredRows,
+    inquiryLandingRows,
     reachedRows,
     engagedRows,
     wonRows,
@@ -110,6 +112,28 @@ export async function getDashboardSummary(
         COUNT(DISTINCT prospect_id) FILTER (WHERE sent_at >= ${prevIso}::timestamptz AND sent_at < ${curIso}::timestamptz)::int AS previous
       FROM outreach_logs
       WHERE project_id = ${projectId} AND status = 'sent' AND sent_at >= ${prevIso}::timestamptz`),
+    // delivered = distinct prospects with a send no bounce came back for. Absence of a
+    // bounce is not proof of delivery: a bounce binds only to a send whose Message-ID we
+    // generated (services/reply-ingest.ts), so this is an upper bound.
+    raw<WindowCountRow>(sql`
+      WITH s AS (
+        SELECT ol.prospect_id AS pid, ol.sent_at AS ts
+        FROM outreach_logs ol
+        WHERE ol.project_id = ${projectId} AND ol.status = 'sent'
+          AND ol.sent_at >= ${prevIso}::timestamptz
+          AND NOT EXISTS (
+            SELECT 1 FROM responses r
+            WHERE r.outreach_log_id = ol.id AND r.response_type = 'bounce')
+      )
+      SELECT
+        COUNT(DISTINCT pid) FILTER (WHERE ts >= ${curIso}::timestamptz)::int AS current,
+        COUNT(DISTINCT pid) FILTER (WHERE ts >= ${prevIso}::timestamptz AND ts < ${curIso}::timestamptz)::int AS previous
+      FROM s`),
+    db
+      .select({ enabled: projectSettings.inquiryLandingEnabled })
+      .from(projectSettings)
+      .where(eq(projectSettings.projectId, projectId))
+      .limit(1),
     // reached = distinct prospects who opened their inquiry page (session start in window)
     raw<WindowCountRow>(sql`
       SELECT
@@ -230,16 +254,21 @@ export async function getDashboardSummary(
   if (!attentionInputRes.ok) return attentionInputRes
 
   const approached = toKpi(Number(approachedRows[0]?.current ?? 0), Number(approachedRows[0]?.previous ?? 0))
+  const delivered = toKpi(Number(deliveredRows[0]?.current ?? 0), Number(deliveredRows[0]?.previous ?? 0))
   const reached = toKpi(Number(reachedRows[0]?.current ?? 0), Number(reachedRows[0]?.previous ?? 0))
   const engaged = toKpi(Number(engagedRows[0]?.current ?? 0), Number(engagedRows[0]?.previous ?? 0))
   const won = toKpi(Number(wonRows[0]?.current ?? 0), Number(wonRows[0]?.previous ?? 0))
 
-  const funnel = buildFunnel({
-    sent: approached.current,
-    reached: reached.current,
-    engaged: engaged.current,
-    won: won.current,
-  })
+  const funnel = buildFunnel(
+    {
+      sent: approached.current,
+      delivered: delivered.current,
+      reached: reached.current,
+      engaged: engaged.current,
+      won: won.current,
+    },
+    inquiryLandingRows[0]?.enabled ?? false,
+  )
 
   const trend = buildTrend(
     now,
@@ -277,7 +306,7 @@ export async function getDashboardSummary(
 
   return ok({
     period: query.period,
-    kpis: { approached, reached, engaged, won },
+    kpis: { approached, delivered, reached, engaged, won },
     funnel,
     trend,
     replyRateTrend: {

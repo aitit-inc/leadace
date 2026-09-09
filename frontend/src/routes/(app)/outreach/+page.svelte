@@ -23,6 +23,7 @@
 
   const STAGE_OPTIONS: { value: FunnelStageFilter; label: string }[] = [
     { value: 'approached', label: 'Approached' },
+    { value: 'delivered', label: 'Delivered' },
     { value: 'reached', label: 'Reached' },
     { value: 'engaged', label: 'Engaged' },
     { value: 'won', label: 'Won' },

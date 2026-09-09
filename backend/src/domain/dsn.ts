@@ -1,45 +1,16 @@
-// Pure parsing of a Delivery Status Notification (bounce). Two facts are
-// extracted from the machine-readable parts, provider-agnostically:
-//   - finalRecipients: the addresses that failed (message/delivery-status).
-//   - originalMessageId: our own Message-ID echoed back in the returned original
-//     (message/rfc822 / text/rfc822-headers). This is the *trusted* bounce key:
-//     a spoofed DSN can't carry our unguessable Message-ID, so attribution by it
-//     gates DNC while finalRecipients alone never does (it is forgeable).
-// Returns null when the message has neither machine-readable part — i.e. it is
-// not a parseable DSN and the caller should treat it as a normal message.
+// A bounce echoes our original message back in a message/rfc822 or
+// text/rfc822-headers part. The Message-ID it carries is the trusted bounce key
+// — a spoofed DSN cannot echo an id we generated — and is what gates DNC.
+// Final-Recipient is deliberately unused: it is forgeable, and over a week of
+// prod bounces it bound nothing threading missed (2026-09).
 
 import { getHeader, parseTopHeaders, type MessagePart } from './email-message'
 
-export type ParsedDsn = {
-  finalRecipients: string[]
-  originalMessageId: string | null
-}
-
-const DELIVERY_STATUS = 'message/delivery-status'
 const RFC822_TYPES = new Set(['message/rfc822', 'text/rfc822-headers'])
 
-export function parseDsn(parts: MessagePart[]): ParsedDsn | null {
-  const statusPart = parts.find((p) => p.mimeType === DELIVERY_STATUS)
+export function parseDsnOriginalMessageId(parts: MessagePart[]): string | null {
   const originalPart = parts.find((p) => RFC822_TYPES.has(p.mimeType))
-  if (!statusPart && !originalPart) return null
-
-  const finalRecipients = statusPart ? parseFinalRecipients(statusPart.body) : []
-  const originalMessageId = originalPart ? extractOriginalMessageId(originalPart) : null
-  if (finalRecipients.length === 0 && originalMessageId === null) return null
-  return { finalRecipients, originalMessageId }
-}
-
-// `Final-Recipient: rfc822; user@host` — one per failed recipient. Tolerant of
-// the address-type token, surrounding angle brackets, and case; normalized lower.
-export function parseFinalRecipients(deliveryStatus: string): string[] {
-  const out: string[] = []
-  for (const line of deliveryStatus.split(/\r\n|\n/)) {
-    const m = line.match(/^final-recipient\s*:\s*[^;]+;\s*(.+)$/i)
-    if (!m) continue
-    const addr = (m[1] ?? '').trim().replace(/^<|>$/g, '').trim().toLowerCase()
-    if (addr) out.push(addr)
-  }
-  return out
+  return originalPart ? extractOriginalMessageId(originalPart) : null
 }
 
 // Gmail attaches the returned original's headers to the message/rfc822 part
@@ -51,7 +22,6 @@ function extractOriginalMessageId(part: MessagePart): string | null {
   return fromBody ? normalizeMessageIdToken(fromBody) : null
 }
 
-// Reduce a raw `Message-ID:` value to its `<id>` token (drops CFWS / stray text).
 function normalizeMessageIdToken(raw: string): string {
   const m = raw.match(/<[^<>\s]+>/)
   return m ? m[0] : raw.trim()

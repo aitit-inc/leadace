@@ -9,7 +9,7 @@ import {
 } from '../domain/imap'
 import { encodeAuthPlain } from '../domain/smtp'
 import { parseEmailMessage, getHeader, flattenMessageParts } from '../domain/email-message'
-import { parseDsn } from '../domain/dsn'
+import { parseDsnOriginalMessageId } from '../domain/dsn'
 import type { CapturedReply } from '../domain/reply'
 
 // Poll-only IMAP over 993 implicit TLS (cloudflare:sockets connect()); smtp_imap
@@ -32,9 +32,9 @@ function toCaptured(rawBinary: string): CapturedReply {
   const dateHeader = getHeader(email.headers, 'date')
   const parsed = dateHeader ? new Date(dateHeader) : null
   const receivedAt = parsed && !Number.isNaN(parsed.getTime()) ? parsed : new Date()
-  // The partial fetch (BODY.PEEK[]<0.128K>) keeps a DSN's delivery-status and
-  // returned-original headers, which sit near the top — enough for parseDsn.
-  return { email, receivedAt, dsn: parseDsn(flattenMessageParts(raw)) }
+  // The partial fetch (BODY.PEEK[]<0.128K>) keeps a DSN's returned-original
+  // headers, which sit near the top.
+  return { email, receivedAt, dsnOriginalMessageId: parseDsnOriginalMessageId(flattenMessageParts(raw)) }
 }
 
 const POLL_TIMEOUT_MS = 30_000

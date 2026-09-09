@@ -136,10 +136,9 @@ export function parseMessageIdList(value: string | null): string[] {
   return value.match(/<[^<>\s]+>/g) ?? []
 }
 
-// multipart/* containers recurse; message/rfc822 (a DSN's returned original) and
-// message/delivery-status stay leaves so domain/dsn can read their text. Mirrors
-// extractText's boundary handling but keeps every part instead of collapsing to
-// the text/plain leaf.
+// multipart/* containers recurse; message/rfc822 (a DSN's returned original)
+// stays a leaf so domain/dsn can read its text. Mirrors extractText's boundary
+// handling but keeps every part instead of collapsing to the text/plain leaf.
 export function flattenMessageParts(raw: string, depth = 0): MessagePart[] {
   const normalized = raw.replace(/\r\n|\r|\n/g, '\r\n')
   const split = normalized.indexOf('\r\n\r\n')

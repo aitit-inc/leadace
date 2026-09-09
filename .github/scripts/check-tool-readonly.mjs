@@ -1,20 +1,12 @@
 import { readFileSync } from 'node:fs'
 
-// `readOnly: true` lets the hosted chat agent run a tool alongside its siblings
-// in one model turn. That is safe only while the tool writes nothing: a write
-// running concurrently loses the ordering the model assumed and can race
-// another write past a check it already passed (quota is the sharp case).
-//
-// The flag is a promise about the handler, and nothing in the type system holds
-// the handler to it. This does: a tool that declares itself read-only may reach
+// `readOnly: true` lets the chat agent run a tool alongside its siblings in one
+// model turn — safe only while the tool writes nothing, and nothing in the type
+// system holds a handler to that promise. This does: a read-only tool may reach
 // the API with GET and nothing else.
 //
-// Blind spots:
-//   - a handler that writes without going through callApi. There is no such
-//     tool today — every one of them reaches the API through ToolCtx.
-//   - a write introduced inside the service behind a GET endpoint. Nothing
-//     here reads past registry.ts, so the verb stays the whole claim; a GET
-//     route that writes is already against the backend rule.
+// Blind to a write behind a GET endpoint, or one that skips callApi: the verb is
+// the whole claim here, and a GET route that writes already breaks its own rule.
 
 const SRC = new URL('../../backend/src/tools/registry.ts', import.meta.url)
 const lines = readFileSync(SRC, 'utf8').split('\n')
@@ -40,8 +32,7 @@ for (let k = 0; k < starts.length; k++) {
   const name = lines[start + 1].trim().replace(/^'|',$/g, '')
   const literal = [...block.matchAll(/callApi\(\s*['"]([A-Z]+)['"]/g)].map((m) => m[1])
   const writes = [...new Set(literal.filter((m) => m !== 'GET'))]
-  // A method the handler computes cannot be read here, so it is not a GET
-  // until someone proves otherwise.
+  // A method this cannot read is not a GET until someone proves it.
   const opaque = [...block.matchAll(/callApi\(/g)].length - literal.length
   if (opaque > 0) writes.push(`${opaque} call${opaque === 1 ? '' : 's'} with a method this check cannot read`)
   if (writes.length > 0) offenders.push({ name, line: start + 2, writes })

@@ -13,7 +13,7 @@ export type InquiryOutcome = 'opened' | 'inquired' | 'unsubscribed' | 'signup_cl
 
 // Mirrors backend funnelStageSchema (services/outreach.ts) — the dashboard
 // KPI drill-down filter on /outreach.
-export type FunnelStageFilter = 'approached' | 'reached' | 'engaged' | 'won';
+export type FunnelStageFilter = 'approached' | 'delivered' | 'reached' | 'engaged' | 'won';
 
 export interface OutreachLog {
   id: number;

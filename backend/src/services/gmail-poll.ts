@@ -1,6 +1,6 @@
 import type { CapturedReply } from '../domain/reply'
 import type { ParsedEmail, MessagePart } from '../domain/email-message'
-import { parseDsn } from '../domain/dsn'
+import { parseDsnOriginalMessageId } from '../domain/dsn'
 
 // Server-side Gmail reply poll via the Gmail API (requires gmail.readonly),
 // normalized to the same CapturedReply the IMAP arm produces. gmail_oauth only.
@@ -59,7 +59,7 @@ export function extractBody(part: GmailPart | undefined, depth = 0): string {
 // Flatten the Gmail payload tree into provider-agnostic MessageParts for DSN
 // inspection. Gmail nests a bounce's returned original under a message/rfc822
 // node whose FIRST child carries the original's headers (incl. Message-ID), so
-// those are surfaced onto the rfc822 part for parseDsn to read.
+// those are surfaced onto the rfc822 part for the DSN parser to read.
 export function flattenGmailParts(part: GmailPart | undefined): MessagePart[] {
   if (!part) return []
   const mimeType = (part.mimeType ?? '').toLowerCase()
@@ -108,7 +108,11 @@ export async function pollGmailInbox(
       }
       const parsedDate = msg.internalDate ? new Date(Number(msg.internalDate)) : null
       const receivedAt = parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate : new Date()
-      replies.push({ email, receivedAt, dsn: parseDsn(flattenGmailParts(msg.payload)) })
+      replies.push({
+        email,
+        receivedAt,
+        dsnOriginalMessageId: parseDsnOriginalMessageId(flattenGmailParts(msg.payload)),
+      })
     }
     return { ok: true, replies }
   } catch (e) {

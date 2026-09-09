@@ -111,3 +111,10 @@ The three check commands are the pre-release checklist. Local E2E harness:
 Work on `develop` (default branch); merge to `main` to ship (CI deploys
 Workers + Pages + plugin marketplace). Release procedure and version bump
 rules: [.claude/rules/release.md](.claude/rules/release.md).
+
+Shipping also mirrors an allowlisted subset to the public repo
+`aitit-inc/leadace` — the code trees, `.claude/`, the root docs and
+`docs/self-host.md`, so what goes there is public. The rest of `docs/` and the
+deploy/release workflows stay private; the allowlist in
+[.github/sync/build-public-tree.sh](.github/sync/build-public-tree.sh) is the
+authority.

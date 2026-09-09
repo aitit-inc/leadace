@@ -169,41 +169,36 @@ export async function runDiscover(
   }
 
   const today = utcDateKey()
-  // One search per strategy, all at once: they are independent and each takes
-  // over a minute. Extraction stays serial — every pass rewrites the
-  // search_notes document the next one merges into.
   await progress(`searching: ${plan.map((p) => p.slug).join(', ')}`, 0, plan.length)
-  // allSettled, not all: returning on the first rejection would leave the
-  // other searches in flight, and the step's retry would start a second batch
-  // alongside them.
+  // Extraction stays serial — each pass rewrites the search_notes the next one
+  // merges into. allSettled so a rejection does not leave the others in
+  // flight, overlapping the step's retry.
   const settled = await Promise.allSettled(
     plan.map(async (entry) => ({
       entry,
-      searchText: (
-        await callGeminiGroundedText({
-          op: 'discover.search',
-          apiKey: env.GEMINI_API_KEY,
-          model: HOSTED_MODEL,
-          timeoutMs: 180_000,
-          prompt: searchPrompt({
-            plan: entry,
-            business: docs.value.business,
-            salesStrategy: docs.value.salesStrategy,
-            searchNotes,
-            learnings,
-            targetCountries: allowlist.targetCountries,
-            today,
-          }),
-          maxOutputTokens: 8192,
-        })
-      ).text,
+      searchText: await callGeminiGroundedText({
+        op: 'discover.search',
+        apiKey: env.GEMINI_API_KEY,
+        model: HOSTED_MODEL,
+        timeoutMs: 180_000,
+        prompt: searchPrompt({
+          plan: entry,
+          business: docs.value.business,
+          salesStrategy: docs.value.salesStrategy,
+          searchNotes,
+          learnings,
+          targetCountries: allowlist.targetCountries,
+          today,
+        }),
+        maxOutputTokens: 8192,
+      }),
     })),
   )
-  const rejected: unknown[] = settled.flatMap((s) => (s.status === 'rejected' ? [s.reason] : []))
-  if (rejected.length > 0) {
-    const [failure] = rejected
-    if (failure instanceof GeminiError) return err('BAD_GATEWAY', 'Search step failed upstream', failure.message)
-    throw failure
+  const failed = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected')
+  if (failed) {
+    const reason: unknown = failed.reason
+    if (reason instanceof GeminiError) return err('BAD_GATEWAY', 'Search step failed upstream', reason.message)
+    throw reason
   }
   const searches = settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : []))
 

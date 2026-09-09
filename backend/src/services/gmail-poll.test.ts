@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { gmailAfter, extractBody, flattenGmailParts, type GmailPart } from './gmail-poll'
-import { parseDsn } from '../domain/dsn'
+import { parseDsnOriginalMessageId } from '../domain/dsn'
 
 function b64url(text: string): string {
   const b64 = btoa(String.fromCharCode(...new TextEncoder().encode(text)))
@@ -88,8 +88,8 @@ describe('extractBody (gmail tree)', () => {
 
 // Validates the Gmail bounce shape: a message/rfc822 node whose first child
 // carries the returned original's headers (incl. Message-ID). flattenGmailParts
-// surfaces those onto the rfc822 part so parseDsn can read the trusted bounce key.
-describe('flattenGmailParts -> parseDsn (Gmail bounce tree)', () => {
+// surfaces those onto the rfc822 part so the trusted bounce key can be read.
+describe('flattenGmailParts -> parseDsnOriginalMessageId (Gmail bounce tree)', () => {
   const payload: GmailPart = {
     mimeType: 'multipart/report',
     headers: [{ name: 'Message-ID', value: '<dsn-own@mail.gmail.com>' }],
@@ -126,14 +126,11 @@ describe('flattenGmailParts -> parseDsn (Gmail bounce tree)', () => {
     ],
   }
 
-  it('extracts the final recipient and the returned original Message-ID', () => {
-    const dsn = parseDsn(flattenGmailParts(payload))
-    expect(dsn?.finalRecipients).toEqual(['gone@dead.example'])
-    expect(dsn?.originalMessageId).toBe('<orig-token@surpassone.com>')
+  it('extracts the returned original Message-ID', () => {
+    expect(parseDsnOriginalMessageId(flattenGmailParts(payload))).toBe('<orig-token@surpassone.com>')
   })
 
   it('does not mistake the DSN own Message-ID for the original', () => {
-    const dsn = parseDsn(flattenGmailParts(payload))
-    expect(dsn?.originalMessageId).not.toBe('<dsn-own@mail.gmail.com>')
+    expect(parseDsnOriginalMessageId(flattenGmailParts(payload))).not.toBe('<dsn-own@mail.gmail.com>')
   })
 })

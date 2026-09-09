@@ -5,6 +5,7 @@
 # getDashboardSummary (services/dashboard.ts) counts DISTINCT prospects per
 # funnel stage over stage events:
 #   approached = outreach_logs status='sent' (sent_at in window)
+#   delivered  = approached with no bounce response on the log
 #   reached    = inquiry_sessions opened in window
 #   engaged    = countable reply (not bounce/auto_reply) OR inquiry outcome
 #                in (inquired, lead, signup_clicked)
@@ -16,8 +17,9 @@
 # of DISTINCT prospects in the corresponding filtered list. Also pinned: the
 # log-vs-prospect unit difference (a prospect with two sends appears twice in
 # the list, once in the KPI), the period window (a 60-day-old send is out of
-# period=30d, in all-time), inquiryOutcome surfacing on list rows, and 400 on
-# an invalid stage value.
+# period=30d, in all-time), inquiryOutcome surfacing on list rows, the stage
+# set the funnel chain reports (this project has the inquiry landing on, so
+# 'reached' participates), and 400 on an invalid stage value.
 #
 # Runs against the local stack (localhost:8787 API + 54322 Postgres).
 # Snapshots + restores tenant compliance (shared state). Curl-only, cleans up.
@@ -155,15 +157,17 @@ api PUT "/api/projects/$PROJECT_ID/settings" '{"inquiryLandingEnabled":true,"out
 SEED_BODY="$(jq -nc --arg pid "$PROJECT_ID" \
   --argjson reply "$(mkseed reply)" --argjson inq "$(mkseed inq)" \
   --argjson won "$(mkseed won)" --argjson quiet "$(mkseed quiet)" \
-  '{projectId:$pid, prospects:[$reply,$inq,$won,$quiet]}')"
+  --argjson bounce "$(mkseed bounce)" \
+  '{projectId:$pid, prospects:[$reply,$inq,$won,$quiet,$bounce]}')"
 SEED_RESP="$(api POST /api/prospects/batch "$SEED_BODY")"
-assert_eq "seed inserted=4" "$(echo "$SEED_RESP" | jq -r '.inserted // 0')" "4"
+assert_eq "seed inserted=5" "$(echo "$SEED_RESP" | jq -r '.inserted // 0')" "5"
 
 LIST_RESP="$(api GET "/api/projects/$PROJECT_ID/prospects?limit=200")"
 pid_of() { echo "$LIST_RESP" | jq -r --arg e "contact@$RUN_TAG-$1.example" '.prospects[]? | select(.email == $e) | .prospectId' | head -1; }
 P_REPLY="$(pid_of reply)"; P_INQ="$(pid_of inq)"; P_WON="$(pid_of won)"; P_QUIET="$(pid_of quiet)"
-[[ -n "$P_REPLY" && -n "$P_INQ" && -n "$P_WON" && -n "$P_QUIET" ]] || { echo "could not resolve prospect ids" >&2; echo "$LIST_RESP" >&2; exit 1; }
-say "ids: reply=$P_REPLY inq=$P_INQ won=$P_WON quiet=$P_QUIET"
+P_BOUNCE="$(pid_of bounce)"
+[[ -n "$P_REPLY" && -n "$P_INQ" && -n "$P_WON" && -n "$P_QUIET" && -n "$P_BOUNCE" ]] || { echo "could not resolve prospect ids" >&2; echo "$LIST_RESP" >&2; exit 1; }
+say "ids: reply=$P_REPLY inq=$P_INQ won=$P_WON quiet=$P_QUIET bounce=$P_BOUNCE"
 
 step "fixtures: one prospect per stage"
 # P_REPLY: sent + countable reply → engaged. Second send backdated 60d → out of
@@ -191,15 +195,24 @@ LID_WON="$(last_log_id "$P_WON")"
 record_response "$LID_WON" "meeting_request"
 # P_QUIET: sent, no events → approached only.
 record_sent "$P_QUIET"
+# P_BOUNCE: sent + bounce → approached but NOT delivered (its only send bounced).
+record_sent "$P_BOUNCE"
+LID_BOUNCE="$(last_log_id "$P_BOUNCE")"
+record_response "$LID_BOUNCE" "bounce"
 say "fixtures in place"
+
+step "the funnel chain carries delivered, and reached (inquiry landing is on here)"
+assert_eq "funnel keys" "$(api GET "/api/projects/$PROJECT_ID/dashboard?period=30d" | jq -rc '[.funnel[].key]')" '["sent","delivered","reached","engaged","won"]'
 
 step "dashboard KPIs (period=30d) match the fixture"
 DASH="$(api GET "/api/projects/$PROJECT_ID/dashboard?period=30d")"
 KPI_APPROACHED="$(echo "$DASH" | jq -r '.kpis.approached.current')"
+KPI_DELIVERED="$(echo "$DASH" | jq -r '.kpis.delivered.current')"
 KPI_REACHED="$(echo "$DASH" | jq -r '.kpis.reached.current')"
 KPI_ENGAGED="$(echo "$DASH" | jq -r '.kpis.engaged.current')"
 KPI_WON="$(echo "$DASH" | jq -r '.kpis.won.current')"
-assert_eq "approached=4 (old send out of window, distinct prospects)" "$KPI_APPROACHED" "4"
+assert_eq "approached=5 (old send out of window, distinct prospects)" "$KPI_APPROACHED" "5"
+assert_eq "delivered=4 (P_BOUNCE's only send bounced)" "$KPI_DELIVERED" "4"
 assert_eq "reached=1" "$KPI_REACHED" "1"
 assert_eq "engaged=3" "$KPI_ENGAGED" "3"
 assert_eq "won=1" "$KPI_WON" "1"
@@ -208,6 +221,7 @@ step "drill-down lists agree with the KPIs (distinct prospects per stage)"
 stage_list() { api GET "/api/projects/$PROJECT_ID/outreach/recent?stage=$1&period=30d"; }
 distinct_prospects() { jq -r '[.logs[].prospectId] | unique | length'; }
 assert_eq "stage=approached distinct == KPI" "$(stage_list approached | distinct_prospects)" "$KPI_APPROACHED"
+assert_eq "stage=delivered distinct == KPI" "$(stage_list delivered | distinct_prospects)" "$KPI_DELIVERED"
 assert_eq "stage=reached distinct == KPI" "$(stage_list reached | distinct_prospects)" "$KPI_REACHED"
 assert_eq "stage=engaged distinct == KPI" "$(stage_list engaged | distinct_prospects)" "$KPI_ENGAGED"
 assert_eq "stage=won distinct == KPI" "$(stage_list won | distinct_prospects)" "$KPI_WON"
@@ -218,10 +232,10 @@ assert_eq "stage=reached row carries inquiryOutcome=inquired" "$(echo "$REACHED_
 assert_eq "stage=won is P_WON's log" "$(stage_list won | jq -r '.logs[0].id')" "$LID_WON"
 
 step "period window + log-vs-prospect unit"
-assert_eq "stage=approached period=30d total=4 logs" "$(stage_list approached | jq -r '.total')" "4"
+assert_eq "stage=approached period=30d total=5 logs" "$(stage_list approached | jq -r '.total')" "5"
 ALL_APPROACHED="$(api GET "/api/projects/$PROJECT_ID/outreach/recent?stage=approached")"
-assert_eq "stage=approached all-time total=5 logs (P_REPLY twice)" "$(echo "$ALL_APPROACHED" | jq -r '.total')" "5"
-assert_eq "stage=approached all-time distinct prospects=4" "$(echo "$ALL_APPROACHED" | distinct_prospects)" "4"
+assert_eq "stage=approached all-time total=6 logs (P_REPLY twice)" "$(echo "$ALL_APPROACHED" | jq -r '.total')" "6"
+assert_eq "stage=approached all-time distinct prospects=5" "$(echo "$ALL_APPROACHED" | distinct_prospects)" "5"
 
 step "strict validation"
 assert_eq "invalid stage → 400" "$(api_status_only GET "/api/projects/$PROJECT_ID/outreach/recent?stage=bogus")" "400"

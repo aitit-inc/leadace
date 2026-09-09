@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   attributeReply,
-  bounceMatchesFinalRecipient,
+  fromDomainMatchesRecentSend,
   normalizeEmailForMatch,
   normalizeMessageId,
   toInboundReply,
@@ -18,7 +18,6 @@ const reply = (over: Partial<InboundReply> = {}): InboundReply => ({
   bodyText: 'sure',
   receivedAt: new Date('2026-06-10T12:00:00Z'),
   referencedMessageIds: [],
-  dsn: null,
   ...over,
 })
 
@@ -54,7 +53,7 @@ describe('normalizeMessageId', () => {
 const captured = (raw: string, receivedAt = new Date('2026-06-10T12:00:00Z')): CapturedReply => ({
   email: parseEmailMessage(raw),
   receivedAt,
-  dsn: null,
+  dsnOriginalMessageId: null,
 })
 
 describe('toInboundReply', () => {
@@ -76,7 +75,6 @@ describe('toInboundReply', () => {
       bodyText: 'sure, lets talk',
       receivedAt: new Date('2026-06-10T12:00:00Z'),
       referencedMessageIds: ['<orig@surpassone.com>', '<root@surpassone.com>', '<orig@surpassone.com>'],
-      dsn: null,
     })
   })
 
@@ -84,7 +82,7 @@ describe('toInboundReply', () => {
     const cap: CapturedReply = {
       email: parseEmailMessage('Message-ID: <dsn@daemon>\r\nFrom: mailer-daemon@googlemail.com\r\n\r\nfailed'),
       receivedAt: new Date('2026-06-10T12:00:00Z'),
-      dsn: { finalRecipients: ['gone@dead.example'], originalMessageId: '<orig@surpassone.com>' },
+      dsnOriginalMessageId: '<orig@surpassone.com>',
     }
     expect(toInboundReply(cap)?.referencedMessageIds).toEqual(['<orig@surpassone.com>'])
   })
@@ -196,26 +194,32 @@ describe('attributeReply — threading', () => {
   })
 })
 
-describe('bounceMatchesFinalRecipient (A-vs-C recall instrumentation)', () => {
-  it('true when a Final-Recipient matches a recent send in window (case-insensitive)', () => {
+describe('fromDomainMatchesRecentSend (colleague-reply recall instrumentation)', () => {
+  it('true when a colleague replies from the domain of a generic-inbox send', () => {
     expect(
-      bounceMatchesFinalRecipient(['Gone@Dead.example'], [cand(1, 'gone@dead.example', '2026-06-08T00:00:00Z')], 30, NOW),
+      fromDomainMatchesRecentSend('taro@Acme.com', [cand(1, 'info@acme.com', '2026-06-08T00:00:00Z')], 30, NOW),
     ).toBe(true)
   })
 
-  it('false when no Final-Recipient matches any send', () => {
+  it('false when no send in the window used that domain', () => {
     expect(
-      bounceMatchesFinalRecipient(['gone@dead.example'], [cand(1, 'lead@acme.com', '2026-06-08T00:00:00Z')], 30, NOW),
+      fromDomainMatchesRecentSend('taro@other.com', [cand(1, 'info@acme.com', '2026-06-08T00:00:00Z')], 30, NOW),
     ).toBe(false)
   })
 
-  it('false when the matching send is outside the window', () => {
+  it('false when the only same-domain send is outside the window', () => {
     expect(
-      bounceMatchesFinalRecipient(['gone@dead.example'], [cand(1, 'gone@dead.example', '2026-04-01T00:00:00Z')], 30, NOW),
+      fromDomainMatchesRecentSend('taro@acme.com', [cand(1, 'info@acme.com', '2026-04-01T00:00:00Z')], 30, NOW),
     ).toBe(false)
   })
 
-  it('false for an empty Final-Recipient list', () => {
-    expect(bounceMatchesFinalRecipient([], [cand(1, 'gone@dead.example', '2026-06-08T00:00:00Z')], 30, NOW)).toBe(false)
+  it('false for a From without a parseable domain', () => {
+    expect(fromDomainMatchesRecentSend('taro', [cand(1, 'info@acme.com', '2026-06-08T00:00:00Z')], 30, NOW)).toBe(false)
+  })
+
+  it('does not match a subdomain of a domain we sent to', () => {
+    expect(
+      fromDomainMatchesRecentSend('taro@mail.acme.com', [cand(1, 'info@acme.com', '2026-06-08T00:00:00Z')], 30, NOW),
+    ).toBe(false)
   })
 })
