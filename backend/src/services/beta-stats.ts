@@ -211,6 +211,7 @@ export async function summarizeSignalTrends(
       op: 'beta-stats',
       apiKey: env.GEMINI_API_KEY,
       model: TREND_MODEL,
+      timeoutMs: 60_000,
       prompt: trendPrompt(updates),
       temperature: 0.3,
       maxOutputTokens: 512,

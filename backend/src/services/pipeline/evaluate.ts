@@ -121,6 +121,7 @@ message variants: ${JSON.stringify(variants.value.variants)}
       op: 'evaluate',
       apiKey: env.GEMINI_API_KEY,
       model: HOSTED_MODEL,
+      timeoutMs: 120_000,
       prompt,
       schema: evaluationSchema,
       maxOutputTokens: 16384,

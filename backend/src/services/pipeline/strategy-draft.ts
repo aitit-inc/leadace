@@ -77,6 +77,7 @@ ${targetingGuide}
       op: 'strategy-draft',
       apiKey: env.GEMINI_API_KEY,
       model: HOSTED_MODEL,
+      timeoutMs: 120_000,
       prompt,
       schema: strategyDraftSchema,
       maxOutputTokens: 32768,

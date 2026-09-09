@@ -52,6 +52,7 @@ export async function classifyReply(
       op: 'reply-classify',
       apiKey: env.GEMINI_API_KEY,
       model: GEMINI_CLASSIFY_MODEL,
+      timeoutMs: 60_000,
       prompt: prompt(args.subject, args.bodyText),
       responseSchema: RESPONSE_SCHEMA,
       temperature: 0,

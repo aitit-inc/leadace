@@ -65,6 +65,10 @@ export type ToolDef = {
   surface: 'shared' | 'chat'
   // Decided on parsed arguments.
   confirm: (args: Record<string, unknown>) => boolean
+  // Writes nothing and carries no ordering against a sibling call, so the
+  // chat agent may run several of these at once. Never true for a tool that
+  // takes a confirmation.
+  readOnly: boolean
   handler: (args: Record<string, unknown>, ctx: ToolCtx) => Promise<ToolCallResult> | ToolCallResult
 }
 
@@ -77,7 +81,10 @@ export function buildToolRegistry(): ToolDef[] {
     description: string,
     schema: S,
     handler: (args: z.infer<z.ZodObject<S>>, ctx: ToolCtx) => Promise<ToolCallResult> | ToolCallResult,
-    opts: { confirm?: true | ((args: z.infer<z.ZodObject<S>>) => boolean); surface?: ToolDef['surface'] } = {},
+    opts: { surface?: ToolDef['surface'] } & (
+      | { confirm?: true | ((args: z.infer<z.ZodObject<S>>) => boolean); readOnly?: never }
+      | { readOnly: true; confirm?: never }
+    ) = {},
   ): void => {
     tools.push({
       name,
@@ -85,6 +92,7 @@ export function buildToolRegistry(): ToolDef[] {
       schema,
       surface: opts.surface ?? 'shared',
       confirm: opts.confirm === true ? () => true : ((opts.confirm ?? (() => false)) as ToolDef['confirm']),
+      readOnly: opts.readOnly === true,
       handler: handler as ToolDef['handler'],
     })
   }
@@ -101,6 +109,7 @@ export function buildToolRegistry(): ToolDef[] {
         }],
       }
     },
+    { readOnly: true },
   )
 
   defineTool(
@@ -147,6 +156,7 @@ export function buildToolRegistry(): ToolDef[] {
         }],
       }
     },
+    { readOnly: true },
   )
 
   defineTool(
@@ -323,6 +333,7 @@ export function buildToolRegistry(): ToolDef[] {
       }
       return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] }
     },
+    { readOnly: true },
   )
 
   defineTool(
@@ -381,6 +392,7 @@ export function buildToolRegistry(): ToolDef[] {
         }],
       }
     },
+    { readOnly: true },
   )
 
   defineTool(
@@ -434,6 +446,7 @@ export function buildToolRegistry(): ToolDef[] {
       if (h.pausedUntil) lines.push(`⚠️ Sending PAUSED until ${h.pausedUntil}`)
       return { content: [{ type: 'text' as const, text: lines.join('\n') }] }
     },
+    { readOnly: true },
   )
 
   defineTool(
@@ -518,6 +531,7 @@ export function buildToolRegistry(): ToolDef[] {
         }],
       }
     },
+    { readOnly: true },
   )
 
   defineTool(
@@ -537,6 +551,7 @@ export function buildToolRegistry(): ToolDef[] {
         : `compliance_status: incomplete\nmissing: ${r.missing.join(', ')}\nfix_url: https://app.leadace.ai/workspace-settings`
       return { content: [{ type: 'text' as const, text }] }
     },
+    { readOnly: true },
   )
 
   defineTool(
@@ -562,6 +577,7 @@ export function buildToolRegistry(): ToolDef[] {
         }],
       }
     },
+    { readOnly: true },
   )
 
   defineTool(
@@ -732,6 +748,7 @@ export function buildToolRegistry(): ToolDef[] {
       }
       return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] }
     },
+    { readOnly: true },
   )
 
   defineTool(
@@ -751,6 +768,7 @@ export function buildToolRegistry(): ToolDef[] {
       }
       return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] }
     },
+    { readOnly: true },
   )
 
   defineTool(
@@ -800,6 +818,7 @@ export function buildToolRegistry(): ToolDef[] {
           : `Gmail connected as ${result.email} (granted: ${result.grantedAt}, last refreshed: ${result.updatedAt}).`
       return { content: [{ type: 'text' as const, text }] }
     },
+    { readOnly: true },
   )
 
   defineTool(
@@ -944,6 +963,7 @@ export function buildToolRegistry(): ToolDef[] {
         }],
       }
     },
+    { readOnly: true },
   )
 
   defineTool(
@@ -1076,6 +1096,7 @@ export function buildToolRegistry(): ToolDef[] {
         }],
       }
     },
+    { readOnly: true },
   )
 
   defineTool(
@@ -1238,6 +1259,7 @@ export function buildToolRegistry(): ToolDef[] {
         }],
       }
     },
+    { readOnly: true },
   )
 
   defineTool(
@@ -1306,6 +1328,7 @@ export function buildToolRegistry(): ToolDef[] {
       }
       return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] }
     },
+    { readOnly: true },
   )
 
   defineTool(
@@ -1322,6 +1345,7 @@ export function buildToolRegistry(): ToolDef[] {
         content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
       }
     },
+    { readOnly: true },
   )
 
   defineTool(
@@ -1365,6 +1389,7 @@ export function buildToolRegistry(): ToolDef[] {
       }
       return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] }
     },
+    { readOnly: true },
   )
 
   defineTool(
@@ -1390,6 +1415,7 @@ export function buildToolRegistry(): ToolDef[] {
       const doc = data as { id: number; slug: string; content: string; createdAt: string }
       return { content: [{ type: 'text' as const, text: doc.content }] }
     },
+    { readOnly: true },
   )
 
   defineTool(
@@ -1434,6 +1460,7 @@ export function buildToolRegistry(): ToolDef[] {
         }],
       }
     },
+    { readOnly: true },
   )
 
   defineTool(
@@ -1456,6 +1483,7 @@ export function buildToolRegistry(): ToolDef[] {
         content: [{ type: 'text' as const, text: doc.content }],
       }
     },
+    { readOnly: true },
   )
 
   defineTool(
@@ -1479,6 +1507,7 @@ export function buildToolRegistry(): ToolDef[] {
         }],
       }
     },
+    { readOnly: true },
   )
 
   defineTool(
@@ -1511,6 +1540,7 @@ export function buildToolRegistry(): ToolDef[] {
         }],
       }
     },
+    { readOnly: true },
   )
 
   defineTool(
@@ -1545,6 +1575,7 @@ export function buildToolRegistry(): ToolDef[] {
         }],
       }
     },
+    { readOnly: true },
   )
 
   defineTool(
@@ -1596,6 +1627,7 @@ export function buildToolRegistry(): ToolDef[] {
       }
       return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] }
     },
+    { readOnly: true },
   )
 
   defineTool(
@@ -1698,6 +1730,7 @@ export function buildToolRegistry(): ToolDef[] {
       }
       return { content: [{ type: 'text' as const, text: jobLine(data as JobWire) }] }
     },
+    { readOnly: true },
   )
 
   defineTool(
@@ -1722,6 +1755,7 @@ export function buildToolRegistry(): ToolDef[] {
       const { jobs } = data as { jobs: JobWire[] }
       return { content: [{ type: 'text' as const, text: jobs.length === 0 ? 'No jobs yet.' : jobs.map(jobLine).join('\n') }] }
     },
+    { readOnly: true },
   )
 
   defineTool(

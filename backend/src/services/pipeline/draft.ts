@@ -233,6 +233,7 @@ export async function draftOne(
         op: 'draft',
         apiKey: env.GEMINI_API_KEY,
         model: HOSTED_MODEL,
+        timeoutMs: 90_000,
         prompt: compositionPrompt({ p, channel, variant, ctx, today: utcDateKey() }),
         schema: compositionSchema,
         thinking: 'LOW',

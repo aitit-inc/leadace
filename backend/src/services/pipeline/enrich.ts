@@ -84,6 +84,7 @@ async function readPages(env: HostedEnv, op: 'enrich.site' | 'enrich.pages', pro
     op,
     apiKey: env.GEMINI_API_KEY,
     model: HOSTED_MODEL,
+    timeoutMs: 90_000,
     prompt,
     schema: pageReadSchema,
     maxOutputTokens: 8192,

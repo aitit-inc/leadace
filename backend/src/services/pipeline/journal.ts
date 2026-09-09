@@ -77,6 +77,7 @@ export async function runJournal(
       op: 'journal',
       apiKey: env.GEMINI_API_KEY,
       model: HOSTED_MODEL,
+      timeoutMs: 90_000,
       prompt: `You are Ace writing today's public journal entry (first person, ${language}) for a live page anyone can read. Today is ${today}.
 
 Counts today: ${counts.sent} emails sent, ${counts.replies} replies (${counts.positive} positive), ${counts.bounces} bounces.

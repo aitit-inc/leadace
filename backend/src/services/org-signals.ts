@@ -373,6 +373,7 @@ async function readSignalsViaUrlContext(env: GeminiEnv, org: StaleOrg): Promise<
       op: 'org-signals',
       apiKey: env.GEMINI_API_KEY,
       model: GEMINI_SIGNAL_MODEL,
+      timeoutMs: 90_000,
       prompt: signalReadPrompt(org, urls, now.toISOString().slice(0, 10)),
       responseSchema: ORG_SIGNALS_RESPONSE_SCHEMA,
       temperature: 0.1,

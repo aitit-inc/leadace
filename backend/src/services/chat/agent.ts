@@ -28,6 +28,7 @@ import { buildSystemInstruction } from './system-prompt'
 export type ToolExecutor = {
   declarations: FunctionDeclaration[]
   needsConfirmation: (name: string, args: Record<string, unknown>) => boolean
+  isReadOnly: (name: string) => boolean
   execute: (name: string, args: Record<string, unknown>) => Promise<ToolResult>
 }
 
@@ -142,16 +143,18 @@ function withThread(call: Call, threadId: string): Record<string, unknown> {
   return call.name === 'start_job' ? { ...call.args, threadId } : call.args
 }
 
-// Runs one call and yields its events; the effect a tool reports (a job
-// started, a project created in this thread) is applied here.
-async function* executeCall(deps: ChatTurnDeps, threadId: string, call: Call): AsyncGenerator<ChatEvent, ToolResult> {
-  yield { type: 'tool_call', callId: call.id, name: call.name, args: call.args }
-  // A tool that throws (dispatch failure, non-JSON body) is an error result
-  // for the model, not the end of the turn.
-  const result = await deps.tools.execute(call.name, withThread(call, threadId)).catch((e: unknown): ToolResult => {
+// A tool that throws (dispatch failure, non-JSON body) is an error result
+// for the model, not the end of the turn.
+function runCall(deps: ChatTurnDeps, threadId: string, call: Call): Promise<ToolResult> {
+  return deps.tools.execute(call.name, withThread(call, threadId)).catch((e: unknown): ToolResult => {
     console.error(`[chat] tool ${call.name} threw`, e)
     return { ok: false, text: `Tool failed: ${e instanceof Error ? e.message : String(e)}` }
   })
+}
+
+// The result, then the effect the tool reported (a job started, a project
+// created in this thread).
+async function* reportCall(deps: ChatTurnDeps, threadId: string, call: Call, result: ToolResult): AsyncGenerator<ChatEvent, void> {
   yield { type: 'tool_result', callId: call.id, name: call.name, ok: result.ok, text: result.text }
   const effect = result.effect
   switch (effect?.kind) {
@@ -162,8 +165,19 @@ async function* executeCall(deps: ChatTurnDeps, threadId: string, call: Call): A
       await deps.run((db) => setThreadProject(db, deps.tenantId, threadId, asProjectId(effect.projectId)))
       break
   }
+}
+
+async function* executeCall(deps: ChatTurnDeps, threadId: string, call: Call): AsyncGenerator<ChatEvent, ToolResult> {
+  yield { type: 'tool_call', callId: call.id, name: call.name, args: call.args }
+  const result = await runCall(deps, threadId, call)
+  yield* reportCall(deps, threadId, call, result)
   return result
 }
+
+// How many reads share a moment. The model chooses how many calls a turn
+// makes; each one dispatches into the API and opens its own connection and
+// RLS transaction, so the fan-out is capped here rather than by the model.
+const READ_BATCH = 4
 
 // Every gated call in a model turn waits for the person, one at a time; the
 // ungated ones run now. Returns the tool message when nothing is pending.
@@ -173,6 +187,23 @@ async function* settleCalls(
   modelMessageId: number,
   calls: Call[],
 ): AsyncGenerator<ChatEvent, ToolPart[] | { pending: PendingCall }> {
+  // Read-only tools write nothing and hold no order against each other, so a
+  // turn that asks for several at once gets them together. One write in the
+  // batch and the whole turn stays sequential: order is part of what a write
+  // means, and a confirmation gate has to hold the turn where it sits.
+  if (calls.length > 1 && !deps.aborted() && calls.every((c) => deps.tools.isReadOnly(c.name))) {
+    for (const call of calls) yield { type: 'tool_call', callId: call.id, name: call.name, args: call.args }
+    // Each yield above waited on the client; the person may have left in the
+    // meantime, and the sequential path would have run nothing more either.
+    if (deps.aborted()) return calls.map((call) => ({ functionResponse: toolResponse(call, INTERRUPTED) }))
+    const done: Array<{ call: Call; result: ToolResult }> = []
+    for (let i = 0; i < calls.length; i += READ_BATCH) {
+      const slice = calls.slice(i, i + READ_BATCH)
+      done.push(...(await Promise.all(slice.map(async (call) => ({ call, result: await runCall(deps, threadId, call) })))))
+    }
+    for (const { call, result } of done) yield* reportCall(deps, threadId, call, result)
+    return done.map(({ call, result }) => ({ functionResponse: toolResponse(call, result) }))
+  }
   const responses: ToolResponse[] = []
   const gated: Call[] = []
   for (const call of calls) {
@@ -284,6 +315,7 @@ export async function* runChatTurn(deps: ChatTurnDeps, threadId: string, input: 
         op: 'chat',
         apiKey: deps.env.GEMINI_API_KEY,
         model: HOSTED_MODEL,
+        timeoutMs: 120_000,
         systemInstruction,
         contents,
         functionDeclarations: deps.tools.declarations,

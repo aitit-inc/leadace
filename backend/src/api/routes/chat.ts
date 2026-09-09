@@ -98,6 +98,7 @@ function toolExecutor(c: ChatCtx, dispatch: InternalDispatch): ToolExecutor {
       const parsed = parseToolArgs(tool, args)
       return parsed.ok && tool.confirm(parsed.value)
     },
+    isReadOnly: (name) => byName.get(name)?.readOnly ?? false,
     execute: async (name, args) => {
       const tool = byName.get(name)
       if (!tool) return { ok: false, text: `Unknown tool ${name}` }

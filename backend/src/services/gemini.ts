@@ -21,6 +21,10 @@ type GeminiCall = {
   op: string
   apiKey: string
   model: string
+  // Every call is bounded: an unbounded one burns its Workflow step's whole
+  // budget (a url_context read once stalled for 7 minutes) or leaves a chat
+  // turn hanging. The value is the op's own realistic ceiling.
+  timeoutMs: number
 }
 
 export class GeminiError extends Error {
@@ -49,7 +53,11 @@ function logUsage(call: GeminiCall, response: GenerateContentResponse): void {
   })
 }
 
-function toGeminiError(e: unknown, call: GeminiCall, phase: 'request' | 'stream'): never {
+function toGeminiError(e: unknown, call: GeminiCall, phase: 'request' | 'stream', deadline: AbortSignal): never {
+  if (deadline.aborted) {
+    console.error(`Gemini ${phase} timed out`, { op: call.op, timeoutMs: call.timeoutMs })
+    throw new GeminiError(`upstream LLM ${phase} timed out after ${call.timeoutMs}ms`, 504)
+  }
   if (e instanceof ApiError) {
     console.error(`Gemini ${phase} non-2xx`, { op: call.op, status: e.status, detail: e.message })
     throw new GeminiError(`upstream LLM ${phase} failed`, e.status)
@@ -63,11 +71,12 @@ async function generate(
   config: GenerateContentConfig,
 ): Promise<GenerateContentResponse> {
   const ai = new GoogleGenAI({ apiKey: call.apiKey })
+  const deadline = AbortSignal.timeout(call.timeoutMs)
   let response: GenerateContentResponse
   try {
-    response = await ai.models.generateContent({ model: call.model, contents, config })
+    response = await ai.models.generateContent({ model: call.model, contents, config: { ...config, abortSignal: deadline } })
   } catch (e) {
-    toGeminiError(e, call, 'request')
+    toGeminiError(e, call, 'request', deadline)
   }
   logUsage(call, response)
   return response
@@ -184,6 +193,7 @@ export type GeminiChatArgs = GeminiCall & {
 // Usage arrives on the chunks; the last one carrying it holds the totals.
 export async function* streamGeminiChat(args: GeminiChatArgs): AsyncGenerator<GenerateContentResponse> {
   const ai = new GoogleGenAI({ apiKey: args.apiKey })
+  const deadline = AbortSignal.timeout(args.timeoutMs)
   let stream: AsyncGenerator<GenerateContentResponse>
   try {
     stream = await ai.models.generateContentStream({
@@ -194,10 +204,11 @@ export async function* streamGeminiChat(args: GeminiChatArgs): AsyncGenerator<Ge
         tools: [{ functionDeclarations: args.functionDeclarations }],
         ...thinkingConfig(args.thinking),
         maxOutputTokens: args.maxOutputTokens,
+        abortSignal: deadline,
       },
     })
   } catch (e) {
-    toGeminiError(e, args, 'request')
+    toGeminiError(e, args, 'request', deadline)
   }
   let last: GenerateContentResponse | undefined
   try {
@@ -206,7 +217,7 @@ export async function* streamGeminiChat(args: GeminiChatArgs): AsyncGenerator<Ge
       yield chunk
     }
   } catch (e) {
-    toGeminiError(e, args, 'stream')
+    toGeminiError(e, args, 'stream', deadline)
   } finally {
     if (last) logUsage(args, last)
   }

@@ -84,3 +84,4 @@ jobs:
         with:
           node-version: '22'
       - run: node .github/scripts/check-mcp-descriptions.mjs
+      - run: node .github/scripts/check-tool-readonly.mjs
