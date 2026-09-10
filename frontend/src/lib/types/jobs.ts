@@ -22,6 +22,14 @@ export type Job = {
 
 export const TERMINAL_JOB_STATUSES: readonly JobStatus[] = ['succeeded', 'failed', 'cancelled'];
 
+export const JOB_STATUS_LABELS: Record<JobStatus, string> = {
+  queued: 'waiting',
+  running: 'running',
+  succeeded: 'done',
+  failed: 'failed',
+  cancelled: 'cancelled',
+};
+
 export const JOB_KIND_LABELS: Record<JobKind, string> = {
   daily_cycle: 'Daily cycle',
   discover: 'Find prospects',

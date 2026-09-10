@@ -20,7 +20,7 @@
   // only while a turn streams and are folded back in by the next invalidate.
   let liveMessages = $state<ChatMessage[]>([]);
   let streamingText = $state('');
-  let liveTools = $state<Array<{ callId: string; name: string; ok: boolean | null }>>([]);
+  let liveSteps = $state(0);
   let pending = $state<PendingCall | null>(null);
   let jobs = $state<Record<string, Job>>({});
   let busy = $state(false);
@@ -47,7 +47,7 @@
     }
     liveMessages = [];
     streamingText = '';
-    liveTools = [];
+    liveSteps = 0;
     jobs = Object.fromEntries(data.jobs.map((j) => [j.id, j]));
     error = '';
     pending = data.thread?.pendingCall ?? null;
@@ -104,21 +104,20 @@
         liveMessages = [...liveMessages, e.message];
         if (e.message.role === 'model') {
           streamingText = '';
-          liveTools = [];
+          liveSteps = 0;
         }
         break;
       case 'text_delta':
         streamingText += e.text;
         break;
       case 'tool_call':
-        liveTools = [...liveTools, { callId: e.callId, name: e.name, ok: null }];
+        liveSteps += 1;
         break;
       case 'tool_result':
-        liveTools = liveTools.map((t) => (t.callId === e.callId ? { ...t, ok: e.ok } : t));
         if (e.ok && PROJECT_LIST_TOOLS.includes(e.name)) projectsChanged = true;
         break;
       case 'confirm_required':
-        pending = { callId: e.callId, name: e.name, args: e.args };
+        pending = { callId: e.callId, summary: e.summary };
         break;
       case 'job_started':
         void watchJob(e.jobId);
@@ -199,7 +198,7 @@
         controller = null;
         busy = false;
         streamingText = '';
-        liveTools = [];
+        liveSteps = 0;
       }
     }
   }
@@ -266,27 +265,26 @@
         </div>
       {/if}
       {#each messages as m (m.id)}
-        <MessageItem content={m.content} />
-        {#if m.content.role === 'job' && jobs[m.content.jobId]}
-          <JobCard job={jobs[m.content.jobId]!} />
+        {#if m.content.role === 'job'}
+          {#if jobs[m.content.jobId]}
+            <JobCard job={jobs[m.content.jobId]!} />
+          {:else}
+            <p class="text-xs text-text-muted">{m.content.summary}</p>
+          {/if}
+        {:else}
+          <MessageItem content={m.content} />
         {/if}
       {/each}
       {#each Object.values(jobs).filter((j) => !TERMINAL_JOB_STATUSES.includes(j.status)) as job (job.id)}
         <JobCard {job} oncancel={cancel} />
       {/each}
-      {#if streamingText || liveTools.length > 0}
-        <div class="max-w-[85%] space-y-1">
-          {#if streamingText}
-            <p class="whitespace-pre-wrap text-base text-text">{streamingText}</p>
-          {/if}
-          {#each liveTools as t (t.callId)}
-            <div class="inline-flex items-center gap-1 rounded bg-surface px-2 py-0.5 font-mono text-[11px] text-text-secondary">
-              {t.name} {t.ok === null ? '…' : t.ok ? '✓' : '✗'}
-            </div>
-          {/each}
-        </div>
-      {:else if busy}
-        <p class="text-xs text-text-muted">Thinking…</p>
+      {#if streamingText}
+        <p class="max-w-[85%] whitespace-pre-wrap text-base text-text">{streamingText}</p>
+      {/if}
+      {#if busy}
+        <p class="text-xs text-text-muted">
+          {liveSteps === 0 ? 'Thinking…' : `Working… (${liveSteps} step${liveSteps === 1 ? '' : 's'})`}
+        </p>
       {/if}
       {#if pending}
         <ConfirmCard {pending} {busy} onrespond={respond} />

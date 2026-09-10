@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Loader2, CheckCircle2, XCircle, Ban } from '@lucide/svelte';
-  import { JOB_KIND_LABELS, type Job } from '$lib/types/jobs';
+  import { JOB_KIND_LABELS, JOB_STATUS_LABELS, type Job } from '$lib/types/jobs';
 
   let { job, oncancel }: { job: Job; oncancel?: (id: string) => void } = $props();
   let running = $derived(job.status === 'queued' || job.status === 'running');
@@ -18,7 +18,7 @@
       <XCircle size={14} class="text-danger" />
     {/if}
     <span class="font-medium text-text">{JOB_KIND_LABELS[job.kind]}</span>
-    <span class="text-text-muted">{job.status}</span>
+    <span class="text-text-muted">{JOB_STATUS_LABELS[job.status]}</span>
     {#if running && oncancel}
       <button type="button" class="ml-auto text-text-muted hover:text-danger" onclick={() => oncancel?.(job.id)}>Cancel</button>
     {/if}

@@ -51,6 +51,7 @@ SUITES=(
   regression-decision-maker-pointer
   regression-tenant-isolation
   regression-caller-gates
+  regression-schedules
 )
 
 fail=0

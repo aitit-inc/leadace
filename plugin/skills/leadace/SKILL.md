@@ -373,7 +373,7 @@ Three tiers — daily use only needs the first two. Print under sub-headings so 
 | `/import-prospects` | Load prospects from a file (CSV / Excel / SQLite / text) — either as tenant assets or linked to a project. |
 | `/match-prospects` | Pull existing tenant-wide prospects into a project that fits the targeting. |
 | `/check-feedback` | PMF-oriented review of rejection feedback (Pro-tier introspection). |
-| `/setup-cron` | Schedule `/daily-cycle` daily: a Claude Cowork scheduled task (default, cloud), a Claude Code Desktop task (local), or an OS scheduler as a last resort. |
+| `/setup-cron` | Set up a daily run: a server-side schedule (default — LeadAce runs it, no machine needed), else a Claude Cowork task, a Claude Code Desktop task, or an OS scheduler. |
 
 **Maintenance**
 

@@ -18,9 +18,6 @@ export type ProjectSettingsData = {
   inquiryLandingEnabled: boolean;
   publicScoreboardEnabled: boolean;
   publicScoreboardEligible: boolean;
-  hostedCycleEnabled: boolean;
-  hostedCycleHourUtc: number;
-  hostedCycleOutboundCount: number;
   followUpSequence: FollowUpSequence;
   outboundChannels: OutboundChannel[];
   targetCountries: AllowedSendCountry[];

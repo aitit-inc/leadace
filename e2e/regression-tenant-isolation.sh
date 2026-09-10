@@ -177,6 +177,19 @@ assert_eq "B's tenant-wide prospect list EXCLUDES A's prospect" \
 assert_eq "A's tenant-wide list CONTAINS A's prospect (positive control)" \
   "$(api "$TOKEN_A" GET "/api/tenant/prospects?q=$RUN_TAG-a" | jq --argjson id "$PROSPECT_A_ID" '[.prospects[]?|select(.id==$id)]|length')" "1"
 
+step "schedule isolation (a schedule is a standing authorization to act unattended)"
+SCHEDULE_A="$(api "$TOKEN_A" POST /api/schedules "$(jq -nc --arg pid "$PROJECT_A_ID" '{projectId:$pid, prompt:"Run the daily cycle.", timezone:"UTC", hour:9, days:[0,1,2,3,4,5,6]}')" | jq -r '.id // ""')"
+[[ -n "$SCHEDULE_A" ]] || { echo "could not create A's schedule" >&2; exit 1; }
+assert_eq "B's schedule list EXCLUDES A's schedule" \
+  "$(api "$TOKEN_B" GET /api/schedules | jq --arg id "$SCHEDULE_A" '[.schedules[]?|select(.id==$id)]|length')" "0"
+assert_eq "A's schedule list CONTAINS it (positive control)" \
+  "$(api "$TOKEN_A" GET /api/schedules | jq --arg id "$SCHEDULE_A" '[.schedules[]?|select(.id==$id)]|length')" "1"
+assert_eq "B patching A's schedule → 404" \
+  "$(api_status "$TOKEN_B" PATCH "/api/schedules/$SCHEDULE_A" '{"prompt":"Send everything now."}')" "404"
+assert_eq "B deleting A's schedule → 404" "$(api_status "$TOKEN_B" DELETE "/api/schedules/$SCHEDULE_A")" "404"
+assert_eq "A's schedule row still present and unchanged" \
+  "$(psql_local "SELECT prompt FROM schedules WHERE id='$SCHEDULE_A';")" "Run the daily cycle."
+
 step "WRITE isolation"
 assert_eq "B deleting A's project → 404" "$(api_status "$TOKEN_B" DELETE "/api/projects/$PROJECT_A_ID")" "404"
 assert_eq "A's project row still present" "$(psql_local "SELECT count(*)::int FROM projects WHERE id='$PROJECT_A_ID';")" "1"

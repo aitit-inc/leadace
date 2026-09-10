@@ -1,6 +1,6 @@
 ---
 name: setup-cron
-description: "Use when the user asks to schedule daily-cycle, set up cron, or run daily-cycle every day. Sets up a Claude Cowork scheduled task (default) or a Claude Code Desktop task, covers /loop, and installs an OS schedule only as a last resort."
+description: "Use when the user asks to schedule daily-cycle, set up cron, or run it every day. Prefers a server-side schedule (needs no machine), else a Claude Cowork or Claude Code Desktop task, /loop, or an OS schedule as a last resort."
 argument-hint: "[project-name]"
 allowed-tools:
   - Bash
@@ -8,6 +8,7 @@ allowed-tools:
   - Write
   - AskUserQuestion
   - mcp__plugin_leadace_leadace__list_projects
+  - mcp__plugin_leadace_leadace__list_schedules
 ---
 
 # Setup-cron - Schedule Daily Automation
@@ -26,11 +27,20 @@ Use `AskUserQuestion` for enumerable choices, plain text for free-form input.
 
 1. **Project**: `$0` if given; else `list_projects` — exactly one -> use it, several -> ask. `<PROJECT_SLUG>` = the project name lowercased, every character outside `[a-z0-9]` replaced by `-` (collapse runs, trim leading/trailing `-`).
 2. **Method**, offered in this order; state what each can run before the user picks:
-   - **Claude Cowork scheduled task** — default. Runs in the cloud with no machine on; browser channels need the Claude Desktop app open at run time.
+   - **Server-side schedule** — default, and the only one that needs neither a machine nor a Claude session. LeadAce itself runs the instruction; email outreach, replies, evaluation and list building all work. It has no browser, so contact forms, SNS DMs and platform channels are out. Set it up in the Web app (Project settings -> Scheduled runs) or by asking in the Web chat; `list_schedules` shows what is already registered. Registering it is not possible from here — say where to go and what to write.
+   - **Claude Cowork scheduled task** — for browser channels, or a self-host without a model key on the server. Runs in the cloud with no machine on; browser channels need the Claude Desktop app open at run time.
    - **Claude Code Desktop scheduled task** — runs on the user's machine while Claude Desktop is open and the computer is awake, with whatever local toolchain and browser MCP the user has configured (`/leadace` shows the live capability summary). A Claude Code *cloud routine* also exists, but it must be attached to a GitHub repository (cloned on every run; it uses the skills committed there) although LeadAce needs no repository — mention it, do not recommend it; it is unverified with LeadAce.
    - `/loop 24h /daily-cycle <PROJECT_NAME>` — runs only while that session stays open and expires after 7 days. Print it and stop.
    - **OS scheduler** (LaunchAgent / cron / Task Scheduler) — last resort, for a machine without the Desktop app such as a headless server. Offer it only when the others do not fit.
 3. **Schedule**: time (24h `HH:MM`, local timezone, default `09:00`) and frequency (every day / weekdays only).
+
+## Server-side schedule
+
+Nothing is installed and nothing runs on the user's machine: a schedule is a row in their workspace holding one instruction, a local hour, and the days it runs. LeadAce runs it as its own agent — it may read everything and start jobs (the daily cycle, list building, drafting or sending per the project's outbound mode, evaluation), and may never delete, set do-not-contact, or change a schedule.
+
+Point the user at **Project settings -> Scheduled runs** in the Web app, or the Web chat ("run the daily cycle every weekday at 9"). Give them the instruction to paste — `Run today's cycle for up to <N> prospects.` for the daily cycle, or whatever they actually want run — and the hour in their own time zone. `list_schedules` reads back what exists; use it to confirm, and to avoid registering a second schedule for a project that already has one.
+
+Report: what will run, when, in which time zone, that it needs no machine, and which of their channels it cannot do (forms / SNS / platform — those need one of the methods below).
 
 ## Claude Cowork — scheduled task
 

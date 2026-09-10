@@ -8,7 +8,7 @@ import { asTenantId } from '../../domain/ids'
 import { logFunnel } from '../../services/funnel'
 import { lookupAuthUser } from '../../services/supabase-admin'
 import type { Env, Variables } from '../types'
-import { INTERNAL_DISPATCH_HEADER, internalDispatchToken } from '../internal-dispatch'
+import { INTERNAL_DISPATCH_HEADER, INTERNAL_ORIGIN_HEADER, internalDispatchToken } from '../internal-dispatch'
 
 export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: Variables }>(
   async (c, next) => {
@@ -26,7 +26,10 @@ export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: Varia
 
     const userId = verified.sub
     const isMcp = verified.aud === MCP_AUDIENCE
-    const origin = isMcp ? 'mcp' : c.req.header(INTERNAL_DISPATCH_HEADER) === internalDispatchToken() ? 'chat' : 'ui'
+    const internal = c.req.header(INTERNAL_DISPATCH_HEADER) === internalDispatchToken()
+    // Only an in-process caller can name itself, and only as one of the two
+    // agent entry points: the header is meaningless without the isolate token.
+    const origin = isMcp ? 'mcp' : internal ? (c.req.header(INTERNAL_ORIGIN_HEADER) === 'cron' ? 'cron' : 'chat') : 'ui'
     const caller = origin === 'ui' ? 'browser' : 'agent'
 
     c.set('userId', userId)

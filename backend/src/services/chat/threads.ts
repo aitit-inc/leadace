@@ -62,10 +62,30 @@ const messageCols = {
 }
 
 function toThreadView(row: typeof chatThreads.$inferSelect extends infer R ? Omit<R, 'tenantId'> : never): ThreadView {
-  return { ...row, projectId: row.projectId === null ? null : asProjectId(row.projectId) }
+  // A call held before approval cards carried their summary has nothing to
+  // show, so it is not offered; the next message supersedes it.
+  const pendingCall = row.pendingCall?.summary ? row.pendingCall : null
+  return { ...row, pendingCall, projectId: row.projectId === null ? null : asProjectId(row.projectId) }
 }
 
 const ID_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+
+export const DEFAULT_THREAD_TITLE = 'New chat'
+const TITLE_MAX_CHARS = 60
+
+// Empty when there is nothing to name the thread with; the caller then keeps
+// the default.
+export function titleFromMessage(text: string): string {
+  const line = text.trim().replace(/\s+/g, ' ')
+  return line.length <= TITLE_MAX_CHARS ? line : `${line.slice(0, TITLE_MAX_CHARS - 1)}…`
+}
+
+export async function renameThread(db: Db, tenantId: TenantId, threadId: string, title: string): Promise<void> {
+  await db
+    .update(chatThreads)
+    .set({ title })
+    .where(and(eq(chatThreads.id, threadId), eq(chatThreads.tenantId, tenantId)))
+}
 
 export async function createThread(
   db: Db,
@@ -81,7 +101,7 @@ export async function createThread(
   const now = new Date()
   const [row] = await db
     .insert(chatThreads)
-    .values({ id: randomFromAlphabet(ID_ALPHABET, 21), tenantId, projectId, title: body.title ?? 'New chat', createdAt: now, updatedAt: now })
+    .values({ id: randomFromAlphabet(ID_ALPHABET, 21), tenantId, projectId, title: body.title ?? DEFAULT_THREAD_TITLE, createdAt: now, updatedAt: now })
     .returning(threadCols)
   if (!row) throw new Error('Invariant: thread insert returned no row')
   return ok(toThreadView(row))

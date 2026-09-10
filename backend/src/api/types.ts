@@ -62,8 +62,9 @@ export type Variables = {
   // only ever narrows what a request may do.
   caller: 'browser' | 'agent'
   // Which entry point is acting, for the jobs ledger: the Web UI, an MCP
-  // client, or the hosted chat. Never 'cron' here — cron has no request.
-  origin: Exclude<JobOrigin, 'cron'>
+  // client, the hosted chat, or a schedule's unattended run ('cron' — that
+  // one has no person's request behind it, only the in-process dispatch).
+  origin: JobOrigin
   tenantId: TenantId
   db: Db
   // Set by editionMiddleware on every request (incl. unauthenticated public

@@ -7,7 +7,7 @@ import type { Content, FunctionDeclaration, Part } from '@google/genai'
 import type { Db } from '../../db/connection'
 import { asProjectId, type TenantId } from '../../domain/ids'
 import { utcDateKey } from '../../domain/time'
-import type { ChatModelPart, PendingCall, ToolEffect } from '../../domain/chat'
+import type { ChatModelPart, ConfirmSummary, PendingCall, ToolEffect } from '../../domain/chat'
 import type { GeminiEnv } from '../gemini'
 import { GeminiError, HOSTED_MODEL, streamGeminiChat } from '../gemini'
 import { takeChatRateSlot, MAIN_CHAT_TURNS_PER_TENANT_PER_DAY } from '../chat-rate-limit'
@@ -17,18 +17,25 @@ import { getTenantComplianceStatus } from '../tenants'
 import {
   appendMessage,
   claimPendingCall,
+  DEFAULT_THREAD_TITLE,
   getThread,
   listMessages,
+  renameThread,
   setPendingCall,
   setThreadProject,
+  titleFromMessage,
   type MessageView,
 } from './threads'
 import { buildSystemInstruction } from './system-prompt'
 
 export type ToolExecutor = {
   declarations: FunctionDeclaration[]
-  needsConfirmation: (name: string, args: Record<string, unknown>) => boolean
+  // The approval card for a call that must not run unattended, or null.
+  confirmSummary: (name: string, args: Record<string, unknown>) => Promise<ConfirmSummary | null> | ConfirmSummary | null
   isReadOnly: (name: string) => boolean
+  // Whether the tool can raise an approval card at all, whatever its
+  // arguments. The unattended policy keys on this, never on one call's card.
+  isGated: (name: string) => boolean
   execute: (name: string, args: Record<string, unknown>) => Promise<ToolResult>
 }
 
@@ -41,7 +48,7 @@ export type ChatEvent =
   | { type: 'text_delta'; text: string }
   | { type: 'tool_call'; callId: string; name: string; args: Record<string, unknown> }
   | { type: 'tool_result'; callId: string; name: string; ok: boolean; text: string }
-  | { type: 'confirm_required'; callId: string; name: string; args: Record<string, unknown> }
+  | { type: 'confirm_required'; callId: string; summary: ConfirmSummary }
   | { type: 'job_started'; jobId: string; kind: string }
   | { type: 'done' }
   | { type: 'error'; message: string }
@@ -56,6 +63,11 @@ export type ChatTurnDeps = {
   userId: string
   env: GeminiEnv & { APP_URL: string }
   tools: ToolExecutor
+  // A scheduled run: no one can answer an approval card, and the turn sees its
+  // instruction and nothing else. The thread is that run's log, not its memory
+  // — day 300 must behave like day 1, and what earlier runs left behind is in
+  // the database, where the tools read it.
+  unattended?: boolean
 }
 
 const MAX_TOOL_ROUNDS = 12
@@ -67,6 +79,12 @@ type ToolPart = { functionResponse: ToolResponse }
 
 function toolResponse(call: Call, result: ToolResult): ToolResponse {
   return { id: call.id, name: call.name, response: result.ok ? { result: result.text } : { error: result.text } }
+}
+
+// What the person actually answered. Facts that only drift (a quota ticking
+// down) are not the promise, and re-asking on those would be noise.
+export function termsChanged(shown: ConfirmSummary, now: ConfirmSummary): boolean {
+  return shown.confirmLabel !== now.confirmLabel || shown.warning !== now.warning
 }
 
 const DECLINED: ToolResult = { ok: false, text: 'The person declined this call.' }
@@ -136,6 +154,7 @@ async function buildContext(deps: ChatTurnDeps, threadProjectId: string | null):
     gmail: gmail.ok ? (gmail.value.connected ? `connected as ${gmail.value.email}` : 'not connected — connect it at the Web UI top banner') : 'unknown',
     compliance: compliance.ok ? (compliance.value.ready ? 'ready' : `missing ${compliance.value.missing.join(', ')} — set on /workspace-settings`) : 'unknown',
     appUrl: deps.env.APP_URL,
+    unattended: deps.unattended === true,
   })
 }
 
@@ -199,14 +218,15 @@ async function* settleCalls(
     return done.map(({ call, result }) => ({ functionResponse: toolResponse(call, result) }))
   }
   const responses: ToolResponse[] = []
-  const gated: Call[] = []
+  const gated: Array<Call & { summary: ConfirmSummary }> = []
   for (const call of calls) {
     if (deps.aborted()) {
       responses.push(toolResponse(call, INTERRUPTED))
       continue
     }
-    if (deps.tools.needsConfirmation(call.name, call.args)) {
-      gated.push(call)
+    const summary = await deps.tools.confirmSummary(call.name, call.args)
+    if (summary) {
+      gated.push({ ...call, summary })
       continue
     }
     const result = yield* executeCall(deps, threadId, call)
@@ -220,8 +240,9 @@ async function* settleCalls(
         callId: first.id,
         name: first.name,
         args: first.args,
+        summary: first.summary,
         otherResponses: responses,
-        remaining: rest.map((c) => ({ callId: c.id, name: c.name, args: c.args })),
+        remaining: rest.map((c) => ({ callId: c.id, name: c.name, args: c.args, summary: c.summary })),
       },
     }
   }
@@ -235,7 +256,7 @@ async function* persistTool(deps: ChatTurnDeps, threadId: string, parts: ToolPar
 
 async function* holdPending(deps: ChatTurnDeps, threadId: string, pending: PendingCall): AsyncGenerator<ChatEvent, void> {
   await deps.run((db) => setPendingCall(db, deps.tenantId, threadId, pending))
-  yield { type: 'confirm_required', callId: pending.callId, name: pending.name, args: pending.args }
+  yield { type: 'confirm_required', callId: pending.callId, summary: pending.summary }
   yield { type: 'done' }
 }
 
@@ -245,6 +266,10 @@ export async function* runChatTurn(deps: ChatTurnDeps, threadId: string, input: 
     yield { type: 'error', message: thread.error }
     return
   }
+
+  // Kept so an unattended run reads its own instruction and not whatever
+  // landed in the thread beside it.
+  let instruction: MessageView | null = null
 
   if (input.kind === 'message') {
     const slot = await deps.run((db) => takeChatRateSlot(db, deps.tenantId, 'main_chat', deps.tenantId))
@@ -265,7 +290,12 @@ export async function* runChatTurn(deps: ChatTurnDeps, threadId: string, input: 
         yield* persistTool(deps, threadId, declined)
       }
     }
-    const userMsg = await deps.run((db) => appendMessage(db, deps.tenantId, threadId, { role: 'user', parts: [{ text: input.text }] }))
+    const title = thread.value.title === DEFAULT_THREAD_TITLE ? titleFromMessage(input.text) : ''
+    const userMsg = await deps.run(async (db) => {
+      if (title) await renameThread(db, deps.tenantId, threadId, title)
+      return appendMessage(db, deps.tenantId, threadId, { role: 'user', parts: [{ text: input.text }] })
+    })
+    instruction = userMsg
     yield { type: 'message', message: userMsg }
   } else {
     // The claim is the only path to execution: a concurrent or repeated
@@ -276,6 +306,15 @@ export async function* runChatTurn(deps: ChatTurnDeps, threadId: string, input: 
       return
     }
     const call: Call = { id: claimed.callId, name: claimed.name, args: claimed.args }
+    // The card was a promise made when it was shown; if the world moved under
+    // it, the new terms go back to the person instead of running.
+    if (input.approve) {
+      const fresh = await deps.tools.confirmSummary(call.name, call.args)
+      if (fresh && termsChanged(claimed.summary, fresh)) {
+        yield* holdPending(deps, threadId, { ...claimed, summary: fresh })
+        return
+      }
+    }
     const result = input.approve ? yield* executeCall(deps, threadId, call) : DECLINED
     const answered = [...claimed.otherResponses, toolResponse(call, result)]
     const [next, ...rest] = claimed.remaining
@@ -285,6 +324,7 @@ export async function* runChatTurn(deps: ChatTurnDeps, threadId: string, input: 
         callId: next.callId,
         name: next.name,
         args: next.args,
+        summary: next.summary,
         otherResponses: answered,
         remaining: rest,
       })
@@ -294,12 +334,17 @@ export async function* runChatTurn(deps: ChatTurnDeps, threadId: string, input: 
   }
 
   const systemInstruction = await buildContext(deps, thread.value.projectId)
-  const history = await deps.run((db) => listMessages(db, deps.tenantId, threadId))
-  if (!history.ok) {
-    yield { type: 'error', message: history.error }
-    return
+  let contents: Content[]
+  if (deps.unattended && instruction) {
+    contents = toContents([instruction])
+  } else {
+    const history = await deps.run((db) => listMessages(db, deps.tenantId, threadId))
+    if (!history.ok) {
+      yield { type: 'error', message: history.error }
+      return
+    }
+    contents = toContents(history.value.messages)
   }
-  const contents = toContents(history.value.messages)
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     let text = ''

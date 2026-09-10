@@ -1,4 +1,4 @@
-import { Hono, type Context, type ExecutionContext } from 'hono'
+import { Hono, type Context } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { zValidator } from '../zvalidator'
 import {
@@ -13,12 +13,10 @@ import {
   messageBodySchema,
   confirmBodySchema,
 } from '../../services/chat/threads'
-import { runChatTurn, type ToolExecutor, type ChatTurnInput, type ChatTurnDeps } from '../../services/chat/agent'
-import { buildToolRegistry, type ToolDef } from '../../tools/registry'
-import { buildFunctionDeclarations, parseToolArgs } from '../../tools/declarations'
+import { runChatTurn, type ChatTurnInput, type ChatTurnDeps } from '../../services/chat/agent'
+import { buildToolExecutor, type InternalDispatch } from '../tool-executor'
 import { respondWithError } from '../respond'
 import { withTenantConnection } from '../../db/rls'
-import { INTERNAL_DISPATCH_HEADER, internalDispatchToken } from '../internal-dispatch'
 import type { Env, Variables } from '../types'
 
 export const chatRouter = new Hono<{ Bindings: Env; Variables: Variables }>()
@@ -55,66 +53,19 @@ chatRouter.delete('/chat/threads/:id', zValidator('param', threadIdParamSchema),
 // transaction would close when the handler returns the Response, while the
 // stream keeps working. Persistence takes its own connection per call.
 
-export type InternalDispatch = (request: Request, env: Env, ctx: ExecutionContext) => Promise<Response>
-
 // Tool calls re-enter the API in-process as the same person, marked as the
 // chat so services apply agent privileges (approved playbooks only, no
 // UI-only settings).
 type ChatCtx = Context<{ Bindings: Env; Variables: Variables }, string>
 
-// The registry and its function declarations never change per request.
-type Tools = { byName: Map<string, ToolDef>; declarations: ReturnType<typeof buildFunctionDeclarations> }
-let tools: Tools | null = null
-function loadTools(): Tools {
-  if (!tools) {
-    const registry = buildToolRegistry()
-    tools = { byName: new Map(registry.map((t) => [t.name, t])), declarations: buildFunctionDeclarations(registry) }
-  }
-  return tools
-}
-
-function toolExecutor(c: ChatCtx, dispatch: InternalDispatch): ToolExecutor {
-  const { byName, declarations } = loadTools()
-  const internalFetch = (request: Request) => dispatch(request, c.env, c.executionCtx)
-  const origin = new URL(c.req.url).origin
-  const authorization = c.req.header('Authorization') ?? ''
-  const ctx = {
-    callApi: async (method: string, path: string, body: unknown) => {
-      const res = await internalFetch(
-        new Request(`${origin}/api${path}`, {
-          method,
-          headers: { 'Content-Type': 'application/json', Authorization: authorization, [INTERNAL_DISPATCH_HEADER]: internalDispatchToken() },
-          body: body != null ? JSON.stringify(body) : undefined,
-        }),
-      )
-      return { ok: res.ok, status: res.status, data: (await res.json()) as unknown }
-    },
-  }
-  return {
-    declarations,
-    needsConfirmation: (name, args) => {
-      const tool = byName.get(name)
-      if (!tool) return false
-      const parsed = parseToolArgs(tool, args)
-      return parsed.ok && tool.confirm(parsed.value)
-    },
-    isReadOnly: (name) => byName.get(name)?.readOnly ?? false,
-    execute: async (name, args) => {
-      const tool = byName.get(name)
-      if (!tool) return { ok: false, text: `Unknown tool ${name}` }
-      const parsed = parseToolArgs(tool, args)
-      if (!parsed.ok) return { ok: false, text: `Invalid arguments: ${parsed.error}` }
-      const result = await tool.handler(parsed.value, ctx)
-      const text = result.content.map((p) => (p.type === 'text' ? p.text : '')).join('\n')
-      return { ok: !result.isError, text, ...(result.effect ? { effect: result.effect } : {}) }
-    },
-  }
-}
-
 function streamTurn(c: ChatCtx, dispatch: InternalDispatch, threadId: string, input: ChatTurnInput) {
   const tenantId = c.get('tenantId')
   const userId = c.get('userId')
-  const tools = toolExecutor(c, dispatch)
+  const tools = buildToolExecutor(c.env, c.executionCtx, dispatch, {
+    origin: 'chat',
+    authorization: c.req.header('Authorization') ?? '',
+    apiOrigin: new URL(c.req.url).origin,
+  })
   const run: ChatTurnDeps['run'] = (fn) => withTenantConnection(c.env.DATABASE_URL, tenantId, fn)
   return streamSSE(c, async (stream) => {
     // A throw here would close the stream mid-way and read as a finished

@@ -4,6 +4,7 @@
   import { deleteProject } from '$lib/api/projects';
   import { setActiveProject } from '$lib/active-project';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+  import ProjectSchedules from '$lib/components/schedules/ProjectSchedules.svelte';
   import {
     ALLOWED_SEND_COUNTRIES,
     OUTBOUND_CHANNELS,
@@ -126,9 +127,6 @@
         ...(projectSettings.publicScoreboardEligible
           ? { publicScoreboardEnabled: projectSettings.publicScoreboardEnabled }
           : {}),
-        hostedCycleEnabled: projectSettings.hostedCycleEnabled,
-        hostedCycleHourUtc: projectSettings.hostedCycleHourUtc,
-        hostedCycleOutboundCount: projectSettings.hostedCycleOutboundCount,
       };
       await updateProjectSettings<ProjectSettingsData>(
         data.projectId,
@@ -570,31 +568,12 @@
         </p>
       </div>
 
-      <div class="flex items-start gap-2">
-        <input id="hosted-cycle-enabled" type="checkbox" bind:checked={s.hostedCycleEnabled} class="mt-0.5" />
-        <label for="hosted-cycle-enabled" class="text-sm text-text">
-          Run the daily cycle on the server
-          <span class="block text-xs text-text-secondary">
-            Every day at
-            <select bind:value={s.hostedCycleHourUtc} class="mx-1 rounded border border-border bg-page px-1 py-0.5 text-xs text-text">
-              {#each Array.from({ length: 24 }, (_, h) => h) as h (h)}
-                <option value={h}>{String(h).padStart(2, '0')}:00</option>
-              {/each}
-            </select>
-            UTC: evaluate results, tune the levers, draft (or send, per the outbound mode above) outreach to
-            the next
-            <input
-              type="number"
-              min="1"
-              max="200"
-              bind:value={s.hostedCycleOutboundCount}
-              class="mx-1 w-16 rounded border border-border bg-page px-1 py-0.5 text-xs text-text"
-            />
-            prospects (your plan's quota still caps sends), and find new ones when the list runs low. You can
-            also start any stage from the <a href="/chat" class="underline hover:text-text">chat</a>.
-          </span>
-        </label>
-      </div>
+      <ProjectSchedules
+        projectId={s.projectId}
+        schedules={data.schedules}
+        {token}
+        onChanged={() => invalidate('app:project-settings')}
+      />
 
       {#if s.publicScoreboardEligible}
         <div class="flex items-start gap-2">

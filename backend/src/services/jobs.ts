@@ -4,7 +4,7 @@
 import { z } from 'zod'
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import type { Db } from '../db/connection'
-import { jobs, projectSettings, projects } from '../db/schema'
+import { jobs } from '../db/schema'
 import type { ProjectId, ProjectRef, TenantId } from '../domain/ids'
 import { asProjectId, asTenantId, projectRefSchema } from '../domain/ids'
 import {
@@ -265,46 +265,3 @@ export async function finishJob(
     .where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, id), inArray(jobs.status, ['queued', 'running'])))
 }
 
-// Cron entry: every project with the hosted cycle on whose hour is now gets
-// today's daily_cycle job. Already-ran projects are skipped by the
-// idempotency key, so the hourly cron may fire this freely.
-export async function startDueDailyCycles(
-  db: Db,
-  runner: JobRunner,
-  now: Date,
-): Promise<{ started: number; skipped: number; failed: number }> {
-  const hour = now.getUTCHours()
-  const due = await db
-    .select({
-      projectId: projectSettings.projectId,
-      tenantId: projectSettings.tenantId,
-      outboundCount: projectSettings.hostedCycleOutboundCount,
-    })
-    .from(projectSettings)
-    .innerJoin(projects, eq(projects.id, projectSettings.projectId))
-    .where(and(eq(projectSettings.hostedCycleEnabled, true), eq(projectSettings.hostedCycleHourUtc, hour)))
-  let started = 0
-  let skipped = 0
-  let failed = 0
-  for (const p of due) {
-    try {
-      const result = await insertAndRun(
-        db,
-        asTenantId(p.tenantId),
-        asProjectId(p.projectId),
-        runner,
-        'cron',
-        { kind: 'daily_cycle', outboundCount: p.outboundCount },
-        null,
-        now,
-      )
-      if (result.ok) started++
-      else if (result.code === 'CONFLICT') skipped++
-      else failed++
-    } catch (e) {
-      console.error(`[jobs] daily cycle start failed project=${p.projectId}`, e)
-      failed++
-    }
-  }
-  return { started, skipped, failed }
-}

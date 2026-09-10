@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { toContents } from './agent'
+import { termsChanged, toContents } from './agent'
 import type { MessageView } from './threads'
 
 let nextId = 1
@@ -48,5 +48,15 @@ describe('toContents', () => {
     const contents = toContents([msg({ role: 'model', parts: [call('c1')] })])
     expect(contents).toHaveLength(2)
     expect(contents[1]?.parts?.[0]?.functionResponse?.id).toBe('c1')
+  })
+})
+
+describe('termsChanged', () => {
+  const card = { title: "Run today's cycle", facts: [], confirmLabel: 'Draft up to 10 messages' }
+  it('re-asks when the project started sending under a draft approval', () => {
+    expect(termsChanged(card, { ...card, confirmLabel: 'Send up to 10 emails', warning: 'Sent email cannot be recalled.' })).toBe(true)
+  })
+  it('does not re-ask because a number moved', () => {
+    expect(termsChanged(card, { ...card, facts: [{ label: 'Outreach quota', value: '86 of 100 left this month' }] })).toBe(false)
   })
 })

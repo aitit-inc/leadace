@@ -8,42 +8,57 @@
     onrespond,
   }: { pending: PendingCall; busy: boolean; onrespond: (approve: boolean) => void } = $props();
 
-  const TOOL_LABELS: Record<string, string> = {
-    send_email_and_record: 'Send this email',
-    start_job: 'Start this job',
-    apply_strategy_draft: 'Save the strategy setup',
-    delete_prospects: 'Delete prospects',
-    delete_organizations: 'Delete organizations',
-    delete_project: 'Delete the project',
-    discard_drafts: 'Discard drafts',
-    set_prospect_do_not_contact: 'Mark do-not-contact',
-    update_prospect_status: 'Change prospect status',
-  };
-  let label = $derived(TOOL_LABELS[pending.name] ?? pending.name);
+  // The server marks an action that cannot be undone by writing a warning.
+  let danger = $derived(pending.summary.warning !== undefined);
 </script>
 
-<div class="my-2 rounded border border-accent/50 bg-accent/10 px-3 py-2 text-xs">
+<div
+  class="my-2 max-w-[85%] rounded border px-3 py-2.5 text-sm {danger
+    ? 'border-danger/50 bg-danger/5'
+    : 'border-accent/50 bg-accent/10'}"
+>
   <div class="flex items-center gap-2 text-text">
-    <ShieldAlert size={14} class="text-accent" />
-    <span class="font-medium">Approve: {label}?</span>
+    <ShieldAlert size={15} class={danger ? 'text-danger' : 'text-accent'} />
+    <span class="font-semibold">{pending.summary.title}</span>
   </div>
-  <pre class="mt-2 max-h-48 overflow-auto rounded bg-page p-2 font-mono text-[11px] text-text-secondary">{JSON.stringify(pending.args, null, 2)}</pre>
-  <div class="mt-2 flex gap-2">
+
+  <dl class="mt-2 space-y-1">
+    {#each pending.summary.facts as fact (fact.label)}
+      <div class="flex gap-3">
+        <dt class="w-28 shrink-0 text-text-muted">{fact.label}</dt>
+        <dd class="min-w-0 flex-1 text-text-secondary">{fact.value}</dd>
+      </div>
+    {/each}
+  </dl>
+
+  {#if pending.summary.body}
+    <p class="mt-2 max-h-56 overflow-auto whitespace-pre-wrap rounded border border-border bg-page p-2 text-text-secondary">
+      {pending.summary.body}
+    </p>
+  {/if}
+
+  {#if pending.summary.warning}
+    <p class="mt-2 text-danger">{pending.summary.warning}</p>
+  {/if}
+
+  <div class="mt-3 flex items-center gap-3">
     <button
       type="button"
       disabled={busy}
       onclick={() => onrespond(true)}
-      class="rounded bg-accent px-3 py-1 font-medium text-page hover:bg-accent-strong disabled:opacity-50"
+      class="rounded px-3 py-1.5 font-medium text-page hover:bg-accent-strong disabled:opacity-50 {danger
+        ? 'bg-danger'
+        : 'bg-accent'}"
     >
-      Approve
+      {pending.summary.confirmLabel}
     </button>
     <button
       type="button"
       disabled={busy}
       onclick={() => onrespond(false)}
-      class="rounded border border-border px-3 py-1 text-text hover:bg-surface disabled:opacity-50"
+      class="text-text-muted hover:text-text disabled:opacity-50"
     >
-      Decline
+      Cancel
     </button>
   </div>
 </div>

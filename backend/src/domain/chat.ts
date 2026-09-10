@@ -39,6 +39,18 @@ export const chatContentSchema = z.discriminatedUnion('role', [
 export type ChatContent = z.infer<typeof chatContentSchema>
 export type ChatModelPart = Extract<ChatContent, { role: 'model' }>['parts'][number]
 
+// What the person is asked to approve: the effect of the call, never its
+// arguments. Written where the gate is decided (tools/registry).
+export type ConfirmSummary = {
+  title: string
+  facts: Array<{ label: string; value: string }>
+  // The content being committed, shown as written — an email's text.
+  body?: string
+  // Present when the action cannot be undone; the UI styles on it.
+  warning?: string
+  confirmLabel: string
+}
+
 // A tool call the agent asked for that waits on the person's approval. The
 // thread is blocked on it: approve executes the call, anything else declines.
 export type PendingCall = {
@@ -46,12 +58,13 @@ export type PendingCall = {
   callId: string
   name: string
   args: Record<string, unknown>
+  summary: ConfirmSummary
   // Responses of the calls from the same model turn already answered (the
   // ungated ones, and gated ones the person already decided); they travel with
   // this call's answer in one tool message.
   otherResponses: Array<{ id: string; name: string; response: Record<string, unknown> }>
   // Further gated calls from the same turn, each asked about in order.
-  remaining: Array<{ callId: string; name: string; args: Record<string, unknown> }>
+  remaining: Array<{ callId: string; name: string; args: Record<string, unknown>; summary: ConfirmSummary }>
 }
 
 export type ToolEffect =

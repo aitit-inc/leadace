@@ -22,12 +22,20 @@ export type ChatMessage = {
   createdAt: string;
 };
 
+// Mirrors backend domain/chat.ts `ConfirmSummary`.
+export type ConfirmSummary = {
+  title: string;
+  facts: Array<{ label: string; value: string }>;
+  body?: string;
+  warning?: string;
+  confirmLabel: string;
+};
+
 // The thread's pending call as the UI sees it (the backend also keeps the
-// message it belongs to).
+// call itself and the message it belongs to).
 export type PendingCall = {
   callId: string;
-  name: string;
-  args: Record<string, unknown>;
+  summary: ConfirmSummary;
 };
 
 export type ChatThread = {
@@ -44,7 +52,7 @@ export type ChatEvent =
   | { type: 'text_delta'; text: string }
   | { type: 'tool_call'; callId: string; name: string; args: Record<string, unknown> }
   | { type: 'tool_result'; callId: string; name: string; ok: boolean; text: string }
-  | { type: 'confirm_required'; callId: string; name: string; args: Record<string, unknown> }
+  | { type: 'confirm_required'; callId: string; summary: ConfirmSummary }
   | { type: 'job_started'; jobId: string; kind: string }
   | { type: 'done' }
   | { type: 'error'; message: string };

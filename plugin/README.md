@@ -11,7 +11,7 @@ outbound outreach, and iterates on strategy — all hands-free.
 
 ## Prerequisites
 
-- Claude Cowork (in the Claude Desktop app) or Claude Code, on an Anthropic Pro or Max plan — verified on macOS; by default `/setup-cron` runs the daily cycle as a Cowork scheduled task in Anthropic's cloud
+- Claude Cowork (in the Claude Desktop app) or Claude Code, on an Anthropic Pro or Max plan — verified on macOS. Email-only automation needs neither: `/setup-cron` prefers a server-side schedule that LeadAce runs on its own, and falls back to a Cowork scheduled task for the browser channels
 - A LeadAce account (sign up at https://app.leadace.ai — Free tier, no card)
 - A connected Gmail account — for sending email (granted when you sign in with Google, or via the "Connect Gmail" banner in the web app)
 - Gmail MCP (claude.ai built-in) — for checking email replies
@@ -95,7 +95,7 @@ Run them in a Cowork session (the Cowork tab, not Chat — `/daily-cycle` runs s
 | `/check-feedback <name>` | Surface PMF signals from rejection feedback (feature gaps, competitor presence) |
 | **Automation** | |
 | `/daily-cycle <name> [count]` | One-shot bundle: check-responses → evaluate → outbound + build-list |
-| `/setup-cron <name>` | Schedule `/daily-cycle` daily (Cowork scheduled task, Claude Code Desktop task, or an OS scheduler as a last resort) |
+| `/setup-cron <name>` | Set up a daily run (a server-side schedule that needs no machine, a Cowork scheduled task, a Claude Code Desktop task, or an OS scheduler) |
 | **Maintenance** | |
 | `/delete-project <name>` | Permanently delete a project and all its data |
 

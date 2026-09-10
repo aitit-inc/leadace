@@ -544,20 +544,10 @@ export const projectSettings = pgTable('project_settings', {
   // Outbound-message language. A content setting, not a targeting filter —
   // independent of target_countries. Mirrors localeSchema (domain/locale.ts).
   targetLanguage: text('target_language').$type<Locale>().notNull().default('en'),
-  // Server-run daily cycle (jobs/daily-cycle). Off until the person turns it
-  // on in the Web UI or chat; the hourly cron starts a `daily_cycle` job for
-  // every enabled project whose hour matches. UTC hour, not local: the send
-  // window is a weak lever and one clock keeps the cron trivial.
-  hostedCycleEnabled: boolean('hosted_cycle_enabled').notNull().default(false),
-  hostedCycleHourUtc: smallint('hosted_cycle_hour_utc').notNull().default(13),
-  // Prospects one hosted cycle works through (the plan's quota still caps sends).
-  hostedCycleOutboundCount: smallint('hosted_cycle_outbound_count').notNull().default(30),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   index('idx_project_settings_tenant').on(table.tenantId),
-  check('chk_hosted_cycle_hour', sql`${table.hostedCycleHourUtc} BETWEEN 0 AND 23`),
-  check('chk_hosted_cycle_outbound_count', sql`${table.hostedCycleOutboundCount} BETWEEN 1 AND 200`),
   // Composite FK ties project_id + tenant_id together so a settings row
   // cannot reference a project in a different tenant (defense-in-depth on
   // top of RLS).
@@ -1352,4 +1342,47 @@ export const chatMessages = pgTable('chat_messages', {
 }, (table) => [
   index('idx_chat_messages_thread').on(table.threadId, table.id),
   index('idx_chat_messages_tenant').on(table.tenantId),
+])
+
+// A saved instruction the hosted agent runs unattended on a recurring local
+// hour (domain/schedules.ts).
+export const schedules = pgTable('schedules', {
+  id: text('id').primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  projectId: text('project_id').notNull(),
+  // The run acts as the person who registered it: their Gmail sends, their
+  // notifications, their agent privileges.
+  userId: text('user_id').notNull(),
+  // Where the runs are logged and where job notices land. NULL until the first
+  // run creates one, and again if the person deletes the thread.
+  threadId: text('thread_id').references(() => chatThreads.id, { onDelete: 'set null' }),
+  prompt: text('prompt').notNull(),
+  // IANA zone; the local hour is resolved per run so a DST change keeps it.
+  timezone: text('timezone').notNull().default('UTC'),
+  hour: smallint('hour').notNull(),
+  // Bit 0 = Sunday … bit 6 = Saturday. 127 = every day.
+  daysOfWeek: smallint('days_of_week').notNull().default(127),
+  enabled: boolean('enabled').notNull().default(true),
+  // The local hour already claimed (domain/schedules.ts runKey); the
+  // conditional update that sets it is what makes a run happen once.
+  lastRunKey: text('last_run_key'),
+  lastRunAt: timestamp('last_run_at', { withTimezone: true }),
+  lastError: text('last_error'),
+  consecutiveFailures: smallint('consecutive_failures').notNull().default(0),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  // The cron's only read; the local hour cannot be a predicate here because it
+  // depends on each row's zone.
+  index('idx_schedules_enabled').on(table.enabled),
+  index('idx_schedules_project').on(table.projectId),
+  check('chk_schedules_hour', sql`${table.hour} BETWEEN 0 AND 23`),
+  check('chk_schedules_days_of_week', sql`${table.daysOfWeek} BETWEEN 1 AND 127`),
+  foreignKey({
+    columns: [table.projectId, table.tenantId],
+    foreignColumns: [projects.id, projects.tenantId],
+    name: 'fk_schedules_project_tenant',
+  }).onDelete('cascade'),
 ])

@@ -3,17 +3,18 @@
 // DB: each one calls the LeadAce API through the injected ToolCtx.callApi and
 // formats the answer as the text block an agent reads.
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
-import type { ToolEffect } from '../domain/chat'
+import type { ConfirmSummary, ToolEffect } from '../domain/chat'
 import { z } from 'zod'
-import { BUG_REPORT_CATEGORIES, EMPLOYEE_BANDS, OUTBOUND_CHANNELS, REJECTION_PRIMARY_REASONS, REJECTION_RECONTACT_WINDOWS, SUGGESTION_STATUSES, prospectStatusEnum, prioritySchema } from '../db/schema'
+import { BUG_REPORT_CATEGORIES, EMPLOYEE_BANDS, OUTBOUND_CHANNELS, REACHABLE_STATUSES, REJECTION_PRIMARY_REASONS, REJECTION_RECONTACT_WINDOWS, SUGGESTION_STATUSES, prospectStatusEnum, prioritySchema, type ProspectStatus } from '../db/schema'
 import { ALLOWED_SEND_COUNTRIES } from '../domain/country'
 import { discoveryStrategySchema, suggestionKindSchema, variantIdSchema } from '../domain/ids'
 import { localeSchema } from '../domain/locale'
 import type { ReplyCollectionStatus } from '../domain/attention'
 import { isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG } from '../domain/url'
-import type { OutreachQuota, OutreachQuotaWindow } from '../services/plan-limits'
+import type { OutreachQuota, OutreachQuotaWindow, OutreachWindowKind } from '../services/plan-limits'
 import { SERVER_VERSION } from '../mcp/version'
-import { JOB_KINDS, JOB_STATUSES, jobParamsSchema, type JobKind } from '../domain/jobs'
+import { JOB_KINDS, JOB_STATUSES, jobParamsSchema, type JobKind, type JobParams } from '../domain/jobs'
+import { DAYS_OF_WEEK, daysSchema, hourSchema, promptSchema, timezoneSchema } from '../domain/schedules'
 import { applyStrategyDraftSchema, strategyDraftInputSchema } from '../domain/strategy-draft'
 
 // MIN_PLUGIN_VERSION is the gate: any plugin older than this MUST be told to
@@ -49,6 +50,131 @@ function replyCollectionLine(status: ReplyCollectionStatus): string {
 const formatTarget = (id?: string) => id ? `project ${id}` : 'tenant assets'
 
 
+// The facts that decide a gated call's consequence live on the server, not in
+// its arguments. A preview read that fails leaves facts out of the card; it
+// never opens the gate.
+async function readApi(ctx: ToolCtx, path: string): Promise<unknown> {
+  const res = await ctx.callApi('GET', path, null).catch(() => null)
+  return res && res.ok ? res.data : null
+}
+
+const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`
+
+const ENDED_STATUSES: readonly ProspectStatus[] = ['rejected', 'inactive']
+
+async function projectLabel(ctx: ToolCtx, projectRef: string): Promise<string> {
+  const data = await readApi(ctx, '/projects')
+  if (!data) return projectRef
+  const { projects } = data as { projects: Array<{ id: string; name: string }> }
+  return projects.find((p) => p.id === projectRef)?.name ?? projectRef
+}
+
+export type OutboundPreview = {
+  outboundMode: 'send' | 'draft'
+  reachable: number
+  quota: OutreachQuota | undefined
+  mailbox: { email: string; remaining: number } | null
+  blocked: string | null
+}
+
+async function outboundPreview(ctx: ToolCtx, projectRef: string): Promise<OutboundPreview | null> {
+  const ref = encodeURIComponent(projectRef)
+  const [reachable, health] = await Promise.all([
+    readApi(ctx, `/projects/${ref}/prospects/reachable?limit=1`),
+    readApi(ctx, `/projects/${ref}/mailbox-health`),
+  ])
+  if (!reachable) return null
+  const r = reachable as {
+    total: number
+    quota?: OutreachQuota
+    outboundMode: 'send' | 'draft'
+    outboundBlocked: boolean
+    message?: string
+  }
+  const h = health as { kind: 'no_mailbox' } | { kind: 'active'; email: string; remaining: number } | null
+  return {
+    outboundMode: r.outboundMode,
+    reachable: r.total,
+    quota: r.quota,
+    mailbox: h?.kind === 'active' ? { email: h.email, remaining: h.remaining } : null,
+    blocked: r.outboundBlocked ? (r.message ?? 'Nothing can go out right now.') : null,
+  }
+}
+
+const QUOTA_WINDOW: Record<OutreachWindowKind, string> = {
+  daily: 'left today',
+  monthly: 'left this month',
+  lifetime: 'left in total',
+}
+
+// The one definition of which job kinds need approval.
+type SendScope = { count: number; noun: 'prospect' | 'draft'; upTo: boolean }
+
+function sendingScope(params: JobParams): SendScope | null {
+  switch (params.kind) {
+    case 'daily_cycle':
+      return { count: params.outboundCount, noun: 'prospect', upTo: true }
+    case 'send':
+      return { count: params.draftIds.length, noun: 'draft', upTo: false }
+    case 'draft':
+      return { count: params.count ?? params.prospectIds?.length ?? 0, noun: 'prospect', upTo: params.count !== undefined }
+    default:
+      return null
+  }
+}
+
+export function startJobConfirmSummary(
+  params: JobParams,
+  projectName: string,
+  preview: OutboundPreview | null,
+): ConfirmSummary | null {
+  const scope = sendingScope(params)
+  if (!scope) return null
+  const mode = params.kind === 'send' ? 'send' : (preview?.outboundMode ?? 'unknown')
+  const upTo = scope.upTo ? 'up to ' : ''
+  const facts: Array<{ label: string; value: string }> = [
+    { label: 'Project', value: projectName },
+    {
+      label: 'What happens',
+      value:
+        mode === 'send'
+          ? 'Every message is sent as it is written'
+          : mode === 'draft'
+            ? 'Drafts are created for your review — nothing is sent'
+            : "Your project's outbound mode decides whether these are sent or held as drafts",
+    },
+    { label: 'How many', value: `${upTo}${plural(scope.count, scope.noun)}` },
+  ]
+  if (preview && scope.noun === 'prospect') facts.push({ label: 'Reachable now', value: plural(preview.reachable, 'prospect') })
+  // In draft mode nothing leaves and no quota is spent: these would be noise.
+  if (mode !== 'draft' && preview) {
+    const { mailbox, quota } = preview
+    if (mailbox) {
+      facts.push({ label: 'From', value: mailbox.email })
+      facts.push({ label: 'Mailbox today', value: `${plural(mailbox.remaining, 'email')} left` })
+    }
+    if (quota) {
+      facts.push({
+        label: 'Outreach quota',
+        value: quota.kind === 'unlimited' ? 'unlimited' : `${quota.remaining} of ${quota.limit} ${QUOTA_WINDOW[quota.bindingConstraint]}`,
+      })
+    }
+  }
+  const warning = [preview?.blocked, mode === 'send' ? 'Sent email cannot be recalled.' : null].filter((w) => w !== null).join(' ')
+  return {
+    title:
+      params.kind === 'daily_cycle' ? "Run today's cycle" : params.kind === 'send' ? 'Send these drafts' : 'Write outreach',
+    facts,
+    ...(warning ? { warning } : {}),
+    confirmLabel:
+      mode === 'send'
+        ? `Send ${upTo}${plural(scope.count, 'email')}`
+        : mode === 'draft'
+          ? `Draft ${upTo}${plural(scope.count, 'message')}`
+          : 'Start',
+  }
+}
+
 // How a tool reaches the LeadAce API. The MCP worker forwards over HTTP with
 // the caller's bearer token; the hosted chat agent dispatches in-process into
 // the API app with the browser session. Either way a tool sees one function.
@@ -63,8 +189,9 @@ export type ToolDef = {
   description: string
   schema: z.ZodRawShape
   surface: 'shared' | 'chat'
-  // Decided on parsed arguments.
-  confirm: (args: Record<string, unknown>) => boolean
+  // Decided on parsed arguments: what the person is asked to approve, or null
+  // when the call runs unattended. Absent = never gated.
+  confirm?: (args: Record<string, unknown>, ctx: ToolCtx) => Promise<ConfirmSummary | null> | ConfirmSummary | null
   // Writes nothing and holds no order against a sibling call, so the chat
   // agent may run several at once.
   readOnly: boolean
@@ -81,7 +208,10 @@ export function buildToolRegistry(): ToolDef[] {
     schema: S,
     handler: (args: z.infer<z.ZodObject<S>>, ctx: ToolCtx) => Promise<ToolCallResult> | ToolCallResult,
     opts: { surface?: ToolDef['surface'] } & (
-      | { confirm?: true | ((args: z.infer<z.ZodObject<S>>) => boolean); readOnly?: never }
+      | {
+          confirm?: (args: z.infer<z.ZodObject<S>>, ctx: ToolCtx) => Promise<ConfirmSummary | null> | ConfirmSummary | null
+          readOnly?: never
+        }
       | { readOnly: true; confirm?: never }
     ) = {},
   ): void => {
@@ -90,7 +220,7 @@ export function buildToolRegistry(): ToolDef[] {
       description,
       schema,
       surface: opts.surface ?? 'shared',
-      confirm: opts.confirm === true ? () => true : ((opts.confirm ?? (() => false)) as ToolDef['confirm']),
+      ...(opts.confirm ? { confirm: opts.confirm as ToolDef['confirm'] } : {}),
       readOnly: opts.readOnly === true,
       handler: handler as ToolDef['handler'],
     })
@@ -188,7 +318,18 @@ export function buildToolRegistry(): ToolDef[] {
       }
       return { content: [{ type: 'text' as const, text: `Project "${projectId}" deleted.` }] }
     },
-    { confirm: true },
+    {
+      confirm: async ({ projectId }, ctx) => ({
+        title: 'Delete this project',
+        facts: [
+          { label: 'Project', value: await projectLabel(ctx, projectId) },
+          { label: 'What goes', value: 'Its outreach history, replies, documents, settings and message angles' },
+          { label: 'What stays', value: 'Prospects and organizations — those belong to the workspace' },
+        ],
+        warning: 'This cannot be undone.',
+        confirmLabel: 'Delete project',
+      }),
+    },
   )
 
   defineTool(
@@ -868,7 +1009,40 @@ export function buildToolRegistry(): ToolDef[] {
         : `Draft created (outreach id: ${result.outreachId}). User reviews and sends from https://app.leadace.ai/drafts.`
       return { content: [{ type: 'text' as const, text }] }
     },
-    { confirm: true },
+    {
+      confirm: async ({ projectId, prospectId, subject, body }, ctx) => {
+        const ref = encodeURIComponent(projectId)
+        const [name, settings, prospect] = await Promise.all([
+          projectLabel(ctx, projectId),
+          readApi(ctx, `/projects/${ref}/settings`),
+          readApi(ctx, `/projects/${ref}/prospects/${prospectId}`),
+        ])
+        const mode = (settings as { outboundMode?: 'send' | 'draft' } | null)?.outboundMode
+        const to = (prospect as { prospect: { name: string; contactName: string | null; email: string | null; organizationName: string } } | null)?.prospect
+        return {
+          title: mode === 'draft' ? 'Draft this email' : 'Send this email',
+          facts: [
+            { label: 'Project', value: name },
+            ...(to
+              ? [{ label: 'To', value: `${to.contactName ?? to.name} at ${to.organizationName}${to.email ? ` (${to.email})` : ''}` }]
+              : []),
+            {
+              label: 'What happens',
+              value:
+                mode === 'draft'
+                  ? 'It is held as a draft for your review — nothing is sent'
+                  : mode === 'send'
+                    ? 'It is sent now'
+                    : "Your project's outbound mode decides whether it is sent or held as a draft",
+            },
+            { label: 'Subject', value: subject },
+          ],
+          body,
+          ...(mode === 'draft' ? {} : { warning: 'Sent email cannot be recalled.' }),
+          confirmLabel: mode === 'draft' ? 'Save draft' : 'Send email',
+        }
+      },
+    },
   )
 
   defineTool(
@@ -909,7 +1083,14 @@ export function buildToolRegistry(): ToolDef[] {
         }],
       }
     },
-    { confirm: true },
+    {
+      confirm: async ({ ids, projectId }, ctx) => ({
+        title: ids ? `Discard ${plural(ids.length, 'draft')}` : 'Discard every pending draft',
+        facts: projectId ? [{ label: 'Project', value: await projectLabel(ctx, projectId) }] : [],
+        warning: 'Discarded drafts cannot be recovered. Already-sent outreach is untouched.',
+        confirmLabel: 'Discard',
+      }),
+    },
   )
 
   defineTool(
@@ -985,7 +1166,30 @@ export function buildToolRegistry(): ToolDef[] {
       }
       return { content: [{ type: 'text' as const, text: `Status updated to "${status}".` }] }
     },
-    { confirm: true },
+    {
+      // Bookkeeping runs unattended; putting someone who ended the conversation
+      // back on the outbound list is a decision to contact them again.
+      confirm: async ({ projectId, prospectId, status }, ctx) => {
+        if (!REACHABLE_STATUSES.includes(status)) return null
+        const data = await readApi(ctx, `/projects/${encodeURIComponent(projectId)}/prospects/${prospectId}`)
+        const current = (data as { prospect: { status: ProspectStatus; name: string; organizationName: string } } | null)?.prospect
+        if (current && !ENDED_STATUSES.includes(current.status)) return null
+        return {
+          title: 'Put this prospect back on the outbound list',
+          facts: [
+            ...(current
+              ? [
+                  { label: 'Prospect', value: `${current.name} at ${current.organizationName}` },
+                  { label: 'Now', value: current.status },
+                ]
+              : []),
+            { label: 'What happens', value: 'They become a target for outreach again' },
+          ],
+          warning: 'They ended the conversation earlier. Contact them again only if something has changed.',
+          confirmLabel: 'Put back on the list',
+        }
+      },
+    },
   )
 
   defineTool(
@@ -1127,7 +1331,14 @@ export function buildToolRegistry(): ToolDef[] {
       }
       return { content: [{ type: 'text' as const, text: parts.join('\n') }] }
     },
-    { confirm: true },
+    {
+      confirm: ({ organizationIds }) => ({
+        title: `Delete ${plural(organizationIds.length, 'organization')}`,
+        facts: [{ label: 'What stays', value: 'Any organization that still has prospects is kept' }],
+        warning: 'This cannot be undone.',
+        confirmLabel: 'Delete permanently',
+      }),
+    },
   )
 
   defineTool(
@@ -1163,7 +1374,16 @@ export function buildToolRegistry(): ToolDef[] {
       }
       return { content: [{ type: 'text' as const, text: parts.join('\n') }] }
     },
-    { confirm: true },
+    {
+      confirm: ({ prospectIds }) => ({
+        title: `Delete ${plural(prospectIds.length, 'prospect')} from the workspace`,
+        facts: [
+          { label: 'What stays', value: 'Prospects with outreach history, do-not-contact prospects, and prospects on two or more projects are kept' },
+        ],
+        warning: 'This cannot be undone.',
+        confirmLabel: 'Delete permanently',
+      }),
+    },
   )
 
   defineTool(
@@ -1234,7 +1454,21 @@ export function buildToolRegistry(): ToolDef[] {
       }
       return { content: [{ type: 'text' as const, text: `Prospect ${prospectId}: do_not_contact = ${doNotContact}.` }] }
     },
-    { confirm: true },
+    {
+      confirm: ({ prospectId, doNotContact }) =>
+        doNotContact
+          ? null
+          : {
+              title: 'Allow outreach to this prospect again',
+              facts: [
+                // Tenant-scoped: no project to resolve a name through.
+                { label: 'Prospect', value: `/prospects/${prospectId}` },
+                { label: 'What happens', value: 'They return to discovery and outbound targeting' },
+              ],
+              warning: 'They are on the do-not-contact list — clear it only if they did not ask to be left alone.',
+              confirmLabel: 'Allow outreach',
+            },
+    },
   )
 
   defineTool(
@@ -1674,7 +1908,6 @@ export function buildToolRegistry(): ToolDef[] {
   // the whole cycle); these tools start and watch them.
 
   // draft sends when the project's outbound mode says so.
-  const SENDING_JOB_KINDS: ReadonlySet<JobKind> = new Set(['send', 'draft', 'daily_cycle'])
 
   type JobWire = {
     id: string
@@ -1714,7 +1947,13 @@ export function buildToolRegistry(): ToolDef[] {
         effect: { kind: 'job_started', jobId: job.id, jobKind: job.kind },
       }
     },
-    { confirm: ({ params }) => SENDING_JOB_KINDS.has(params.kind) },
+    {
+      confirm: async ({ projectId, params }, ctx) => {
+        if (!sendingScope(params)) return null
+        const [name, preview] = await Promise.all([projectLabel(ctx, projectId), outboundPreview(ctx, projectId)])
+        return startJobConfirmSummary(params, name, preview)
+      },
+    },
   )
 
   defineTool(
@@ -1771,6 +2010,143 @@ export function buildToolRegistry(): ToolDef[] {
     },
   )
 
+  // --- Schedules. A schedule is a standing instruction the server runs
+  // unattended; registering one is the person's authorization for it, so the
+  // two writes live on the chat surface, where the approval card is shown.
+
+  type ScheduleWire = {
+    id: string
+    projectId: string
+    prompt: string
+    timezone: string
+    hour: number
+    days: number[]
+    enabled: boolean
+    lastRunAt: string | null
+    lastError: string | null
+  }
+  const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+  const findSchedule = async (ctx: ToolCtx, id: string): Promise<ScheduleWire | undefined> =>
+    ((await readApi(ctx, '/schedules')) as { schedules: ScheduleWire[] } | null)?.schedules.find((s) => s.id === id)
+  const whenLine = (s: Pick<ScheduleWire, 'hour' | 'days' | 'timezone'>): string =>
+    `${s.days.length === 7 ? 'every day' : s.days.map((d) => DAY_NAMES[d]).join(' ')} at ${String(s.hour).padStart(2, '0')}:00 ${s.timezone}`
+  const scheduleLine = (s: ScheduleWire): string => {
+    const ran = s.lastRunAt ? `, last ran ${s.lastRunAt}` : ''
+    const failed = s.lastError ? ` — last run failed: ${s.lastError}` : ''
+    return `${s.id} [${s.enabled ? 'on' : 'off'}] ${whenLine(s)}, project ${s.projectId}${ran}: ${s.prompt}${failed}`
+  }
+
+  defineTool(
+    'list_schedules',
+    "The workspace's scheduled runs, one line each: id, on or off, when it runs (days, local hour, time zone), project, when it last ran, the instruction, and the last run's error if it failed.",
+    { projectId: z.string().min(1).optional().describe('Project name or ID; omit for every project.') },
+    async ({ projectId }, ctx) => {
+      const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''
+      const { ok, data } = await ctx.callApi('GET', `/schedules${qs}`, null)
+      if (!ok) {
+        const e = data as { error: string }
+        return { content: [{ type: 'text' as const, text: `Error: ${e.error}` }], isError: true }
+      }
+      const { schedules } = data as { schedules: ScheduleWire[] }
+      return {
+        content: [{ type: 'text' as const, text: schedules.length === 0 ? 'No schedules.' : schedules.map(scheduleLine).join('\n') }],
+      }
+    },
+    { readOnly: true },
+  )
+
+  defineTool(
+    'set_schedule',
+    "Register a scheduled run, or change one by id: the instruction runs unattended on the given days at the given local hour. A run may read anything and start jobs; it can never send one-off messages by hand, delete, set do-not-contact, or change a schedule. Answers with the saved schedule's line.",
+    {
+      scheduleId: z.string().min(1).optional().describe('Change this schedule instead of registering a new one.'),
+      projectId: z.string().min(1).optional().describe('Project name or ID. Required when registering.'),
+      prompt: promptSchema.optional().describe('What the run should do, written as an instruction to yourself.'),
+      timezone: timezoneSchema.optional().describe('IANA time zone the hour is read in, e.g. Asia/Tokyo.'),
+      hour: hourSchema.optional().describe('Local hour, 0-23. The run starts within that hour.'),
+      days: daysSchema.optional().describe('Days it runs, 0 = Sunday. Omit on a new schedule for every day.'),
+      enabled: z.boolean().optional().describe('Off keeps the schedule without running it.'),
+    },
+    async ({ scheduleId, projectId, prompt, timezone, hour, days, enabled }, ctx) => {
+      if (!scheduleId && (projectId === undefined || prompt === undefined || timezone === undefined || hour === undefined)) {
+        return {
+          content: [{ type: 'text' as const, text: 'Error: a new schedule needs projectId, prompt, timezone and hour' }],
+          isError: true,
+        }
+      }
+      // JSON drops the keys left undefined, so one body serves both calls.
+      const body = { prompt, timezone, hour, days, enabled }
+      const { ok, data } = scheduleId
+        ? await ctx.callApi('PATCH', `/schedules/${encodeURIComponent(scheduleId)}`, body)
+        : await ctx.callApi('POST', '/schedules', { ...body, projectId, days: days ?? DAYS_OF_WEEK })
+      if (!ok) {
+        const e = data as { error: string; detail?: string }
+        return { content: [{ type: 'text' as const, text: `Error: ${e.detail ? `${e.error}: ${e.detail}` : e.error}` }], isError: true }
+      }
+      return { content: [{ type: 'text' as const, text: `Saved: ${scheduleLine(data as ScheduleWire)}` }] }
+    },
+    {
+      surface: 'chat',
+      confirm: async ({ scheduleId, projectId, prompt, timezone, hour, days, enabled }, ctx) => {
+        // Switching one off grants nothing, so it is not a card.
+        if (enabled === false) return null
+        const existing = scheduleId ? await findSchedule(ctx, scheduleId) : undefined
+        const when = whenLine({
+          hour: hour ?? existing?.hour ?? 0,
+          days: days ?? existing?.days ?? [...DAYS_OF_WEEK],
+          timezone: timezone ?? existing?.timezone ?? 'UTC',
+        })
+        const preview = await outboundPreview(ctx, projectId ?? existing?.projectId ?? '')
+        return {
+          title: scheduleId ? 'Change this scheduled run' : 'Run this on a schedule',
+          facts: [
+            { label: 'Project', value: await projectLabel(ctx, projectId ?? existing?.projectId ?? '') },
+            { label: 'When', value: when },
+            {
+              label: 'What it may do',
+              value:
+                preview?.outboundMode === 'send'
+                  ? 'Read your data and start jobs — including sending email, because this project sends without review'
+                  : 'Read your data and start jobs; outreach is held as drafts for your review',
+            },
+            { label: 'What it may never do', value: 'Delete anything, set do-not-contact, or change a schedule' },
+          ],
+          body: prompt ?? existing?.prompt ?? '',
+          confirmLabel: scheduleId ? 'Save schedule' : 'Schedule it',
+        }
+      },
+    },
+  )
+
+  defineTool(
+    'delete_schedule',
+    'Remove a scheduled run by id. Its past runs stay in the chat thread it logged them to; answers with the id removed.',
+    { scheduleId: z.string().min(1).describe('Schedule id from list_schedules.') },
+    async ({ scheduleId }, ctx) => {
+      const { ok, data } = await ctx.callApi('DELETE', `/schedules/${encodeURIComponent(scheduleId)}`, null)
+      if (!ok) {
+        const e = data as { error: string }
+        return { content: [{ type: 'text' as const, text: `Error: ${e.error}` }], isError: true }
+      }
+      return { content: [{ type: 'text' as const, text: `Removed schedule ${(data as { id: string }).id}.` }] }
+    },
+    {
+      surface: 'chat',
+      confirm: async ({ scheduleId }, ctx) => {
+        const existing = await findSchedule(ctx, scheduleId)
+        return {
+          title: 'Stop this scheduled run',
+          facts: [
+            { label: 'When it ran', value: existing ? whenLine(existing) : 'unknown' },
+            { label: 'After this', value: 'Nothing runs on its own for this instruction' },
+          ],
+          body: existing?.prompt ?? '',
+          confirmLabel: 'Remove schedule',
+        }
+      },
+    },
+  )
+
   // --- Onboarding from a URL. draft reads the site and answers with the whole
   // proposed setup as data; apply writes the approved proposal in one call.
 
@@ -1822,7 +2198,19 @@ export function buildToolRegistry(): ToolDef[] {
       const { saved } = data as { saved: string[] }
       return { content: [{ type: 'text' as const, text: `Saved: ${saved.join(', ')}.` }] }
     },
-    { confirm: true },
+    {
+      confirm: async ({ projectId, draft }, ctx) => ({
+        title: 'Save this setup',
+        facts: [
+          { label: 'Project', value: await projectLabel(ctx, projectId) },
+          { label: 'Who to contact', value: `${draft.discoveryStrategies.length} search strategies` },
+          { label: 'What to say', value: `${draft.messageVariants.length} message angles, written in ${draft.targetLanguage}` },
+          { label: 'Channels', value: draft.outboundChannels.map((c) => c.replace(/_/g, ' ')).join(', ') },
+        ],
+        warning: "This replaces the project's current strategy and messaging.",
+        confirmLabel: 'Save setup',
+      }),
+    },
   )
 
   return tools
