@@ -17,7 +17,7 @@ export type SmtpConnection = {
   appPassword: string
 }
 
-export type SmtpSendResult = { ok: true } | { ok: false; detail: string }
+export type SmtpSendResult = { ok: true } | { ok: false; detail: string; mailboxRefused: boolean }
 
 // Verify runs inside the request's RLS DB transaction, so its tighter ceiling
 // bounds how long a hung mailbox can pin the pooled connection.
@@ -27,6 +27,10 @@ const enc = new TextEncoder()
 const dec = new TextDecoder()
 
 class SmtpError extends Error {}
+
+// A submission server doesn't check remote recipients (a bad address bounces
+// later), so a refusal at any stage is about the mailbox.
+class SmtpRefusalError extends SmtpError {}
 
 async function runSession(
   conn: SmtpConnection,
@@ -72,7 +76,7 @@ async function runSession(
     const expect = async (cmd: string | null, codes: number[]): Promise<string> => {
       if (cmd !== null) await send(cmd)
       const reply = await readReply()
-      if (!codes.includes(smtpReplyCode(reply))) throw new SmtpError(reply)
+      if (!codes.includes(smtpReplyCode(reply))) throw new SmtpRefusalError(reply)
       return reply
     }
 
@@ -124,7 +128,11 @@ export async function sendViaSmtp(
     await runSession(conn, msg, SEND_TIMEOUT_MS)
     return { ok: true }
   } catch (e) {
-    return { ok: false, detail: e instanceof Error ? e.message : String(e) }
+    return {
+      ok: false,
+      detail: e instanceof Error ? e.message : String(e),
+      mailboxRefused: e instanceof SmtpRefusalError,
+    }
   }
 }
 

@@ -14,6 +14,7 @@ const base: MailboxWarmupState = {
   warmupStartedAt: null,
   dailyCapOverride: null,
   pausedUntil: null,
+  sendRefusal: null,
 }
 
 describe('mailboxDailyCap', () => {
@@ -63,7 +64,7 @@ describe('mailboxDailyCap', () => {
 describe('mailboxDailyStatus', () => {
   it('projects cap/remaining and ramp progress for a never-sent mailbox', () => {
     expect(mailboxDailyStatus(base, 0, DEFAULT_WARMUP, NOW)).toEqual({
-      cap: 10, used: 0, remaining: 10, pausedUntil: null, rampWeek: 0, rampWeeks: 4, steadyStatePerDay: 25,
+      cap: 10, used: 0, remaining: 10, pausedUntil: null, heldUntil: null, rampWeek: 0, rampWeeks: 4, steadyStatePerDay: 25,
     })
   })
 
@@ -84,6 +85,22 @@ describe('mailboxDailyStatus', () => {
     const elapsed = mailboxDailyStatus({ ...base, pausedUntil: new Date(NOW.getTime() - 1000) }, 0, DEFAULT_WARMUP, NOW)
     expect(elapsed.pausedUntil).toBeNull()
     expect(elapsed.cap).toBe(10)
+  })
+
+  it('holds a refused mailbox until the next UTC day after the latest refusal', () => {
+    const state = {
+      ...base,
+      warmupStartedAt: weeksAgo(10),
+      sendRefusal: { since: '2026-06-20T09:00:00.000Z', lastAt: '2026-06-21T11:30:00.000Z', detail: '550 5.4.6', sentThatDay: 25 },
+    }
+    const nextUtcDay = new Date('2026-06-22T00:00:00.000Z')
+    const held = mailboxDailyStatus(state, 0, DEFAULT_WARMUP, NOW)
+    expect(held.cap).toBe(0)
+    expect(held.heldUntil).toEqual(nextUtcDay)
+
+    const probe = mailboxDailyStatus(state, 0, DEFAULT_WARMUP, nextUtcDay)
+    expect(probe.heldUntil).toBeNull()
+    expect(probe.cap).toBe(25)
   })
 })
 

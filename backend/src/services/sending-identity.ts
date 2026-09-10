@@ -13,6 +13,7 @@ import {
   mailboxDailyStatus,
   type MailboxBounceWindow,
   type MailboxDailyStatus,
+  type MailboxSendRefusal,
 } from '../domain/warmup'
 import {
   canRegisterSmtpIdentity,
@@ -43,6 +44,7 @@ export type SendingIdentitySummary = {
   fromEmail: string
   warmupStartedAt: Date | null
   dailyCapOverride: number | null
+  sendRefusal: MailboxSendRefusal | null
   grantedAt: Date
   smtp: SmtpConnectionView | null
 } & MailboxDailyStatus &
@@ -55,6 +57,7 @@ const summaryColumns = {
   warmupStartedAt: sendingIdentities.warmupStartedAt,
   pausedUntil: sendingIdentities.pausedUntil,
   dailyCapOverride: sendingIdentities.dailyCapOverride,
+  sendRefusal: sendingIdentities.sendRefusal,
   grantedAt: sendingIdentities.grantedAt,
 } as const
 
@@ -65,6 +68,7 @@ type SummaryRow = {
   warmupStartedAt: Date | null
   pausedUntil: Date | null
   dailyCapOverride: number | null
+  sendRefusal: MailboxSendRefusal | null
   grantedAt: Date
 }
 
@@ -80,6 +84,7 @@ function toSummary(
     fromEmail: row.fromEmail,
     warmupStartedAt: row.warmupStartedAt,
     dailyCapOverride: row.dailyCapOverride,
+    sendRefusal: row.sendRefusal,
     grantedAt: row.grantedAt,
     smtp,
     ...status,

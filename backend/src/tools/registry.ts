@@ -497,7 +497,7 @@ export function buildToolRegistry(): ToolDef[] {
         // Wire shape: Date fields arrive as ISO strings through res.json().
         mailboxQuota?:
           | { kind: 'no_mailbox' }
-          | { kind: 'capped'; cap: number; used: number; remaining: number; pausedUntil: string | null }
+          | { kind: 'capped'; cap: number; used: number; remaining: number; pausedUntil: string | null; heldUntil: string | null }
         outboundMode: 'send' | 'draft'
         message?: string
       }
@@ -520,7 +520,9 @@ export function buildToolRegistry(): ToolDef[] {
         mbq && mbq.kind === 'capped'
           ? mbq.pausedUntil
             ? `\nMailbox email sending paused until ${mbq.pausedUntil}`
-            : `\nMailbox email cap (warmup): ${mbq.remaining}/${mbq.cap} sends remaining today`
+            : mbq.heldUntil
+              ? `\nMailbox email sending held until ${mbq.heldUntil}: the mail provider refused the mailbox`
+              : `\nMailbox email cap (warmup): ${mbq.remaining}/${mbq.cap} sends remaining today`
           : ''
       const msgLine = result.message ? `\n⚠️ ${result.message}` : ''
       const modeLine = `\nOutbound mode: ${result.outboundMode}`
@@ -537,7 +539,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_mailbox_health',
-    'Warmup and daily-cap state of the mailbox this project sends from (assigned custom mailbox, else connected Gmail). This per-mailbox email cap is separate from the plan/billing outreach quota — email sends only, resets at UTC midnight. Returns the mailbox email, warmup ramp (week X of N) or fixed cap override, today\'s cap/used/remaining, any pause, and a trailing 30-day bounceRate (threaded-only lower bound). Returns a no-mailbox state when the project has no assigned mailbox and no linked Gmail.',
+    'Warmup and daily-cap state of the mailbox this project sends from (assigned custom mailbox, else connected Gmail). This per-mailbox email cap is separate from the plan/billing outreach quota — email sends only, resets at UTC midnight. Returns the mailbox email, warmup ramp (week X of N) or fixed cap override, today\'s cap/used/remaining, any pause, an unresolved provider refusal of the mailbox, and a trailing 30-day bounceRate (threaded-only lower bound). Returns a no-mailbox state when the project has no assigned mailbox and no linked Gmail.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
     },
@@ -556,6 +558,8 @@ export function buildToolRegistry(): ToolDef[] {
             warmupStartedAt: string | null
             dailyCapOverride: number | null
             pausedUntil: string | null
+            heldUntil: string | null
+            sendRefusal: { since: string; lastAt: string; detail: string; sentThatDay: number } | null
             rampWeek: number
             rampWeeks: number
             steadyStatePerDay: number
@@ -584,9 +588,100 @@ export function buildToolRegistry(): ToolDef[] {
           : `Bounces (last ${h.bounceWindowDays}d): ${h.bounced}/${h.sentInWindow} = ${h.bounceRate}% (threaded-only lower bound). If elevated, review list/source quality and consider pausing this mailbox at app.leadace.ai.`,
       ]
       if (h.pausedUntil) lines.push(`⚠️ Sending PAUSED until ${h.pausedUntil}`)
+      if (h.sendRefusal) {
+        const r = h.sendRefusal
+        const hold = h.heldUntil
+          ? `Sending is held until ${h.heldUntil}; the next send after that checks whether it is lifted.`
+          : 'The next send checks whether it is lifted.'
+        lines.push(`⚠️ The mail provider refused this mailbox (first ${r.since}, after ${r.sentThatDay} sends that UTC day; latest ${r.lastAt}): ${r.detail}. ${hold} The user resolves it with the provider (e.g. unblocks the account), then marks it resolved at app.leadace.ai; a successful send also clears it.`)
+      }
       return { content: [{ type: 'text' as const, text: lines.join('\n') }] }
     },
     { readOnly: true },
+  )
+
+  // A mailbox's sending controls bound what the agent may send, so only the
+  // person changes them: chat-only, and every change is an approval card.
+  type MailboxWire = {
+    identityId: string
+    fromEmail: string
+    dailyCapOverride: number | null
+    pausedUntil: string | null
+    sendRefusal: { lastAt: string } | null
+  }
+  // Exact match: addresses that differ only in case can be separate mailboxes.
+  const findMailbox = async (ctx: ToolCtx, email: string): Promise<MailboxWire | undefined> =>
+    ((await readApi(ctx, '/me/sending-identities')) as { identities: MailboxWire[] } | null)?.identities.find(
+      (i) => i.fromEmail === email,
+    )
+  const capLabel = (cap: number | null) => (cap === null ? 'warmup ramp' : `${cap}/day`)
+  const pauseLabel = (until: string | null) => (until === null ? 'not paused' : `paused until ${until}`)
+  const refusalLabel = (refusal: { lastAt: string } | null) =>
+    refusal === null ? 'none recorded' : `unresolved (last refused ${refusal.lastAt})`
+
+  defineTool(
+    'update_mailbox_sending',
+    "Change a sending mailbox's controls: mark a mail-provider refusal resolved (lifts its hold on sending), set or clear its fixed daily cap, pause it until a time or resume it. They apply to every project sending from the mailbox. Answers with the resulting cap, today's sends, and any pause, hold or unresolved refusal.",
+    {
+      mailbox: z.email().describe('The mailbox address, as get_mailbox_health names it.'),
+      resolveRefusal: z.literal(true).optional().describe('The person says the provider refusal is resolved, e.g. the account was unblocked.'),
+      dailyCap: z.number().int().min(0).nullable().optional().describe('Fixed daily email cap; null returns to the warmup ramp.'),
+      pausedUntil: z.iso.datetime().nullable().optional().describe('Pause sending until this time (ISO 8601); null resumes a pause.'),
+    },
+    async ({ mailbox, resolveRefusal, dailyCap, pausedUntil }, ctx) => {
+      const found = await findMailbox(ctx, mailbox)
+      if (!found) {
+        return { content: [{ type: 'text' as const, text: `Error: no sending mailbox ${mailbox} in this workspace` }], isError: true }
+      }
+      const { ok, data } = await ctx.callApi('PUT', `/me/sending-identities/${encodeURIComponent(found.identityId)}/warmup`, {
+        resolveRefusal,
+        dailyCapOverride: dailyCap,
+        pausedUntil,
+      })
+      if (!ok) {
+        const e = data as { error: string; detail?: string }
+        return { content: [{ type: 'text' as const, text: `Error: ${e.detail ? `${e.error}: ${e.detail}` : e.error}` }], isError: true }
+      }
+      const h = data as {
+        email: string
+        dailyCapOverride: number | null
+        cap: number
+        used: number
+        pausedUntil: string | null
+        heldUntil: string | null
+        sendRefusal: { lastAt: string } | null
+      }
+      const parts = [
+        `Saved for ${h.email}: cap ${capLabel(h.dailyCapOverride)}, today ${h.used}/${h.cap} sent`,
+        h.pausedUntil ? `paused until ${h.pausedUntil}` : null,
+        h.heldUntil ? `held until ${h.heldUntil} after a provider refusal` : null,
+        h.sendRefusal ? `provider refusal unresolved (latest ${h.sendRefusal.lastAt})` : null,
+      ]
+      return { content: [{ type: 'text' as const, text: parts.filter((p) => p !== null).join('; ') }] }
+    },
+    {
+      surface: 'chat',
+      confirm: async ({ mailbox, resolveRefusal, dailyCap, pausedUntil }, ctx) => {
+        // Nothing to change: the call fails at the API, so there is nothing to approve.
+        if (resolveRefusal === undefined && dailyCap === undefined && pausedUntil === undefined) return null
+        const current = await findMailbox(ctx, mailbox)
+        const facts: Array<{ label: string; value: string }> = [{ label: 'Mailbox', value: mailbox }]
+        if (resolveRefusal) {
+          facts.push({
+            label: 'Provider refusal',
+            value: `${current ? refusalLabel(current.sendRefusal) : 'unknown'} → resolved, lifting its hold on sending`,
+          })
+        }
+        if (dailyCap !== undefined) {
+          facts.push({ label: 'Daily cap', value: `${current ? capLabel(current.dailyCapOverride) : 'unknown'} → ${capLabel(dailyCap)}` })
+        }
+        if (pausedUntil !== undefined) {
+          facts.push({ label: 'Pause', value: `${current ? pauseLabel(current.pausedUntil) : 'unknown'} → ${pauseLabel(pausedUntil)}` })
+        }
+        facts.push({ label: 'Applies to', value: 'Every project sending from this mailbox' })
+        return { title: 'Change mailbox sending', facts, confirmLabel: 'Apply' }
+      },
+    },
   )
 
   defineTool(

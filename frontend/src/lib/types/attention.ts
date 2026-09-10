@@ -7,6 +7,7 @@ export type AttentionItem =
 	| { kind: 'compliance_incomplete'; missing: string[] }
 	| { kind: 'gmail_disconnected' }
 	| { kind: 'gmail_auth_revoked'; fromEmail: string; since: string }
+	| { kind: 'mailbox_send_refused'; fromEmail: string; sentThatDay: number }
 	| { kind: 'no_outbound_channels' }
 	| { kind: 'quota_exhausted'; constraint: QuotaConstraint }
 	| { kind: 'reply_collection_scope_missing'; fromEmail: string }

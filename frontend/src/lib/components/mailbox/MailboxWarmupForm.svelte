@@ -65,6 +65,26 @@
     return new Date(iso).toLocaleString();
   }
 
+  // SMTP replies can carry HTML (Zoho's links); show their text.
+  function replyText(detail: string): string {
+    return detail.replace(/<[^>]*>/g, '');
+  }
+
+  async function markRefusalResolved() {
+    errorMsg = '';
+    message = '';
+    saving = true;
+    try {
+      await updateIdentityWarmup(identity.identityId, { resolveRefusal: true }, fetch, token);
+      await onSaved();
+      message = 'Marked resolved.';
+    } catch (e) {
+      errorMsg = e instanceof Error ? e.message : 'Failed to mark it resolved.';
+    } finally {
+      saving = false;
+    }
+  }
+
   async function save() {
     if (!draft) return;
     const cap = parsedCapOverride(draft);
@@ -127,6 +147,32 @@
   <p class="mt-4 rounded border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
     Sending is paused until {formatDateTime(identity.pausedUntil)}.
   </p>
+{/if}
+
+{#if identity.sendRefusal}
+  <div class="mt-4 space-y-1 rounded border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
+    <p>
+      Refused by the mail provider on {formatDateTime(identity.sendRefusal.lastAt)}.{#if identity.heldUntil}{' '}Sending
+        held until {formatDateTime(identity.heldUntil)}.{/if}
+    </p>
+    <p class="line-clamp-2 break-words font-mono" title={identity.sendRefusal.detail}>
+      {replyText(identity.sendRefusal.detail)}
+    </p>
+    <div class="flex flex-wrap items-center gap-2">
+      <span>
+        Unblock it with the provider{#if identity.sendRefusal.sentThatDay > 0}, or set a daily cap below {identity
+            .sendRefusal.sentThatDay}{/if}.
+      </span>
+      <button
+        type="button"
+        onclick={markRefusalResolved}
+        disabled={saving}
+        class="rounded border border-border bg-page px-2.5 py-1 text-xs text-text hover:bg-surface disabled:opacity-50"
+      >
+        Mark resolved
+      </button>
+    </div>
+  </div>
 {/if}
 
 {#if draft}

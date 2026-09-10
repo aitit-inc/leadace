@@ -1,0 +1,1 @@
+ALTER TABLE "sending_identities" ADD COLUMN "send_refusal" jsonb;

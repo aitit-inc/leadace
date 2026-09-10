@@ -21,6 +21,7 @@ import {
   type MailboxBounceCounts,
   type MailboxBounceWindow,
   type MailboxDailyStatus,
+  type MailboxSendRefusal,
 } from '../domain/warmup'
 
 // 'unlimited' is internal-only (no Stripe price), set manually in the DB for
@@ -301,6 +302,7 @@ export type MailboxDailyQuota =
       used: number
       remaining: number
       pausedUntil: Date | null
+      heldUntil: Date | null
     }
 
 export async function getMailboxDailyQuota(
@@ -315,6 +317,7 @@ export async function getMailboxDailyQuota(
       warmupStartedAt: sendingIdentities.warmupStartedAt,
       dailyCapOverride: sendingIdentities.dailyCapOverride,
       pausedUntil: sendingIdentities.pausedUntil,
+      sendRefusal: sendingIdentities.sendRefusal,
     })
     .from(sendingIdentities)
     .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.identityId, identityId)))
@@ -330,6 +333,7 @@ export async function getMailboxDailyQuota(
     used: status.used,
     remaining: status.remaining,
     pausedUntil: status.pausedUntil,
+    heldUntil: status.heldUntil,
   }
 }
 
@@ -415,7 +419,53 @@ export function formatMailboxQuotaError(quota: MailboxDailyQuota): string {
   if (quota.pausedUntil) {
     return `Sending from this mailbox is paused until ${quota.pausedUntil.toISOString()}.`
   }
+  if (quota.heldUntil) {
+    return `The mail provider refused this mailbox, so sending from it is held until ${quota.heldUntil.toISOString()}. Once it is resolved with the provider, mark it resolved in Account settings.`
+  }
   return `This mailbox's safe daily send limit (${quota.cap}/day) is reached. This protects your sending domain's reputation; it resets at UTC midnight. Reach remaining prospects by form/SNS, or continue tomorrow.`
+}
+
+export async function recordMailboxRefusal(
+  db: Db,
+  tenantId: TenantId,
+  identityId: SendingIdentityId | null,
+  detail: string,
+  now: Date = new Date(),
+): Promise<void> {
+  if (!identityId) return
+  const at = now.toISOString()
+  const first: MailboxSendRefusal = {
+    since: at,
+    lastAt: at,
+    detail,
+    sentThatDay: await countMailboxEmailSendsToday(db, tenantId, identityId, now),
+  }
+  await db
+    .update(sendingIdentities)
+    .set({
+      sendRefusal: sql`COALESCE(${sendingIdentities.sendRefusal}, ${JSON.stringify(first)}::jsonb) || ${JSON.stringify({ lastAt: at, detail })}::jsonb`,
+      updatedAt: now,
+    })
+    .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.identityId, identityId)))
+}
+
+// Only a send that started after the latest refusal shows it lifted; an earlier
+// attempt finishing late must not clear it.
+export async function clearMailboxSendRefusal(
+  db: Db,
+  tenantId: TenantId,
+  identityId: SendingIdentityId | null,
+  attemptStartedAt: Date,
+): Promise<void> {
+  if (!identityId) return
+  await db
+    .update(sendingIdentities)
+    .set({ sendRefusal: null })
+    .where(and(
+      eq(sendingIdentities.tenantId, tenantId),
+      eq(sendingIdentities.identityId, identityId),
+      sql`(${sendingIdentities.sendRefusal} ->> 'lastAt')::timestamptz < ${attemptStartedAt.toISOString()}::timestamptz`,
+    ))
 }
 
 // Exposes the warmup state behind the per-mailbox daily cap —
@@ -428,6 +478,7 @@ export type MailboxHealth =
       email: string
       warmupStartedAt: Date | null
       dailyCapOverride: number | null
+      sendRefusal: MailboxSendRefusal | null
     } & MailboxDailyStatus &
       MailboxBounceWindow)
 
@@ -478,6 +529,7 @@ export async function getMailboxHealth(
       warmupStartedAt: sendingIdentities.warmupStartedAt,
       dailyCapOverride: sendingIdentities.dailyCapOverride,
       pausedUntil: sendingIdentities.pausedUntil,
+      sendRefusal: sendingIdentities.sendRefusal,
     })
     .from(sendingIdentities)
     .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.identityId, identityId)))
@@ -494,6 +546,7 @@ export async function getMailboxHealth(
     email: mailbox.email,
     warmupStartedAt: mailbox.warmupStartedAt,
     dailyCapOverride: mailbox.dailyCapOverride,
+    sendRefusal: mailbox.sendRefusal,
     ...mailboxDailyStatus(mailbox, used, DEFAULT_WARMUP, now),
     ...mailboxBounceWindow(bounceByIdentity.get(identityId)),
   }
@@ -505,11 +558,12 @@ export const updateMailboxWarmupSchema = z
   .object({
     dailyCapOverride: z.number().int().min(0).max(MAX_DAILY_CAP_OVERRIDE).nullable().optional(),
     pausedUntil: z.iso.datetime().nullable().optional(),
+    resolveRefusal: z.literal(true).optional(),
   })
   .strict()
   .refine(
-    (p) => p.dailyCapOverride !== undefined || p.pausedUntil !== undefined,
-    { message: 'Provide dailyCapOverride or pausedUntil to update.' },
+    (p) => p.dailyCapOverride !== undefined || p.pausedUntil !== undefined || p.resolveRefusal !== undefined,
+    { message: 'Provide dailyCapOverride, pausedUntil or resolveRefusal to update.' },
   )
 
 export type UpdateMailboxWarmupPatch = z.infer<typeof updateMailboxWarmupSchema>
@@ -526,6 +580,7 @@ export async function updateMailboxWarmup(
     ...(patch.pausedUntil !== undefined
       ? { pausedUntil: patch.pausedUntil === null ? null : new Date(patch.pausedUntil) }
       : {}),
+    ...(patch.resolveRefusal ? { sendRefusal: null } : {}),
     updatedAt: now,
   }
 

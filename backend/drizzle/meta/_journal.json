@@ -589,6 +589,13 @@
       "when": 1789047471815,
       "tag": "0083_minor_daimon_hellstrom",
       "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1789053777839,
+      "tag": "0084_clean_scarlet_spider",
+      "breakpoints": true
     }
   ]
 }

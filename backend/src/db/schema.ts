@@ -26,6 +26,7 @@ import type { ChannelAffinityMap, ChannelCoarseStat } from '../domain/channel-af
 import type { CoarseIndustry } from '../domain/coarse-industry'
 import type { TargetingAxisStat, TargetingLifts } from '../domain/targeting-score'
 import type { VitalsAssessment } from '../domain/vital-signs'
+import type { MailboxSendRefusal } from '../domain/warmup'
 import type { JobLogLine, JobParams, JobProgress, JobResult } from '../domain/jobs'
 import { JOB_KINDS, JOB_ORIGINS, JOB_STATUSES } from '../domain/jobs'
 import type { ChatContent, PendingCall } from '../domain/chat'
@@ -408,6 +409,7 @@ export const sendingIdentities = pgTable('sending_identities', {
   warmupStartedAt: timestamp('warmup_started_at', { withTimezone: true }),
   dailyCapOverride: integer('daily_cap_override'),
   pausedUntil: timestamp('paused_until', { withTimezone: true }),
+  sendRefusal: jsonb('send_refusal').$type<MailboxSendRefusal>(),
   // Observability only — NOT a poll cursor (the poll re-searches a fixed window).
   lastPolledAt: timestamp('last_polled_at', { withTimezone: true }),
   // Poll-failure streak start; NULL while healthy. Persistence is the alert

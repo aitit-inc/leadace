@@ -18,6 +18,23 @@ export interface MailboxWarmupState {
   warmupStartedAt: Date | null
   dailyCapOverride: number | null
   pausedUntil: Date | null
+  sendRefusal: MailboxSendRefusal | null
+}
+
+// since/sentThatDay come from the streak's first refusal (sentThatDay = the
+// sends that UTC day before it), lastAt/detail from the latest.
+export type MailboxSendRefusal = {
+  since: string
+  lastAt: string
+  detail: string
+  sentThatDay: number
+}
+
+function heldUntil(state: MailboxWarmupState, now: Date): Date | null {
+  if (state.sendRefusal === null) return null
+  const last = new Date(state.sendRefusal.lastAt)
+  const until = new Date(Date.UTC(last.getUTCFullYear(), last.getUTCMonth(), last.getUTCDate() + 1))
+  return now < until ? until : null
 }
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000
@@ -45,6 +62,7 @@ export function mailboxDailyCap(
   now: Date,
 ): number {
   if (state.pausedUntil && now < state.pausedUntil) return 0
+  if (heldUntil(state, now)) return 0
   if (state.dailyCapOverride !== null) return state.dailyCapOverride
   return rampCap(config, warmupWeeksElapsed(state, config, now))
 }
@@ -56,6 +74,7 @@ export interface MailboxDailyStatus {
   // Future pause only; an elapsed pausedUntil means the day's sends are spent,
   // not paused, so it reads as null (matching mailboxDailyCap's restored cap).
   pausedUntil: Date | null
+  heldUntil: Date | null
   rampWeek: number
   rampWeeks: number
   steadyStatePerDay: number
@@ -77,6 +96,7 @@ export function mailboxDailyStatus(
     used,
     remaining: Math.max(0, cap - used),
     pausedUntil: state.pausedUntil && state.pausedUntil > now ? state.pausedUntil : null,
+    heldUntil: heldUntil(state, now),
     rampWeek: warmupWeeksElapsed(state, config, now),
     rampWeeks: config.rampWeeks,
     steadyStatePerDay: config.steadyStatePerDay,

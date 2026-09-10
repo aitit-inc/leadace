@@ -11,10 +11,11 @@ export type SmtpConnectionView = {
   username: string;
 };
 
-// Mirrors backend domain/warmup.ts MailboxDailyStatus: future-only pause +
-// today's cap/used/remaining + ramp progress.
+// Mirrors backend domain/warmup.ts MailboxDailyStatus: future-only pause and
+// refusal hold + today's cap/used/remaining + ramp progress.
 export type MailboxDailyStatus = {
   pausedUntil: string | null;
+  heldUntil: string | null;
   cap: number;
   used: number;
   remaining: number;
@@ -33,12 +34,21 @@ export type MailboxBounceWindow = {
   bounceRate: number;
 };
 
+// Mirrors backend domain/warmup.ts MailboxSendRefusal.
+export type MailboxSendRefusal = {
+  since: string;
+  lastAt: string;
+  detail: string;
+  sentThatDay: number;
+};
+
 export type SendingIdentity = {
   identityId: string;
   provider: SendingIdentityProvider;
   fromEmail: string;
   warmupStartedAt: string | null;
   dailyCapOverride: number | null;
+  sendRefusal: MailboxSendRefusal | null;
   grantedAt: string;
   smtp: SmtpConnectionView | null;
 } & MailboxDailyStatus &
@@ -60,6 +70,7 @@ export type RegisterSmtpIdentityInput = {
 export type MailboxWarmupPatch = {
   dailyCapOverride?: number | null;
   pausedUntil?: string | null;
+  resolveRefusal?: true;
 };
 
 // Returned by PUT /me/sending-identities/:id/warmup — the resulting health of
@@ -69,5 +80,6 @@ export type MailboxHealth = {
   email: string;
   warmupStartedAt: string | null;
   dailyCapOverride: number | null;
+  sendRefusal: MailboxSendRefusal | null;
 } & MailboxDailyStatus &
   MailboxBounceWindow;

@@ -36,6 +36,7 @@ export async function loadTenantAttentionInput(
         authRevokedAt: sendingIdentities.authRevokedAt,
         pollFailingSince: sendingIdentities.pollFailingSince,
         lastPollError: sendingIdentities.lastPollError,
+        sendRefusal: sendingIdentities.sendRefusal,
       })
       .from(sendingIdentities)
       .where(eq(sendingIdentities.tenantId, tenantId)),
@@ -68,6 +69,7 @@ export async function loadTenantAttentionInput(
     compliance: { ready: complianceRes.value.ready, missing: complianceRes.value.missing },
     gmailConnected: gmailRes.value.connected,
     identities,
+    refusedMailboxes: identities.flatMap((i) => (i.sendRefusal ? [{ fromEmail: i.fromEmail, sentThatDay: i.sendRefusal.sentThatDay }] : [])),
     futileProjects,
     quota: {
       exhausted: quota.kind === 'capped' && quota.remaining <= 0,

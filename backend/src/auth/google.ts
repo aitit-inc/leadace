@@ -61,6 +61,14 @@ export async function refreshGoogleAccessToken(
   return data.access_token
 }
 
+class GmailSendError extends Error {
+  status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.status = status
+  }
+}
+
 export async function sendGmailMessage(args: {
   accessToken: string
   rfc822: string
@@ -76,7 +84,7 @@ export async function sendGmailMessage(args: {
   })
   if (!res.ok) {
     const detail = await res.text()
-    throw new Error(`Gmail send failed (${res.status}): ${detail}`)
+    throw new GmailSendError(`Gmail send failed (${res.status}): ${detail}`, res.status)
   }
   return (await res.json()) as { id: string; threadId: string }
 }
@@ -463,7 +471,7 @@ export async function markGmailAuthRevoked(
 export type MailSendResult =
   | { ok: true; kind: 'sent'; messageId: string; threadId: string; rfc822MessageId: string | null; from: string; identityId: SendingIdentityId }
   | { ok: false; httpStatus: 412; error: 'Gmail not connected' | 'Gmail token revoked'; detail: string }
-  | { ok: false; httpStatus: 502; error: 'Send failed'; detail: string; from: string }
+  | { ok: false; httpStatus: 502; error: 'Send failed'; detail: string; from: string; mailboxRefused: boolean }
 
 export function formatFromHeader(email: string, displayName: string | null): string {
   if (!displayName) return email
@@ -588,6 +596,9 @@ export async function sendForIdentity(
           error: 'Send failed',
           detail: e instanceof Error ? e.message : String(e),
           from: sendAsEmail,
+          // 403/429 are Gmail's per-user sending limits and account-level
+          // refusals; 400 is about this message, 5xx is transient.
+          mailboxRefused: e instanceof GmailSendError && (e.status === 403 || e.status === 429),
         }
       }
     }
@@ -607,7 +618,14 @@ export async function sendForIdentity(
         },
       )
       if (!result.ok) {
-        return { ok: false, httpStatus: 502, error: 'Send failed', detail: result.detail, from: sendAsEmail }
+        return {
+          ok: false,
+          httpStatus: 502,
+          error: 'Send failed',
+          detail: result.detail,
+          from: sendAsEmail,
+          mailboxRefused: result.mailboxRefused,
+        }
       }
       // No Gmail resource ids for SMTP.
       return { ok: true, kind: 'sent', messageId: '', threadId: '', rfc822MessageId, from: sendAsEmail, identityId: identity.identityId }

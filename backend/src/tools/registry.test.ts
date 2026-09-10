@@ -40,6 +40,11 @@ describe('confirmation gate', () => {
     expect(await gate('update_prospect_status', { projectId: 'p', prospectId: 1, status: 'deferred' })).not.toBeNull()
     expect(await gate('update_prospect_status', { projectId: 'p', prospectId: 1, status: 'contacted' })).toBeNull()
   })
+  it('gates every change to a mailbox\'s sending controls, even when its state cannot be read', async () => {
+    expect(await gate('update_mailbox_sending', { mailbox: 'a@example.com', dailyCap: 100 })).not.toBeNull()
+    expect(await gate('update_mailbox_sending', { mailbox: 'a@example.com', resolveRefusal: true })).not.toBeNull()
+    expect(await gate('update_mailbox_sending', { mailbox: 'a@example.com' })).toBeNull()
+  })
   it('leaves reads alone', async () => {
     expect(await gate('list_projects', {})).toBeNull()
     expect(await gate('get_document', { projectId: 'p', slug: 'business' })).toBeNull()

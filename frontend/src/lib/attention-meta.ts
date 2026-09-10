@@ -1,4 +1,5 @@
 import {
+	Ban,
 	HeartPulse,
 	Mail,
 	MailQuestion,
@@ -85,6 +86,17 @@ export function attentionMeta(item: AttentionItem): AttentionMeta {
 					item.since,
 				).toLocaleDateString()} — sending and reply collection are stopped until you reconnect`,
 				ctaLabel: 'Reconnect',
+				href: '/account-settings',
+			};
+		case 'mailbox_send_refused':
+			return {
+				icon: Ban,
+				tone: 'danger',
+				title: 'Mail provider refused to send',
+				desc: `${item.fromEmail}: unblock it with the provider${
+					item.sentThatDay > 0 ? `, or set its daily cap below ${item.sentThatDay}` : ''
+				}`,
+				ctaLabel: 'Resolve',
 				href: '/account-settings',
 			};
 		case 'reply_collection_scope_missing':

@@ -11,6 +11,7 @@ export type AttentionItem =
   | { kind: 'compliance_incomplete'; missing: string[] }
   | { kind: 'gmail_disconnected' }
   | { kind: 'gmail_auth_revoked'; fromEmail: string; since: string }
+  | { kind: 'mailbox_send_refused'; fromEmail: string; sentThatDay: number }
   | { kind: 'no_outbound_channels' }
   | { kind: 'quota_exhausted'; constraint: QuotaConstraint }
   | { kind: 'reply_collection_scope_missing'; fromEmail: string }
@@ -101,6 +102,7 @@ export type AttentionInput = {
   compliance: { ready: boolean; missing: string[] }
   gmailConnected: boolean
   identities: IdentityHealthInput[]
+  refusedMailboxes: Array<{ fromEmail: string; sentThatDay: number }>
   quota: { exhausted: boolean; constraint: QuotaConstraint | null }
   futileProjects: Array<{ projectId: string; projectName: string; sends: number; replies: number }>
   now: Date
@@ -129,6 +131,7 @@ export function deriveAttentionItems(input: AttentionInput): AttentionItem[] {
   }
   if (!input.gmailConnected) items.push({ kind: 'gmail_disconnected' })
   items.push(...revoked)
+  for (const m of input.refusedMailboxes) items.push({ kind: 'mailbox_send_refused', ...m })
   if (input.project && !input.project.outboundChannelsConfigured) {
     items.push({ kind: 'no_outbound_channels' })
   }

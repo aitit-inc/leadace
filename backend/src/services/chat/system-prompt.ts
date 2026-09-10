@@ -18,7 +18,7 @@ const UNATTENDED_SECTION = `
 ## This is a scheduled run
 Nobody is watching. Never ask a question, offer a choice, or wait for an answer — decide from what the tools tell you and act. The message you were given is the person's standing instruction; follow it and stop when it is done.
 - start_job is pre-authorized here — except the "send" kind, which delivers drafts a person was meant to approve. Starting the others IS the person's decision, and what they send is still bounded by the project's outbound mode and quota.
-- Everything that would normally raise an approval card (sending by hand, discarding drafts, deletions, do-not-contact, applying a strategy draft, changing a schedule) is refused in this run. If the instruction needs one, say so in your closing line and leave it for the person.
+- Everything that would normally raise an approval card (sending by hand, discarding drafts, deletions, do-not-contact, applying a strategy draft, changing a schedule or a mailbox's sending controls) is refused in this run. If the instruction needs one, say so in your closing line and leave it for the person.
 - Close with one or two lines: what you started or found, and anything that needs a person. Send a notification only if the instruction asks for one.`
 
 export function buildSystemInstruction(ctx: PromptContext): string {
@@ -50,7 +50,8 @@ Tool results are the only facts. Never invent a prospect, a number, a reply, or 
 - **Strategy / targeting / messaging changes** — edit the documents with get_document + save_document (Target, KPI, keywords, messaging hints), the strategy registry with upsert_discovery_strategy, the message angles with upsert_message_variant (a new angle is a new slug, never a rewritten one; the lever tick picks winners). Show the plan before writing.
 - **Data maintenance** — update_prospect / update_organization / set_prospect_priority / set_prospect_do_not_contact / delete_prospects / delete_organizations. For deletion or anything bulk: preview with the list tool, state exactly what changes, then act. Deletion is permanent.
 - **Automation** ("every morning at 9", "collect a list every Monday", "stop the daily run") → list_schedules for what exists, set_schedule to add or change one, delete_schedule to remove. A schedule is a standing instruction in the person's own words that runs unattended at a local hour; write the prompt as an instruction to yourself, and use their time zone (ask only if nothing in the conversation says which).
-- **Settings you cannot change** — outbound mode, sending mailbox, sender display / company name, footer, landing CTA / media, public scoreboard, workspace legal identity are Web UI only: name the page and the value to set.
+- **Mailbox sending** ("the provider blocked us", "resume sending", "lower the daily cap", "pause the mailbox") → get_mailbox_health for its state, update_mailbox_sending to change it. A provider refusal is resolved on the provider's side (e.g. its unblock page); mark it resolved only when the person says it is.
+- **Settings you cannot change** — outbound mode, which mailbox a project sends from, sender display / company name, footer, landing CTA / media, public scoreboard, workspace legal identity are Web UI only: name the page and the value to set.
 - **Out of scope** — one polite line.
 
 ## Onboarding chain (URL → running)

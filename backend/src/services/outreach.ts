@@ -35,6 +35,8 @@ import {
   outreachQuotaErrorIfExhausted,
   getMailboxDailyQuota,
   mailboxQuotaErrorIfExhausted,
+  recordMailboxRefusal,
+  clearMailboxSendRefusal,
 } from './plan-limits'
 import {
   sendForIdentity,
@@ -511,6 +513,7 @@ export async function recordOutreach(
     await markProspectContacted(db, projectId, input.prospectId, sentAt, log.id)
     if (input.channel === 'email') {
       await stampMailboxFirstSendIfNeeded(db, tenantId, sendingIdentityId, sentAt)
+      await clearMailboxSendRefusal(db, tenantId, sendingIdentityId, sentAt)
     }
   } else if (input.status === 'failed' && log) {
     await deferProspectReeligibility(db, projectId, input.prospectId, sentAt)
@@ -884,7 +887,9 @@ export async function sendAndRecord(
       .update(outreachLogs)
       .set({ status: 'failed', errorMessage: result.detail })
       .where(eq(outreachLogs.id, log.id))
-    await deferProspectReeligibility(db, projectId, input.prospectId, sentAt)
+    // A refusal of our mailbox says nothing about the prospect — keep it eligible.
+    if (result.mailboxRefused) await recordMailboxRefusal(db, tenantId, sendingIdentityId, result.detail)
+    else await deferProspectReeligibility(db, projectId, input.prospectId, sentAt)
     return err('BAD_GATEWAY', result.error, result.detail, { outreachId: log.id })
   }
 
@@ -895,6 +900,7 @@ export async function sendAndRecord(
     .where(eq(outreachLogs.id, log.id))
   await markProspectContacted(db, projectId, input.prospectId, sentAt, log.id)
   await stampMailboxFirstSendIfNeeded(db, tenantId, sendingIdentityId, sentAt)
+  await clearMailboxSendRefusal(db, tenantId, sendingIdentityId, sentAt)
 
   return ok({
     mode: 'sent',
@@ -1349,6 +1355,7 @@ export async function sendDraft(
   })
   const sendBody = `${draft.body}${attachments.footer}`
 
+  const attemptedAt = new Date()
   const result = await sendForIdentity(db, {
     tenantId,
     identityId: sendingIdentityId,
@@ -1380,12 +1387,14 @@ export async function sendDraft(
     .where(eq(outreachLogs.id, draft.id))
 
   if (!result.ok) {
-    await deferProspectReeligibility(db, draft.projectId as ProjectId, draft.prospectId, sentAt)
+    if (result.mailboxRefused) await recordMailboxRefusal(db, tenantId, sendingIdentityId, result.detail)
+    else await deferProspectReeligibility(db, draft.projectId as ProjectId, draft.prospectId, sentAt)
     return err('BAD_GATEWAY', result.error, result.detail, { outreachId: draft.id })
   }
 
   await markProspectContacted(db, draft.projectId as ProjectId, draft.prospectId, sentAt, draft.id)
   await stampMailboxFirstSendIfNeeded(db, tenantId, sendingIdentityId, sentAt)
+  await clearMailboxSendRefusal(db, tenantId, sendingIdentityId, attemptedAt)
 
   return ok({
     mode: 'sent',
