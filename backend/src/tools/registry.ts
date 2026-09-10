@@ -13,7 +13,7 @@ import type { ReplyCollectionStatus } from '../domain/attention'
 import { isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG } from '../domain/url'
 import type { OutreachQuota, OutreachQuotaWindow, OutreachWindowKind } from '../services/plan-limits'
 import { SERVER_VERSION } from '../mcp/version'
-import { JOB_KINDS, JOB_STATUSES, jobParamsSchema, type JobKind, type JobParams } from '../domain/jobs'
+import { JOB_KINDS, JOB_STATUSES, jobParamsSchema, type JobKind, type JobLogLine, type JobParams } from '../domain/jobs'
 import { DAYS_OF_WEEK, daysSchema, hourSchema, promptSchema, timezoneSchema } from '../domain/schedules'
 import { applyStrategyDraftSchema, strategyDraftInputSchema } from '../domain/strategy-draft'
 
@@ -1926,6 +1926,17 @@ export function buildToolRegistry(): ToolDef[] {
     const tail = j.status === 'succeeded' && j.result ? ` — ${j.result.summary}` : j.status === 'failed' && j.error ? ` — ${j.error}` : progress
     return `${j.id} ${j.kind} [${j.status}] project ${j.projectId}, started by ${j.startedBy} at ${j.createdAt}${tail}`
   }
+  const jobLogLine = (l: JobLogLine): string => {
+    const at = `${l.at.slice(11, 16)} UTC`
+    switch (l.kind) {
+      case 'stage':
+        return `${at} ${l.stage}: ${l.summary}`
+      case 'decision':
+        return `${at} decided: ${l.text}`
+      case 'prospect':
+        return `${at} ${l.name} — ${l.outcome}${'subject' in l ? `: "${l.subject}"` : 'reason' in l ? `: ${l.reason}` : ''}`
+    }
+  }
 
   defineTool(
     'start_job',
@@ -1958,7 +1969,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_job',
-    'Status of one job: kind, status (queued / running / succeeded / failed / cancelled), current step and progress while running, the result summary when succeeded, the error when failed.',
+    'Status of one job: kind, status (queued / running / succeeded / failed / cancelled), current step and progress while running, the result summary when succeeded, the error when failed — then its log, one UTC-timed line per stage finished, decision taken, and prospect sent, drafted, skipped, or failed on (with the subject or the reason).',
     { id: z.string().min(1).describe('Job id from start_job or list_jobs.') },
     async ({ id }, ctx) => {
       const { ok, data } = await ctx.callApi('GET', `/jobs/${encodeURIComponent(id)}`, null)
@@ -1966,7 +1977,8 @@ export function buildToolRegistry(): ToolDef[] {
         const e = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${e.error}` }], isError: true }
       }
-      return { content: [{ type: 'text' as const, text: jobLine(data as JobWire) }] }
+      const job = data as JobWire & { log: JobLogLine[] }
+      return { content: [{ type: 'text' as const, text: [jobLine(job), ...job.log.map(jobLogLine)].join('\n') }] }
     },
     { readOnly: true },
   )

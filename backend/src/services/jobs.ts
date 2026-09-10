@@ -13,6 +13,8 @@ import {
   TERMINAL_JOB_STATUSES,
   jobParamsSchema,
   type JobKind,
+  type JobLogEntry,
+  type JobLogLine,
   type JobOrigin,
   type JobParams,
   type JobProgress,
@@ -70,6 +72,7 @@ export type JobView = {
   createdAt: Date
   startedAt: Date | null
   finishedAt: Date | null
+  logEntries: number
 }
 
 const jobCols = {
@@ -86,10 +89,13 @@ const jobCols = {
   createdAt: jobs.createdAt,
   startedAt: jobs.startedAt,
   finishedAt: jobs.finishedAt,
+  logEntries: sql<number>`jsonb_array_length(${jobs.log})`,
 }
 
-type JobRow = typeof jobs.$inferSelect
-function toView(row: Omit<JobRow, 'tenantId' | 'idempotencyKey'>): JobView {
+// The log grows with the work, so only the single-job read carries it.
+export type JobDetail = JobView & { log: JobLogLine[] }
+
+function toView(row: Omit<JobView, 'projectId'> & { projectId: string }): JobView {
   return { ...row, projectId: asProjectId(row.projectId) }
 }
 
@@ -144,10 +150,16 @@ async function insertAndRun(
     .onConflictDoNothing({ target: jobs.idempotencyKey })
     .returning(jobCols)
   if (!row) {
+    const [today] = idempotencyKey
+      ? await db.select(jobCols).from(jobs).where(and(eq(jobs.tenantId, tenantId), eq(jobs.idempotencyKey, idempotencyKey))).limit(1)
+      : []
+    const ran = today
+      ? ` Today's: job ${today.id}, ${today.status}, started by ${today.startedBy} at ${today.createdAt.toISOString()}${today.result ? ` — ${today.result.summary}` : ''}`
+      : ''
     return err(
       'CONFLICT',
       'The daily cycle already ran today for this project',
-      'One daily cycle per project per UTC day. Start a single stage (discover / draft / evaluate) if more work is wanted today.',
+      `One daily cycle per project per UTC day. Start a single stage (discover / draft / evaluate) if more work is wanted today.${ran}`,
     )
   }
   // The row exists before the instance so the Workflow always finds it. A
@@ -186,14 +198,15 @@ export async function listJobs(
   return ok({ jobs: rows.map(toView) })
 }
 
-export async function getJob(db: Db, tenantId: TenantId, id: string): Promise<ServiceResult<JobView>> {
+export async function getJob(db: Db, tenantId: TenantId, id: string): Promise<ServiceResult<JobDetail>> {
   const [row] = await db
-    .select(jobCols)
+    .select({ ...jobCols, log: jobs.log })
     .from(jobs)
     .where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, id)))
     .limit(1)
   if (!row) return err('NOT_FOUND', 'Job not found')
-  return ok(toView(row))
+  const { log, ...view } = row
+  return ok({ ...toView(view), log })
 }
 
 export async function cancelJob(
@@ -246,6 +259,17 @@ export async function markJobRunning(db: Db, tenantId: TenantId, id: string): Pr
 
 export async function writeJobProgress(db: Db, tenantId: TenantId, id: string, progress: JobProgress): Promise<void> {
   await db.update(jobs).set({ progress }).where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, id)))
+}
+
+// A step that runs again after writing (the instance restarted before the
+// step was recorded as done) finds its lines already there.
+export async function appendJobLog(db: Db, tenantId: TenantId, id: string, step: string, entries: JobLogEntry[]): Promise<void> {
+  const at = new Date().toISOString()
+  const lines: JobLogLine[] = entries.map((e) => ({ ...e, at, step }))
+  await db
+    .update(jobs)
+    .set({ log: sql`${jobs.log} || ${JSON.stringify(lines)}::jsonb` })
+    .where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, id), sql`NOT ${jobs.log} @> ${JSON.stringify([{ step }])}::jsonb`))
 }
 
 export async function finishJob(

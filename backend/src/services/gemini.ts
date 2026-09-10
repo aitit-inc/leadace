@@ -176,12 +176,16 @@ export type GeminiChatArgs = GeminiCall & {
   functionDeclarations: FunctionDeclaration[]
   thinking?: HostedThinking
   maxOutputTokens: number
+  // Stopping is not a failure: the stream ends where the answer stands.
+  signal: AbortSignal
 }
 
 // One model turn of the chat agent, streamed. The caller drives the
 // function-calling loop (execute calls, append responses, call again).
 // Usage arrives on the chunks; the last one carrying it holds the totals.
 export async function* streamGeminiChat(args: GeminiChatArgs): AsyncGenerator<GenerateContentResponse> {
+  // The SDK ignores a signal that is already aborted.
+  if (args.signal.aborted) return
   const ai = new GoogleGenAI({ apiKey: args.apiKey })
   const deadline = AbortSignal.timeout(args.timeoutMs)
   let stream: AsyncGenerator<GenerateContentResponse>
@@ -194,19 +198,22 @@ export async function* streamGeminiChat(args: GeminiChatArgs): AsyncGenerator<Ge
         tools: [{ functionDeclarations: args.functionDeclarations }],
         ...thinkingConfig(args.thinking),
         maxOutputTokens: args.maxOutputTokens,
-        abortSignal: deadline,
+        abortSignal: AbortSignal.any([deadline, args.signal]),
       },
     })
   } catch (e) {
+    if (args.signal.aborted) return
     toGeminiError(e, args, 'request', deadline)
   }
   let last: GenerateContentResponse | undefined
   try {
     for await (const chunk of stream) {
+      if (args.signal.aborted) return
       if (chunk.usageMetadata) last = chunk
       yield chunk
     }
   } catch (e) {
+    if (args.signal.aborted) return
     toGeminiError(e, args, 'stream', deadline)
   } finally {
     if (last) logUsage(args, last)

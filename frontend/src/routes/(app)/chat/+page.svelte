@@ -3,6 +3,7 @@
   import { ApiError } from '$lib/api';
   import { confirmChatCall, createThread, deleteThread, sendChatMessage } from '$lib/api/chat';
   import { cancelJob, getJob } from '$lib/api/jobs';
+  import { answerSaved, stillFinishing } from '$lib/chat-stop';
   import ThreadList from '$lib/components/chat/ThreadList.svelte';
   import MessageItem from '$lib/components/chat/MessageItem.svelte';
   import JobCard from '$lib/components/chat/JobCard.svelte';
@@ -10,7 +11,7 @@
   import SenderIdentityCard, { type SenderIdentityProposal } from '$lib/components/chat/SenderIdentityCard.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import type { ChatEvent, ChatMessage, PendingCall } from '$lib/types/chat';
-  import { TERMINAL_JOB_STATUSES, type Job } from '$lib/types/jobs';
+  import { TERMINAL_JOB_STATUSES, type Job, type JobDetail } from '$lib/types/jobs';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
@@ -21,8 +22,13 @@
   let liveMessages = $state<ChatMessage[]>([]);
   let streamingText = $state('');
   let liveSteps = $state(0);
+  let stoppedText = $state('');
+  let stopping = $state(false);
+  // Stop waits for the server's first event: before it, the turn's own writes
+  // (the message, a claimed approval) could still land after the stop settled.
+  let accepted = $state(false);
   let pending = $state<PendingCall | null>(null);
-  let jobs = $state<Record<string, Job>>({});
+  let jobs = $state<Record<string, Job | JobDetail>>({});
   let busy = $state(false);
   let error = $state('');
   let input = $state('');
@@ -32,15 +38,22 @@
   // aborts it and drops anything it still emits.
   let controller: AbortController | null = null;
   let streamThreadId: string | null = null;
-  let shownThreadId: string | null = null;
+  // A thread switch or a later stop takes over from the stop in progress.
+  let stopper: object | null = null;
+  // A thread, or one project's home. A request started for an earlier view,
+  // even one left and come back to, finds the generation moved on.
+  let shownView: string | undefined;
+  let viewGen = 0;
 
   $effect(() => {
-    // Reset per-thread state on a thread switch only. Every invalidate hands
-    // over a new `data`; the same thread keeps its error, job cards and the
+    // Reset per-view state on a view switch only. Every invalidate hands
+    // over a new `data`; the same view keeps its error, job cards and the
     // turn in flight.
     const id = data.thread?.id ?? null;
-    if (shownThreadId === id) return;
-    shownThreadId = id;
+    const view = id ?? `home:${data.activeProjectId}`;
+    if (shownView === view) return;
+    shownView = view;
+    viewGen++;
     if (streamThreadId !== id) {
       controller?.abort();
       busy = false;
@@ -48,16 +61,21 @@
     liveMessages = [];
     streamingText = '';
     liveSteps = 0;
+    stoppedText = '';
+    stopping = false;
+    stopper = null;
     jobs = Object.fromEntries(data.jobs.map((j) => [j.id, j]));
     error = '';
     pending = data.thread?.pendingCall ?? null;
-    for (const j of data.jobs) if (!TERMINAL_JOB_STATUSES.includes(j.status)) void watchJob(j.id, id);
+    for (const j of data.jobs) if (!TERMINAL_JOB_STATUSES.includes(j.status)) void watchJob(j.id);
   });
 
   let messages = $derived.by(() => {
     const seen = new Set(data.messages.map((m) => m.id));
     return [...data.messages, ...liveMessages.filter((m) => !seen.has(m.id))];
   });
+
+  let activity = $derived(data.thread ? [] : data.jobs.map((j) => jobs[j.id] ?? j));
 
   $effect(() => {
     void messages.length;
@@ -99,6 +117,7 @@
 
   function handleEvent(threadId: string, e: ChatEvent) {
     if (threadId !== (data.thread?.id ?? streamThreadId)) return;
+    accepted = true;
     switch (e.type) {
       case 'message':
         liveMessages = [...liveMessages, e.message];
@@ -141,12 +160,13 @@
     controller?.abort();
   });
 
-  async function watchJob(id: string, threadId: string | null = streamThreadId) {
+  async function watchJob(id: string) {
+    const gen = viewGen;
     const startedAt = Date.now();
     while (mounted) {
       try {
         const job = await getJob(id, fetch, token);
-        if (!mounted || (data.thread?.id ?? null) !== threadId) return;
+        if (!mounted || gen !== viewGen) return;
         jobs = { ...jobs, [id]: job };
         if (TERMINAL_JOB_STATUSES.includes(job.status)) {
           await invalidate('app:chat');
@@ -156,6 +176,18 @@
         return;
       }
       await new Promise((r) => setTimeout(r, Date.now() - startedAt < POLL_FAST_FOR_MS ? POLL_FAST_MS : POLL_SLOW_MS));
+    }
+  }
+
+  async function loadDetails(id: string) {
+    const gen = viewGen;
+    try {
+      const job = await getJob(id, fetch, token);
+      // A poll may have stored a newer copy while this one was in flight.
+      const shown = jobs[id];
+      if (gen === viewGen && !(shown && 'log' in shown)) jobs = { ...jobs, [id]: job };
+    } catch (e) {
+      if (gen === viewGen) error = e instanceof ApiError ? e.message : 'Could not load the job details.';
     }
   }
 
@@ -173,8 +205,9 @@
     run: (threadId: string, onEvent: (e: ChatEvent) => void, signal: AbortSignal) => Promise<void>,
     onFail?: () => void,
   ) {
-    if (busy) return;
+    if (busy || stopping) return;
     busy = true;
+    accepted = false;
     error = '';
     const ac = new AbortController();
     controller = ac;
@@ -182,13 +215,7 @@
       const threadId = await ensureThread();
       streamThreadId = threadId;
       await run(threadId, (e) => handleEvent(threadId, e), ac.signal);
-      if (!ac.signal.aborted) {
-        if (projectsChanged) {
-          projectsChanged = false;
-          await invalidate('app:projects');
-        }
-        await invalidate('app:chat');
-      }
+      if (!ac.signal.aborted) await reload();
     } catch (e) {
       if (ac.signal.aborted) return;
       error = e instanceof ApiError ? e.message : 'Something went wrong. Please try again.';
@@ -199,6 +226,44 @@
         busy = false;
         streamingText = '';
         liveSteps = 0;
+      }
+    }
+  }
+
+  async function reload() {
+    if (projectsChanged) {
+      projectsChanged = false;
+      await invalidate('app:projects');
+    }
+    await invalidate('app:chat');
+  }
+
+  // A stopped turn goes on until it has recorded a call it had started (the
+  // server allows it 30 s). A message sent before that lands would read the
+  // call as interrupted, so Send waits until the stop is on record.
+  const SETTLE_POLL_MS = 500;
+  const SETTLE_FOR_MS = 30000;
+
+  async function stop() {
+    const me = {};
+    stopper = me;
+    stoppedText = streamingText;
+    stopping = true;
+    controller?.abort();
+    const until = Date.now() + SETTLE_FOR_MS;
+    try {
+      for (;;) {
+        await reload();
+        if (!mounted || stopper !== me) return;
+        if (!stillFinishing(data.messages, stoppedText, data.thread?.pendingCall != null) || Date.now() > until) break;
+        await new Promise((r) => setTimeout(r, SETTLE_POLL_MS));
+      }
+      pending = data.thread?.pendingCall ?? null;
+    } finally {
+      if (stopper === me) {
+        stopper = null;
+        stopping = false;
+        stoppedText = '';
       }
     }
   }
@@ -230,7 +295,7 @@
 
   async function cancel(id: string) {
     const job = await cancelJob(id, fetch, token);
-    jobs = { ...jobs, [id]: job };
+    jobs = { ...jobs, [id]: { ...jobs[id], ...job } };
   }
 </script>
 
@@ -251,7 +316,12 @@
 
   <section class="flex min-w-0 flex-1 flex-col">
     <div class="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-      {#if messages.length === 0 && !streamingText}
+      {#if activity.length > 0}
+        <h2 class="text-xs font-medium text-text-muted">Activity</h2>
+        {#each activity as job (job.id)}
+          <JobCard {job} oncancel={cancel} ondetails={loadDetails} showOrigin />
+        {/each}
+      {:else if messages.length === 0 && !streamingText}
         <div class="mx-auto max-w-lg py-10 text-center">
           <h2 class="text-base font-semibold text-text">Ask Ace anything about your outreach</h2>
           <p class="mt-2 text-base text-text-muted">
@@ -267,7 +337,7 @@
       {#each messages as m (m.id)}
         {#if m.content.role === 'job'}
           {#if jobs[m.content.jobId]}
-            <JobCard job={jobs[m.content.jobId]!} />
+            <JobCard job={jobs[m.content.jobId]!} ondetails={loadDetails} />
           {:else}
             <p class="text-xs text-text-muted">{m.content.summary}</p>
           {/if}
@@ -275,19 +345,23 @@
           <MessageItem content={m.content} />
         {/if}
       {/each}
-      {#each Object.values(jobs).filter((j) => !TERMINAL_JOB_STATUSES.includes(j.status)) as job (job.id)}
-        <JobCard {job} oncancel={cancel} />
-      {/each}
-      {#if streamingText}
-        <p class="max-w-[85%] whitespace-pre-wrap text-base text-text">{streamingText}</p>
+      {#if data.thread}
+        {#each Object.values(jobs).filter((j) => !TERMINAL_JOB_STATUSES.includes(j.status)) as job (job.id)}
+          <JobCard {job} oncancel={cancel} ondetails={loadDetails} />
+        {/each}
+      {/if}
+      {#if streamingText || !answerSaved(messages, stoppedText)}
+        <p class="max-w-[85%] whitespace-pre-wrap text-base text-text">{streamingText || stoppedText}</p>
       {/if}
       {#if busy}
         <p class="text-xs text-text-muted">
           {liveSteps === 0 ? 'Thinking…' : `Working… (${liveSteps} step${liveSteps === 1 ? '' : 's'})`}
         </p>
+      {:else if stopping}
+        <p class="text-xs text-text-muted">Stopping…</p>
       {/if}
       {#if pending}
-        <ConfirmCard {pending} {busy} onrespond={respond} />
+        <ConfirmCard {pending} busy={busy || stopping} onrespond={respond} />
       {/if}
       {#if showIdentityCard}
         {#key proposal.callId}
@@ -306,7 +380,7 @@
           {#each quickActions as a (a.label)}
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || stopping}
               onclick={() => send(a.text)}
               class="rounded-full border border-border px-2.5 py-1 text-xs text-text-secondary hover:bg-surface hover:text-text disabled:opacity-50"
             >
@@ -326,7 +400,7 @@
           bind:value={input}
           rows={2}
           placeholder={data.activeProjectId ? 'Tell Ace what to do…' : 'https://your-company.com'}
-          disabled={busy}
+          disabled={busy || stopping}
           onkeydown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
@@ -335,13 +409,28 @@
           }}
           class="min-w-0 flex-1 resize-none rounded border border-border bg-page px-3 py-2 text-base text-text focus:border-accent focus:outline-none disabled:opacity-60"
         ></textarea>
-        <button
-          type="submit"
-          disabled={busy || !input.trim()}
-          class="self-end rounded bg-accent px-4 py-2 text-base font-medium text-page hover:bg-accent-strong disabled:opacity-50"
-        >
-          Send
-        </button>
+        {#if busy}
+          <button
+            type="button"
+            onclick={stop}
+            disabled={!accepted}
+            aria-label="Stop"
+            title="Stop"
+            class="inline-flex h-10 min-w-[4.5rem] items-center justify-center self-end rounded bg-accent px-4 text-page hover:bg-accent-strong disabled:opacity-50"
+          >
+            <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" class="h-3.5 w-3.5">
+              <rect x="2" y="2" width="12" height="12" rx="2" />
+            </svg>
+          </button>
+        {:else}
+          <button
+            type="submit"
+            disabled={stopping || !input.trim()}
+            class="inline-flex h-10 min-w-[4.5rem] items-center justify-center self-end rounded bg-accent px-4 text-base font-medium text-page hover:bg-accent-strong disabled:opacity-50"
+          >
+            Send
+          </button>
+        {/if}
       </form>
     </div>
   </section>

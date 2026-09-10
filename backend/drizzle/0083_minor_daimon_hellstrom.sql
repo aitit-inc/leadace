@@ -1,0 +1,1 @@
+ALTER TABLE "jobs" ADD COLUMN "log" jsonb DEFAULT '[]'::jsonb NOT NULL;

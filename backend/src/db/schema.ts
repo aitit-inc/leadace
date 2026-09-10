@@ -26,7 +26,7 @@ import type { ChannelAffinityMap, ChannelCoarseStat } from '../domain/channel-af
 import type { CoarseIndustry } from '../domain/coarse-industry'
 import type { TargetingAxisStat, TargetingLifts } from '../domain/targeting-score'
 import type { VitalsAssessment } from '../domain/vital-signs'
-import type { JobParams, JobProgress, JobResult } from '../domain/jobs'
+import type { JobLogLine, JobParams, JobProgress, JobResult } from '../domain/jobs'
 import { JOB_KINDS, JOB_ORIGINS, JOB_STATUSES } from '../domain/jobs'
 import type { ChatContent, PendingCall } from '../domain/chat'
 import { CHAT_ROLES } from '../domain/chat'
@@ -1285,6 +1285,7 @@ export const jobs = pgTable('jobs', {
   progress: jsonb('progress').$type<JobProgress>(),
   result: jsonb('result').$type<JobResult>(),
   error: text('error'),
+  log: jsonb('log').$type<JobLogLine[]>().notNull().default([]),
   startedBy: jobOriginEnum('started_by').notNull(),
   // Chat thread to notify on completion; NULL for cron / UI / MCP starts.
   threadId: text('thread_id'),

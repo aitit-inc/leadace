@@ -7,12 +7,12 @@ import type { Env } from '../api/types'
 import { createDb, type Db } from '../db/connection'
 import { runWithRls, withTenantConnection } from '../db/rls'
 import type { ProjectId, TenantId } from '../domain/ids'
-import type { DiscoverCandidate, JobParamsOf, JobResult } from '../domain/jobs'
+import type { DiscoverCandidate, JobLogEntry, JobParamsOf, JobResult } from '../domain/jobs'
 import type { ServiceResult } from '../services/result'
-import { loadJobForRun, writeJobProgress, type LoadedJob } from '../services/jobs'
+import { appendJobLog, loadJobForRun, writeJobProgress, type LoadedJob } from '../services/jobs'
 import { runDiscover } from '../services/pipeline/discover'
 import { runEnrich } from '../services/pipeline/enrich'
-import { draftOne, loadCompositionContext, loadDraftBatch, summarizeDraftOutcomes, type DraftOutcome } from '../services/pipeline/draft'
+import { draftLogEntry, draftOne, loadCompositionContext, loadDraftBatch, summarizeDraftOutcomes, type DraftOutcome } from '../services/pipeline/draft'
 import { runEvaluate } from '../services/pipeline/evaluate'
 import { runJournal, type CycleDigest } from '../services/pipeline/journal'
 import { sendDraft } from '../services/outreach'
@@ -46,6 +46,23 @@ export function progressWriter(ctx: StageCtx, db: Db, prefix?: string): Progress
       (e: unknown) => console.warn(`[jobs] progress write failed job=${ctx.job.id}`, e),
     )
   }
+}
+
+// A failed write must not fail the step that did the work.
+async function writeLog(ctx: StageCtx, db: Db, stepName: string, entries: JobLogEntry[]): Promise<void> {
+  await appendJobLog(db, ctx.job.tenantId, ctx.job.id, stepName, entries).catch((e: unknown) =>
+    console.warn(`[jobs] log write failed job=${ctx.job.id}`, e),
+  )
+}
+
+// For entries known outside any step (the daily cycle's decisions): a step of
+// their own, so a replay after hibernation does not write them twice.
+export async function logStep(ctx: StageCtx, name: string, entries: JobLogEntry[]): Promise<void> {
+  const stepName = `log:${name}`
+  await ctx.step.do(stepName, async () => {
+    await writeLog(ctx, createDb(ctx.env.DATABASE_URL), stepName, entries)
+    return true
+  })
 }
 
 type Ids = { tenantId: TenantId; projectId: ProjectId }
@@ -126,11 +143,14 @@ export async function draftStage(
   const outcomes: DraftOutcome[] = []
   let consecutiveFailures = 0
   for (const [i, p] of batch.targets.entries()) {
-    const outcome = await ctx.step.do(`${namePrefix}:${p.prospectId}`, SEND_STEP, async (): Promise<DraftOutcome | null> => {
+    const stepName = `${namePrefix}:${p.prospectId}`
+    const outcome = await ctx.step.do(stepName, SEND_STEP, async (): Promise<DraftOutcome | null> => {
       const db = createDb(ctx.env.DATABASE_URL)
       if (await isCancelled(ctx, db)) return null
       await progressWriter(ctx, db, 'draft')(p.name, i, batch.targets.length)
-      return draftOne(db, tenantId, ctx.env, projectId, p, batch, context)
+      const drafted = await draftOne(db, tenantId, ctx.env, projectId, p, batch, context)
+      await writeLog(ctx, db, stepName, [draftLogEntry(p.name, drafted)])
+      return drafted
     })
     if (outcome === null) break
     outcomes.push(outcome)

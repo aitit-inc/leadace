@@ -63,8 +63,8 @@ describe('summarizeDraftOutcomes', () => {
   it('counts each outcome once and lists variant ids without duplicates', () => {
     const r = summarizeDraftOutcomes(
       [
-        { kind: 'sent', outreachId: 1, channel: 'email', variantId: 'a' },
-        { kind: 'drafted', outreachId: 2, channel: 'form', variantId: 'a' },
+        { kind: 'sent', outreachId: 1, channel: 'email', variantId: 'a', subject: 's' },
+        { kind: 'drafted', outreachId: 2, channel: 'form', variantId: 'a', subject: 's' },
         { kind: 'skipped', reason: 'bad_timing: layoffs' },
         { kind: 'failed', error: 'x' },
         { kind: 'needs_hands' },

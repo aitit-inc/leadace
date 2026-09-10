@@ -81,4 +81,17 @@ export type JobResult =
   | { kind: 'send'; summary: string; sent: number; failed: number }
   | { kind: 'evaluate'; summary: string; report: string; wrote: string[] }
   | { kind: 'journal'; summary: string; saved: boolean }
-  | { kind: 'daily_cycle'; summary: string; stages: Array<{ kind: JobKind; summary: string }>; decisions: string[] }
+  | { kind: 'daily_cycle'; summary: string }
+
+type ProspectOutcome =
+  | { outcome: 'sent' | 'drafted'; subject: string }
+  | { outcome: 'skipped' | 'failed'; reason: string }
+  | { outcome: 'needs_hands' }
+
+// Appended as each piece of work finishes, so a running job shows how far it
+// got; `progress` is only where it is right now.
+export type JobLogEntry =
+  | { kind: 'stage'; stage: JobKind; summary: string }
+  | { kind: 'decision'; text: string }
+  | ({ kind: 'prospect'; name: string } & ProspectOutcome)
+export type JobLogLine = JobLogEntry & { at: string; step: string }

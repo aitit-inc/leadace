@@ -66,7 +66,7 @@ async function runOne(env: Env, ctx: ExecutionContext, dispatch: InternalDispatc
   const authorization = `Bearer ${await mintRunToken(schedule.userId, env.SUPABASE_JWT_SECRET)}`
   const deps = {
     run,
-    aborted: () => false,
+    signal: new AbortController().signal,
     tenantId: schedule.tenantId,
     userId: schedule.userId,
     env,

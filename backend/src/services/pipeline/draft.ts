@@ -6,7 +6,7 @@ import { z } from 'zod'
 import type { Db } from '../../db/connection'
 import type { Channel, OutboundChannel } from '../../db/schema'
 import type { ProjectId, TenantId } from '../../domain/ids'
-import type { JobParamsOf, JobResult } from '../../domain/jobs'
+import type { JobLogEntry, JobParamsOf, JobResult } from '../../domain/jobs'
 import { ok, type ServiceResult } from '../result'
 import { callGeminiJson, GeminiError, HOSTED_MODEL } from '../gemini'
 import { listReachable, type ReachableProspect } from '../prospects'
@@ -207,11 +207,25 @@ decision "skip": skipReason and a one-line skipNote; subject and body null.`
 }
 
 export type DraftOutcome =
-  | { kind: 'drafted'; outreachId: number; channel: Channel; variantId: string | null }
-  | { kind: 'sent'; outreachId: number; channel: Channel; variantId: string | null }
+  | { kind: 'drafted'; outreachId: number; channel: Channel; variantId: string | null; subject: string }
+  | { kind: 'sent'; outreachId: number; channel: Channel; variantId: string | null; subject: string }
   | { kind: 'skipped'; reason: string }
   | { kind: 'needs_hands' }
   | { kind: 'failed'; error: string }
+
+export function draftLogEntry(name: string, o: DraftOutcome): JobLogEntry {
+  switch (o.kind) {
+    case 'sent':
+    case 'drafted':
+      return { kind: 'prospect', name, outcome: o.kind, subject: o.subject }
+    case 'skipped':
+      return { kind: 'prospect', name, outcome: 'skipped', reason: o.reason }
+    case 'failed':
+      return { kind: 'prospect', name, outcome: 'failed', reason: o.error }
+    case 'needs_hands':
+      return { kind: 'prospect', name, outcome: 'needs_hands' }
+  }
+}
 
 export async function draftOne(
   db: Db,
@@ -264,7 +278,7 @@ export async function draftOne(
       }),
     )
     if (!sent.ok) return { kind: 'failed', error: `${sent.error}${sent.detail ? ` — ${typeof sent.detail === 'string' ? sent.detail : JSON.stringify(sent.detail)}` : ''}` }
-    return { kind: sent.value.mode, outreachId: sent.value.outreachId, channel, variantId }
+    return { kind: sent.value.mode, outreachId: sent.value.outreachId, channel, variantId, subject: composed.subject }
   }
   // Form / SNS only reach here in draft mode (pickChannel), so the row lands
   // as pending_review with the footer baked in for the person to submit.
@@ -279,7 +293,7 @@ export async function draftOne(
     }),
   )
   if (!recorded.ok) return { kind: 'failed', error: `${recorded.error}` }
-  return { kind: 'drafted', outreachId: recorded.value.outreachLogId, channel, variantId }
+  return { kind: 'drafted', outreachId: recorded.value.outreachLogId, channel, variantId, subject: composed.subject }
 }
 
 export type DraftResult = Extract<JobResult, { kind: 'draft' }>

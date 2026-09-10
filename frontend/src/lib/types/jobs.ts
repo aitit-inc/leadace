@@ -18,6 +18,37 @@ export type Job = {
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
+  logEntries: number;
+};
+
+type ProspectOutcome =
+  | { outcome: 'sent' | 'drafted'; subject: string }
+  | { outcome: 'skipped' | 'failed'; reason: string }
+  | { outcome: 'needs_hands' };
+
+// Mirrors backend domain/jobs.ts JobLogLine, less `step` (the writer's dedupe key).
+export type JobLogLine = { at: string } & (
+  | { kind: 'stage'; stage: JobKind; summary: string }
+  | { kind: 'decision'; text: string }
+  | ({ kind: 'prospect'; name: string } & ProspectOutcome)
+);
+
+// Mirrors backend services/jobs.ts JobDetail.
+export type JobDetail = Job & { log: JobLogLine[] };
+
+export const JOB_ORIGIN_LABELS: Record<JobOrigin, string> = {
+  cron: 'Scheduled run',
+  chat: 'Chat',
+  ui: 'Web UI',
+  mcp: 'External agent',
+};
+
+export const PROSPECT_OUTCOME_LABELS: Record<ProspectOutcome['outcome'], string> = {
+  sent: 'sent',
+  drafted: 'drafted for review',
+  skipped: 'skipped',
+  needs_hands: 'needs a browser (form / SNS)',
+  failed: 'failed',
 };
 
 export const TERMINAL_JOB_STATUSES: readonly JobStatus[] = ['succeeded', 'failed', 'cancelled'];

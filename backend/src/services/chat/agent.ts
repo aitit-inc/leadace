@@ -54,11 +54,11 @@ export type ChatEvent =
   | { type: 'error'; message: string }
 
 // Each persistence call runs inside `run` — one short RLS transaction.
-// `aborted` is the client connection: once it is gone no further model round
-// or tool call starts; what already ran is still recorded.
+// `signal` is Stop: a tool call already running finishes, nothing further
+// starts, and what ran is recorded.
 export type ChatTurnDeps = {
   run: <T>(fn: (db: Db) => Promise<T>) => Promise<T>
-  aborted: () => boolean
+  signal: AbortSignal
   tenantId: TenantId
   userId: string
   env: GeminiEnv & { APP_URL: string }
@@ -186,6 +186,8 @@ async function* reportCall(deps: ChatTurnDeps, threadId: string, call: Call, res
 
 async function* executeCall(deps: ChatTurnDeps, threadId: string, call: Call): AsyncGenerator<ChatEvent, ToolResult> {
   yield { type: 'tool_call', callId: call.id, name: call.name, args: call.args }
+  // Stop may have come while the yield waited on the client.
+  if (deps.signal.aborted) return INTERRUPTED
   const result = await runCall(deps, threadId, call)
   yield* reportCall(deps, threadId, call, result)
   return result
@@ -205,14 +207,14 @@ async function* settleCalls(
 ): AsyncGenerator<ChatEvent, ToolPart[] | { pending: PendingCall }> {
   // One write in the batch and the whole turn stays sequential: order is part
   // of what a write means, and a gate has to hold the turn where it sits.
-  if (calls.length > 1 && !deps.aborted() && calls.every((c) => deps.tools.isReadOnly(c.name))) {
+  if (calls.length > 1 && !deps.signal.aborted && calls.every((c) => deps.tools.isReadOnly(c.name))) {
     for (const call of calls) yield { type: 'tool_call', callId: call.id, name: call.name, args: call.args }
     // The yields above waited on the client, who may have left during them.
-    if (deps.aborted()) return calls.map((call) => ({ functionResponse: toolResponse(call, INTERRUPTED) }))
+    if (deps.signal.aborted) return calls.map((call) => ({ functionResponse: toolResponse(call, INTERRUPTED) }))
     const done: Array<{ call: Call; result: ToolResult }> = []
     for (let i = 0; i < calls.length; i += READ_BATCH) {
       const slice = calls.slice(i, i + READ_BATCH)
-      done.push(...(await Promise.all(slice.map(async (call) => ({ call, result: await runCall(deps, threadId, call) })))))
+      done.push(...(await Promise.all(slice.map(async (call) => ({ call, result: deps.signal.aborted ? INTERRUPTED : await runCall(deps, threadId, call) })))))
     }
     for (const { call, result } of done) yield* reportCall(deps, threadId, call, result)
     return done.map(({ call, result }) => ({ functionResponse: toolResponse(call, result) }))
@@ -220,7 +222,7 @@ async function* settleCalls(
   const responses: ToolResponse[] = []
   const gated: Array<Call & { summary: ConfirmSummary }> = []
   for (const call of calls) {
-    if (deps.aborted()) {
+    if (deps.signal.aborted) {
       responses.push(toolResponse(call, INTERRUPTED))
       continue
     }
@@ -233,7 +235,7 @@ async function* settleCalls(
     responses.push(toolResponse(call, result))
   }
   const [first, ...rest] = gated
-  if (first && !deps.aborted()) {
+  if (first && !deps.signal.aborted) {
     return {
       pending: {
         messageId: modelMessageId,
@@ -246,7 +248,7 @@ async function* settleCalls(
       },
     }
   }
-  return responses.map((r) => ({ functionResponse: r }))
+  return [...responses, ...gated.map((c) => toolResponse(c, INTERRUPTED))].map((r) => ({ functionResponse: r }))
 }
 
 async function* persistTool(deps: ChatTurnDeps, threadId: string, parts: ToolPart[]): AsyncGenerator<ChatEvent, void> {
@@ -310,7 +312,7 @@ export async function* runChatTurn(deps: ChatTurnDeps, threadId: string, input: 
     // it, the new terms go back to the person instead of running.
     if (input.approve) {
       const fresh = await deps.tools.confirmSummary(call.name, call.args)
-      if (fresh && termsChanged(claimed.summary, fresh)) {
+      if (fresh && termsChanged(claimed.summary, fresh) && !deps.signal.aborted) {
         yield* holdPending(deps, threadId, { ...claimed, summary: fresh })
         return
       }
@@ -318,7 +320,7 @@ export async function* runChatTurn(deps: ChatTurnDeps, threadId: string, input: 
     const result = input.approve ? yield* executeCall(deps, threadId, call) : DECLINED
     const answered = [...claimed.otherResponses, toolResponse(call, result)]
     const [next, ...rest] = claimed.remaining
-    if (next) {
+    if (next && !deps.signal.aborted) {
       yield* holdPending(deps, threadId, {
         messageId: claimed.messageId,
         callId: next.callId,
@@ -330,9 +332,11 @@ export async function* runChatTurn(deps: ChatTurnDeps, threadId: string, input: 
       })
       return
     }
-    yield* persistTool(deps, threadId, answered.map((r) => ({ functionResponse: r })))
+    const undone = claimed.remaining.map((c) => toolResponse({ id: c.callId, name: c.name, args: c.args }, INTERRUPTED))
+    yield* persistTool(deps, threadId, [...answered, ...undone].map((r) => ({ functionResponse: r })))
   }
 
+  if (deps.signal.aborted) return
   const systemInstruction = await buildContext(deps, thread.value.projectId)
   let contents: Content[]
   if (deps.unattended && instruction) {
@@ -360,6 +364,7 @@ export async function* runChatTurn(deps: ChatTurnDeps, threadId: string, input: 
         functionDeclarations: deps.tools.declarations,
         thinking: 'LOW',
         maxOutputTokens: 8192,
+        signal: deps.signal,
       })) {
         for (const part of chunk.candidates?.[0]?.content?.parts ?? []) {
           if (part.thought) continue
@@ -404,7 +409,7 @@ export async function* runChatTurn(deps: ChatTurnDeps, threadId: string, input: 
     }
     yield* persistTool(deps, threadId, settled)
     contents.push({ role: 'user', parts: settled })
-    if (deps.aborted()) return
+    if (deps.signal.aborted) return
   }
   yield { type: 'done' }
 }

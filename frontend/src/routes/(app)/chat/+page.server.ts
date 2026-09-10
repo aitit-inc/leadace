@@ -1,6 +1,6 @@
 import { isHttpError, redirect } from '@sveltejs/kit';
 import { getThread, listThreads } from '$lib/api/chat';
-import { listThreadJobs } from '$lib/api/jobs';
+import { listProjectJobs, listThreadJobs } from '$lib/api/jobs';
 import type { Job } from '$lib/types/jobs';
 import { ApiError } from '$lib/api';
 import type { ChatMessage, ChatThread } from '$lib/types/chat';
@@ -31,6 +31,8 @@ export const load: PageServerLoad = async ({ fetch, parent, url, locals, depends
       if (!(e instanceof ApiError && e.status === 404)) throw e;
       redirect(303, '/chat');
     }
+  } else if (activeProjectId) {
+    jobs = await listProjectJobs(activeProjectId, fetch, token);
   }
   return { activeProjectId, threads, thread, messages, jobs };
 };

@@ -68,17 +68,34 @@ function streamTurn(c: ChatCtx, dispatch: InternalDispatch, threadId: string, in
   })
   const run: ChatTurnDeps['run'] = (fn) => withTenantConnection(c.env.DATABASE_URL, tenantId, fn)
   return streamSSE(c, async (stream) => {
-    // A throw here would close the stream mid-way and read as a finished
-    // turn; the client requires a terminal event, so failures become one.
-    try {
-      const deps = { run, aborted: () => stream.aborted, tenantId, userId, env: c.env, tools }
-      for await (const event of runChatTurn(deps, threadId, input)) {
-        await stream.writeSSE({ event: event.type, data: JSON.stringify(event) })
+    // Stop closes the connection. The runtime reports that on the request or by
+    // cancelling the response; both abort the stream, which also releases a
+    // write stuck on the closed connection.
+    c.req.raw.signal.addEventListener('abort', () => stream.abort())
+    const stop = new AbortController()
+    stream.onAbort(() => stop.abort())
+    // A closed connection is noticed only on a write, and nothing is written
+    // while the model thinks or a tool runs.
+    const ping = setInterval(() => void stream.write(': ping\n\n'), 1000)
+    const deps = { run, signal: stop.signal, tenantId, userId, env: c.env, tools }
+    const turn = (async () => {
+      // A throw here would close the stream mid-way and read as a finished
+      // turn; the client requires a terminal event, so failures become one.
+      try {
+        for await (const event of runChatTurn(deps, threadId, input)) {
+          await stream.writeSSE({ event: event.type, data: JSON.stringify(event) })
+        }
+      } catch (e) {
+        console.error('[chat] stream failed', e)
+        await stream.writeSSE({ event: 'error', data: JSON.stringify({ type: 'error', message: 'The turn failed part-way. Reload the thread to see what was saved.' }) })
       }
-    } catch (e) {
-      console.error('[chat] stream failed', e)
-      await stream.writeSSE({ event: 'error', data: JSON.stringify({ type: 'error', message: 'The turn failed part-way. Reload the thread to see what was saved.' }) })
-    }
+    })()
+    // A closed connection ends the invocation, cutting a tool call mid-flight
+    // (an email sent, never recorded); waitUntil gives the turn the platform's
+    // 30 s to finish it and record where it stopped.
+    c.executionCtx.waitUntil(turn)
+    await turn
+    clearInterval(ping)
   })
 }
 
