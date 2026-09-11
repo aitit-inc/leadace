@@ -8,22 +8,20 @@ import { tenantMembers } from '../db/schema'
 import type { JobKind, JobParamsOf, JobResult } from '../domain/jobs'
 import { shouldBuildFirst, type ReachableSnapshot } from '../domain/cycle-plan'
 import { runLeverTick } from '../services/levers'
-import { listReachable } from '../services/prospects'
 import { getActiveStrategySlugs } from '../services/discovery-strategies'
 import { assertTenantComplianceReady } from '../services/tenants'
 import { notifyUser } from '../services/notifications'
-import { editionOf, googleCtxOf } from '../services/pipeline/context'
+import { googleCtxOf } from '../services/pipeline/context'
+import { listHostedReachable } from '../services/pipeline/draft'
 import type { CycleDigest } from '../services/pipeline/journal'
 import { discoverStage, draftStage, evaluateStage, journalStage, logStep, STEP_RETRY, tenantTx, unwrap, type StageCtx } from './stages'
 
 async function reachableSnapshot(ctx: StageCtx, name: string): Promise<ReachableSnapshot> {
   return ctx.step.do(name, STEP_RETRY, () => tenantTx(ctx, async (db) => {
-    const r = unwrap(await listReachable(db, ctx.job.tenantId, editionOf(ctx.env), ctx.job.projectId, { limit: 1 }))
+    const r = unwrap(await listHostedReachable(db, ctx.job.tenantId, ctx.env, ctx.job.projectId, { limit: 1 }))
     return {
-      total: r.total,
-      email: r.byChannel.email,
-      formOnly: r.byChannel.formOnly,
-      platformOnly: r.byChannel.platformOnly,
+      deliverable: r.withinChannels,
+      needsHands: r.total - r.withinChannels,
       blocked: r.outboundBlocked ? r.message ?? 'outbound blocked' : null,
     }
   }))
@@ -66,7 +64,7 @@ export async function runDailyCycle(ctx: StageCtx, params: JobParamsOf<'daily_cy
   let reachable = await reachableSnapshot(ctx, 'reachable:before')
   let built = false
   if (canDiscover && shouldBuildFirst(reachable, params.outboundCount)) {
-    await decide(`list low (${reachable.total} reachable, ${reachable.email} by email) → discovery before outbound`)
+    await decide(`list low (${reachable.deliverable} reachable${reachable.needsHands > 0 ? `, ${reachable.needsHands} more need a browser` : ''}) → discovery before outbound`)
     const found = await discoverStage(ctx, { kind: 'discover', count: params.outboundCount }, 'discover:first')
     await stage('discover', found.summary)
     built = true
@@ -74,17 +72,21 @@ export async function runDailyCycle(ctx: StageCtx, params: JobParamsOf<'daily_cy
   }
 
   let processed = 0
-  if (reachable.total > 0) {
-    const count = Math.min(params.outboundCount, reachable.total)
+  if (reachable.deliverable > 0) {
+    const count = Math.min(params.outboundCount, reachable.deliverable)
     const drafted = await draftStage(ctx, { kind: 'draft', count })
     await stage('draft', drafted.summary)
     processed = drafted.drafted + drafted.sent + drafted.skipped + drafted.failed
   } else {
-    await decide(reachable.blocked ? `outbound blocked: ${reachable.blocked}` : 'no reachable prospects → outbound skipped')
+    await decide(
+      reachable.blocked
+        ? `outbound blocked: ${reachable.blocked}`
+        : `no reachable prospects${reachable.needsHands > 0 ? ` (${reachable.needsHands} need a browser)` : ''} → outbound skipped`,
+    )
   }
 
-  if (canDiscover && !built && !reachable.blocked && reachable.total - processed < 3 * params.outboundCount) {
-    await decide(`remaining list ${reachable.total - processed} < ${3 * params.outboundCount} → discovery after outbound`)
+  if (canDiscover && !built && !reachable.blocked && reachable.deliverable - processed < 3 * params.outboundCount) {
+    await decide(`remaining list ${reachable.deliverable - processed} < ${3 * params.outboundCount} → discovery after outbound`)
     const found = await discoverStage(ctx, { kind: 'discover', count: params.outboundCount }, 'discover:after')
     await stage('discover', found.summary)
   }

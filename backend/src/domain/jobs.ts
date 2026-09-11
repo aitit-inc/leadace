@@ -4,6 +4,7 @@
 // same instance, so a stage has exactly one implementation.
 import { z } from 'zod'
 import { discoveryStrategySchema, positiveInt } from './ids'
+import { utcDateKey } from './time'
 
 export const JOB_KINDS = ['daily_cycle', 'discover', 'enrich', 'draft', 'send', 'evaluate', 'journal'] as const
 export type JobKind = (typeof JOB_KINDS)[number]
@@ -14,6 +15,26 @@ export const TERMINAL_JOB_STATUSES: readonly JobStatus[] = ['succeeded', 'failed
 
 export const JOB_ORIGINS = ['cron', 'chat', 'ui', 'mcp'] as const
 export type JobOrigin = (typeof JOB_ORIGINS)[number]
+
+// Five signals × three stays within url_context's 20 URLs per request.
+export const SIGNAL_MAX_SOURCES = 3
+export const signalSourceSchema = z.url({ protocol: /^https?$/ }).max(500)
+
+export const discoverSignalSchema = z.object({
+  text: z.string().max(300),
+  sourceUrls: z.array(signalSourceSchema).min(1).max(SIGNAL_MAX_SOURCES),
+})
+
+export const SIGNAL_MAX_AGE_DAYS = 90
+const DAY_MS = 86_400_000
+
+export function isRecentSignal(text: string, now: Date): boolean {
+  const date = text.slice(0, 10)
+  const at = new Date(date)
+  // Date rolls 2026-02-30 over to March 2; only a real date round-trips.
+  if (Number.isNaN(at.getTime()) || utcDateKey(at) !== date) return false
+  return date <= utcDateKey(now) && date >= utcDateKey(new Date(now.getTime() - SIGNAL_MAX_AGE_DAYS * DAY_MS))
+}
 
 // A discover candidate before enrichment: what a search surfaces about an
 // organization, no contact data yet. Carried from discover into enrich.
@@ -28,8 +49,8 @@ export const discoverCandidateSchema = z.object({
   matchReason: z.string().min(1).max(1000),
   priority: z.literal([1, 2, 3, 4, 5]),
   discoveryStrategy: discoveryStrategySchema.optional(),
-  // Dated, sourced signals the search itself surfaced ("2026-03-12: Series B (TechCrunch)").
-  signals: z.array(z.string().max(300)).max(5).default([]),
+  // Unconfirmed claims; enrich keeps only the ones their pages state.
+  signals: z.array(discoverSignalSchema).max(5).default([]),
 })
 export type DiscoverCandidate = z.infer<typeof discoverCandidateSchema>
 

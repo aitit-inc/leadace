@@ -6,9 +6,17 @@
 import { z } from 'zod'
 import type { Db } from '../../db/connection'
 import type { ProjectId, TenantId } from '../../domain/ids'
-import { discoverCandidateSchema, type DiscoverCandidate, type JobParamsOf, type JobResult } from '../../domain/jobs'
+import {
+  discoverCandidateSchema,
+  SIGNAL_MAX_AGE_DAYS,
+  SIGNAL_MAX_SOURCES,
+  signalSourceSchema,
+  type DiscoverCandidate,
+  type JobParamsOf,
+  type JobResult,
+} from '../../domain/jobs'
 import { ok, err, type ServiceResult } from '../result'
-import { callGeminiGroundedText, callGeminiJson, GeminiError, HOSTED_MODEL } from '../gemini'
+import { callGeminiGroundedText, callGeminiJson, GeminiError, HOSTED_MODEL, type Citation, type GroundedText } from '../gemini'
 import { getLeverStateById } from '../levers'
 import { loadProjectOutboundAllowlist } from '../project-settings'
 import { checkProspectDedup } from '../prospect-import'
@@ -38,6 +46,7 @@ const extractionSchema = z.object({
   candidates: z.array(
     discoverCandidateSchema.omit({ discoveryStrategy: true, priority: true }).extend({
       priority: z.number().int().min(1).max(5),
+      signals: z.array(z.object({ text: z.string().max(300), passages: z.array(z.number().int()) })).max(5).default([]),
     }),
   ),
   // The whole search_notes document after this pass, merged with the prior one.
@@ -86,13 +95,13 @@ For each candidate one block:
 - Overview (1–2 sentences from the site)
 - Industry (your best guess) / Country (ISO 3166-1 alpha-2, if evident) / Size evidence (headcount, funding stage, capital)
 - Why it fits (which Target trait and which Prerequisite is observable, and where)
-- Signals: dated, sourced items from the last 6 months (funding, hiring, launch, press) — omit the line when there are none; never invent
+- Signals: dated items from the last ${SIGNAL_MAX_AGE_DAYS} days (funding, hiring, launch, press), every name written exactly as the page writes it — omit the line when there are none; never invent
 
 Then a section "## Queries and sources" listing the search queries you ran and the listing / directory pages you opened, and which of them were productive.`
 }
 
 function extractionPrompt(args: {
-  searchText: string
+  search: GroundedText
   industries: string[]
   priorNotes: string | null
   today: string
@@ -101,7 +110,10 @@ function extractionPrompt(args: {
   return `Convert the research notes below into structured candidates, then write the merged search_notes document.
 
 ## Research notes
-${args.searchText}
+${args.search.text}
+
+## Cited passages (the search results behind the notes, numbered)
+${args.search.citations.map((c, i) => `[${i + 1}] ${c.passage}`).join('\n') || '(none)'}
 
 ## Industry vocabulary (use one exact value per candidate; "Other" when none fits)
 ${args.industries.join(' | ')}
@@ -112,7 +124,8 @@ ${args.priorNotes ?? '(none — create the document)'}
 ## Rules for candidates
 - name, organizationName (legal entity, or the name), websiteUrl (official site), overview, industry (exact vocabulary value), matchReason (why it fits — one or two sentences, naming the observable Prerequisite), priority 1–5 (1 = perfectly matches and the need is clear … 5 = indirect possibility; raise by one when the site or a press release shows an email address).
 - country only when evident (ISO 3166-1 alpha-2); employeeBand one of 1-10 / 11-50 / 51-200 / 201+ only with an honest basis.
-- signals: each "YYYY-MM-DD: what happened (source)"; leave empty when none.
+- signals: text "YYYY-MM-DD: what happened" with every name exactly as the notes write it, and passages, the numbers of the cited passages that state it; drop a signal no cited passage states; leave empty when none.
+- overview and matchReason carry no dated events (funding, hiring, launches, partnerships, press) — those go only in signals, which a later step checks against their pages.
 - Drop duplicates by domain. Keep only candidates with an official URL and an overview.
 
 ## search_notes document
@@ -125,6 +138,14 @@ Markdown with these sections, merged with the prior version (never overwrite wha
 ## Directions to Try Next Time
 ## Notes
 Record this pass under strategy "${args.strategySlug}".`
+}
+
+function sourcedSignals(signals: Array<{ text: string; passages: number[] }>, citations: Citation[]): DiscoverCandidate['signals'] {
+  return signals.flatMap((s) => {
+    const pages = s.passages.flatMap((n) => citations[n - 1]?.pages ?? []).filter((u) => signalSourceSchema.safeParse(u).success)
+    const sourceUrls = [...new Set(pages)].slice(0, SIGNAL_MAX_SOURCES)
+    return sourceUrls.length > 0 ? [{ text: s.text, sourceUrls }] : []
+  })
 }
 
 export async function runDiscover(
@@ -176,7 +197,7 @@ export async function runDiscover(
   const settled = await Promise.allSettled(
     plan.map(async (entry) => ({
       entry,
-      searchText: await callGeminiGroundedText({
+      search: await callGeminiGroundedText({
         op: 'discover.search',
         apiKey: env.GEMINI_API_KEY,
         model: HOSTED_MODEL,
@@ -205,7 +226,7 @@ export async function runDiscover(
   const found: DiscoverCandidate[] = []
   const planCompliance: Array<{ slug: string; planned: number; found: number }> = []
   let notes = searchNotes
-  for (const [i, { entry, searchText }] of searches.entries()) {
+  for (const [i, { entry, search }] of searches.entries()) {
     await progress(`extracting: ${entry.slug}`, i, plan.length)
     let extracted: z.infer<typeof extractionSchema>
     try {
@@ -214,7 +235,7 @@ export async function runDiscover(
         apiKey: env.GEMINI_API_KEY,
         model: HOSTED_MODEL,
         timeoutMs: 120_000,
-        prompt: extractionPrompt({ searchText, industries, priorNotes: notes, today, strategySlug: entry.slug }),
+        prompt: extractionPrompt({ search, industries, priorNotes: notes, today, strategySlug: entry.slug }),
         schema: extractionSchema,
         maxOutputTokens: 16384,
       })
@@ -229,6 +250,7 @@ export async function runDiscover(
         industry: industries.includes(c.industry) ? c.industry : 'Other',
         priority: c.priority as DiscoverCandidate['priority'],
         discoveryStrategy: entry.slug,
+        signals: sourcedSignals(c.signals, search.citations),
       }))
       .slice(0, Math.ceil(entry.count * 1.5))
     planCompliance.push({ slug: entry.slug, planned: entry.count, found: withStrategy.length })

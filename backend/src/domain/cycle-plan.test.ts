@@ -1,23 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import { shouldBuildFirst, type ReachableSnapshot } from './cycle-plan'
 
-const snap = (r: Omit<ReachableSnapshot, 'blocked'>, blocked: string | null = null): ReachableSnapshot => ({ ...r, blocked })
+const snap = (r: Partial<ReachableSnapshot>): ReachableSnapshot => ({ deliverable: 0, needsHands: 0, blocked: null, ...r })
 
 describe('shouldBuildFirst', () => {
   it('builds first on an empty list', () => {
-    expect(shouldBuildFirst(snap({ total: 0, email: 0, formOnly: 0, platformOnly: 0 }), 30)).toBe(true)
+    expect(shouldBuildFirst(snap({}), 30)).toBe(true)
   })
   it('never builds on a blocked day — an exhausted quota looks like an empty list', () => {
-    expect(shouldBuildFirst(snap({ total: 0, email: 0, formOnly: 0, platformOnly: 0 }, 'quota exhausted'), 30)).toBe(false)
+    expect(shouldBuildFirst(snap({ blocked: 'quota exhausted' }), 30)).toBe(false)
   })
-  it('builds first when email is depleted and few form/platform prospects remain', () => {
-    expect(shouldBuildFirst(snap({ total: 4, email: 0, formOnly: 3, platformOnly: 1 }), 30)).toBe(true)
-    // Enough form / platform prospects carry the day even with no email.
-    expect(shouldBuildFirst(snap({ total: 12, email: 0, formOnly: 5, platformOnly: 7 }), 30)).toBe(false)
+  it('does not count what only a browser can reach — form-only rows do not carry a send-mode day', () => {
+    expect(shouldBuildFirst(snap({ deliverable: 1, needsHands: 46 }), 10)).toBe(true)
   })
   it('builds first below a third of the outbound count, otherwise sends first', () => {
-    expect(shouldBuildFirst(snap({ total: 9, email: 9, formOnly: 0, platformOnly: 0 }), 30)).toBe(true)
-    expect(shouldBuildFirst(snap({ total: 10, email: 10, formOnly: 0, platformOnly: 0 }), 30)).toBe(false)
-    expect(shouldBuildFirst(snap({ total: 40, email: 40, formOnly: 0, platformOnly: 0 }), 30)).toBe(false)
+    expect(shouldBuildFirst(snap({ deliverable: 9 }), 30)).toBe(true)
+    expect(shouldBuildFirst(snap({ deliverable: 10 }), 30)).toBe(false)
+    expect(shouldBuildFirst(snap({ deliverable: 40 }), 30)).toBe(false)
   })
 })

@@ -342,10 +342,16 @@ export async function listReachable(
   tenantId: TenantId,
   edition: Edition,
   projectRef: ProjectRef,
-  query: ReachableQuery,
+  query: ReachableQuery & {
+    // Draw only prospects these channels reach (within the enabled ones);
+    // total and byChannel still count the whole reachable list.
+    channels?: readonly OutboundChannel[]
+  },
 ): Promise<ServiceResult<{
   prospects: ReachableProspect[]
   total: number
+  // The part of total the requested channels reach; all of it without them.
+  withinChannels: number
   byChannel: { email: number; formOnly: number; snsOnly: number; platformOnly: number }
   quota: Awaited<ReturnType<typeof getRemainingOutreachQuota>>
   mailboxQuota: MailboxDailyQuota
@@ -359,7 +365,7 @@ export async function listReachable(
   if (!resolved.ok) return resolved
   const projectId = resolved.value
 
-  const { limit, prospectIds: onlyProspectIds } = query
+  const { limit, prospectIds: onlyProspectIds, channels } = query
 
   const [quota, mailboxQuota, outboundMode, allowlist, leverConfig, stateRows, activeStrategySlugs] = await Promise.all([
     getRemainingOutreachQuota(db, tenantId, edition),
@@ -386,6 +392,7 @@ export async function listReachable(
     return ok({
       prospects: [],
       total: 0,
+      withinChannels: 0,
       byChannel: { email: 0, formOnly: 0, snsOnly: 0, platformOnly: 0 },
       quota,
       mailboxQuota,
@@ -402,6 +409,7 @@ export async function listReachable(
     return ok({
       prospects: [],
       total: 0,
+      withinChannels: 0,
       byChannel: { email: 0, formOnly: 0, snsOnly: 0, platformOnly: 0 },
       quota,
       mailboxQuota,
@@ -410,6 +418,14 @@ export async function listReachable(
       message: 'Automated outbound is paused for this project (no channels enabled in project settings).',
     })
   }
+
+  const drawChannels = channels ? enabledChannels.filter((ch) => channels.includes(ch)) : enabledChannels
+  // Narrowed to channels the project has off: nothing is drawn, while the
+  // counts still show what the enabled channels reach.
+  const drawOff =
+    channels && drawChannels.length === 0
+      ? `Outbound by ${channels.join(' / ')} is not enabled for this project (project settings).`
+      : null
 
   // Email-only cap: targets are still returned (form/SNS unaffected); the note
   // tells the skill to use other channels or wait. The send path is the hard guard.
@@ -421,6 +437,7 @@ export async function listReachable(
   const effectiveLimit = quota.kind === 'capped' ? Math.min(limit, quota.remaining) : limit
 
   const channelFilter: SQL | undefined = or(...enabledChannels.map(channelAvailabilityClause))
+  const drawFilter: SQL = or(...drawChannels.map(channelAvailabilityClause)) ?? sql`false`
 
   // NULL country excluded — explicit allowlist means "only these".
   const countryFilter: SQL | undefined = allowlist.targetCountries.length > 0
@@ -502,6 +519,8 @@ export async function listReachable(
     ),
   )
 
+  const drawCondition = and(reachableCondition, drawFilter)
+
   // Multiplicative score orders DESC (the additive pre-score expression was
   // ASC); createdAt stays the ASC tiebreak.
   const signalLifts = stateRows[0]?.targetingLifts?.freshSignal ?? DEFAULT_FRESH_SIGNAL_LIFTS
@@ -555,13 +574,14 @@ export async function listReachable(
   const [topRows, summaryRows] = await Promise.all([
     topCount > 0
       ? reachableSelect()
-          .where(reachableCondition)
+          .where(drawCondition)
           .orderBy(desc(orderingScoreExpr), projectProspects.createdAt)
           .limit(topCount)
       : Promise.resolve([]),
     db
       .select({
         total: sql<number>`COUNT(*)::int`,
+        withinChannels: sql<number>`COUNT(*) FILTER (WHERE ${drawFilter})::int`,
         email: sql<number>`COUNT(*) FILTER (WHERE ${emailUsableExpr})::int`,
         formOnly: sql<number>`COUNT(*) FILTER (WHERE NOT (${emailUsableExpr}) AND ${prospects.contactFormUrl} IS NOT NULL)::int`,
         snsOnly: sql<number>`COUNT(*) FILTER (WHERE NOT (${emailUsableExpr}) AND ${prospects.contactFormUrl} IS NULL AND ${prospects.snsAccounts} IS NOT NULL)::int`,
@@ -597,7 +617,7 @@ export async function listReachable(
     Object.entries(slotCounts).map(([slug, count]) =>
       reachableSelect()
         .where(and(
-          reachableCondition,
+          drawCondition,
           slug === UNATTRIBUTED_STRATUM
             ? activeStrategySlugs.length > 0
               ? or(
@@ -618,7 +638,7 @@ export async function listReachable(
     shortfall > 0
       ? await reachableSelect()
           .where(and(
-            reachableCondition,
+            drawCondition,
             pickedIds.length > 0 ? notInArray(projectProspects.id, pickedIds) : undefined,
           ))
           .orderBy(sql`random()`)
@@ -626,7 +646,7 @@ export async function listReachable(
       : []
   const rows = [...topRows, ...strataRows, ...fallbackRows]
 
-  const summary = summaryRows[0] ?? { total: 0, email: 0, formOnly: 0, snsOnly: 0, platformOnly: 0 }
+  const summary = summaryRows[0] ?? { total: 0, withinChannels: 0, email: 0, formOnly: 0, snsOnly: 0, platformOnly: 0 }
   const channelAffinityByBucket = stateRows[0]?.channelAffinity ?? {}
 
   const prospectIds = rows.map((r) => r.prospectId)
@@ -666,6 +686,7 @@ export async function listReachable(
   return ok({
     prospects: enriched,
     total: summary.total,
+    withinChannels: summary.withinChannels,
     byChannel: {
       email: summary.email,
       formOnly: summary.formOnly,
@@ -675,8 +696,8 @@ export async function listReachable(
     quota,
     mailboxQuota,
     outboundMode,
-    outboundBlocked: false,
-    ...(mailboxCappedNote ? { message: mailboxCappedNote } : {}),
+    outboundBlocked: drawOff !== null,
+    ...(drawOff ? { message: drawOff } : mailboxCappedNote ? { message: mailboxCappedNote } : {}),
   })
 }
 

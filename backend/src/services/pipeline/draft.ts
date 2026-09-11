@@ -4,14 +4,14 @@
 // sendAndRecord; this stage decides only what to say and whether to skip.
 import { z } from 'zod'
 import type { Db } from '../../db/connection'
-import type { Channel, OutboundChannel } from '../../db/schema'
+import type { Channel, OutboundChannel, OutboundMode } from '../../db/schema'
 import type { ProjectId, TenantId } from '../../domain/ids'
 import type { JobLogEntry, JobParamsOf, JobResult } from '../../domain/jobs'
 import { ok, type ServiceResult } from '../result'
 import { callGeminiJson, GeminiError, HOSTED_MODEL } from '../gemini'
-import { listReachable, type ReachableProspect } from '../prospects'
+import { listReachable, type ReachableProspect, type ReachableQuery } from '../prospects'
 import { pickMessageVariant, type PickedVariant } from '../message-variants'
-import { getProjectSettings, type ProjectSettingsRow } from '../project-settings'
+import { getOutboundMode, getProjectSettings, type ProjectSettingsRow } from '../project-settings'
 import { recordOutreachWithInquiry, sendAndRecord, skipProspect } from '../outreach'
 import { assertTenantComplianceReady } from '../tenants'
 import { editionOf, loadDoc, loadMasterDoc, requireStrategyDocs, sendContextOf, type HostedEnv } from './context'
@@ -28,6 +28,26 @@ export type DraftBatch = {
   quotaMessage: string | null
 }
 
+// What the hosted agent acts on by itself: only email in send mode — a form or
+// DM needs a browser — and every channel but platform in draft mode, where a
+// person submits the form / SNS drafts.
+function hostedChannels(mode: OutboundMode): OutboundChannel[] {
+  return mode === 'send' ? ['email'] : ['email', 'form', 'sns_twitter', 'sns_linkedin']
+}
+
+// The reachable list drawn only from what the hosted agent can act on; total
+// still counts the prospects left to a browser.
+export async function listHostedReachable(
+  db: Db,
+  tenantId: TenantId,
+  env: HostedEnv,
+  projectId: ProjectId,
+  query: ReachableQuery,
+): ReturnType<typeof listReachable> {
+  const mode = await getOutboundMode(db, projectId)
+  return listReachable(db, tenantId, editionOf(env), projectId, { ...query, channels: hostedChannels(mode) })
+}
+
 // Which prospects this run will write to, and the batch-wide context every
 // composition shares. Loaded once per job, not per prospect.
 export async function loadDraftBatch(
@@ -39,17 +59,16 @@ export async function loadDraftBatch(
 ): Promise<ServiceResult<DraftBatch>> {
   const compliance = await assertTenantComplianceReady(db, tenantId)
   if (!compliance.ok) return compliance
-  const reachable = await listReachable(db, tenantId, editionOf(env), projectId, {
+  const reachable = await listHostedReachable(db, tenantId, env, projectId, {
     limit: params.prospectIds ? params.prospectIds.length : params.count ?? 30,
     ...(params.prospectIds ? { prospectIds: params.prospectIds } : {}),
   })
   if (!reachable.ok) return reachable
   const r = reachable.value
-  const deliverable = r.prospects.filter((p) => r.outboundMode === 'draft' || p.email !== null)
   return ok({
-    targets: deliverable,
+    targets: r.prospects,
     outboundMode: r.outboundMode,
-    needsHands: r.prospects.length - deliverable.length,
+    needsHands: r.total - r.withinChannels,
     quotaMessage: r.message ?? null,
   })
 }
@@ -190,7 +209,7 @@ ${JSON.stringify(
   1,
 )}
 Assertable facts about them are ONLY the overview, matchReason, notes and the dated signals below. hypothesis fields are inferred, never observed — use them to choose the angle, never as claims about the recipient.
-Signals: ${signals.length > 0 ? signals.join(' | ') : '(none — do not invent one; open on their situation plainly)'}
+Signals: ${signals.length > 0 ? `${signals.join(' | ')} — judge each by its date against today: use one only while it is still timely for the angle, and never present an older one as recent news` : '(none — do not invent one; open on their situation plainly)'}
 
 ## Cycle
 ${cycleNote}
@@ -202,7 +221,7 @@ ${inquiry}
 Judge from the material above whether a concrete, clearly negative event (layoffs, wind-down, buyer left, post-acquisition freeze) makes now a bad moment → decision "skip", reason bad_timing, one-line note. When in doubt, send.
 
 ## Output
-decision "send": subject (40–60 characters, recipient benefit, no "Proposal" / "Announcement") and body — the complete message in the recipient's language: salutation per the guidelines, personalization woven through the whole body from overview and matchReason, one reply CTA, light sign-off from Sender Information. No footer, no legal lines, no links to our own hosts, no placeholders; skipReason and skipNote null. ${args.channel === 'email' ? '' : args.channel === 'form' ? 'Concise for a form field; the subject is the form topic line.' : 'Short DM; subject is unused but still required.'}
+decision "send": subject (40–60 characters, recipient benefit, no "Proposal" / "Announcement") and body — the complete message in the recipient's language: salutation per the guidelines, personalization woven through the whole body from overview and matchReason, one reply CTA, light sign-off from Sender Information. No footer, no legal lines, no links to our own hosts, no placeholders, no claim about who uses our product or what it has achieved beyond what BUSINESS.md or SALES_STRATEGY states; skipReason and skipNote null. ${args.channel === 'email' ? '' : args.channel === 'form' ? 'Concise for a form field; the subject is the form topic line.' : 'Short DM; subject is unused but still required.'}
 decision "skip": skipReason and a one-line skipNote; subject and body null.`
 }
 
@@ -313,7 +332,7 @@ export function summarizeDraftOutcomes(outcomes: DraftOutcome[], needsHandsUpfro
     drafted > 0 ? `${drafted} drafted for review` : null,
     skipped > 0 ? `${skipped} skipped` : null,
     failed > 0 ? `${failed} failed (${reasons.join('; ')})` : null,
-    needsHands > 0 ? `${needsHands} need a browser (form / SNS)` : null,
+    needsHands > 0 ? `${needsHands} on the list need a browser (form / SNS)` : null,
   ].filter((x): x is string => x !== null)
   return {
     kind: 'draft',

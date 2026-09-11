@@ -158,16 +158,50 @@ type GeminiGroundedTextArgs = GeminiCall & {
   maxOutputTokens: number
 }
 
+export type Citation = { passage: string; pages: string[] }
+export type GroundedText = { text: string; citations: Citation[] }
+
 // Search-grounded reading: Google Search for discovery plus url_context so
 // the model can open what it finds. Text out — grounding tools and JSON mode
 // are separate calls; the caller structures the text with callGeminiStructured.
-export async function callGeminiGroundedText(args: GeminiGroundedTextArgs): Promise<string> {
+// Citations are the search's own record; a page the model names in its text
+// may not exist.
+export async function callGeminiGroundedText(args: GeminiGroundedTextArgs): Promise<GroundedText> {
   const response = await generate(args, args.prompt, {
     tools: [{ googleSearch: {} }, { urlContext: {} }],
     ...thinkingConfig(args.thinking),
     maxOutputTokens: args.maxOutputTokens,
   })
-  return textOf(response)
+  const grounding = response.candidates?.[0]?.groundingMetadata
+  const links = (grounding?.groundingChunks ?? []).map((c) => c.web?.uri)
+  const pages: Array<string | null> = []
+  // Workers queues requests beyond six in flight with their timeouts running;
+  // three leaves room for the other passes' requests.
+  for (let i = 0; i < links.length; i += 3) pages.push(...(await Promise.all(links.slice(i, i + 3).map(pageOf))))
+  const supports = (grounding?.groundingSupports ?? []).map((s) => ({ passage: s.segment?.text ?? '', chunks: s.groundingChunkIndices ?? [] }))
+  return { text: textOf(response), citations: citationsOf(supports, pages) }
+}
+
+// Grounding cites each result by a Google redirect link; its Location is the page.
+async function pageOf(uri: string | undefined): Promise<string | null> {
+  if (!uri?.startsWith('https://vertexaisearch.cloud.google.com/grounding-api-redirect/')) return null
+  try {
+    const res = await fetch(uri, { redirect: 'manual', signal: AbortSignal.timeout(5_000) })
+    await res.body?.cancel()
+    return res.headers.get('location')
+  } catch {
+    return null
+  }
+}
+
+export function citationsOf(supports: Array<{ passage: string; chunks: number[] }>, pages: Array<string | null>): Citation[] {
+  const byPassage = new Map<string, Set<string>>()
+  for (const { passage, chunks } of supports) {
+    const found = chunks.flatMap((i) => pages[i] ?? [])
+    if (passage === '' || found.length === 0) continue
+    byPassage.set(passage, new Set([...(byPassage.get(passage) ?? []), ...found]))
+  }
+  return [...byPassage].map(([passage, set]) => ({ passage, pages: [...set] }))
 }
 
 export type GeminiChatArgs = GeminiCall & {

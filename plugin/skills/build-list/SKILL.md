@@ -281,7 +281,7 @@ query of the form
 your equivalent for the prospect's region / language). Skim the top
 results for any of:
 
-- A press release dated within the last 6 months
+- A press release
 - A funding round announcement
 - A hiring spike, role expansion, or new department launch
 - A product launch, partnership, or named-customer announcement
@@ -295,8 +295,9 @@ the candidate's `overview` of the form:
 - 2026-02-04: Hiring 5 senior backend engineers (LinkedIn)
 ```
 
-Bullet date + 1 sentence + source. Do not invent signals — if nothing
-relevant turns up, leave the section out. `/outbound` reads `## Recent
+Bullet date + 1 sentence + source. Record only events dated within the
+last 90 days — the entry that led you to a candidate included. Do not
+invent signals — if nothing relevant turns up, leave the section out. `/outbound` reads `## Recent
 Signals` and decides whether to open with a signal-aware hook; absent
 section means no signal mention.
 
