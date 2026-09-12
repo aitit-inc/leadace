@@ -7,7 +7,6 @@ export type TargetingLifts = {
   employeeBand: TargetingAxisLift[]
   country: TargetingAxisLift[]
   discoveryStrategy: TargetingAxisLift[]
-  freshSignal: { withSignal: number; withoutSignal: number }
 }
 
 // Applied per axis AND on the composite — an unclamped 4-axis product
@@ -24,9 +23,6 @@ export const PRIORITY_MULTIPLIERS: Readonly<Record<1 | 2 | 3 | 4 | 5, number>> =
   4: 0.8,
   5: 0.5,
 }
-
-// Pre-measurement defaults ≈ the old fixed one-priority-step boost.
-export const DEFAULT_FRESH_SIGNAL_LIFTS = { withSignal: 1.25, withoutSignal: 1.0 } as const
 
 const clampLift = (v: number): number => Math.min(LIFT_MAX, Math.max(LIFT_MIN, v))
 
@@ -52,23 +48,4 @@ export function computeAxisLifts(
     const posterior = (priorStrength * r0 + rewardSum) / (priorStrength + total)
     return { value, lift: clampLift(posterior / r0) }
   })
-}
-
-// Time-varying flag → never materialized; applied at read time. An unmeasured
-// bucket keeps its default so the prior boost survives until measured.
-export function computeFreshSignalLifts(
-  withSignal: TargetingAxisStat,
-  withoutSignal: TargetingAxisStat,
-  r0: number,
-  priorStrength: number,
-): TargetingLifts['freshSignal'] {
-  const measured = (stat: TargetingAxisStat, fallback: number): number => {
-    if (stat.total === 0) return fallback
-    const posterior = (priorStrength * r0 + stat.rewardSum) / (priorStrength + stat.total)
-    return clampLift(posterior / r0)
-  }
-  return {
-    withSignal: measured(withSignal, DEFAULT_FRESH_SIGNAL_LIFTS.withSignal),
-    withoutSignal: measured(withoutSignal, DEFAULT_FRESH_SIGNAL_LIFTS.withoutSignal),
-  }
 }

@@ -15,6 +15,7 @@ import { runEnrich } from '../services/pipeline/enrich'
 import { draftLogEntry, draftOne, loadCompositionContext, loadDraftBatch, summarizeDraftOutcomes, type DraftOutcome } from '../services/pipeline/draft'
 import { runEvaluate } from '../services/pipeline/evaluate'
 import { runJournal, type CycleDigest } from '../services/pipeline/journal'
+import { withLlmScope } from '../services/gemini'
 import { sendDraft } from '../services/outreach'
 import { editionOf, sendContextOf, type ProgressFn } from '../services/pipeline/context'
 
@@ -22,6 +23,12 @@ export type StageCtx = {
   env: Env
   step: WorkflowStep
   job: LoadedJob
+}
+
+// A step callback runs outside the Workflow's async context, so the usage
+// log scope is entered per step.
+function llmScoped<T>(ctx: StageCtx, fn: () => Promise<T>): Promise<T> {
+  return withLlmScope({ tenantId: ctx.job.tenantId, jobId: ctx.job.id }, fn)
 }
 
 export const STEP_RETRY = { retries: { limit: 2, delay: '20 seconds', backoff: 'exponential' }, timeout: '10 minutes' } as const
@@ -85,10 +92,10 @@ export async function discoverStage(
   namePrefix = 'discover',
 ): Promise<Extract<JobResult, { kind: 'discover' }>> {
   const { tenantId, projectId }: Ids = ctx.job
-  const discovered = await ctx.step.do(namePrefix, STEP_RETRY, async () => {
+  const discovered = await ctx.step.do(namePrefix, STEP_RETRY, () => llmScoped(ctx, async () => {
     const db = createDb(ctx.env.DATABASE_URL)
     return unwrap(await runDiscover(db, tenantId, ctx.env, projectId, params, progressWriter(ctx, db, 'discover')))
-  })
+  }))
   const enriched = await enrichStage(ctx, discovered.candidates, `${namePrefix}:enrich`)
   return {
     ...discovered.result,
@@ -108,11 +115,11 @@ export async function enrichStage(
   const totals = { registered: 0, skipped: 0, withEmail: 0, skippedDetails: [] as Array<{ name: string; reason: string }> }
   for (let i = 0; i < candidates.length; i += ENRICH_CHUNK) {
     const chunk = candidates.slice(i, i + ENRICH_CHUNK)
-    const r = await ctx.step.do(`${namePrefix}:${i}`, STEP_RETRY, async () => {
+    const r = await ctx.step.do(`${namePrefix}:${i}`, STEP_RETRY, () => llmScoped(ctx, async () => {
       const db = createDb(ctx.env.DATABASE_URL)
       const progress: ProgressFn = (step, done) => progressWriter(ctx, db, 'enrich')(step, i + done, candidates.length)
       return unwrap(await runEnrich(db, tenantId, ctx.env, projectId, chunk, progress))
-    })
+    }))
     totals.registered += r.registered
     totals.skipped += r.skipped
     totals.withEmail += r.withEmail
@@ -144,20 +151,20 @@ export async function draftStage(
   let consecutiveFailures = 0
   for (const [i, p] of batch.targets.entries()) {
     const stepName = `${namePrefix}:${p.prospectId}`
-    const outcome = await ctx.step.do(stepName, SEND_STEP, async (): Promise<DraftOutcome | null> => {
+    const outcome = await ctx.step.do(stepName, SEND_STEP, () => llmScoped(ctx, async (): Promise<DraftOutcome | null> => {
       const db = createDb(ctx.env.DATABASE_URL)
       if (await isCancelled(ctx, db)) return null
       await progressWriter(ctx, db, 'draft')(p.name, i, batch.targets.length)
       const drafted = await draftOne(db, tenantId, ctx.env, projectId, p, batch, context)
       await writeLog(ctx, db, stepName, [draftLogEntry(p.name, drafted)])
       return drafted
-    })
+    }))
     if (outcome === null) break
     outcomes.push(outcome)
     if (outcome.kind === 'sent') await ctx.step.sleep(`${namePrefix}:space:${p.prospectId}`, '30 seconds')
     // A mailbox or quota problem fails every remaining prospect the same way;
     // three in a row is that, not three different recipients.
-    consecutiveFailures = outcome.kind === 'failed' ? consecutiveFailures + 1 : 0
+    consecutiveFailures = outcome.kind === 'failed' && outcome.at === 'send' ? consecutiveFailures + 1 : 0
     if (consecutiveFailures >= 3) break
   }
   return summarizeDraftOutcomes(outcomes, batch.needsHands, batch.quotaMessage)
@@ -195,16 +202,16 @@ export async function sendStage(ctx: StageCtx, params: JobParamsOf<'send'>): Pro
 
 export async function evaluateStage(ctx: StageCtx): Promise<Extract<JobResult, { kind: 'evaluate' }>> {
   const { tenantId, projectId }: Ids = ctx.job
-  return ctx.step.do('evaluate', STEP_RETRY, async () => {
+  return ctx.step.do('evaluate', STEP_RETRY, () => llmScoped(ctx, async () => {
     const db = createDb(ctx.env.DATABASE_URL)
     return unwrap(await runEvaluate(db, tenantId, ctx.env, projectId, progressWriter(ctx, db, 'evaluate')))
-  })
+  }))
 }
 
 export async function journalStage(ctx: StageCtx, digest: CycleDigest | null): Promise<Extract<JobResult, { kind: 'journal' }>> {
   const { tenantId, projectId }: Ids = ctx.job
-  return ctx.step.do('journal', STEP_RETRY, async () => {
+  return ctx.step.do('journal', STEP_RETRY, () => llmScoped(ctx, async () => {
     const db = createDb(ctx.env.DATABASE_URL)
     return unwrap(await runJournal(db, tenantId, ctx.env, projectId, digest, progressWriter(ctx, db, 'journal')))
-  })
+  }))
 }

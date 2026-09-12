@@ -4,7 +4,7 @@
 # Cloudflare cron triggers don't fire automatically under `wrangler dev`.
 # `npm run dev:api` starts the Worker with `--test-scheduled`, which exposes
 # /__scheduled; this script just curls it. Watch the API Worker terminal for
-# `[scheduled] org-signals refresh` log lines.
+# the matching `[scheduled] …` log lines.
 #
 # Usage:
 #   ./e2e/trigger-cron.sh                       # default cron spec "0 3 * * *"

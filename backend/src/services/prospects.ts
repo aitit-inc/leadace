@@ -2,7 +2,6 @@ import { z } from 'zod'
 import { eq, ne, and, sql, desc, or, ilike, inArray, notInArray, isNotNull, isNull, lte, notExists, type SQL } from 'drizzle-orm'
 import {
   organizations,
-  orgSignalsGlobal,
   prospects,
   projectProspects,
   outreachLogs,
@@ -41,7 +40,6 @@ import { resolveSendingIdentityId } from '../auth/google'
 import { getOutboundMode, loadLeverConfig, loadProjectOutboundAllowlist } from './project-settings'
 import { getActiveStrategySlugs } from './discovery-strategies'
 import {
-  DEFAULT_FRESH_SIGNAL_LIFTS,
   PRIORITY_MULTIPLIERS,
 } from '../domain/targeting-score'
 import { projectProspectInsertValues } from '../domain/project-prospect'
@@ -57,38 +55,10 @@ import {
 import { isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG } from '../domain/url'
 import { ALLOWED_SEND_COUNTRIES } from '../domain/country'
 import { coarseIndustry, isKnownIndustry } from '../domain/coarse-industry'
+import { siteReadPatch } from '../domain/site-read'
 import type { ChannelRank } from '../domain/channel-affinity'
 import { drawExploreSlots } from '../domain/discovery-allocation'
 import { floorRescuedWeights } from '../domain/arm-bandit'
-
-// See get_outbound_targets / B §4.2-F.
-const SIGNAL_FRESH_DAYS = 14
-
-// Up to 200 targets ride in one JSON response — digest, not the full payload.
-const RECENT_SIGNALS_MAX = 3
-
-// The `signals IS NOT NULL` guard keeps legacy rows (failure-bumped
-// timestamp, NULL payload) from counting as fresh.
-const freshSignalExpr = sql<boolean>`(
-  ${orgSignalsGlobal.signals} IS NOT NULL
-  AND ${orgSignalsGlobal.signalsUpdatedAt} IS NOT NULL
-  AND ${orgSignalsGlobal.signalsUpdatedAt} >= NOW() - (${SIGNAL_FRESH_DAYS} * INTERVAL '1 day')
-)`
-
-export async function prospectHadFreshSignal(
-  db: Db,
-  tenantId: TenantId,
-  prospectId: number,
-): Promise<boolean> {
-  const [row] = await db
-    .select({ fresh: freshSignalExpr })
-    .from(prospects)
-    .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
-    .leftJoin(orgSignalsGlobal, eq(orgSignalsGlobal.domain, organizations.domain))
-    .where(and(eq(prospects.id, prospectId), eq(prospects.tenantId, tenantId)))
-    .limit(1)
-  return row?.fresh ?? false
-}
 
 // Shared by the reachable gate and the byChannel summary so both agree.
 const emailUsableExpr: SQL = and(
@@ -274,19 +244,14 @@ export type ReachableProspect = {
   // so the US/CA/JP-only delivery scope is enforced at the skill layer
   // rather than failing 422 at send time.
   country: string | null
-  // True when the org has non-empty signals extracted within
-  // SIGNAL_FRESH_DAYS. Drives both skill UX and server-side ordering
-  // (fresh-signal prospects float up).
-  hasFreshSignal: boolean
-  // Up to RECENT_SIGNALS_MAX highlights from a fresh org_signals_global
-  // payload; absent when it carries none (hasFreshSignal may still be true).
-  recentSignals?: string[]
   hypothesis: {
     bestChannel: string | null
     bestKeyperson: string | null
     hypothesizedPain?: string[]
     timingSignals?: string[]
   }
+  // ISO; null = never read for timingSignals.
+  siteReadAt: string | null
   channelAffinity: ChannelRank[]
   cycle: ReachableCycle
 }
@@ -521,17 +486,13 @@ export async function listReachable(
 
   const drawCondition = and(reachableCondition, drawFilter)
 
-  // Multiplicative score orders DESC (the additive pre-score expression was
-  // ASC); createdAt stays the ASC tiebreak.
-  const signalLifts = stateRows[0]?.targetingLifts?.freshSignal ?? DEFAULT_FRESH_SIGNAL_LIFTS
   const orderingScoreExpr = sql<number>`(${projectProspects.orderingScore}
     * (CASE ${projectProspects.priority}
         WHEN 1 THEN ${PRIORITY_MULTIPLIERS[1]}::float8
         WHEN 2 THEN ${PRIORITY_MULTIPLIERS[2]}::float8
         WHEN 3 THEN ${PRIORITY_MULTIPLIERS[3]}::float8
         WHEN 4 THEN ${PRIORITY_MULTIPLIERS[4]}::float8
-        ELSE ${PRIORITY_MULTIPLIERS[5]}::float8 END)
-    * (CASE WHEN ${freshSignalExpr} THEN ${signalLifts.withSignal}::float8 ELSE ${signalLifts.withoutSignal}::float8 END))`
+        ELSE ${PRIORITY_MULTIPLIERS[5]}::float8 END))`
 
   const exploreCount = Math.floor(effectiveLimit * leverConfig.explorationShare)
   const topCount = effectiveLimit - exploreCount
@@ -554,6 +515,7 @@ export async function listReachable(
         discoveryStrategy: prospects.discoveryStrategy,
         notes: prospects.notes,
         hypothesis: prospects.hypothesis,
+        siteReadAt: prospects.siteReadAt,
         matchReason: projectProspects.matchReason,
         priority: projectProspects.priority,
         status: projectProspects.status,
@@ -563,13 +525,10 @@ export async function listReachable(
         // SQL-side coalesce so the skill never merges two columns and
         // /outbound's pre-flight country gate works on a single field.
         country: sql<string | null>`COALESCE(${prospects.country}, ${organizations.country})`,
-        hasFreshSignal: freshSignalExpr,
-        signals: orgSignalsGlobal.signals,
       })
       .from(projectProspects)
       .innerJoin(prospects, eq(prospects.id, projectProspects.prospectId))
       .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
-      .leftJoin(orgSignalsGlobal, eq(orgSignalsGlobal.domain, organizations.domain))
 
   const [topRows, summaryRows] = await Promise.all([
     topCount > 0
@@ -653,7 +612,7 @@ export async function listReachable(
   const cycleByProspect = await loadCycleContext(db, projectId, prospectIds)
 
   const enriched: ReachableProspect[] = rows.map(
-    ({ signals, nextFollowupAfter, followupTouches, ...r }) => {
+    ({ nextFollowupAfter, followupTouches, ...r }) => {
       const base = cycleByProspect.get(r.prospectId) ?? EMPTY_CYCLE
       // A set next_followup_after means the day-scale arm picked this row — relabel
       // so the skill writes a short nudge, not a months-scale re-approach.
@@ -673,12 +632,9 @@ export async function listReachable(
             ? { timingSignals: r.hypothesis.timingSignals }
             : {}),
         },
+        siteReadAt: r.siteReadAt?.toISOString() ?? null,
         channelAffinity: channelAffinityByBucket[coarseIndustry(r.industry)] ?? [],
         cycle,
-        // `signals` is destructured out above so the raw column never leaks out.
-        ...(r.hasFreshSignal && signals?.highlights?.length
-          ? { recentSignals: signals.highlights.slice(0, RECENT_SIGNALS_MAX) }
-          : {}),
       }
     },
   )
@@ -785,6 +741,24 @@ async function loadCycleContext(
   }
 
   return cycles
+}
+
+export async function recordSiteRead(
+  db: Db,
+  tenantId: TenantId,
+  prospectId: number,
+  read: { overview: string; timingSignals: string[] },
+  now: Date,
+): Promise<void> {
+  await db
+    .update(prospects)
+    .set({
+      overview: read.overview,
+      hypothesis: sql`COALESCE(${prospects.hypothesis}, '{}'::jsonb) || ${JSON.stringify({ timingSignals: read.timingSignals })}::jsonb`,
+      siteReadAt: now,
+      updatedAt: now,
+    })
+    .where(and(eq(prospects.id, prospectId), eq(prospects.tenantId, tenantId)))
 }
 
 export async function updateProspectStatus(
@@ -1207,6 +1181,7 @@ export async function updateProspect(
   // row is already loaded), so re-submitting the same address keeps any prior
   // 'undeliverable' verdict and skips a redundant background re-stamp.
   const emailChanged = patch.email !== undefined && patch.email !== existing.email
+  const now = new Date()
   const updateSet = {
     ...(patch.name !== undefined ? { name: patch.name } : {}),
     ...(patch.contactName !== undefined ? { contactName: patch.contactName } : {}),
@@ -1222,6 +1197,7 @@ export async function updateProspect(
     ...(patch.platformUrl !== undefined ? { platformUrl: patch.platformUrl } : {}),
     ...(patch.notes !== undefined ? { notes: patch.notes } : {}),
     ...(patch.hypothesis !== undefined ? { hypothesis: patch.hypothesis as ProspectHypothesis | null } : {}),
+    ...siteReadPatch(patch.hypothesis, now),
     ...(patch.country !== undefined ? { country: patch.country?.toUpperCase() ?? null } : {}),
     ...(patch.countrySource !== undefined ? { countrySource: patch.countrySource } : {}),
   }
@@ -1233,7 +1209,7 @@ export async function updateProspect(
   try {
     await db
       .update(prospects)
-      .set({ ...updateSet, updatedAt: new Date() })
+      .set({ ...updateSet, updatedAt: now })
       .where(eq(prospects.id, prospectId))
   } catch (e) {
     if (e instanceof Error && (/duplicate key|unique constraint|23505/i.test(e.message))) {

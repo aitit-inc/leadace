@@ -411,16 +411,15 @@ dev:api` starts the API Worker with `--test-scheduled`, which exposes a
 `/__scheduled` endpoint that fires the `scheduled` handler on demand:
 
 ```bash
-./e2e/trigger-cron.sh                  # fires the daily org-signals refresh (0 3 * * *)
+./e2e/trigger-cron.sh                  # fires the daily verifier balance watch (0 3 * * *)
 ./e2e/trigger-cron.sh "0 * * * *"      # hourly server-side reply poll (reply-ingest)
 ./e2e/trigger-cron.sh "*/5 * * * *"    # custom cron spec
 curl 'http://localhost:8787/__scheduled?cron=0+3+*+*+*'   # raw equivalent
 ```
 
 Watch the API Worker terminal for the matching `[scheduled] …` log line
-(`org-signals refresh` for `0 3 * * *`, `reply-ingest …` for `0 * * * *`). The
-handler runs against the local DB only; the per-run cap inside
-`runDailySignalRefresh` keeps a wide tenant from spinning forever.
+(`verifier balance` for `0 3 * * *`, `reply-ingest …` for `0 * * * *`). The
+handler runs against the local DB only.
 
 Only reply-ingest's `gmail_oauth` arm works locally — the `smtp_imap` arm (IMAP
 over `connect()`) fails in `wrangler dev` with `cannot connect to the specified

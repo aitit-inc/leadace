@@ -42,7 +42,7 @@ export type DiscoverOutput = {
 
 type PlanEntry = { slug: string; approach: string; count: number }
 
-const extractionSchema = z.object({
+export const extractionSchema = z.object({
   candidates: z.array(
     discoverCandidateSchema.omit({ discoveryStrategy: true, priority: true }).extend({
       priority: z.number().int().min(1).max(5),
@@ -53,7 +53,7 @@ const extractionSchema = z.object({
   searchNotes: z.string(),
 })
 
-function searchPrompt(args: {
+export function searchPrompt(args: {
   plan: PlanEntry
   business: string
   salesStrategy: string
@@ -100,7 +100,7 @@ For each candidate one block:
 Then a section "## Queries and sources" listing the search queries you ran and the listing / directory pages you opened, and which of them were productive.`
 }
 
-function extractionPrompt(args: {
+export function extractionPrompt(args: {
   search: GroundedText
   industries: string[]
   priorNotes: string | null
@@ -129,7 +129,7 @@ ${args.priorNotes ?? '(none — create the document)'}
 - Drop duplicates by domain. Keep only candidates with an official URL and an overview.
 
 ## search_notes document
-Markdown with these sections, merged with the prior version (never overwrite what earlier passes learned):
+Markdown with exactly these sections, merged with the prior version (never overwrite what earlier passes learned). Add no other section, and write no lever weight, lift or allocation — those are computed elsewhere and are not yours to record, even when the prior document carries some:
 # Search Notes / Last updated: ${args.today}
 ## Coverage Matrix (table: Industry | Region | Size | Status covered/exhausted/unexplored | Notes)
 ## Exhausted Keywords (keyword — reason — date; only ones that clearly returned known or off-target results)
@@ -140,7 +140,7 @@ Markdown with these sections, merged with the prior version (never overwrite wha
 Record this pass under strategy "${args.strategySlug}".`
 }
 
-function sourcedSignals(signals: Array<{ text: string; passages: number[] }>, citations: Citation[]): DiscoverCandidate['signals'] {
+export function sourcedSignals(signals: Array<{ text: string; passages: number[] }>, citations: Citation[]): DiscoverCandidate['signals'] {
   return signals.flatMap((s) => {
     const pages = s.passages.flatMap((n) => citations[n - 1]?.pages ?? []).filter((u) => signalSourceSchema.safeParse(u).success)
     const sourceUrls = [...new Set(pages)].slice(0, SIGNAL_MAX_SOURCES)
@@ -199,6 +199,7 @@ export async function runDiscover(
       entry,
       search: await callGeminiGroundedText({
         op: 'discover.search',
+        tier: 'flex',
         apiKey: env.GEMINI_API_KEY,
         model: HOSTED_MODEL,
         timeoutMs: 180_000,
@@ -232,6 +233,7 @@ export async function runDiscover(
     try {
       extracted = await callGeminiJson({
         op: 'discover.extract',
+        tier: 'flex',
         apiKey: env.GEMINI_API_KEY,
         model: HOSTED_MODEL,
         timeoutMs: 120_000,

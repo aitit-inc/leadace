@@ -30,8 +30,8 @@ const PRIVATE_IPV4_RE =
 
 const IPV4_LITERAL_RE = /^\d{1,3}(?:\.\d{1,3}){3}$/
 
-// Stored org domains and sitemap-declared URLs are attacker-controlled (any
-// signup can register one), so the server-side reader must not be steerable at
+// Stored org domains and their site URLs are attacker-controlled (any signup
+// can register one), so the server-side reader must not be steerable at
 // hosts that only resolve inside a network. A company site is always a DNS name,
 // so IP literals are refused outright rather than range-matched.
 export const isPublicWebUrl = (u: string): boolean => {

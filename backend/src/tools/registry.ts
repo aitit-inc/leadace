@@ -365,7 +365,7 @@ export function buildToolRegistry(): ToolDef[] {
           targetRolePattern: z.string().optional().describe('Likely buyer role/title pattern.'),
           hypothesizedPain: z.array(z.string()).optional().describe('Short pain hypotheses.'),
           valueMapping: z.array(z.string()).optional().describe('How the offering addresses each pain, in the same order as hypothesizedPain.'),
-          timingSignals: z.array(z.string()).optional().describe('Concrete reasons now is a good moment to reach out.'),
+          timingSignals: z.array(z.string()).optional().describe('Concrete reasons now is a good moment to reach out. Send the array (even empty) only when the site was read for them — its presence stamps the prospect\'s site-read time; omit it otherwise.'),
           bestChannel: z.string().optional().describe('Suggested first channel (e.g. personal_email, form, linkedin_dm).'),
           bestKeyperson: z.string().optional().describe('Specific keyperson if obvious (name + role).'),
         }).optional().describe('Per-prospect targeting hypothesis.'),
@@ -478,7 +478,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_outbound_targets',
-    'Prospects due for outreach (new + follow-up/recycle touches), ordered by the measured targeting score (x priority multiplier; a share of each batch is random exploration slots); server-filters by enabled channels and deliverable country (unknown country passes unless the project sets targetCountries). Reports the reachable total and its email / formOnly / snsOnly / platformOnly split, the outbound mode (send|draft), remaining outreach quota, and the mailbox email cap; then the prospects as JSON, each carrying `country`, `discoveryStrategy`, and `cycle` {kind, touchNumber}.',
+    'Prospects due for outreach (new + follow-up/recycle touches), ordered by the measured targeting score (x priority multiplier; a share of each batch is random exploration slots); server-filters by enabled channels and deliverable country (unknown country passes unless the project sets targetCountries). Reports the reachable total and its email / formOnly / snsOnly / platformOnly split, the outbound mode (send|draft), remaining outreach quota, and the mailbox email cap; then the prospects as JSON, each carrying `country`, `discoveryStrategy`, `siteReadAt` (when its site was last read for dated events; null = never), and `cycle` {kind, touchNumber}.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       limit: z.number().int().min(1).max(200).default(50).describe('Max number of prospects to return'),
@@ -900,7 +900,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'run_lever_tick',
-    'Run the project\'s daily outbound-optimization tick: recompute the message-variant draw weights pick_message_variant reads (Thompson sampling over graded reward; archives variants whose P(best) stays below the threshold at maturity, never below two active), the discovery-strategy draw weights over the active registry (same Thompson math; archives dominated strategies, never below two active), the per-industry channel affinity get_outbound_targets surfaces, and the measured targeting lifts (industry / size / country / discovery strategy / fresh signal) that re-score the get_outbound_targets ordering. After a sustained flat streak (every arm mature yet none likely best) it rotates out the weakest variant to free a slot for a fresh angle. Idempotent per UTC day — a repeat call returns that day\'s recorded decision without re-applying. Returns variant weights and archived variants (a stagnation rotation is marked as such), strategy weights and archived strategies, channelAffinity by industry bucket, targeting lifts, the futility vitals verdict (ok / insufficient / futile over recent mature email sends — futile means outreach is statistically drawing no replies and belongs in the cycle report; it clears on its own once recent sends draw replies again), and the live needsReplenishment / needsStrategyReplenishment flags (recomputed each call, not the frozen recorded value).',
+    'Run the project\'s daily outbound-optimization tick: recompute the message-variant draw weights pick_message_variant reads (Thompson sampling over graded reward; archives variants whose P(best) stays below the threshold at maturity, never below two active), the discovery-strategy draw weights over the active registry (same Thompson math; archives dominated strategies, never below two active), the per-industry channel affinity get_outbound_targets surfaces, and the measured targeting lifts (industry / size / country / discovery strategy) that re-score the get_outbound_targets ordering. After a sustained flat streak (every arm mature yet none likely best) it rotates out the weakest variant to free a slot for a fresh angle. Idempotent per UTC day — a repeat call returns that day\'s recorded decision without re-applying. Returns variant weights and archived variants (a stagnation rotation is marked as such), strategy weights and archived strategies, channelAffinity by industry bucket, targeting lifts, the futility vitals verdict (ok / insufficient / futile over recent mature email sends — futile means outreach is statistically drawing no replies and belongs in the cycle report; it clears on its own once recent sends draw replies again), and the live needsReplenishment / needsStrategyReplenishment flags (recomputed each call, not the frozen recorded value).',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
     },
@@ -1510,7 +1510,7 @@ export function buildToolRegistry(): ToolDef[] {
           targetRolePattern: z.string().optional(),
           hypothesizedPain: z.array(z.string()).optional(),
           valueMapping: z.array(z.string()).optional(),
-          timingSignals: z.array(z.string()).optional(),
+          timingSignals: z.array(z.string()).optional().describe('Present (even empty) = the site was read for them; stamps the site-read time.'),
           bestChannel: z.string().optional(),
           bestKeyperson: z.string().optional(),
         }).nullable().optional(),
@@ -1661,7 +1661,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_eval_data',
-    'Evaluation statistics for a project: response rates, channel performance, sentiment breakdown, discoveryStrategyResponseRate (per discovery strategy; reply metrics count mature sends only while its bounce metrics span all sends — the early source-quality read; the null bucket is prospects without recorded provenance), targeting observation axes (industryResponseRate by coarse bucket / sizeResponseRate by employee band / countryResponseRate — these also count mature sends only, older than the reply-maturity window), freshSignalResponseRate, inquiry-landing outcome counts, respondedMessages, and a data-sufficiency check. Reply rates exclude bounces/auto-replies; per-bucket bounces + bounceRate are a threaded-only lower bound.',
+    'Evaluation statistics for a project: response rates, channel performance, sentiment breakdown, discoveryStrategyResponseRate (per discovery strategy; reply metrics count mature sends only while its bounce metrics span all sends — the early source-quality read; the null bucket is prospects without recorded provenance), targeting observation axes (industryResponseRate by coarse bucket / sizeResponseRate by employee band / countryResponseRate — these also count mature sends only, older than the reply-maturity window), inquiry-landing outcome counts, respondedMessages, and a data-sufficiency check. Reply rates exclude bounces/auto-replies; per-bucket bounces + bounceRate are a threaded-only lower bound.',
     { projectId: z.string().min(1).describe('Project name or ID') },
     async ({ projectId }, ctx) => {
       const { ok, data } = await ctx.callApi('GET', `/projects/${encodeURIComponent(projectId)}/stats`, null)

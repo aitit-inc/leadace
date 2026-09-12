@@ -115,23 +115,21 @@ Each prospect in the targets list also carries:
   `lastResponse.rejectionFeedback` carries the stated objection — `primaryReason`
   (e.g. `wrong_timing` / `budget`) and `freeText` (their own words, may be null).
   Drives step 3's tone and step 3b's re-approach branch.
-- `hasFreshSignal: boolean` — true when the org has non-empty signals extracted
-  within the last 14 days. Used by server-side prioritisation; you may surface it
-  in the report.
-- `recentSignals?: string[]` — up to 3 dated signal highlights from the server-side
-  daily refresh (e.g. `"Raised Series B on 2026-05-20"`); may be absent even when
-  `hasFreshSignal` is true. The refreshed counterpart to overview's `## Recent
-  Signals` (frozen at registration) — when both exist, use whichever carries the
-  more recent dated entries. Raw material for the opening line, the bad-timing
-  judgment, and the re-approach hooks below.
 - `hypothesis: { bestChannel, bestKeyperson, hypothesizedPain?, timingSignals? }`
   — build-list's first-touch guesses, frozen at registration; each may be null.
   `bestChannel` / `bestKeyperson` hint channel choice and addressing, but
   `tpl_channel_policy` and the country / quota gates still decide.
   `hypothesizedPain` / `timingSignals` are **inferred, not observed**: use them to
   pick the angle when the prospect has no signal material, framed as your reasoning
-  and never as a claim about the recipient. Only `recentSignals` / `## Recent
-  Signals` carry assertable facts and count as "what's new" below.
+  and never as a claim about the recipient. Only `## Recent Signals` carries
+  assertable facts and counts as "what's new" below.
+- `siteReadAt` — when the prospect's site was last read for dated events (ISO), or
+  null when never. **Freshness check:** when null or older than 30 days, WebFetch
+  the site's home page (and its news / press page if linked) before composing and
+  keep only events the page itself states with a date within the last 90 days, as
+  `- YYYY-MM-DD: what happened (source)` lines; treat them exactly like
+  `## Recent Signals`. They serve this message only — the server keeps its own
+  reads, so do not write them back.
 - `channelAffinity: [{ channel, rate, total, responses }]` — the project's
   **measured** channel ranking for this prospect's coarse industry, best first,
   recomputed daily by the lever tick. Only the array order drives selection;
@@ -171,7 +169,7 @@ Country eligibility is not a skill-side concern — `get_outbound_targets` alrea
 
 **Bad-timing skip (optional, on by default).** Before composing, judge from the
 material you already have (`overview` including any `## Recent Signals`,
-`recentSignals`, `hypothesis`, `cycle`) whether a concrete, clearly negative event
+`hypothesis`, `cycle`) whether a concrete, clearly negative event
 makes now a bad moment for this recipient — layoffs, an announced wind-down, a
 leadership shake-up implying the buyer left, a post-acquisition freeze. When in
 doubt, send: a neutral read is a send, so prospects with no such signal are
@@ -218,7 +216,7 @@ add angles via `upsert_message_variant` (or `/leadace`'s strategy onboarding ste
 Do not fabricate a SALES_STRATEGY.md "Subject Line Patterns" section; that content
 is not an authoritative source.
 
-**Signal-aware personalization.** Use the most recent relevant entry from `recentSignals` or
+**Signal-aware personalization.** Use the most recent relevant entry from
 `overview`'s `## Recent Signals` in concrete terms ("Saw the Series B announcement on TechCrunch
 last week — congrats on…"). Place it per the picked variant's opener policy; otherwise follow
 the email guidelines. Never invent a signal.
@@ -278,7 +276,7 @@ When `cycle.kind === 'short_cycle_followup'`:
   unsubscribe arrives — so reaching you here means genuine silence). This is
   `touchNumber` of a short sequence, not a months-later cold re-approach.
 - Keep it **short and low-friction** — a brief nudge that adds one new angle or
-  surfaces a fresh `recentSignals` item, not a re-pitch of the whole offer.
+  surfaces a fresh `## Recent Signals` item, not a re-pitch of the whole offer.
   A new angle is welcome but **not required**: unlike `no_response`, do NOT
   skip for lack of new material — a concise, polite bump is the point (much of
   the reply volume comes from these follow-ups). Escalate brevity with
@@ -290,8 +288,9 @@ When `cycle.kind === 'short_cycle_followup'`:
 When `cycle.kind === 'no_response'`:
 - This is a follow-up after silence. Acknowledge the silence lightly
   ("circling back on my note from <approx month>"), then **lead with
-  what's new** — a fresh signal from `recentSignals` or `## Recent Signals`
-  (whichever is newer), a new product release, a different angle in
+  what's new** — a `## Recent Signals` entry (or one from the freshness
+  check) dated after `cycle.lastOutreach.sentAt`, a new product
+  release, a different angle in
   `matchReason`. If you genuinely have no
   new material to add, **skip the prospect**: call
   `skip_prospect` with:
@@ -319,7 +318,8 @@ When `cycle.kind === 'rejection_followup'`:
     `lastResponse.rejectionFeedback.primaryReason` (and `freeText` if
     present) to open against the actual objection — reference it, don't
     quote verbatim — then lead with what's specifically changed since
-    (`recentSignals`, `## Recent Signals`, product updates, pricing changes).
+    (`## Recent Signals` dated after `cycle.lastOutreach.sentAt`, product
+    updates, pricing changes).
   - `'meeting_request'` / positive `'reply'`: unusual to be back in
     the candidate pool — only happens if the recycle window elapsed
     without a follow-up booking. Reference the earlier interest neutrally.

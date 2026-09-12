@@ -15,6 +15,7 @@ import { GoogleAuthError, refreshGoogleAccessToken } from '../auth/google'
 import { pollGmailInbox } from './gmail-poll'
 import { pollImapInbox } from './imap-poll'
 import { classifyReply, type ReplyClassification } from './reply-classify'
+import { withLlmScope } from './gemini'
 import { recordResponse, type RecordResponseInput } from './responses'
 
 type ReplyIngestEnv = {
@@ -340,7 +341,7 @@ async function ingestIdentity(
 
     const classified = det
       ? { responseType: det, sentiment: 'neutral' as const }
-      : (await classifyReply(env, { subject: reply.subject, bodyText: leadingUnquotedText(reply.bodyText) })) ??
+      : (await withLlmScope({ tenantId }, () => classifyReply(env, { subject: reply.subject, bodyText: leadingUnquotedText(reply.bodyText) }))) ??
         { responseType: 'reply' as const, sentiment: 'neutral' as const }
 
     const rawContent = reply.bodyText.trim() || reply.subject || '(no text)'

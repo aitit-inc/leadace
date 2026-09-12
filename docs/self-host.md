@@ -191,9 +191,9 @@ those alongside another stack, pass their own `--port` flags.
 
 What you need:
 
-- **Cloudflare account** on the **Workers Paid plan** — the daily
-  org-signals cron makes up to 200 Gemini calls in one invocation,
-  past the Free plan's 50-subrequest limit.
+- **Cloudflare account** on the **Workers Paid plan** — the hosted job
+  pipeline and the hourly reply poll make more outbound requests per
+  invocation than the Free plan's 50-subrequest limit allows.
 - **Supabase project** (free tier works for evaluation).
 - **Domain** (optional — you can run on `*.workers.dev` /
   `*.pages.dev` URLs without a custom domain).
@@ -596,7 +596,7 @@ Most self-hosters will leave Stripe off entirely.
 | `UNSUBSCRIBE_TOKEN_SECRET` | API | for outbound | 32+ char passphrase. HMAC key for `/unsubscribe/:token` links — **never rotate** once emails have been sent. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | API | for outbound | OAuth refresh-token exchange for Gmail send. |
 | `OPENAI_API_KEY` | API | for chat | Powers inquiry-chat. Chat is disabled if absent. |
-| `GEMINI_API_KEY` | API | yes | Google AI Studio key (paid tier). Powers the daily org-signal refresh, which reads company pages via Gemini. The daily cron fails without it. |
+| `GEMINI_API_KEY` | API | yes | Google AI Studio key (paid tier). Powers the hosted agent (discover / enrich / draft / evaluate stages and the chat), which reads company pages and searches via Gemini. |
 | `EMAILABLE_API_KEY` | API | no | Emailable key (pay-as-you-go credits, no subscription). Verifies recipient mailboxes ahead of sending and refuses addresses that provably do not accept mail. Absent leaves only the free DNS half of that check, which still catches domains that went dark after the address was collected. |
 | `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | API | cloud only | Required only when `LEADACE_EDITION=cloud`. Ignored otherwise. |
 | `SHOWCASE_PROJECT_ID` | API | no | Project id the public `/live` scoreboard shows (`GET /api/live`). Only that project's settings show the "Publish a public scoreboard" switch, and it must be on. Unset keeps `/live` off. |

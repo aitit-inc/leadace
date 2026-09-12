@@ -110,11 +110,11 @@ The local DB is not the production DB — SELECT / UPDATE / DELETE are fair game
 `wrangler dev` does not fire scheduled triggers automatically. The API Worker is started with `--test-scheduled`, which exposes a `/__scheduled` endpoint that fires the `scheduled` handler on demand:
 
 ```bash
-./e2e/trigger-cron.sh                  # fires the daily org-signals refresh
+./e2e/trigger-cron.sh                  # fires the daily verifier balance watch (0 3 * * *)
 curl 'http://localhost:8787/__scheduled?cron=0+3+*+*+*'   # raw equivalent
 ```
 
-Watch the API Worker terminal for `[scheduled] org-signals refresh` log lines. The handler runs on the local DB only and respects the per-run cap inside `runDailySignalRefresh`.
+Watch the API Worker terminal for the matching `[scheduled] …` log lines. The handler runs on the local DB only.
 
 ### 5. Cleanup
 

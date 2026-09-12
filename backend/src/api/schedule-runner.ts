@@ -12,6 +12,7 @@ import type { Db } from '../db/connection'
 import { withTenantConnection } from '../db/rls'
 import { runKey } from '../domain/schedules'
 import { runChatTurn } from '../services/chat/agent'
+import { withLlmScope } from '../services/gemini'
 import { unattendedTools } from '../services/chat/unattended'
 import { createThread, titleFromMessage } from '../services/chat/threads'
 import { notifyUser } from '../services/notifications'
@@ -75,9 +76,11 @@ async function runOne(env: Env, ctx: ExecutionContext, dispatch: InternalDispatc
   }
 
   let failure: string | null = null
-  for await (const event of runChatTurn(deps, threadId, { kind: 'message', text: schedule.prompt })) {
-    if (event.type === 'error') failure = event.message
-  }
+  await withLlmScope({ tenantId: schedule.tenantId, threadId }, async () => {
+    for await (const event of runChatTurn(deps, threadId, { kind: 'message', text: schedule.prompt })) {
+      if (event.type === 'error') failure = event.message
+    }
+  })
   const stopped = await run((db) => recordScheduleOutcome(db, schedule.tenantId, schedule.id, failure))
   if (stopped) {
     await run((db) =>

@@ -184,9 +184,9 @@ export type MeetingRequestSource = (typeof MEETING_REQUEST_SOURCES)[number]
 export const meetingRequestSourceEnum = pgEnum('meeting_request_source', MEETING_REQUEST_SOURCES)
 
 // Per-session frozen context for inquiry chat. Synthesized once at session
-// open from project_settings.inquiry_chat_brief + prospects.hypothesis +
-// orgSignalsGlobal.signals; subsequent chat turns read this snapshot
-// verbatim so the LLM context stays stable across the conversation.
+// open from project_settings.inquiry_chat_brief + prospects.hypothesis;
+// subsequent chat turns read this snapshot verbatim so the LLM context stays
+// stable across the conversation.
 export type InquirySessionContextSnapshot = {
   brief: string
   prospectHints?: {
@@ -334,10 +334,6 @@ export type EvaluationMetrics = {
     bounces: number
     bounceRate: number
   }>
-  freshSignalResponseRate: {
-    withSignal: { total: number; responses: number; rate: number }
-    withoutSignal: { total: number; responses: number; rate: number }
-  }
   // Inquiry-landing outcomes per project. Captures self-serve conversions
   // ('signup_clicked') and chat-only engagement ('inquired') that the
   // response-axis metrics above miss — responses are written for
@@ -648,6 +644,9 @@ export const prospects = pgTable('prospects', {
   nextOutreachAfter: timestamp('next_outreach_after', { withTimezone: true }),
   // NULL = not yet computed; the LLM falls back to overview alone.
   hypothesis: jsonb('hypothesis').$type<ProspectHypothesis>(),
+  // Last site read for hypothesis.timingSignals; NULL = never read (CSV / manual
+  // entry). The send side re-reads when this is missing or stale.
+  siteReadAt: timestamp('site_read_at', { withTimezone: true }),
   // Per-prospect country override. Most prospects share the organization's
   // country; this column is for the rare case the prospect is in a different
   // country than the org (e.g. distributed team, regional sales rep). Send
@@ -759,9 +758,6 @@ export const outreachLogs = pgTable('outreach_logs', {
   // variants stay analysable). Populated by /outbound when the project has
   // multiple variants registered. NULL when the email used a one-off subject.
   variantId: text('variant_id'),
-  // Whether the org had a fresh org_signals_global payload when this outreach
-  // was composed (server-computed at insert; the plugin never supplies it).
-  hadFreshSignal: boolean('had_fresh_signal').notNull().default(false),
   // Position of this send in its follow-up sequence (1 = initial touch).
   touchNumber: smallint('touch_number').notNull().default(1),
   sendingIdentityId: text('sending_identity_id'),
@@ -889,7 +885,6 @@ export type LeverDecisionPayload = {
       employeeBand: TargetingAxisStat[]
       country: TargetingAxisStat[]
       discoveryStrategy: TargetingAxisStat[]
-      freshSignal: { withSignal: TargetingAxisStat; withoutSignal: TargetingAxisStat }
     }
   }
   discovery?: {
@@ -1189,36 +1184,6 @@ export const masterDocuments = pgTable('master_documents', {
   content: text('content').notNull(),
   version: integer('version').notNull().default(1),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-})
-
-// All fields optional — daily fetchers fill what they can and the LLM
-// gracefully degrades when fields are missing. Recency is tracked separately
-// in signalsUpdatedAt.
-export type OrgSignals = {
-  pressReleases?: Array<{ title: string; url?: string; publishedAt?: string }>
-  funding?: { round?: string; amount?: string; investors?: string[]; announcedAt?: string }
-  hiring?: { totalOpen?: number; departments?: string[]; sampleTitles?: string[]; sourceUrl?: string }
-  leadership?: Array<{ name: string; role?: string; sourceUrl?: string }>
-  // Free-form notes the LLM may surface verbatim (e.g. "Just launched product
-  // X on 2026-04-01"). Kept short to fit comfortably in /outbound prompt.
-  highlights?: string[]
-}
-
-// Cross-tenant signal cache, keyed on apex domain — global, no RLS,
-// populated by SaaS-side daily batch. Multiple tenants pointing to the same
-// organization share one cache entry so a tenant that just added an org gets
-// the recent signals immediately.
-//
-// Two timestamps, no double-duty: lastAttemptAt is bumped on EVERY refresh
-// attempt and read only by the picker rotation; signalsUpdatedAt is bumped
-// only on non-empty extraction and read by freshness gates (NULL = never
-// successfully extracted).
-export const orgSignalsGlobal = pgTable('org_signals_global', {
-  domain: text('domain').primaryKey(),
-  signals: jsonb('signals').$type<OrgSignals>(),
-  signalsUpdatedAt: timestamp('signals_updated_at', { withTimezone: true }),
-  lastAttemptAt: timestamp('last_attempt_at', { withTimezone: true }).defaultNow().notNull(),
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 })
 
 // Reviewed out-of-band by the maintainer — no admin UI yet.

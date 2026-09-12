@@ -62,10 +62,10 @@ UNSUBSCRIBE_TOKEN_SECRET=""
 # of the API still works.
 OPENAI_API_KEY=""
 
-# --- Org-signal refresh (required) ---
+# --- Gemini (required) ---
 # Google AI Studio key (paid tier — the free tier may train on your data).
-# Powers the daily org-signal refresh, which searches recent company events
-# by reading their pages via Gemini. The daily cron fails without it.
+# Powers the hosted agent (discover / enrich / draft / evaluate stages and the
+# chat), which reads company pages and searches via Gemini.
 GEMINI_API_KEY=""
 
 # --- Mailbox verification (optional) ---

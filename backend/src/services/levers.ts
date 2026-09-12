@@ -33,7 +33,6 @@ import {
 } from '../domain/channel-affinity'
 import {
   computeAxisLifts,
-  computeFreshSignalLifts,
   overallMeanReward,
   LIFT_MIN,
   LIFT_MAX,
@@ -245,12 +244,6 @@ export async function runLeverTick(
     employeeBand: computeAxisLifts(targetingStats.employeeBand, r0, config.priorStrength),
     country: computeAxisLifts(targetingStats.country, r0, config.priorStrength),
     discoveryStrategy: computeAxisLifts(targetingStats.discoveryStrategy, r0, config.priorStrength),
-    freshSignal: computeFreshSignalLifts(
-      targetingStats.freshSignal.withSignal,
-      targetingStats.freshSignal.withoutSignal,
-      r0,
-      config.priorStrength,
-    ),
   }
 
   // A stats slug outside the active registry stays baseline-only (e.g. carried

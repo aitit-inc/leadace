@@ -42,6 +42,7 @@ import {
   type DedupSkipReason,
 } from '../domain/prospect-dedup'
 import { isKnownIndustry } from '../domain/coarse-industry'
+import { siteReadPatch } from '../domain/site-read'
 
 const COUNTRY_CODE_REGEX = /^[A-Z]{2}$/
 
@@ -263,6 +264,7 @@ function prospectInsertValues(
     platformUrl: input.platformUrl ?? null,
     notes: input.notes ?? null,
     hypothesis: (input.hypothesis as ProspectHypothesis) ?? null,
+    ...siteReadPatch(input.hypothesis, now),
     ...prospectCountryPatch(input),
     discoveryStrategy: input.discoveryStrategy ?? null,
     doNotContact: input.doNotContact ?? false,
@@ -305,6 +307,7 @@ function prospectUpdateSet(input: ProspectInput, orgId: number, now: Date) {
     ...(input.platformUrl !== undefined ? { platformUrl: input.platformUrl } : {}),
     ...(input.notes !== undefined ? { notes: input.notes } : {}),
     ...(input.hypothesis !== undefined ? { hypothesis: input.hypothesis as ProspectHypothesis } : {}),
+    ...siteReadPatch(input.hypothesis, now),
     ...prospectCountryPatch(input),
     // One-way DNC ratchet: only set true; imports never clear an existing flag.
     ...(input.doNotContact === true ? { doNotContact: true } : {}),

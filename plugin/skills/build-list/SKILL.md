@@ -302,9 +302,7 @@ Signals` and decides whether to open with a signal-aware hook; absent
 section means no signal mention.
 
 This is **one query per prospect**, not deep research. This section is a
-registration-time snapshot and is never updated afterwards; ongoing signal
-refresh happens in a server-side daily batch and reaches `/outbound` as the
-per-target `recentSignals` field.
+registration-time snapshot and is never updated afterwards.
 
 ## Phase 2: Contact + Keyperson Retrieval
 

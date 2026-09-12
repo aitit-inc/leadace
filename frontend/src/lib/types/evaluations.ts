@@ -16,10 +16,6 @@ export interface EvaluationMetrics {
   industryResponseRate: Array<{ industry: string; total: number; responses: number; rate: number; bounces: number; bounceRate: number }>;
   sizeResponseRate: Array<{ employeeBand: EmployeeBand; total: number; responses: number; rate: number; bounces: number; bounceRate: number }>;
   countryResponseRate: Array<{ country: string | null; total: number; responses: number; rate: number; bounces: number; bounceRate: number }>;
-  freshSignalResponseRate: {
-    withSignal: { total: number; responses: number; rate: number };
-    withoutSignal: { total: number; responses: number; rate: number };
-  };
   inquiryOutcomeCounts: Record<InquiryOutcome, number>;
 }
 

@@ -9,7 +9,7 @@ import type { ProjectId, TenantId } from '../../domain/ids'
 import type { JobLogEntry, JobParamsOf, JobResult } from '../../domain/jobs'
 import { ok, type ServiceResult } from '../result'
 import { callGeminiJson, GeminiError, HOSTED_MODEL } from '../gemini'
-import { listReachable, type ReachableProspect, type ReachableQuery } from '../prospects'
+import { listReachable, recordSiteRead, type ReachableProspect, type ReachableQuery } from '../prospects'
 import { pickMessageVariant, type PickedVariant } from '../message-variants'
 import { getOutboundMode, getProjectSettings, type ProjectSettingsRow } from '../project-settings'
 import { recordOutreachWithInquiry, sendAndRecord, skipProspect } from '../outreach'
@@ -17,6 +17,9 @@ import { assertTenantComplianceReady } from '../tenants'
 import { editionOf, loadDoc, loadMasterDoc, requireStrategyDocs, sendContextOf, type HostedEnv } from './context'
 import { languageNameOf } from '../../domain/locale'
 import { utcDateKey } from '../../domain/time'
+import { signalWindowStart } from '../../domain/jobs'
+import { isSiteReadStale, signalsAfter, withRecentSignals } from '../../domain/site-read'
+import { readRecentEvents } from './enrich'
 import { runWithRls } from '../../db/rls'
 
 export type DraftBatch = {
@@ -170,10 +173,8 @@ function compositionPrompt(args: {
         : cycle.kind === 'no_response'
           ? `Months-scale re-approach after silence (last touch "${cycle.lastOutreach?.subject ?? ''}" on ${cycle.lastOutreach?.sentAt ?? ''}). Acknowledge lightly and lead with what is new (a fresh signal, a different angle from matchReason). With genuinely nothing new → decision "skip" with reason no_fresh_material. Subject must differ from the last one.`
           : `Re-approach after a substantive response (${cycle.lastResponse?.responseType ?? 'reply'}${cycle.lastResponse?.rejectionFeedback ? `, stated reason: ${cycle.lastResponse.rejectionFeedback.primaryReason}${cycle.lastResponse.rejectionFeedback.freeText ? ` — "${cycle.lastResponse.rejectionFeedback.freeText}"` : ''}` : ''}). Open against the actual objection without quoting it, then lead with what has concretely changed. Nothing changed → decision "skip" (no_fresh_material). Collegial, never pitchy.`
-  const signals = [
-    ...(p.recentSignals ?? []),
-    ...(p.overview.includes('## Recent Signals') ? [p.overview.slice(p.overview.indexOf('## Recent Signals'))] : []),
-  ]
+  const signalsAt = p.overview.indexOf('## Recent Signals')
+  const signals = signalsAt >= 0 ? p.overview.slice(signalsAt) : null
   return `You are Ace, writing one ${args.channel === 'email' ? 'cold email' : args.channel === 'form' ? 'contact-form message' : 'social DM'} for one recipient, in ${languageNameOf(s.targetLanguage)}. Today is ${args.today}.
 
 ## The business (BUSINESS.md)
@@ -209,7 +210,7 @@ ${JSON.stringify(
   1,
 )}
 Assertable facts about them are ONLY the overview, matchReason, notes and the dated signals below. hypothesis fields are inferred, never observed — use them to choose the angle, never as claims about the recipient.
-Signals: ${signals.length > 0 ? `${signals.join(' | ')} — judge each by its date against today: use one only while it is still timely for the angle, and never present an older one as recent news` : '(none — do not invent one; open on their situation plainly)'}
+Signals: ${signals ? `${signals} — judge each by its date against today: use one only while it is still timely for the angle, and never present an older one as recent news` : '(none — do not invent one; open on their situation plainly)'}
 
 ## Cycle
 ${cycleNote}
@@ -230,7 +231,8 @@ export type DraftOutcome =
   | { kind: 'sent'; outreachId: number; channel: Channel; variantId: string | null; subject: string }
   | { kind: 'skipped'; reason: string }
   | { kind: 'needs_hands' }
-  | { kind: 'failed'; error: string }
+  // at 'send' = the mailbox / quota / record path, which fails every prospect alike.
+  | { kind: 'failed'; error: string; at: 'model' | 'send' }
 
 export function draftLogEntry(name: string, o: DraftOutcome): JobLogEntry {
   switch (o.kind) {
@@ -246,17 +248,50 @@ export function draftLogEntry(name: string, o: DraftOutcome): JobLogEntry {
   }
 }
 
+// A months-scale re-approach needs something the site said after the last
+// touch; without it the composition would only repeat the earlier pitch.
+export function newMaterialSince(p: ReachableProspect): string | null {
+  return (p.cycle.kind === 'no_response' || p.cycle.kind === 'rejection_followup') && p.cycle.lastOutreach ? p.cycle.lastOutreach.sentAt : null
+}
+
+async function refreshSiteRead(db: Db, tenantId: TenantId, env: HostedEnv, p: ReachableProspect, now: Date): Promise<ReachableProspect | null> {
+  if (!isSiteReadStale(p.siteReadAt, now)) return p
+  const window = signalWindowStart(now)
+  const lastTouch = newMaterialSince(p)?.slice(0, 10)
+  const since = lastTouch && lastTouch > window ? lastTouch : window
+  const signals = await readRecentEvents(env, p, { today: utcDateKey(now), since })
+  if (signals === null) return null
+  const overview = withRecentSignals(p.overview, signals)
+  const timingSignals = signals.slice(0, 3)
+  await runWithRls(db, tenantId, (tx) => recordSiteRead(tx, tenantId, p.prospectId, { overview, timingSignals }, now))
+  return { ...p, overview, hypothesis: { ...p.hypothesis, timingSignals }, siteReadAt: now.toISOString() }
+}
+
 export async function draftOne(
   db: Db,
   tenantId: TenantId,
   env: HostedEnv,
   projectId: ProjectId,
-  p: ReachableProspect,
+  target: ReachableProspect,
   batch: Pick<DraftBatch, 'outboundMode'>,
   ctx: CompositionContext,
 ): Promise<DraftOutcome> {
-  const channel = pickChannel(p, ctx.settings.outboundChannels, batch.outboundMode)
+  const channel = pickChannel(target, ctx.settings.outboundChannels, batch.outboundMode)
   if (!channel) return { kind: 'needs_hands' }
+  const now = new Date()
+  const refreshed = await refreshSiteRead(db, tenantId, env, target, now)
+  const since = newMaterialSince(target)
+  // A first touch goes out on what is stored; a re-approach must not be judged on it.
+  if (refreshed === null && since) return { kind: 'failed', error: 'site read failed', at: 'model' }
+  const p = refreshed ?? target
+  if (since && signalsAfter(p.overview, since).length === 0) {
+    const note = `nothing new on their site since ${since.slice(0, 10)}`
+    const skipped = await runWithRls(db, tenantId, (tx) =>
+      skipProspect(tx, tenantId, { projectId, prospectId: p.prospectId, channel, reason: 'no_fresh_material', note }),
+    )
+    if (!skipped.ok) return { kind: 'failed', error: `skip not recorded: ${skipped.error}`, at: 'send' }
+    return { kind: 'skipped', reason: `no_fresh_material: ${note}` }
+  }
   const picked = await pickMessageVariant(db, tenantId, projectId)
   const variant = picked.ok ? picked.value : null
   let composed: Composition | null
@@ -264,25 +299,26 @@ export async function draftOne(
     composed = toComposition(
       await callGeminiJson({
         op: 'draft',
+        tier: 'flex',
         apiKey: env.GEMINI_API_KEY,
         model: HOSTED_MODEL,
         timeoutMs: 90_000,
-        prompt: compositionPrompt({ p, channel, variant, ctx, today: utcDateKey() }),
+        prompt: compositionPrompt({ p, channel, variant, ctx, today: utcDateKey(now) }),
         schema: compositionSchema,
         thinking: 'LOW',
         maxOutputTokens: 8192,
       }),
     )
   } catch (e) {
-    if (e instanceof GeminiError) return { kind: 'failed', error: `composition failed: ${e.message}` }
+    if (e instanceof GeminiError) return { kind: 'failed', error: `composition failed: ${e.message}`, at: 'model' }
     throw e
   }
-  if (!composed) return { kind: 'failed', error: 'composition failed: the model answered without a usable subject and body' }
+  if (!composed) return { kind: 'failed', error: 'composition failed: the model answered without a usable subject and body', at: 'model' }
   if (composed.decision === 'skip') {
     const skipped = await runWithRls(db, tenantId, (tx) =>
       skipProspect(tx, tenantId, { projectId, prospectId: p.prospectId, channel, reason: composed.reason, note: composed.note }),
     )
-    if (!skipped.ok) return { kind: 'failed', error: `skip not recorded: ${skipped.error}` }
+    if (!skipped.ok) return { kind: 'failed', error: `skip not recorded: ${skipped.error}`, at: 'send' }
     return { kind: 'skipped', reason: `${composed.reason}: ${composed.note}` }
   }
   const variantId = variant?.variantId ?? null
@@ -296,7 +332,7 @@ export async function draftOne(
         ...(variantId ? { variantId } : {}),
       }),
     )
-    if (!sent.ok) return { kind: 'failed', error: `${sent.error}${sent.detail ? ` — ${typeof sent.detail === 'string' ? sent.detail : JSON.stringify(sent.detail)}` : ''}` }
+    if (!sent.ok) return { kind: 'failed', error: `${sent.error}${sent.detail ? ` — ${typeof sent.detail === 'string' ? sent.detail : JSON.stringify(sent.detail)}` : ''}`, at: 'send' }
     return { kind: sent.value.mode, outreachId: sent.value.outreachId, channel, variantId, subject: composed.subject }
   }
   // Form / SNS only reach here in draft mode (pickChannel), so the row lands
@@ -311,7 +347,7 @@ export async function draftOne(
       ...(variantId && channel === 'form' ? { variantId } : {}),
     }),
   )
-  if (!recorded.ok) return { kind: 'failed', error: `${recorded.error}` }
+  if (!recorded.ok) return { kind: 'failed', error: `${recorded.error}`, at: 'send' }
   return { kind: 'drafted', outreachId: recorded.value.outreachLogId, channel, variantId, subject: composed.subject }
 }
 

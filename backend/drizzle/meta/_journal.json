@@ -596,6 +596,13 @@
       "when": 1789053777839,
       "tag": "0084_clean_scarlet_spider",
       "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "7",
+      "when": 1789139827589,
+      "tag": "0085_nasty_forge",
+      "breakpoints": true
     }
   ]
 }

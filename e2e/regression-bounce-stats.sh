@@ -18,9 +18,7 @@
 #      total=4, responses=1 (bounces are NOT replies), rate=25,
 #      bounces=1 (L3's unthreaded bounce excluded), bounceRate=50 (1/2
 #      threadable — not 1/4 of all sends).
-#   2. Same response → freshSignalResponseRate.withoutSignal counts the
-#      bounces out of `responses` too (total=4, responses=1).
-#   3. GET /projects/:id/mailbox-health → per-identity trailing-30d fields:
+#   2. GET /projects/:id/mailbox-health → per-identity trailing-30d fields:
 #      bounceWindowDays=30, sentInWindow=2 (threadable only), bounced=1,
 #      bounceRate=50.
 #
@@ -206,11 +204,7 @@ assert_eq "rate=25"        "$(echo "$BUCKET" | jq -r '.rate')" "25"
 assert_eq "bounces=1 (unthreaded bounce excluded)" "$(echo "$BUCKET" | jq -r '.bounces')" "1"
 assert_eq "bounceRate=50 (threadable denominator)" "$(echo "$BUCKET" | jq -r '.bounceRate')" "50"
 
-step "Test 2: freshSignalResponseRate excludes bounces from responses"
-assert_eq "withoutSignal.total=4"     "$(echo "$STATS" | jq -r '.metrics.freshSignalResponseRate.withoutSignal.total')" "4"
-assert_eq "withoutSignal.responses=1" "$(echo "$STATS" | jq -r '.metrics.freshSignalResponseRate.withoutSignal.responses')" "1"
-
-step "Test 3: mailbox-health per-identity trailing-30d bounce fields"
+step "Test 2: mailbox-health per-identity trailing-30d bounce fields"
 MH="$(api GET "/api/projects/$PROJECT_ID/mailbox-health")"
 assert_eq "bounceWindowDays=30" "$(echo "$MH" | jq -r '.bounceWindowDays')" "30"
 assert_eq "sentInWindow=2 (threadable only)" "$(echo "$MH" | jq -r '.sentInWindow')" "2"

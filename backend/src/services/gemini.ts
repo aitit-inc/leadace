@@ -1,5 +1,6 @@
 // Official SDK straight to the Gemini API — AI Gateway doesn't cover its tools.
 
+import { AsyncLocalStorage } from 'node:async_hooks'
 import {
   ApiError,
   GoogleGenAI,
@@ -9,6 +10,7 @@ import {
   type GenerateContentConfig,
   type GenerateContentResponse,
   type Schema,
+  ServiceTier,
   ThinkingLevel,
 } from '@google/genai'
 import { z } from 'zod'
@@ -24,6 +26,17 @@ type GeminiCall = {
   // A call with no deadline burns its Workflow step's whole budget — a
   // url_context read once stalled for seven minutes. Sized per op.
   timeoutMs: number
+  // Unattended stage calls take the flex tier: half price, best-effort capacity.
+  tier?: 'flex'
+}
+
+// Who a call is for, carried on the [llm] usage line so spend can be cut per
+// tenant, job or chat thread instead of per time window.
+export type LlmScope = { tenantId: string; jobId?: string; threadId?: string }
+const llmScope = new AsyncLocalStorage<LlmScope>()
+
+export function withLlmScope<T>(scope: LlmScope, fn: () => Promise<T>): Promise<T> {
+  return llmScope.run(scope, fn)
 }
 
 export class GeminiError extends Error {
@@ -37,10 +50,11 @@ export class GeminiError extends Error {
 
 // Billing: input = input + toolInput (cachedInput is the discounted part),
 // output = output + thoughts, search queries priced per query.
-function logUsage(call: GeminiCall, response: GenerateContentResponse): void {
+function logUsage(call: GeminiCall, response: GenerateContentResponse, tier: ServiceTier | undefined): void {
   const u = response.usageMetadata
   console.log({
     message: `[llm] ${call.op}`,
+    ...llmScope.getStore(),
     op: call.op,
     model: call.model,
     input: u?.promptTokenCount ?? 0,
@@ -48,37 +62,69 @@ function logUsage(call: GeminiCall, response: GenerateContentResponse): void {
     toolInput: u?.toolUsePromptTokenCount ?? 0,
     output: u?.candidatesTokenCount ?? 0,
     thoughts: u?.thoughtsTokenCount ?? 0,
+    tier: tier ?? ServiceTier.STANDARD,
     searchQueries: response.candidates?.[0]?.groundingMetadata?.webSearchQueries?.length ?? 0,
   })
 }
 
-function toGeminiError(e: unknown, call: GeminiCall, phase: 'request' | 'stream', deadline: AbortSignal): never {
+const FLEX_SHED_STATUSES = [429, 503]
+
+function toGeminiError(e: unknown, call: GeminiCall, phase: 'request' | 'stream', deadline: AbortSignal, tier?: ServiceTier): never {
   if (deadline.aborted) {
     console.error(`Gemini ${phase} timed out`, { op: call.op, timeoutMs: call.timeoutMs })
     throw new GeminiError(`upstream LLM ${phase} timed out after ${call.timeoutMs}ms`, 504)
   }
   if (e instanceof ApiError) {
-    console.error(`Gemini ${phase} non-2xx`, { op: call.op, status: e.status, detail: e.message })
+    if (tier === ServiceTier.FLEX && FLEX_SHED_STATUSES.includes(e.status)) console.warn('Gemini flex shed', { op: call.op, status: e.status })
+    else console.error(`Gemini ${phase} non-2xx`, { op: call.op, status: e.status, detail: e.message })
     throw new GeminiError(`upstream LLM ${phase} failed`, e.status)
   }
   throw e
 }
 
+async function attempt(
+  call: GeminiCall,
+  contents: ContentListUnion,
+  config: GenerateContentConfig,
+  deadline: AbortSignal,
+): Promise<GenerateContentResponse> {
+  const ai = new GoogleGenAI({ apiKey: call.apiKey })
+  let response: GenerateContentResponse
+  try {
+    response = await ai.models.generateContent({ model: call.model, contents, config: { ...config, abortSignal: deadline } })
+  } catch (e) {
+    toGeminiError(e, call, 'request', deadline, config.serviceTier)
+  }
+  logUsage(call, response, config.serviceTier)
+  return response
+}
+
+const FLEX_RETRY_DELAY_MS = [1_000, 4_000]
+
+// Flex sheds a request with 429 / 503 within seconds (7 of 13 at one measured
+// peak, all accepted on the next try) and never upgrades it itself. Shed:
+// retry; still shed: the standard tier, so a stage never loses work to the
+// discount. One deadline spans every attempt: the call's timeoutMs stays the
+// bound a step can plan on, so a flex request queued that long fails as any
+// slow call would.
 async function generate(
   call: GeminiCall,
   contents: ContentListUnion,
   config: GenerateContentConfig,
 ): Promise<GenerateContentResponse> {
-  const ai = new GoogleGenAI({ apiKey: call.apiKey })
   const deadline = AbortSignal.timeout(call.timeoutMs)
-  let response: GenerateContentResponse
-  try {
-    response = await ai.models.generateContent({ model: call.model, contents, config: { ...config, abortSignal: deadline } })
-  } catch (e) {
-    toGeminiError(e, call, 'request', deadline)
+  if (call.tier !== 'flex') return attempt(call, contents, config, deadline)
+  const flex = { ...config, serviceTier: ServiceTier.FLEX }
+  for (let retry = 0; ; retry++) {
+    try {
+      return await attempt(call, contents, flex, deadline)
+    } catch (e) {
+      if (!(e instanceof GeminiError) || !FLEX_SHED_STATUSES.includes(e.status)) throw e
+      const delay = FLEX_RETRY_DELAY_MS[retry]
+      if (delay === undefined) return attempt(call, contents, config, deadline)
+      await new Promise((resolve) => setTimeout(resolve, delay))
+    }
   }
-  logUsage(call, response)
-  return response
 }
 
 function textOf(response: GenerateContentResponse): string {
@@ -250,7 +296,7 @@ export async function* streamGeminiChat(args: GeminiChatArgs): AsyncGenerator<Ge
     if (args.signal.aborted) return
     toGeminiError(e, args, 'stream', deadline)
   } finally {
-    if (last) logUsage(args, last)
+    if (last) logUsage(args, last, undefined)
   }
 }
 

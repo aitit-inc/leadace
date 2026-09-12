@@ -51,7 +51,7 @@ import { deriveReplyCollectionStatus, type ReplyCollectionStatus } from '../doma
 import { verifyAddressBeforeSend } from './email-verify'
 import { isMailboxVerdictFresh } from '../domain/email-verification'
 import { DASHBOARD_PERIODS, periodToWindow } from '../domain/dashboard'
-import { requireProspect, prospectHadFreshSignal } from './prospects'
+import { requireProspect } from './prospects'
 import { allocateInquiryUrl } from './inquiry-token'
 import {
   loadProjectReapproachSettings,
@@ -486,7 +486,6 @@ export async function recordOutreach(
   }
 
   const sentAt = new Date()
-  const hadFreshSignal = await prospectHadFreshSignal(db, tenantId, input.prospectId)
 
   const [log] = await db
     .insert(outreachLogs)
@@ -501,7 +500,6 @@ export async function recordOutreach(
       status: input.status,
       sentAt,
       errorMessage: input.status === 'failed' ? input.errorMessage : null,
-      hadFreshSignal,
       sendingIdentityId,
     })
     .returning({ id: outreachLogs.id })
@@ -540,7 +538,6 @@ export async function skipProspect(
   if (!prospectGuard.ok) return prospectGuard
 
   const sentAt = new Date()
-  const hadFreshSignal = await prospectHadFreshSignal(db, tenantId, input.prospectId)
 
   const [log] = await db
     .insert(outreachLogs)
@@ -555,7 +552,6 @@ export async function skipProspect(
       status: 'skipped',
       skipReason: input.reason,
       sentAt,
-      hadFreshSignal,
     })
     .returning({ id: outreachLogs.id })
 
@@ -624,7 +620,6 @@ export async function recordOutreachWithInquiry(
 
   const sentAt = new Date()
   const status: OutreachStatus = willSend ? 'pre_send' : 'pending_review'
-  const hadFreshSignal = await prospectHadFreshSignal(db, tenantId, input.prospectId)
 
   const [log] = await db
     .insert(outreachLogs)
@@ -638,7 +633,6 @@ export async function recordOutreachWithInquiry(
       variantId: input.variantId ?? null,
       status,
       sentAt,
-      hadFreshSignal,
     })
     .returning({ id: outreachLogs.id })
 
@@ -750,7 +744,6 @@ export async function sendAndRecord(
   // (skill, /outbound report) rather than at confirm time after the body's
   // already been composed.
   if (!complianceResult.ok) return complianceResult
-  const hadFreshSignal = await prospectHadFreshSignal(db, tenantId, input.prospectId)
   if (sendSettings.outboundMode === 'draft') {
     const contentGuard = await assertSendableContent(db, tenantId, {
       subject: input.subject,
@@ -774,7 +767,6 @@ export async function sendAndRecord(
         status: 'pending_review',
         sentAt,
         variantId: input.variantId ?? null,
-        hadFreshSignal,
       })
       .returning({ id: outreachLogs.id })
 
@@ -838,7 +830,6 @@ export async function sendAndRecord(
       status: 'pre_send',
       sentAt,
       variantId: input.variantId ?? null,
-      hadFreshSignal,
       // Stamped at allocation so the in-flight reservation counts toward the cap.
       sendingIdentityId,
     })

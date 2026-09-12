@@ -10,7 +10,6 @@ import {
   projectSettings,
   outreachLogs,
   organizations,
-  orgSignalsGlobal,
   REJECTION_PRIMARY_REASONS,
   type Channel,
   type InquiryCtaType,
@@ -18,7 +17,6 @@ import {
   type InquiryMessageRole,
   type InquirySessionContextSnapshot,
   type MeetingRequestSource,
-  type OrgSignals,
   type ProspectHypothesis,
   type RejectionFeedbackV1,
 } from '../db/schema'
@@ -88,10 +86,6 @@ export type InquirySessionRow = {
   closedAt: Date | null
 }
 
-// Stale signals are dropped from the snapshot to avoid feeding the chat LLM
-// outdated talking points.
-const SIGNAL_FRESH_DAYS_FOR_SNAPSHOT = 30
-
 // The composed brief is used verbatim as the chat system prompt.
 export function composeContextSnapshot(args: {
   projectInquiryChatBrief: string
@@ -102,8 +96,6 @@ export function composeContextSnapshot(args: {
   prospectOverview: string
   prospectIndustry: string | null
   prospectCountry: string | null
-  signals: OrgSignals | null
-  signalsUpdatedAt: Date | null
 }): InquirySessionContextSnapshot {
   const lines: string[] = []
   lines.push('[Service description]')
@@ -113,10 +105,7 @@ export function composeContextSnapshot(args: {
   const orgHeader = `${args.organizationName} (${args.organizationDomain})`
   const meta = [args.prospectIndustry, args.prospectCountry].filter((v): v is string => !!v).join(' / ')
   lines.push(meta ? `${orgHeader} — ${meta}` : orgHeader)
-  // overview is build-list's per-prospect company summary (and may include a
-  // trailing `## Recent Signals` section when build-list Phase 1.7 surfaced
-  // anything). Drop it in verbatim so the chat LLM has the same factual base
-  // outbound used to compose the email.
+  // Verbatim, so the chat answers from the same facts outbound wrote from.
   const overview = args.prospectOverview.trim()
   if (overview.length > 0) {
     lines.push('')
@@ -141,18 +130,6 @@ export function composeContextSnapshot(args: {
     }
     if (h.timingSignals?.length) {
       lines.push(`- Timing signals: ${h.timingSignals.join(', ')}`)
-    }
-  }
-
-  const fresh =
-    args.signalsUpdatedAt !== null &&
-    Date.now() - args.signalsUpdatedAt.getTime() <
-      SIGNAL_FRESH_DAYS_FOR_SNAPSHOT * 24 * 60 * 60 * 1000
-  if (fresh && args.signals?.highlights && args.signals.highlights.length > 0) {
-    lines.push('')
-    lines.push('[Recent signals]')
-    for (const s of args.signals.highlights.slice(0, 5)) {
-      lines.push(`- ${s}`)
     }
   }
 
@@ -189,12 +166,9 @@ export async function ensureSessionContextSnapshot(
       prospectOverview: prospects.overview,
       prospectIndustry: prospects.industry,
       prospectCountry: prospects.country,
-      signals: orgSignalsGlobal.signals,
-      signalsUpdatedAt: orgSignalsGlobal.signalsUpdatedAt,
     })
     .from(prospects)
     .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
-    .leftJoin(orgSignalsGlobal, eq(orgSignalsGlobal.domain, organizations.domain))
     .where(eq(prospects.id, session.prospectId))
     .limit(1)
 
@@ -209,8 +183,6 @@ export async function ensureSessionContextSnapshot(
     prospectOverview: row.prospectOverview,
     prospectIndustry: row.prospectIndustry,
     prospectCountry: row.prospectCountry,
-    signals: row.signals,
-    signalsUpdatedAt: row.signalsUpdatedAt,
   })
 
   const [updated] = await db

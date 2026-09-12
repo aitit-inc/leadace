@@ -75,6 +75,7 @@ export async function runJournal(
   const compose = async (objection: string | null) =>
     callGeminiJson({
       op: 'journal',
+      tier: 'flex',
       apiKey: env.GEMINI_API_KEY,
       model: HOSTED_MODEL,
       timeoutMs: 90_000,

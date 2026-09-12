@@ -38,7 +38,6 @@ import { unsubscribeRouter } from './routes/unsubscribe'
 import { inquiryRouter } from './routes/inquiry'
 import { liveRouter } from './routes/live'
 import { createDb } from '../db/connection'
-import { runDailySignalRefresh } from '../services/org-signals'
 import { runDailyBetaStats } from '../services/beta-stats'
 import { runReplyIngest } from '../services/reply-ingest'
 import { watchVerifierBalance } from '../services/email-verify'
@@ -126,11 +125,11 @@ app.onError((err, c) => {
   return c.json({ error: 'Internal server error' }, 500)
 })
 
-// org-signals refresh is pinned to this schedule; keep in sync with the
+// The verifier balance watch is pinned to this schedule; keep in sync with the
 // `crons` arrays in wrangler.api.jsonc. Every other scheduled trigger (the
 // 0 4 beta digest, or a temporary test cron) falls through to the digest, so
 // its schedule can change in wrangler without touching this dispatch.
-const ORG_SIGNALS_CRON = '0 3 * * *'
+const VERIFIER_BALANCE_CRON = '0 3 * * *'
 // Hourly server-side reply poll; keep in sync with the wrangler.api.jsonc crons.
 const REPLY_INGEST_CRON = '0 * * * *'
 
@@ -147,26 +146,13 @@ const handler = {
   ): Promise<void> {
     const db = createDb(env.DATABASE_URL)
 
-    if (controller.cron === ORG_SIGNALS_CRON) {
+    if (controller.cron === VERIFIER_BALANCE_CRON) {
       ctx.waitUntil(
         watchVerifierBalance(env.EMAILABLE_API_KEY ?? null).catch((e: unknown) => {
           console.error('[scheduled] verifier balance watch failed', e)
+          // Scheduled failures never hit Hono onError — report them directly.
           Sentry.captureException(e)
         }),
-      )
-      ctx.waitUntil(
-        runDailySignalRefresh(db, env)
-          .then((summary) => {
-            // Workers Logs only indexes the message string for search.
-            console.log(
-              `[scheduled] org-signals refresh picked=${summary.picked} updated=${summary.updated} empty=${summary.empty} notRetrieved=${summary.notRetrieved} failed=${summary.failed} staleRemaining=${summary.staleRemaining}`,
-            )
-          })
-          .catch((e: unknown) => {
-            console.error('[scheduled] org-signals refresh failed', e)
-            // Scheduled failures never hit Hono onError — report them directly.
-            Sentry.captureException(e)
-          }),
       )
       return
     }

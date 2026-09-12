@@ -185,7 +185,6 @@ export type TargetingStats = {
   employeeBand: TargetingAxisStat[]
   country: TargetingAxisStat[]
   discoveryStrategy: TargetingAxisStat[]
-  freshSignal: { withSignal: TargetingAxisStat; withoutSignal: TargetingAxisStat }
 }
 
 // Bounced sends are excluded from denominator AND rewards: for targeting a
@@ -249,12 +248,11 @@ export async function getTargetingStats(
     })
   }
 
-  const [industryFine, employeeBand, country, discoveryStrategy, freshSignalRaw] = await Promise.all([
+  const [industryFine, employeeBand, country, discoveryStrategy] = await Promise.all([
     axisStats(sql`NULLIF(TRIM(p.industry), '')`),
     axisStats(sql`o.employee_band::text`),
     axisStats(sql`UPPER(COALESCE(p.country, o.country))`),
     axisStats(sql`p.discovery_strategy`),
-    axisStats(sql`CASE WHEN ol.had_fresh_signal THEN 'with' ELSE 'without' END`),
   ])
 
   const coarseAgg = new Map<CoarseIndustry, TargetingAxisStat>()
@@ -266,16 +264,11 @@ export async function getTargetingStats(
     coarseAgg.set(bucket, entry)
   }
 
-  const EMPTY_STAT = (value: string): TargetingAxisStat => ({ value, total: 0, rewardSum: 0 })
   return {
     industry: Array.from(coarseAgg.values()).sort((a, b) => (a.value ?? '').localeCompare(b.value ?? '')),
     employeeBand,
     country,
     discoveryStrategy,
-    freshSignal: {
-      withSignal: freshSignalRaw.find((s) => s.value === 'with') ?? EMPTY_STAT('with'),
-      withoutSignal: freshSignalRaw.find((s) => s.value === 'without') ?? EMPTY_STAT('without'),
-    },
   }
 }
 
@@ -349,7 +342,6 @@ export async function getProjectStats(
     industryRows,
     sizeRows,
     countryRows,
-    freshSignalRows,
     respondedMessagesRows,
     noResponseSampleRows,
     lastSentRows,
@@ -439,15 +431,6 @@ export async function getProjectStats(
                    LEFT JOIN responses r ON r.outreach_log_id = ol.id
                  WHERE ol.project_id = ${projectId} AND ol.status = ${SENT} AND ol.sent_at < ${matureBefore}
                  GROUP BY COALESCE(p.country, o.country)`),
-    // One row of FILTER aggregates, not GROUP BY had_fresh_signal: both buckets
-    // always come back and no boolean parsing through the pooler.
-    rawQuery<{ signalTotal: string | number; signalResponses: string | number; noSignalTotal: string | number; noSignalResponses: string | number }>(sql`SELECT
-                   COUNT(DISTINCT ol.id) FILTER (WHERE ol.had_fresh_signal)::int AS "signalTotal",
-                   COUNT(DISTINCT ol.id) FILTER (WHERE ol.had_fresh_signal AND r.id IS NOT NULL AND r.response_type NOT IN ('bounce', 'auto_reply'))::int AS "signalResponses",
-                   COUNT(DISTINCT ol.id) FILTER (WHERE NOT ol.had_fresh_signal)::int AS "noSignalTotal",
-                   COUNT(DISTINCT ol.id) FILTER (WHERE NOT ol.had_fresh_signal AND r.id IS NOT NULL AND r.response_type NOT IN ('bounce', 'auto_reply'))::int AS "noSignalResponses"
-                 FROM outreach_logs ol LEFT JOIN responses r ON r.outreach_log_id = ol.id
-                 WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}`),
     rawQuery<{ id: string | number; channel: Channel; subject: string | null; body: string; sentiment: Sentiment; responseType: ResponseType }>(sql`SELECT ol.id, ol.channel, ol.subject, ol.body, r.sentiment, r.response_type AS "responseType"
                  FROM responses r JOIN outreach_logs ol ON r.outreach_log_id = ol.id WHERE ol.project_id = ${projectId}`),
     rawQuery<{ id: string | number; channel: Channel; subject: string | null; body: string }>(sql`SELECT ol.id, ol.channel, ol.subject, ol.body
@@ -612,18 +595,6 @@ export async function getProjectStats(
     countryResponseRate: countryRows
       .map((r) => ({ country: r.country, ...axisBucket(axisCounts(r)) }))
       .sort(axisSort),
-    freshSignalResponseRate: (() => {
-      const row = freshSignalRows[0]
-      const bucket = (total: number, responses: number) => ({
-        total,
-        responses,
-        rate: total === 0 ? 0 : Math.round((responses / total) * 1000) / 10,
-      })
-      return {
-        withSignal: bucket(Number(row?.signalTotal ?? 0), Number(row?.signalResponses ?? 0)),
-        withoutSignal: bucket(Number(row?.noSignalTotal ?? 0), Number(row?.noSignalResponses ?? 0)),
-      }
-    })(),
     variantResponseRate,
     inquiryOutcomeCounts,
   }

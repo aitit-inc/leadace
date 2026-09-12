@@ -14,6 +14,7 @@ import {
   confirmBodySchema,
 } from '../../services/chat/threads'
 import { runChatTurn, type ChatTurnInput, type ChatTurnDeps } from '../../services/chat/agent'
+import { withLlmScope } from '../../services/gemini'
 import { buildToolExecutor, type InternalDispatch } from '../tool-executor'
 import { respondWithError } from '../respond'
 import { withTenantConnection } from '../../db/rls'
@@ -82,9 +83,11 @@ function streamTurn(c: ChatCtx, dispatch: InternalDispatch, threadId: string, in
       // A throw here would close the stream mid-way and read as a finished
       // turn; the client requires a terminal event, so failures become one.
       try {
-        for await (const event of runChatTurn(deps, threadId, input)) {
-          await stream.writeSSE({ event: event.type, data: JSON.stringify(event) })
-        }
+        await withLlmScope({ tenantId, threadId }, async () => {
+          for await (const event of runChatTurn(deps, threadId, input)) {
+            await stream.writeSSE({ event: event.type, data: JSON.stringify(event) })
+          }
+        })
       } catch (e) {
         console.error('[chat] stream failed', e)
         await stream.writeSSE({ event: 'error', data: JSON.stringify({ type: 'error', message: 'The turn failed part-way. Reload the thread to see what was saved.' }) })

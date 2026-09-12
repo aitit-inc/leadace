@@ -156,27 +156,6 @@
       </div>
     {/if}
 
-    {#if stats.metrics.freshSignalResponseRate.withSignal.total + stats.metrics.freshSignalResponseRate.withoutSignal.total > 0}
-      {@const fs = stats.metrics.freshSignalResponseRate}
-      <div class="mb-6">
-        <p class="text-xs font-medium text-text-secondary mb-2">Fresh signal at send time</p>
-        <div class="grid grid-cols-[1fr_60px_70px_60px] md:grid-cols-[1fr_80px_80px_80px] gap-2 text-xs">
-          <span class="text-text-muted">Outreach</span>
-          <span class="text-text-muted text-right">Sent</span>
-          <span class="text-text-muted text-right">Resp.</span>
-          <span class="text-text-muted text-right">Rate</span>
-          <span class="text-text">With signal</span>
-          <span class="text-text-secondary text-right font-mono">{fs.withSignal.total}</span>
-          <span class="text-text-secondary text-right font-mono">{fs.withSignal.responses}</span>
-          <span class="text-text text-right font-mono">{pct(fs.withSignal.responses, fs.withSignal.total)}</span>
-          <span class="text-text">Without signal</span>
-          <span class="text-text-secondary text-right font-mono">{fs.withoutSignal.total}</span>
-          <span class="text-text-secondary text-right font-mono">{fs.withoutSignal.responses}</span>
-          <span class="text-text text-right font-mono">{pct(fs.withoutSignal.responses, fs.withoutSignal.total)}</span>
-        </div>
-      </div>
-    {/if}
-
     {#if stats.metrics.variantResponseRate.length > 0}
       <div class="mb-6">
         <p class="text-xs font-medium text-text-secondary mb-2">By message angle · reply-matured sends</p>

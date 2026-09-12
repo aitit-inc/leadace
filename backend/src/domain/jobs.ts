@@ -28,12 +28,16 @@ export const discoverSignalSchema = z.object({
 export const SIGNAL_MAX_AGE_DAYS = 90
 const DAY_MS = 86_400_000
 
+export function signalWindowStart(now: Date): string {
+  return utcDateKey(new Date(now.getTime() - SIGNAL_MAX_AGE_DAYS * DAY_MS))
+}
+
 export function isRecentSignal(text: string, now: Date): boolean {
   const date = text.slice(0, 10)
   const at = new Date(date)
   // Date rolls 2026-02-30 over to March 2; only a real date round-trips.
   if (Number.isNaN(at.getTime()) || utcDateKey(at) !== date) return false
-  return date <= utcDateKey(now) && date >= utcDateKey(new Date(now.getTime() - SIGNAL_MAX_AGE_DAYS * DAY_MS))
+  return date <= utcDateKey(now) && date >= signalWindowStart(now)
 }
 
 // A discover candidate before enrichment: what a search surfaces about an

@@ -3,7 +3,6 @@ import { eq, and } from 'drizzle-orm'
 import {
   prospects,
   organizations,
-  orgSignalsGlobal,
   projectProspects,
   projectSettings,
 } from '../db/schema'
@@ -180,13 +179,10 @@ async function loadPreviewPromptContext(
       prospectOverview: prospects.overview,
       prospectIndustry: prospects.industry,
       prospectCountry: prospects.country,
-      signals: orgSignalsGlobal.signals,
-      signalsUpdatedAt: orgSignalsGlobal.signalsUpdatedAt,
     })
     .from(projectProspects)
     .innerJoin(prospects, eq(prospects.id, projectProspects.prospectId))
     .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
-    .leftJoin(orgSignalsGlobal, eq(orgSignalsGlobal.domain, organizations.domain))
     .where(
       and(
         eq(projectProspects.projectId, projectId),
@@ -208,8 +204,6 @@ async function loadPreviewPromptContext(
     prospectOverview: row.prospectOverview,
     prospectIndustry: row.prospectIndustry,
     prospectCountry: row.prospectCountry,
-    signals: row.signals,
-    signalsUpdatedAt: row.signalsUpdatedAt,
   })
 
   return {

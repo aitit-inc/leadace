@@ -1,9 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   computeAxisLifts,
-  computeFreshSignalLifts,
   overallMeanReward,
-  DEFAULT_FRESH_SIGNAL_LIFTS,
   LIFT_MAX,
   LIFT_MIN,
   PRIORITY_MULTIPLIERS,
@@ -57,21 +55,6 @@ describe('computeAxisLifts', () => {
     const [nullBucket] = computeAxisLifts([stat(null, 50, 10)], r0, 25)
     expect(nullBucket!.value).toBeNull()
     expect(nullBucket!.lift).toBeGreaterThan(1)
-  })
-})
-
-describe('computeFreshSignalLifts', () => {
-  const r0 = 0.05
-
-  it('keeps the default boost while a bucket is unmeasured', () => {
-    const lifts = computeFreshSignalLifts(stat('with', 0, 0), stat('without', 0, 0), r0, 25)
-    expect(lifts).toEqual(DEFAULT_FRESH_SIGNAL_LIFTS)
-  })
-
-  it('replaces a bucket with its measured lift once it has sends', () => {
-    const lifts = computeFreshSignalLifts(stat('with', 0, 0), stat('without', 200, 2), r0, 25)
-    expect(lifts.withSignal).toBe(DEFAULT_FRESH_SIGNAL_LIFTS.withSignal)
-    expect(lifts.withoutSignal).toBeLessThan(1)
   })
 })
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { pickChannel, summarizeDraftOutcomes } from './draft'
+import { newMaterialSince, pickChannel, summarizeDraftOutcomes } from './draft'
 import type { ReachableProspect } from '../prospects'
 
 const base = {
@@ -22,8 +22,8 @@ const base = {
   status: 'new',
   organizationId: 1,
   country: 'US',
-  hasFreshSignal: false,
   hypothesis: { bestChannel: null, bestKeyperson: null },
+  siteReadAt: null,
   channelAffinity: [],
   cycle: { n: 0, kind: 'first', touchNumber: 1, lastOutreach: null, lastResponse: null },
 } satisfies ReachableProspect
@@ -66,11 +66,23 @@ describe('summarizeDraftOutcomes', () => {
         { kind: 'sent', outreachId: 1, channel: 'email', variantId: 'a', subject: 's' },
         { kind: 'drafted', outreachId: 2, channel: 'form', variantId: 'a', subject: 's' },
         { kind: 'skipped', reason: 'bad_timing: layoffs' },
-        { kind: 'failed', error: 'x' },
+        { kind: 'failed', error: 'x', at: 'send' },
         { kind: 'needs_hands' },
       ],
       2,
     )
     expect(r).toMatchObject({ sent: 1, drafted: 1, skipped: 1, failed: 1, needsHands: 3, variantIds: ['a'] })
+  })
+})
+
+describe('newMaterialSince', () => {
+  const last = { sentAt: '2026-06-01T09:00:00.000Z', subject: 'Hello' }
+  it('asks for material after the last touch only on a months-scale re-approach', () => {
+    expect(newMaterialSince({ ...base, cycle: { ...base.cycle, n: 1, kind: 'no_response', lastOutreach: last } })).toBe(last.sentAt)
+    expect(newMaterialSince({ ...base, cycle: { ...base.cycle, n: 1, kind: 'rejection_followup', lastOutreach: last } })).toBe(last.sentAt)
+  })
+  it('lets a first touch and a day-scale follow-up go out on what is stored', () => {
+    expect(newMaterialSince(base)).toBeNull()
+    expect(newMaterialSince({ ...base, cycle: { ...base.cycle, n: 1, kind: 'short_cycle_followup', touchNumber: 2, lastOutreach: last } })).toBeNull()
   })
 })

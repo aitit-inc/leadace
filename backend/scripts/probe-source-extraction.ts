@@ -12,7 +12,7 @@
  * So the prompt below is deliberately generic and is NOT tuned per source. If
  * it needs per-source hints the premise fails, and that is the finding.
  *
- * Runs through callGeminiUrlContext — the same path org-signals ships — so a
+ * Runs through callGeminiUrlContext — the same path enrich ships — so a
  * result here is a result about production, not about a lab. Extraction quality
  * is not self-scoring: it prints every record so they can be checked against
  * the page, because a model asked to find events will happily invent them.
