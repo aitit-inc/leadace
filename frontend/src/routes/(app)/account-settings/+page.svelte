@@ -2,25 +2,24 @@
   import { invalidate } from '$app/navigation';
   import { page } from '$app/state';
   import { revokeMcpSession } from '$lib/api/mcp';
-  import { connectGmail } from '$lib/gmail-oauth';
-  import MailboxWarmupForm from '$lib/components/mailbox/MailboxWarmupForm.svelte';
-  import SendingIdentitiesForm from '$lib/components/sending-identity/SendingIdentitiesForm.svelte';
-  import GmailAliasesForm from '$lib/components/sending-identity/GmailAliasesForm.svelte';
-  import GoogleMailboxesForm from '$lib/components/sending-identity/GoogleMailboxesForm.svelte';
+  import Hint from '$lib/components/Hint.svelte';
+  import MailboxList from '$lib/components/mailbox/MailboxList.svelte';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
   let token = $derived(data.session?.access_token);
-  let supabase = $derived(data.supabase);
-  let signInGmail = $derived(data.sendingIdentities.find((i) => i.signInAccount) ?? null);
 
   let revokingFamilyId = $state<string | null>(null);
   let mcpSessionMessage = $state('');
-  let connectingGmail = $state(false);
-  let gmailMessage = $state('');
+
   // /auth/google-mailbox/callback lands here with the outcome in the query string.
   const connectedMailbox = page.url.searchParams.get('mailbox_connected');
   const mailboxError = page.url.searchParams.get('mailbox_error');
+  const mailboxNotice = connectedMailbox
+    ? ({ kind: 'connected', email: connectedMailbox } as const)
+    : mailboxError
+      ? ({ kind: 'error', message: mailboxError } as const)
+      : null;
 
   // Google OAuth populates user_metadata with avatar_url/picture and full_name;
   // fields may be missing on a non-Google identity, hence the fallbacks.
@@ -34,14 +33,8 @@
     };
   });
 
-  async function handleConnectGmail() {
-    connectingGmail = true;
-    gmailMessage = '';
-    const err = await connectGmail(supabase);
-    if (err) {
-      gmailMessage = `Error: ${err}`;
-      connectingGmail = false;
-    }
+  async function refreshMailboxes() {
+    await Promise.all([invalidate('app:sending-identities'), invalidate('app:attention')]);
   }
 
   async function handleRevokeMcpSession(familyId: string, displayName: string) {
@@ -79,187 +72,65 @@
 <h2 class="text-lg font-semibold text-text mb-6">Account</h2>
 
 <section class="mb-10">
-  <h3 class="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">
-    Google account
-  </h3>
-  <div class="rounded-md border border-border p-5">
-    <div class="flex items-center gap-4">
-      {#if profile.avatarUrl}
-        <img
-          src={profile.avatarUrl}
-          alt=""
-          class="h-12 w-12 rounded-full border border-border"
-          referrerpolicy="no-referrer"
-        />
-      {:else}
-        <div
-          class="h-12 w-12 rounded-full border border-border bg-surface flex items-center justify-center text-sm text-text-muted"
-        >
-          {profile.name.charAt(0).toUpperCase()}
-        </div>
-      {/if}
-      <div class="min-w-0">
-        <p class="text-sm text-text truncate">{profile.name}</p>
-        <p class="text-xs text-text-muted font-mono truncate">{profile.email}</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section class="mb-10">
-  <h3 class="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">
-    Sign-in Gmail
-  </h3>
-  <div class="rounded-md border border-border p-5">
-    {#if data.gmailStatus.state === 'connected'}
-      <p class="text-text text-sm">
-        Connected as <span class="font-mono">{data.gmailStatus.email}</span>
-      </p>
-      <p class="text-text-muted text-xs mt-1">
-        LeadAce can send email on your behalf and read your Gmail inbox (read-only) to detect and
-        classify replies to your outreach. It never modifies or deletes your messages.
-      </p>
-    {:else if data.gmailStatus.state === 'revoked'}
-      <p class="text-danger text-sm mb-3">
-        Google access for <span class="font-mono">{data.gmailStatus.email}</span> was revoked on
-        {new Date(data.gmailStatus.since).toLocaleDateString()}.
-      </p>
-      <p class="text-text-muted text-xs mb-4">
-        Sending and reply collection are stopped until you reconnect.
-      </p>
-      <button
-        type="button"
-        onclick={handleConnectGmail}
-        disabled={connectingGmail}
-        class="rounded-md border border-border bg-page px-3 py-1.5 text-xs font-medium text-text hover:bg-surface disabled:opacity-50"
-      >
-        {connectingGmail ? 'Connecting…' : 'Reconnect Gmail'}
-      </button>
-    {:else if data.gmailStatus.state === 'disconnected'}
-      <p class="text-danger text-sm mb-3">Gmail is not connected.</p>
-      <p class="text-text-muted text-xs mb-4">
-        Outbound email sending is disabled until you grant the gmail.send scope.
-      </p>
-      <button
-        type="button"
-        onclick={handleConnectGmail}
-        disabled={connectingGmail}
-        class="rounded-md border border-border bg-page px-3 py-1.5 text-xs font-medium text-text hover:bg-surface disabled:opacity-50"
-      >
-        {connectingGmail ? 'Connecting…' : 'Connect Gmail'}
-      </button>
-    {:else}
-      <p class="text-danger text-sm">{data.gmailStatus.message}</p>
-    {/if}
-    {#if signInGmail}
-      <GmailAliasesForm
-        parent={signInGmail}
-        identities={data.sendingIdentities}
-        planTier={data.plan?.plan}
-        {token}
-        onChanged={async () => {
-          await Promise.all([invalidate('app:sending-identities'), invalidate('app:attention')]);
-        }}
+  <h3 class="text-xs font-medium text-text-muted uppercase tracking-wider mb-3">Google account</h3>
+  <div class="flex items-center gap-4 rounded-md border border-border px-5 py-4">
+    {#if profile.avatarUrl}
+      <img
+        src={profile.avatarUrl}
+        alt=""
+        class="h-10 w-10 rounded-full border border-border"
+        referrerpolicy="no-referrer"
       />
+    {:else}
+      <div
+        class="h-10 w-10 rounded-full border border-border bg-surface flex items-center justify-center text-sm text-text-muted"
+      >
+        {profile.name.charAt(0).toUpperCase()}
+      </div>
     {/if}
-    {#if gmailMessage}
-      <p class="mt-3 text-xs {gmailMessage.startsWith('Error') ? 'text-danger' : 'text-text-muted'}">
-        {gmailMessage}
-      </p>
-    {/if}
-  </div>
-</section>
-
-<section class="mb-10">
-  <h3 class="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">
-    Other Google accounts
-  </h3>
-  <div class="rounded-md border border-border p-5">
-    {#if connectedMailbox}
-      <p class="mb-3 text-xs text-text-muted">
-        Connected <span class="font-mono">{connectedMailbox}</span>.
-      </p>
-    {:else if mailboxError}
-      <p class="mb-3 text-xs text-danger">{mailboxError}</p>
-    {/if}
-    <GoogleMailboxesForm
-      identities={data.sendingIdentities}
-      planTier={data.plan?.plan}
-      session={data.session}
-      onChanged={async () => {
-        await Promise.all([invalidate('app:sending-identities'), invalidate('app:attention')]);
-      }}
-    />
-  </div>
-</section>
-
-{#if data.sendingIdentities.length > 0}
-  <section class="mb-10">
-    <h3 class="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">
-      Sending warmup
-    </h3>
-    <div class="space-y-4">
-      {#each data.sendingIdentities as identity (identity.identityId)}
-        <div class="rounded-md border border-border p-5">
-          <p class="mb-3 text-xs font-medium text-text-secondary">
-            {identity.signInAccount
-              ? 'Sign-in Gmail'
-              : { gmail: 'Connected Google account', gmail_alias: 'Gmail Send-As alias', smtp: 'Custom SMTP mailbox' }[identity.kind]}
-          </p>
-          <MailboxWarmupForm
-            {identity}
-            {token}
-            onSaved={() => invalidate('app:sending-identities')}
-          />
-        </div>
-      {/each}
+    <div class="min-w-0">
+      <p class="text-sm text-text truncate">{profile.name}</p>
+      <p class="text-xs text-text-muted font-mono truncate">{profile.email}</p>
     </div>
-  </section>
-{/if}
-
-<section class="mb-10">
-  <h3 class="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">
-    Custom sending mailboxes
-  </h3>
-  <div class="rounded-md border border-border p-5">
-    {#if data.sendingIdentitiesError}
-      <p class="mb-3 text-xs text-danger">
-        Couldn't load your custom mailboxes — the list below may be incomplete. Reload to retry.
-      </p>
-    {/if}
-    <SendingIdentitiesForm
-      identities={data.sendingIdentities}
-      planTier={data.plan?.plan}
-      {token}
-      onChanged={async () => {
-        await Promise.all([invalidate('app:sending-identities'), invalidate('app:attention')]);
-      }}
-    />
   </div>
 </section>
 
 <section class="mb-10">
-  <h3 class="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">
-    Connected MCP clients
-  </h3>
-  <div class="rounded-md border border-border p-5">
-    <p class="text-xs text-text-muted mb-4">
-      MCP clients (e.g. Claude Code's <span class="font-mono">/leadace</span>) that you've
-      authorized to call LeadAce on your behalf. Each entry holds a refresh token with full API
-      access — revoke any session you no longer use or trust.
-    </p>
+  <MailboxList
+    identities={data.sendingIdentities}
+    identitiesError={data.sendingIdentitiesError}
+    gmailStatus={data.gmailStatus}
+    planTier={data.plan?.plan}
+    session={data.session}
+    supabase={data.supabase}
+    notice={mailboxNotice}
+    onChanged={refreshMailboxes}
+  />
+</section>
+
+<section class="mb-10">
+  <div class="mb-3 flex items-center gap-1.5">
+    <h3 class="text-xs font-medium text-text-muted uppercase tracking-wider">Connected MCP clients</h3>
+    <Hint label="About MCP clients">
+      Tools you authorized to act on LeadAce for you, such as Claude Code's
+      <span class="font-mono">/leadace</span>. Each holds a token with full API access. Revoke any
+      you no longer use or trust; running <span class="font-mono">/leadace</span> again creates a
+      new one.
+    </Hint>
+  </div>
+  <div class="rounded-md border border-border">
     {#if data.mcpSessions.error}
-      <p class="text-sm text-danger">{data.mcpSessions.error}</p>
+      <p class="px-4 py-3 text-sm text-danger">{data.mcpSessions.error}</p>
     {:else if data.mcpSessions.sessions.length === 0}
-      <p class="text-sm text-text-muted">
+      <p class="px-4 py-3 text-sm text-text-muted">
         No active MCP sessions. Run <span class="font-mono">/leadace</span> in Claude Code to create
         one.
       </p>
     {:else}
-      <ul class="divide-y divide-border -my-3">
+      <ul class="divide-y divide-border">
         {#each data.mcpSessions.sessions as session (session.familyId)}
           {@const label = session.clientName?.trim() || 'Unnamed MCP client'}
-          <li class="flex items-start justify-between gap-4 py-3">
+          <li class="flex items-center justify-between gap-4 px-4 py-3">
             <div class="min-w-0">
               <p class="text-sm text-text truncate">{label}</p>
               <p class="mt-0.5 text-xs text-text-muted">
@@ -279,23 +150,16 @@
         {/each}
       </ul>
     {/if}
-    {#if mcpSessionMessage}
-      <p
-        class="mt-3 text-xs {mcpSessionMessage.startsWith('Error')
-          ? 'text-danger'
-          : 'text-text-muted'}"
-      >
-        {mcpSessionMessage}
-      </p>
-    {/if}
   </div>
+  {#if mcpSessionMessage}
+    <p class="mt-2 text-xs {mcpSessionMessage.startsWith('Error') ? 'text-danger' : 'text-text-muted'}">
+      {mcpSessionMessage}
+    </p>
+  {/if}
 </section>
 
 <div class="mt-12 text-xs text-text-muted">
-  <a
-    href="/account-settings/delete"
-    class="underline hover:text-danger transition-colors"
-  >
+  <a href="/account-settings/delete" class="underline hover:text-danger transition-colors">
     Delete account
   </a>
 </div>

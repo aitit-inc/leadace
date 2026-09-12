@@ -1,5 +1,6 @@
 <script lang="ts">
   import { updateIdentityWarmup } from '$lib/api/sending-identities';
+  import Hint from '$lib/components/Hint.svelte';
   import type { SendingIdentity, MailboxWarmupPatch } from '$lib/types/sending-identity';
 
   let {
@@ -111,46 +112,8 @@
   }
 </script>
 
-<p class="text-sm text-text">
-  Per-mailbox safe daily send cap for <span class="font-mono">{identity.fromEmail}</span>. This protects
-  your sending domain's reputation — it's separate from your plan's outreach quota.
-</p>
-
-<dl class="mt-4 grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
-  <dt class="text-text-muted">Today's email sends</dt>
-  <dd class="text-text">{identity.used} / {identity.cap} ({identity.remaining} left)</dd>
-  <dt class="text-text-muted">Daily cap</dt>
-  <dd class="text-text">
-    {#if identity.dailyCapOverride !== null}
-      Fixed at {identity.dailyCapOverride}/day (warmup ramp bypassed)
-    {:else if identity.warmupStartedAt}
-      Warmup week {identity.rampWeek} of {identity.rampWeeks} (toward {identity.steadyStatePerDay}/day)
-    {:else}
-      Warmup — ramps to {identity.steadyStatePerDay}/day once you send the first email
-    {/if}
-  </dd>
-  <dt class="text-text-muted">Bounces (last {identity.bounceWindowDays} days)</dt>
-  <dd class="text-text">
-    {#if identity.sentInWindow === 0}
-      No threadable email sends yet
-    {:else}
-      {identity.bounced} / {identity.sentInWindow} ({identity.bounceRate}%)
-    {/if}
-  </dd>
-</dl>
-<p class="mt-2 text-xs text-text-muted">
-  Only bounces that thread back to a sent message are counted, so the rate is a lower bound. If it
-  climbs, review your list sources or pause this mailbox below.
-</p>
-
-{#if identity.pausedUntil}
-  <p class="mt-4 rounded border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
-    Sending is paused until {formatDateTime(identity.pausedUntil)}.
-  </p>
-{/if}
-
 {#if identity.sendRefusal}
-  <div class="mt-4 space-y-1 rounded border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
+  <div class="space-y-1 rounded border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
     <p>
       Refused by the mail provider on {formatDateTime(identity.sendRefusal.lastAt)}.{#if identity.heldUntil}{' '}Sending
         held until {formatDateTime(identity.heldUntil)}.{/if}
@@ -176,52 +139,42 @@
 {/if}
 
 {#if draft}
-  <div class="mt-6 space-y-6">
+  <div class="space-y-4 {identity.sendRefusal ? 'mt-4' : ''}">
     <div>
-      <label for="cap-override" class="block text-sm text-text">Daily cap override</label>
-      <input
-        id="cap-override"
-        type="text"
-        inputmode="numeric"
-        placeholder="Default"
-        bind:value={draft.capOverrideInput}
-        disabled={saving}
-        class="mt-1 w-full max-w-xs rounded border border-border bg-page px-2 py-1.5 text-sm text-text disabled:opacity-50"
-      />
-      <p class="mt-1 text-xs text-text-muted">
-        Blank follows the warmup ramp (starts low, climbs to {identity.steadyStatePerDay}/day over
-        {identity.rampWeeks} weeks). Set a number to use a fixed daily cap instead — it takes effect
-        immediately and bypasses the ramp. 0 stops sending until you clear it.
-      </p>
+      <label for="cap-override-{identity.identityId}" class="flex items-center gap-1.5 text-xs text-text-secondary">
+        Daily cap override
+        <Hint label="About the daily cap override">
+          Blank follows the warmup ramp. A number sets a fixed daily cap right away and skips the
+          ramp. 0 stops sending until you clear it.
+        </Hint>
+      </label>
+      <div class="mt-1 flex items-center gap-2">
+        <input
+          id="cap-override-{identity.identityId}"
+          type="text"
+          inputmode="numeric"
+          placeholder="Default"
+          bind:value={draft.capOverrideInput}
+          disabled={saving}
+          class="w-28 rounded border border-border bg-page px-2 py-1.5 text-sm text-text disabled:opacity-50"
+        />
+        <span class="text-xs text-text-muted">/ day</span>
+      </div>
     </div>
 
     <div>
-      <span class="block text-sm text-text">Pause sending</span>
-      <div class="mt-2 flex flex-wrap gap-2">
-        <button
-          type="button"
-          onclick={() => pauseForDays(1)}
-          disabled={saving}
-          class="rounded border border-border bg-page px-2.5 py-1 text-xs text-text hover:bg-surface disabled:opacity-50"
-        >
-          Pause 1 day
-        </button>
-        <button
-          type="button"
-          onclick={() => pauseForDays(7)}
-          disabled={saving}
-          class="rounded border border-border bg-page px-2.5 py-1 text-xs text-text hover:bg-surface disabled:opacity-50"
-        >
-          Pause 7 days
-        </button>
-        <button
-          type="button"
-          onclick={() => pauseForDays(30)}
-          disabled={saving}
-          class="rounded border border-border bg-page px-2.5 py-1 text-xs text-text hover:bg-surface disabled:opacity-50"
-        >
-          Pause 30 days
-        </button>
+      <span class="block text-xs text-text-secondary">Pause sending</span>
+      <div class="mt-1 flex flex-wrap gap-2">
+        {#each [1, 7, 30] as days (days)}
+          <button
+            type="button"
+            onclick={() => pauseForDays(days)}
+            disabled={saving}
+            class="rounded border border-border bg-page px-2.5 py-1 text-xs text-text hover:bg-surface disabled:opacity-50"
+          >
+            {days} {days === 1 ? 'day' : 'days'}
+          </button>
+        {/each}
         {#if draft.pausedUntil}
           <button
             type="button"
@@ -229,16 +182,16 @@
             disabled={saving}
             class="rounded border border-border bg-page px-2.5 py-1 text-xs text-text hover:bg-surface disabled:opacity-50"
           >
-            Resume sending
+            Resume
           </button>
         {/if}
       </div>
       {#if draft.pausedUntil !== identity.pausedUntil}
-        <p class="mt-2 text-xs text-text-muted">
+        <p class="mt-1.5 text-xs text-text-muted">
           {#if draft.pausedUntil}
-            Will pause until {formatDateTime(draft.pausedUntil)} once saved.
+            Pauses until {formatDateTime(draft.pausedUntil)} once saved.
           {:else}
-            Will resume sending once saved.
+            Resumes once saved.
           {/if}
         </p>
       {/if}
@@ -249,7 +202,7 @@
         type="button"
         onclick={save}
         disabled={saving || !changed(draft)}
-        class="rounded px-3 py-1.5 text-xs font-medium text-page bg-accent hover:bg-accent-strong transition-colors disabled:opacity-50"
+        class="rounded bg-accent px-3 py-1.5 text-xs font-medium text-page transition-colors hover:bg-accent-strong disabled:opacity-50"
       >
         {saving ? 'Saving…' : 'Save'}
       </button>
