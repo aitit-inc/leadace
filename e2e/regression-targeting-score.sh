@@ -9,6 +9,9 @@
 #   3. Measured beats discretion: after the tick, a neutral-priority prospect
 #      in the measured-hot segment outranks a P1 prospect in the measured-cold
 #      segment (composite lift range 4x > priority multiplier range 3x).
+#   3b. Tie-break: a silent prospect's months-scale re-approach (contacted,
+#      no follow-up in flight, recycle window elapsed) ranks behind a first
+#      touch of equal fit, yet still ahead of a lower-fit first touch.
 #   4. Rows registered after the tick keep the neutral default 1.0.
 #   5. Tick idempotency: a same-day re-run reports ran=false and echoes the
 #      recorded targetingLifts.
@@ -226,6 +229,15 @@ assert_eq "reachable total=3" "$(echo "$POST_TICK" | jq -r '.total')" "3"
 assert_eq "1st = H1 (score 2.0 x P3 1.0)" "$(echo "$POST_TICK" | jq -r '.prospects[0].email')" "contact@$RUN_TAG-H1.example"
 assert_eq "2nd = H2 (createdAt tiebreak)"  "$(echo "$POST_TICK" | jq -r '.prospects[1].email')" "contact@$RUN_TAG-H2.example"
 assert_eq "3rd = C1 despite P1 (0.5 x 1.5 = 0.75)" "$(echo "$POST_TICK" | jq -r '.prospects[2].email')" "contact@$RUN_TAG-C1.example"
+
+step "Test 3b: recycle re-approach ranks behind a first touch of equal fit, ahead of lower fit"
+psql_local "UPDATE project_prospects SET status='contacted', next_followup_after=NULL WHERE project_id='$PROJECT_ID' AND prospect_id=$P_H1;" > /dev/null
+psql_local "UPDATE prospects SET next_outreach_after = now() - interval '1 day' WHERE id=$P_H1;" > /dev/null
+RECYCLE="$(api GET "/api/projects/$PROJECT_ID/prospects/reachable?limit=3")"
+assert_eq "recycled H1 still reachable (total=3)" "$(echo "$RECYCLE" | jq -r '.total')" "3"
+assert_eq "1st = H2 (first touch wins the tie at 2.0)" "$(echo "$RECYCLE" | jq -r '.prospects[0].email')" "contact@$RUN_TAG-H2.example"
+assert_eq "2nd = H1 (recycle arm, fit still beats C1)" "$(echo "$RECYCLE" | jq -r '.prospects[1].email')" "contact@$RUN_TAG-H1.example"
+assert_eq "3rd = C1" "$(echo "$RECYCLE" | jq -r '.prospects[2].email')" "contact@$RUN_TAG-C1.example"
 
 step "Test 4: rows registered after the tick stay at the neutral default"
 LATE_BODY="$(jq -nc --arg pid "$PROJECT_ID" --argjson l "$(mkseed late 'B2B SaaS' '11-50' hot-src 3)" '{projectId:$pid, prospects:[$l]}')"

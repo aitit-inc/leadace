@@ -45,7 +45,7 @@ export async function listHostedReachable(
   tenantId: TenantId,
   env: HostedEnv,
   projectId: ProjectId,
-  query: ReachableQuery,
+  query: ReachableQuery & { excludeProspectIds?: number[] },
 ): ReturnType<typeof listReachable> {
   const mode = await getOutboundMode(db, projectId)
   return listReachable(db, tenantId, editionOf(env), projectId, { ...query, channels: hostedChannels(mode) })
@@ -59,11 +59,13 @@ export async function loadDraftBatch(
   env: HostedEnv,
   projectId: ProjectId,
   params: JobParamsOf<'draft'>,
+  draw: { limit: number; excludeProspectIds: number[] },
 ): Promise<ServiceResult<DraftBatch>> {
   const compliance = await assertTenantComplianceReady(db, tenantId)
   if (!compliance.ok) return compliance
   const reachable = await listHostedReachable(db, tenantId, env, projectId, {
-    limit: params.prospectIds ? params.prospectIds.length : params.count ?? 30,
+    limit: draw.limit,
+    excludeProspectIds: draw.excludeProspectIds,
     ...(params.prospectIds ? { prospectIds: params.prospectIds } : {}),
   })
   if (!reachable.ok) return reachable
@@ -74,6 +76,12 @@ export async function loadDraftBatch(
     needsHands: r.total - r.withinChannels,
     quotaMessage: r.message ?? null,
   })
+}
+
+// A batch is counted in messages out, not prospects tried; attempts stop at
+// twice the batch so a pool of nothing but skips still ends.
+export function refillDrawSize(wanted: number, produced: number, attempted: number): number {
+  return Math.max(0, Math.min(wanted - produced, 2 * wanted - attempted))
 }
 
 // Plain data (it is a Workflow step's output): the settings fields the prompt

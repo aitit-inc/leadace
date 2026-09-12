@@ -481,7 +481,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_outbound_targets',
-    'Prospects due for outreach (new + follow-up/recycle touches), ordered by the measured targeting score (x priority multiplier; a share of each batch is random exploration slots); server-filters by enabled channels and deliverable country (unknown country passes unless the project sets targetCountries). Reports the reachable total and its email / formOnly / snsOnly / platformOnly split, the outbound mode (send|draft), remaining outreach quota, and the mailbox email cap; then the prospects as JSON, each carrying `country`, `discoveryStrategy`, `siteReadAt` (when its site was last read for dated events; null = never), and `cycle` {kind, touchNumber}.',
+    'Prospects due for outreach (new + follow-up/recycle touches), ordered by the measured targeting score (x priority multiplier; ties put first touches and follow-ups before a silent prospect\'s recycle re-approach; a share of each batch is random exploration slots); server-filters by enabled channels and deliverable country (unknown country passes unless the project sets targetCountries). Reports the reachable total and its email / formOnly / snsOnly / platformOnly split, the outbound mode (send|draft), remaining outreach quota, and the mailbox email cap; then the prospects as JSON, each carrying `country`, `discoveryStrategy`, `siteReadAt` (when its site was last read for dated events; null = never), and `cycle` {kind, touchNumber}.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       limit: z.number().int().min(1).max(200).default(50).describe('Max number of prospects to return'),

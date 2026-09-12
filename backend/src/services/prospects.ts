@@ -315,6 +315,7 @@ export async function listReachable(
     // Draw only prospects these channels reach (within the enabled ones);
     // total and byChannel still count the whole reachable list.
     channels?: readonly OutboundChannel[]
+    excludeProspectIds?: number[]
   },
 ): Promise<ServiceResult<{
   prospects: ReachableProspect[]
@@ -334,7 +335,7 @@ export async function listReachable(
   if (!resolved.ok) return resolved
   const projectId = resolved.value
 
-  const { limit, prospectIds: onlyProspectIds, channels } = query
+  const { limit, prospectIds: onlyProspectIds, channels, excludeProspectIds } = query
 
   const [quota, mailboxQuota, outboundMode, allowlist, leverConfig, stateRows, activeStrategySlugs] = await Promise.all([
     getRemainingOutreachQuota(db, tenantId, edition),
@@ -445,6 +446,7 @@ export async function listReachable(
     eq(projectProspects.projectId, projectId),
     eq(projectProspects.tenantId, tenantId),
     onlyProspectIds ? inArray(projectProspects.prospectId, onlyProspectIds) : undefined,
+    excludeProspectIds?.length ? notInArray(projectProspects.prospectId, excludeProspectIds) : undefined,
     eq(prospects.doNotContact, false),
     eq(organizations.doNotContact, false),
     or(
@@ -495,6 +497,10 @@ export async function listReachable(
         WHEN 4 THEN ${PRIORITY_MULTIPLIERS[4]}::float8
         ELSE ${PRIORITY_MULTIPLIERS[5]}::float8 END))`
 
+  // At equal fit a first touch (a new sample) outranks a silent prospect's
+  // re-approach (a retry): docs/send_decision_design.local.md §4.
+  const recycleArmExpr = sql<number>`(CASE WHEN ${projectProspects.status} = 'contacted' AND ${projectProspects.nextFollowupAfter} IS NULL THEN 1 ELSE 0 END)`
+
   const exploreCount = Math.floor(effectiveLimit * leverConfig.explorationShare)
   const topCount = effectiveLimit - exploreCount
 
@@ -536,7 +542,7 @@ export async function listReachable(
     topCount > 0
       ? reachableSelect()
           .where(drawCondition)
-          .orderBy(desc(orderingScoreExpr), projectProspects.createdAt)
+          .orderBy(desc(orderingScoreExpr), recycleArmExpr, projectProspects.createdAt, projectProspects.id)
           .limit(topCount)
       : Promise.resolve([]),
     db

@@ -12,7 +12,7 @@ import type { ServiceResult } from '../services/result'
 import { appendJobLog, loadJobForRun, writeJobProgress, type LoadedJob } from '../services/jobs'
 import { runDiscover } from '../services/pipeline/discover'
 import { runEnrich } from '../services/pipeline/enrich'
-import { draftLogEntry, draftOne, loadCompositionContext, loadDraftBatch, summarizeDraftOutcomes, type DraftOutcome } from '../services/pipeline/draft'
+import { draftLogEntry, draftOne, loadCompositionContext, loadDraftBatch, refillDrawSize, summarizeDraftOutcomes, type DraftOutcome } from '../services/pipeline/draft'
 import { runEvaluate } from '../services/pipeline/evaluate'
 import { runJournal, type CycleDigest } from '../services/pipeline/journal'
 import { withLlmScope } from '../services/gemini'
@@ -138,9 +138,13 @@ export async function draftStage(
   namePrefix = 'draft',
 ): Promise<Extract<JobResult, { kind: 'draft' }>> {
   const { tenantId, projectId }: Ids = ctx.job
-  const batch = await ctx.step.do(`${namePrefix}:load`, STEP_RETRY, () =>
-    tenantTx(ctx, async (tx) => unwrap(await loadDraftBatch(tx, tenantId, ctx.env, projectId, params))),
-  )
+  const wanted = params.prospectIds?.length ?? params.count ?? 30
+  const attempted: number[] = []
+  const load = (round: number, limit: number) =>
+    ctx.step.do(`${namePrefix}:load:${round}`, STEP_RETRY, () =>
+      tenantTx(ctx, async (tx) => unwrap(await loadDraftBatch(tx, tenantId, ctx.env, projectId, params, { limit, excludeProspectIds: attempted }))),
+    )
+  let batch = await load(1, wanted)
   if (batch.targets.length === 0) return summarizeDraftOutcomes([], batch.needsHands, batch.quotaMessage)
   // Shared by every composition; its own retried step so the zero-retry send
   // step below holds nothing but the one call that must not run twice.
@@ -148,26 +152,41 @@ export async function draftStage(
     tenantTx(ctx, async (tx) => unwrap(await loadCompositionContext(tx, tenantId, projectId))),
   )
   const outcomes: DraftOutcome[] = []
+  const needsHands = batch.needsHands
+  let quotaMessage = batch.quotaMessage
+  let produced = 0
   let consecutiveFailures = 0
-  for (const [i, p] of batch.targets.entries()) {
-    const stepName = `${namePrefix}:${p.prospectId}`
-    const outcome = await ctx.step.do(stepName, SEND_STEP, () => llmScoped(ctx, async (): Promise<DraftOutcome | null> => {
-      const db = createDb(ctx.env.DATABASE_URL)
-      if (await isCancelled(ctx, db)) return null
-      await progressWriter(ctx, db, 'draft')(p.name, i, batch.targets.length)
-      const drafted = await draftOne(db, tenantId, ctx.env, projectId, p, batch, context)
-      await writeLog(ctx, db, stepName, [draftLogEntry(p.name, drafted)])
-      return drafted
-    }))
-    if (outcome === null) break
-    outcomes.push(outcome)
-    if (outcome.kind === 'sent') await ctx.step.sleep(`${namePrefix}:space:${p.prospectId}`, '30 seconds')
-    // A mailbox or quota problem fails every remaining prospect the same way;
-    // three in a row is that, not three different recipients.
-    consecutiveFailures = outcome.kind === 'failed' && outcome.at === 'send' ? consecutiveFailures + 1 : 0
-    if (consecutiveFailures >= 3) break
+  rounds: for (let round = 2; ; round++) {
+    for (const p of batch.targets) {
+      const stepName = `${namePrefix}:${p.prospectId}`
+      const done = produced
+      attempted.push(p.prospectId)
+      const outcome = await ctx.step.do(stepName, SEND_STEP, () => llmScoped(ctx, async (): Promise<DraftOutcome | null> => {
+        const db = createDb(ctx.env.DATABASE_URL)
+        if (await isCancelled(ctx, db)) return null
+        await progressWriter(ctx, db, 'draft')(p.name, done, wanted)
+        const drafted = await draftOne(db, tenantId, ctx.env, projectId, p, batch, context)
+        await writeLog(ctx, db, stepName, [draftLogEntry(p.name, drafted)])
+        return drafted
+      }))
+      if (outcome === null) break rounds
+      outcomes.push(outcome)
+      if (outcome.kind === 'sent' || outcome.kind === 'drafted') produced++
+      if (outcome.kind === 'sent') await ctx.step.sleep(`${namePrefix}:space:${p.prospectId}`, '30 seconds')
+      // A mailbox or quota problem fails every remaining prospect the same way;
+      // three in a row is that, not three different recipients.
+      consecutiveFailures = outcome.kind === 'failed' && outcome.at === 'send' ? consecutiveFailures + 1 : 0
+      if (consecutiveFailures >= 3) break rounds
+    }
+    // An explicit list is the batch itself; a count is refilled until that
+    // many messages are out.
+    const limit = params.prospectIds ? 0 : refillDrawSize(wanted, produced, attempted.length)
+    if (limit === 0) break
+    batch = await load(round, limit)
+    quotaMessage = batch.quotaMessage ?? quotaMessage
+    if (batch.targets.length === 0) break
   }
-  return summarizeDraftOutcomes(outcomes, batch.needsHands, batch.quotaMessage)
+  return summarizeDraftOutcomes(outcomes, needsHands, quotaMessage)
 }
 
 export async function sendStage(ctx: StageCtx, params: JobParamsOf<'send'>): Promise<Extract<JobResult, { kind: 'send' }>> {

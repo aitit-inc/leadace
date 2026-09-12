@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { newMaterialSince, pickChannel, summarizeDraftOutcomes } from './draft'
+import { newMaterialSince, pickChannel, refillDrawSize, summarizeDraftOutcomes } from './draft'
 import type { ReachableProspect } from '../prospects'
 
 const base = {
@@ -84,5 +84,19 @@ describe('newMaterialSince', () => {
   it('lets a first touch and a day-scale follow-up go out on what is stored', () => {
     expect(newMaterialSince(base)).toBeNull()
     expect(newMaterialSince({ ...base, cycle: { ...base.cycle, n: 1, kind: 'short_cycle_followup', touchNumber: 2, lastOutreach: last } })).toBeNull()
+  })
+})
+
+describe('refillDrawSize', () => {
+  it('draws what the batch still lacks in messages, not in prospects tried', () => {
+    expect(refillDrawSize(20, 1, 20)).toBe(19)
+    expect(refillDrawSize(20, 20, 20)).toBe(0)
+  })
+  it('stops at twice the batch in attempts', () => {
+    expect(refillDrawSize(20, 5, 30)).toBe(10)
+    expect(refillDrawSize(20, 5, 40)).toBe(0)
+  })
+  it('never asks for a negative draw', () => {
+    expect(refillDrawSize(20, 25, 25)).toBe(0)
   })
 })

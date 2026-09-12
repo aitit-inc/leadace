@@ -102,7 +102,8 @@ on, need no Claude session, and run fast:
   (coarse fold / band / country precedence, mature sends only).
 - `regression-targeting-score.sh` — closed-loop Phase B surface: lever tick
   computes targeting lifts and materializes `ordering_score`; measured-first
-  `get_outbound_targets` ordering (score x priority multiplier) and the
+  `get_outbound_targets` ordering (score x priority multiplier; a recycle
+  re-approach loses the tie to a first touch of equal fit) and the
   exploration share (random slots, no duplicates).
 - `regression-suggestions.sh` — suggestions surface: record upsert refreshes an
   open row in place, dismissed/done never resurrected, playbook save auto-resolves
