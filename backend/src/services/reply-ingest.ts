@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
+import { and, eq, gte, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm'
 import type { Db } from '../db/connection'
 import { outreachLogs, prospects, responses, sendingIdentities } from '../db/schema'
 import { asTenantId, type TenantId } from '../domain/ids'
@@ -149,7 +149,18 @@ async function loadCandidates(
     .where(
       and(
         eq(outreachLogs.tenantId, tenantId),
-        eq(outreachLogs.sendingIdentityId, identityId),
+        // Replies to a Send-As alias land in the parent's inbox, so the parent's
+        // poll owns the alias's sends too.
+        or(
+          eq(outreachLogs.sendingIdentityId, identityId),
+          inArray(
+            outreachLogs.sendingIdentityId,
+            db
+              .select({ identityId: sendingIdentities.identityId })
+              .from(sendingIdentities)
+              .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.parentIdentityId, identityId))),
+          ),
+        ),
         eq(outreachLogs.channel, 'email'),
         eq(outreachLogs.status, 'sent'),
         gte(outreachLogs.sentAt, cutoff),
@@ -395,9 +406,11 @@ export async function runReplyIngest(db: Db, env: ReplyIngestEnv): Promise<Reply
     identitiesAuthRevoked: 0,
   }
 
+  // A Send-As alias shares its parent's inbox, so only credential-holding rows poll.
   const identities = await db.execute<IdentityRow>(sql`
     SELECT tenant_id, identity_id, provider, scope, last_polled_at
     FROM sending_identities
+    WHERE parent_identity_id IS NULL
   `)
 
   for (const identity of identities) {

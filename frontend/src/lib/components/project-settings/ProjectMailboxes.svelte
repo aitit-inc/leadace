@@ -30,6 +30,8 @@
   let byId = $derived(new Map(identities.map((i) => [i.identityId, i])));
   let listed = $derived(pool.flatMap((id) => byId.get(id) ?? []));
   let available = $derived(identities.filter((i) => !pool.includes(i.identityId)));
+  // What an empty list sends from (services/mailbox.ts loadProjectMailboxes).
+  let connectedGmail = $derived(identities.find((i) => i.kind === 'gmail') ?? null);
 
   let dragIndex = $state<number | null>(null);
   let saving = $state(false);
@@ -81,7 +83,8 @@
     saving = false;
   }
 
-  const providerLabel = (i: SendingIdentity) => (i.provider === 'gmail_oauth' ? 'Gmail' : 'SMTP');
+  const kindLabel = (i: SendingIdentity) =>
+    ({ gmail: 'Gmail', gmail_alias: 'Gmail alias', smtp: 'SMTP' })[i.kind];
   const capLabel = (i: SendingIdentity) =>
     i.dailyCapOverride !== null
       ? `fixed ${i.dailyCapOverride}/day`
@@ -103,7 +106,13 @@
 
   {#if listed.length === 0}
     <p class="text-sm text-text-secondary">
-      None listed — this project sends from the connected Gmail.
+      {#if connectedGmail}
+        None listed — every email goes out from the connected Gmail,
+        <span class="font-mono">{connectedGmail.fromEmail}</span>. List mailboxes to send from an
+        alias or a custom mailbox, or to spread sends over several.
+      {:else}
+        None listed and no Gmail connected — email sending is off until you list a mailbox.
+      {/if}
     </p>
   {:else}
     <ol class="max-w-3xl divide-y divide-border rounded border border-border">
@@ -124,7 +133,7 @@
           <div class="min-w-0 flex-1">
             <p class="truncate font-mono text-sm text-text">{i.fromEmail}</p>
             <p class="mt-0.5 text-xs text-text-muted">
-              {providerLabel(i)} · today {i.used}/{i.cap} sent · {capLabel(i)}
+              {kindLabel(i)} · today {i.used}/{i.cap} sent · {capLabel(i)}
               {#if i.pausedUntil}· paused{/if}
               {#if i.heldUntil}· held after a provider refusal{/if}
             </p>
@@ -169,6 +178,7 @@
   {/if}
 
   {#if available.length > 0}
+    <p class="text-xs font-medium text-text-secondary">Available mailboxes</p>
     <ul class="max-w-3xl space-y-1">
       {#each available as i (i.identityId)}
         <li class="flex items-center gap-3 text-sm">
@@ -179,7 +189,7 @@
             class="rounded border border-border bg-page px-2.5 py-1 text-xs text-text hover:bg-surface disabled:opacity-50"
           >Add</button>
           <span class="font-mono text-text-secondary">{i.fromEmail}</span>
-          <span class="text-xs text-text-muted">{providerLabel(i)} · today {i.used}/{i.cap} sent</span>
+          <span class="text-xs text-text-muted">{kindLabel(i)} · today {i.used}/{i.cap} sent</span>
         </li>
       {/each}
     </ul>

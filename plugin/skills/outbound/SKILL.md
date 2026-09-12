@@ -79,9 +79,9 @@ From the settings response, surface for body composition:
   actually answer. Promise only what the brief covers (e.g. no "ask about
   pricing in chat" unless it carries pricing).
 - `inquiryOneLiner` (when non-empty) — the tagline the recipient sees on the landing page. Avoid contradicting it in the subject / opener.
-- `outboundMode`, `senderEmailAlias`, `senderDisplayName`, and the `compliance`
-  block (legal_name / physical_address) — the backend applies all of these at
-  send time; never inline them in the body.
+- `outboundMode`, `senderDisplayName`, and the `compliance` block (legal_name /
+  physical_address) — the backend applies all of these at send time; never
+  inline them in the body.
 
 And for channel selection in step 2:
 - **`outboundChannels`** (subset of `email | form | sns_twitter | sns_linkedin`): the enabled
@@ -265,7 +265,7 @@ On a 502 `Send failed`, the outreach is still logged with `status: "failed"` and
 
 **Notes:**
 - The body must be the complete content including the signature
-- The `From:` address is the mailbox the server picked for that send (the project's mailboxes in priority order): a custom SMTP mailbox sends as its own address; the connected Gmail sends as its primary address, or as `senderEmailAlias` when that Gmail Send-As alias is set. An alias not yet verified in the user's Gmail account fails with a Gmail error — surface it in the report and tell the user to verify the alias at https://mail.google.com → Settings → Accounts → "Send mail as"
+- The `From:` address is the mailbox the server picked for that send (the project's mailboxes in priority order, each sending as its own address): the connected Gmail, a Gmail Send-As alias registered as a mailbox under it, or a custom SMTP mailbox. An alias not yet verified in the user's Gmail account fails with a Gmail error — surface it in the report and tell the user to verify the alias at https://mail.google.com → Settings → Accounts → "Send mail as"
 
 ### 3b. Re-approach Branching (cycle.kind != 'first')
 

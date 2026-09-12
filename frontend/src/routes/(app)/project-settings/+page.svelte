@@ -17,7 +17,6 @@
   } from '$lib/types/project-settings';
   import type { PageProps } from './$types';
   import type { ProjectSettingsData } from './types';
-  import type { SendingIdentity } from '$lib/types/sending-identity';
 
   const CHANNEL_LABELS: Record<OutboundChannel, string> = {
     email: 'Email',
@@ -58,15 +57,6 @@
   let footerText = $state('');
   let footerLoadedOverride = $state<string | null>(null);
 
-  // The Gmail Send-As alias applies only when the connected Gmail sends: no
-  // mailbox listed, or Gmail among the saved ones (unsaved edits don't count).
-  let aliasApplies = $derived.by(() => {
-    const listed = data.projectSettings?.sendingIdentityIds ?? [];
-    return (
-      listed.length === 0 ||
-      data.sendingIdentities.some((i: SendingIdentity) => i.provider === 'gmail_oauth' && listed.includes(i.identityId))
-    );
-  });
   $effect(() => {
     const loaded = data.projectSettings;
     if (!loaded) {
@@ -111,7 +101,6 @@
     try {
       const body = {
         outboundMode: projectSettings.outboundMode,
-        senderEmailAlias: projectSettings.senderEmailAlias?.trim() || null,
         senderDisplayName: projectSettings.senderDisplayName?.trim() || null,
         unsubscribeEnabled: projectSettings.unsubscribeEnabled,
         ...(footerChanged() ? { footerOverride: computedFooterOverride() } : {}),
@@ -278,35 +267,6 @@
       {#if sendingIdentitiesError}
         <p class="text-xs text-text-muted">Couldn't load your mailboxes. Reload to edit the list.</p>
       {/if}
-
-      <div>
-        <label for="sender-alias" class="block text-xs font-medium text-text-secondary mb-1">
-          Sender email alias
-        </label>
-        <input
-          id="sender-alias"
-          type="email"
-          placeholder="primary Gmail (default)"
-          bind:value={s.senderEmailAlias}
-          disabled={!aliasApplies}
-          class="w-full max-w-xs rounded border border-border bg-page px-2 py-1.5 text-sm text-text font-mono disabled:opacity-50"
-        />
-        <p class="mt-1 text-xs text-text-muted">
-          {#if !aliasApplies}
-            Not used while only custom SMTP mailboxes are listed — each sends as its own address.
-          {:else}
-            A Gmail Send-As alias (e.g. <span class="font-mono">sales@yourdomain.com</span>) to use
-            as the From: address. The alias must already be set up and verified in
-            <a
-              href="https://mail.google.com/mail/u/0/#settings/accounts"
-              target="_blank"
-              rel="noopener"
-              class="underline hover:text-text"
-            >Gmail → Settings → Accounts and Import</a>. If it isn't verified there, sending will
-            fail with a Gmail error.
-          {/if}
-        </p>
-      </div>
 
       <div>
         <label for="sender-display-name" class="block text-xs font-medium text-text-secondary mb-1">

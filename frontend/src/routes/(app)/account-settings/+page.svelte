@@ -4,6 +4,7 @@
   import { connectGmail } from '$lib/gmail-oauth';
   import MailboxWarmupForm from '$lib/components/mailbox/MailboxWarmupForm.svelte';
   import SendingIdentitiesForm from '$lib/components/sending-identity/SendingIdentitiesForm.svelte';
+  import GmailAliasesForm from '$lib/components/sending-identity/GmailAliasesForm.svelte';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
@@ -144,6 +145,16 @@
     {:else}
       <p class="text-danger text-sm">{data.gmailStatus.message}</p>
     {/if}
+    {#if data.gmailStatus.state === 'connected' || data.gmailStatus.state === 'revoked'}
+      <GmailAliasesForm
+        identities={data.sendingIdentities}
+        planTier={data.plan?.plan}
+        {token}
+        onChanged={async () => {
+          await Promise.all([invalidate('app:sending-identities'), invalidate('app:attention')]);
+        }}
+      />
+    {/if}
     {#if gmailMessage}
       <p class="mt-3 text-xs {gmailMessage.startsWith('Error') ? 'text-danger' : 'text-text-muted'}">
         {gmailMessage}
@@ -161,7 +172,7 @@
       {#each data.sendingIdentities as identity (identity.identityId)}
         <div class="rounded-md border border-border p-5">
           <p class="mb-3 text-xs font-medium text-text-secondary">
-            {identity.provider === 'gmail_oauth' ? 'Connected Gmail' : 'Custom SMTP mailbox'}
+            {{ gmail: 'Connected Gmail', gmail_alias: 'Gmail Send-As alias', smtp: 'Custom SMTP mailbox' }[identity.kind]}
           </p>
           <MailboxWarmupForm
             {identity}

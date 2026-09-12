@@ -27,15 +27,13 @@ export type SendingIdentitySecret =
 
 export type GmailOAuthSecret = Extract<SendingIdentitySecret, { provider: 'gmail_oauth' }>
 
-// From by provider: an SMTP mailbox can only send as its own address, so a Gmail
-// Send-As alias is ignored there (using it would break SPF/DKIM alignment).
-export function senderAddressFor(
-  provider: SendingIdentityProvider,
-  fromEmail: string,
-  alias: string | null | undefined,
-): string {
-  if (provider === 'gmail_oauth') return alias?.trim() || fromEmail
-  return fromEmail
+// What a mailbox row is: the connected Gmail, a Send-As alias under it (its own
+// From, warmup and cap; the parent's credentials and inbox), or an SMTP mailbox.
+export type MailboxKind = 'gmail' | 'gmail_alias' | 'smtp'
+
+export function mailboxKind(provider: SendingIdentityProvider, parentIdentityId: string | null): MailboxKind {
+  if (provider === 'smtp_imap') return 'smtp'
+  return parentIdentityId === null ? 'gmail' : 'gmail_alias'
 }
 
 // Overload so a caller that statically knows the provider keeps the narrowed arm.

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 import {
   GoogleAuthError,
   applyE2eRedirect,
@@ -85,6 +85,7 @@ export async function getCredentialsStatus(
         eq(sendingIdentities.tenantId, tenantId),
         eq(sendingIdentities.userId, userId),
         eq(sendingIdentities.provider, 'gmail_oauth'),
+        isNull(sendingIdentities.parentIdentityId),
       ),
     )
     .limit(1)

@@ -541,6 +541,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   type MailboxHealthWire = {
     identityId: string
+    kind: 'gmail' | 'gmail_alias' | 'smtp'
     authRevokedAt: string | null
     fromEmail: string
     warmupStartedAt: string | null
@@ -565,8 +566,9 @@ export function buildToolRegistry(): ToolDef[] {
       : h.rampWeek >= h.rampWeeks
         ? `warmup complete (steady ${h.steadyStatePerDay}/day)`
         : `warming up — week ${h.rampWeek} of ${h.rampWeeks} toward steady ${h.steadyStatePerDay}/day${h.warmupStartedAt ? '' : ' (no email sent yet)'}`
+    const kindLabel = { gmail: 'connected Gmail', gmail_alias: 'Gmail Send-As alias', smtp: 'custom SMTP mailbox' }[h.kind]
     const lines = [
-      `Mailbox: ${h.fromEmail}`,
+      `Mailbox: ${h.fromEmail} (${kindLabel})`,
       `Cap: ${warmupLine}`,
       `Today (email only): ${h.used}/${h.cap} sent, ${h.remaining} remaining — resets at UTC midnight`,
       h.sentInWindow === 0
@@ -2020,7 +2022,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'update_project_settings',
-    'Update the project settings the agent owns. Any omitted field keeps its current value; null clears nullable fields. Outbound mode, sender alias / display name, footer override, the landing CTA / media / branding and publicScoreboardEnabled are Web UI only (Project / Inquiry settings) — propose them to the user instead. Which mailboxes a project sends from is set_project_mailboxes (chat only).',
+    'Update the project settings the agent owns. Any omitted field keeps its current value; null clears nullable fields. Outbound mode, sender display name, footer override, the landing CTA / media / branding and publicScoreboardEnabled are Web UI only (Project / Inquiry settings) — propose them to the user instead. Which mailboxes a project sends from is set_project_mailboxes (chat only).',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       unsubscribeEnabled: z.boolean().optional()
@@ -2095,7 +2097,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'start_job',
-    'Start a server-run job for a project and answer with its id and status line. Kinds: daily_cycle (evaluate → lever tick → outbound drafting/sending → prospect discovery when the list runs low → journal), discover (find and register N new prospects, following the tick\'s strategy plan unless strategySlug pins one), enrich (read the candidates\' sites for contacts and register them), draft (compose outreach for the next N reachable prospects or the given prospectIds; the project\'s outbound mode decides draft vs send), send (send the given pending drafts), evaluate, journal. Runs in the background — poll get_job. The daily cycle refuses a second start on the same UTC day.',
+    'Start a server-run job for a project and answer with its id and status line. Kinds: daily_cycle (evaluate → lever tick → outbound drafting/sending → prospect discovery when the list runs low → journal), discover (find and register N new prospects, following the tick\'s strategy plan unless strategySlug pins one), enrich (read the candidates\' sites for contacts and register them), draft (compose outreach for the next N reachable prospects or the given prospectIds; the project\'s outbound mode decides draft vs send), send (send the given pending drafts), evaluate, journal. Runs in the background — poll get_job. The daily cycle refuses a second start while one is still running for the project.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       params: jobParamsSchema.describe('Job kind and its parameters.'),

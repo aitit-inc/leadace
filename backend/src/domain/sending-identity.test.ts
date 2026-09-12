@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseSendingIdentitySecret, senderAddressFor } from './sending-identity'
+import { parseSendingIdentitySecret } from './sending-identity'
 
 const validSmtp = JSON.stringify({
   smtpHost: 'smtp.gmail.com',
@@ -41,24 +41,5 @@ describe('parseSendingIdentitySecret', () => {
   it('rejects a non-465 smtpPort (465 implicit-TLS only)', () => {
     const port587 = JSON.stringify({ ...JSON.parse(validSmtp), smtpPort: 587 })
     expect(() => parseSendingIdentitySecret('smtp_imap', port587)).toThrow()
-  })
-})
-
-describe('senderAddressFor', () => {
-  it('gmail_oauth uses a verified Send-As alias when present', () => {
-    expect(senderAddressFor('gmail_oauth', 'me@gmail.com', 'alias@brand.com')).toBe('alias@brand.com')
-  })
-
-  it('gmail_oauth falls back to the mailbox address when alias is blank/absent', () => {
-    expect(senderAddressFor('gmail_oauth', 'me@gmail.com', '   ')).toBe('me@gmail.com')
-    expect(senderAddressFor('gmail_oauth', 'me@gmail.com', null)).toBe('me@gmail.com')
-    expect(senderAddressFor('gmail_oauth', 'me@gmail.com', undefined)).toBe('me@gmail.com')
-  })
-
-  // The crux: an SMTP mailbox can only send as its own address — a stale Gmail
-  // alias must never leak into the SMTP envelope/From (would break SPF/DKIM).
-  it('smtp_imap always uses the mailbox address, ignoring any alias', () => {
-    expect(senderAddressFor('smtp_imap', 'cold@cold-domain.com', 'alias@brand.com')).toBe('cold@cold-domain.com')
-    expect(senderAddressFor('smtp_imap', 'cold@cold-domain.com', null)).toBe('cold@cold-domain.com')
   })
 })

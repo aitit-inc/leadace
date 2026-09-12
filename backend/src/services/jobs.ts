@@ -22,7 +22,6 @@ import {
   type JobStatus,
 } from '../domain/jobs'
 import { randomFromAlphabet } from '../auth/random-id'
-import { utcDateKey } from '../domain/time'
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { getActiveStrategySlugs } from './discovery-strategies'
@@ -31,6 +30,9 @@ import { getActiveStrategySlugs } from './discovery-strategies'
 // testable and free of the Worker env type.
 export type JobRunner = {
   create: (jobId: string, tenantId: TenantId) => Promise<void>
+  // True once the instance can no longer act (finished, errored, terminated,
+  // or gone) — a row still in flight then belongs to nothing.
+  settled: (jobId: string) => Promise<boolean>
   // Resolves once the instance can no longer act: it was stopped, or had
   // already finished. Rejects when it is still running and could not be stopped.
   terminate: (jobId: string) => Promise<void>
@@ -101,13 +103,9 @@ function toView(row: Omit<JobView, 'projectId'> & { projectId: string }): JobVie
 
 const ID_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
 
-// The daily cycle runs once per project per UTC day whoever starts it; every
-// other kind may run as often as asked. A cycle that failed or was cancelled
-// releases the key (finishJob / cancelJob) so the day can be re-run once the
-// cause is fixed.
-export function dailyCycleIdempotencyKey(projectId: ProjectId, now: Date): string {
-  return `${projectId}:${utcDateKey(now)}`
-}
+// Must read the same as the uq_jobs_daily_cycle_in_flight predicate: the
+// insert infers that index from it.
+const dailyCycleInFlightExpr = sql`${jobs.kind} = 'daily_cycle' AND ${jobs.status} IN ('queued', 'running')`
 
 export async function startJob(
   db: Db,
@@ -141,30 +139,36 @@ async function insertAndRun(
   now: Date,
 ): Promise<ServiceResult<JobView>> {
   const id = randomFromAlphabet(ID_ALPHABET, 21)
-  const idempotencyKey = params.kind === 'daily_cycle' ? dailyCycleIdempotencyKey(projectId, now) : null
-  // The idempotency key is the only conflict target; a taken key returns no
-  // row instead of raising, so the answer is a 409, never a 500.
-  const [row] = await db
-    .insert(jobs)
-    .values({ id, tenantId, projectId, kind: params.kind, params, startedBy: origin, threadId, idempotencyKey, createdAt: now })
-    .onConflictDoNothing({ target: jobs.idempotencyKey })
-    .returning(jobCols)
+  // A conflict returns no row instead of raising, so a second daily cycle is
+  // a 409, never a 500.
+  const insert = () =>
+    db
+      .insert(jobs)
+      .values({ id, tenantId, projectId, kind: params.kind, params, startedBy: origin, threadId, createdAt: now })
+      .onConflictDoNothing({ target: [jobs.projectId], where: dailyCycleInFlightExpr })
+      .returning(jobCols)
+  let [row] = await insert()
   if (!row) {
-    const [today] = idempotencyKey
-      ? await db.select(jobCols).from(jobs).where(and(eq(jobs.tenantId, tenantId), eq(jobs.idempotencyKey, idempotencyKey))).limit(1)
-      : []
-    const ran = today
-      ? ` Today's: job ${today.id}, ${today.status}, started by ${today.startedBy} at ${today.createdAt.toISOString()}${today.result ? ` — ${today.result.summary}` : ''}`
-      : ''
+    // A Workflow that died before finishJob (retries exhausted, DB outage)
+    // leaves its row in flight; the next start is where that is noticed.
+    const blocking = await inFlightDailyCycle(db, tenantId, projectId)
+    if (blocking && (await runner.settled(blocking.id))) {
+      await releaseJob(db, tenantId, blocking.id, now)
+      ;[row] = await insert()
+    }
+  }
+  if (!row) {
+    const running = await inFlightDailyCycle(db, tenantId, projectId)
+    const which = running ? ` Job ${running.id}, ${running.status}, started by ${running.startedBy} at ${running.createdAt.toISOString()}.` : ''
     return err(
       'CONFLICT',
-      'The daily cycle already ran today for this project',
-      `One daily cycle per project per UTC day. Start a single stage (discover / draft / evaluate) if more work is wanted today.${ran}`,
+      'A daily cycle is already running for this project',
+      `Wait for it to finish (get_job), or cancel it first.${which}`,
     )
   }
   // The row exists before the instance so the Workflow always finds it. A
   // create failure removes the row again: nothing ran, and a daily cycle must
-  // not hold the day's idempotency key after a transient binding outage.
+  // not hold the in-flight lock after a transient binding outage.
   try {
     await runner.create(id, tenantId)
   } catch (e) {
@@ -173,6 +177,22 @@ async function insertAndRun(
     return err('INTERNAL_ERROR', 'Could not start the job', message)
   }
   return ok(toView(row))
+}
+
+async function inFlightDailyCycle(db: Db, tenantId: TenantId, projectId: ProjectId) {
+  const [row] = await db
+    .select(jobCols)
+    .from(jobs)
+    .where(and(eq(jobs.tenantId, tenantId), eq(jobs.projectId, projectId), dailyCycleInFlightExpr))
+    .limit(1)
+  return row
+}
+
+async function releaseJob(db: Db, tenantId: TenantId, id: string, now: Date): Promise<void> {
+  await db
+    .update(jobs)
+    .set({ status: 'failed', error: 'The Workflow instance ended without reporting back', finishedAt: now })
+    .where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, id), inArray(jobs.status, ['queued', 'running'])))
 }
 
 export async function listJobs(
@@ -220,8 +240,8 @@ export async function cancelJob(
   if (TERMINAL_JOB_STATUSES.includes(current.value.status)) {
     return err('CONFLICT', `Job is already ${current.value.status}`)
   }
-  // The row flips only once the instance cannot send anything further; a
-  // running instance that could not be stopped keeps its row and its key.
+  // The row flips only once the instance cannot send anything further; one
+  // that could not be stopped keeps its row, and with it the in-flight lock.
   try {
     await runner.terminate(id)
   } catch (e) {
@@ -229,7 +249,7 @@ export async function cancelJob(
   }
   const [row] = await db
     .update(jobs)
-    .set({ status: 'cancelled', finishedAt: new Date(), idempotencyKey: null })
+    .set({ status: 'cancelled', finishedAt: new Date() })
     .where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, id), inArray(jobs.status, ['queued', 'running'])))
     .returning(jobCols)
   return ok(row ? toView(row) : current.value)
@@ -284,7 +304,7 @@ export async function finishJob(
     .set(
       outcome.ok
         ? { status: 'succeeded', result: outcome.result, finishedAt: new Date() }
-        : { status: 'failed', error: outcome.error, finishedAt: new Date(), idempotencyKey: null },
+        : { status: 'failed', error: outcome.error, finishedAt: new Date() },
     )
     .where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, id), inArray(jobs.status, ['queued', 'running'])))
 }

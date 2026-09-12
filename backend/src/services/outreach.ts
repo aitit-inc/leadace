@@ -867,7 +867,6 @@ export async function sendAndRecord(
     subject: input.subject,
     body: sendBody,
     extraHeaders: attachments.headers,
-    senderEmailAlias: sendSettings.senderEmailAlias,
     senderDisplayName: sendSettings.senderDisplayName,
     e2eRecipientOverride: ctx.e2eRecipientOverride,
   })
@@ -1347,7 +1346,6 @@ export async function sendDraft(
     subject: draft.subject ?? '',
     body: sendBody,
     extraHeaders: attachments.headers,
-    senderEmailAlias: sendSettings.senderEmailAlias,
     senderDisplayName: sendSettings.senderDisplayName,
     e2eRecipientOverride: ctx.e2eRecipientOverride,
   })

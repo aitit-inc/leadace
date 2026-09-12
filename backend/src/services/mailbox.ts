@@ -1,7 +1,9 @@
 import { z } from 'zod'
-import { and, asc, eq, inArray, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
 import type { Db } from '../db/connection'
 import { projectSendingIdentities, sendingIdentities, type SendingIdentityProvider } from '../db/schema'
+import { mailboxKind, type MailboxKind } from '../domain/sending-identity'
 import { asSendingIdentityId, sendingIdentityIdSchema, type ProjectId, type ProjectRef, type SendingIdentityId, type TenantId } from '../domain/ids'
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
@@ -23,6 +25,7 @@ import {
 export type ProjectMailboxRow = {
   identityId: SendingIdentityId
   provider: SendingIdentityProvider
+  kind: MailboxKind
   fromEmail: string
   scope: string | null
   warmupStartedAt: Date | null
@@ -35,19 +38,27 @@ export type ProjectMailboxRow = {
   lastPolledAt: Date | null
 }
 
+// A Send-As alias has its own From, warmup and cap but sends and collects
+// replies through its parent, whose credential and poll state it reports.
+const parentIdentity = alias(sendingIdentities, 'parent_identity')
+const parentJoin = and(
+  eq(parentIdentity.tenantId, sendingIdentities.tenantId),
+  eq(parentIdentity.identityId, sendingIdentities.parentIdentityId),
+)
 const mailboxColumns = {
   identityId: sendingIdentities.identityId,
   provider: sendingIdentities.provider,
+  parentIdentityId: sendingIdentities.parentIdentityId,
   fromEmail: sendingIdentities.fromEmail,
-  scope: sendingIdentities.scope,
+  scope: sql`COALESCE(${parentIdentity.scope}, ${sendingIdentities.scope})`.mapWith(sendingIdentities.scope),
   warmupStartedAt: sendingIdentities.warmupStartedAt,
   dailyCapOverride: sendingIdentities.dailyCapOverride,
   pausedUntil: sendingIdentities.pausedUntil,
   sendRefusal: sendingIdentities.sendRefusal,
-  authRevokedAt: sendingIdentities.authRevokedAt,
-  pollFailingSince: sendingIdentities.pollFailingSince,
-  lastPollError: sendingIdentities.lastPollError,
-  lastPolledAt: sendingIdentities.lastPolledAt,
+  authRevokedAt: sql`COALESCE(${parentIdentity.authRevokedAt}, ${sendingIdentities.authRevokedAt})`.mapWith(sendingIdentities.authRevokedAt),
+  pollFailingSince: sql`COALESCE(${parentIdentity.pollFailingSince}, ${sendingIdentities.pollFailingSince})`.mapWith(sendingIdentities.pollFailingSince),
+  lastPollError: sql`COALESCE(${parentIdentity.lastPollError}, ${sendingIdentities.lastPollError})`.mapWith(sendingIdentities.lastPollError),
+  lastPolledAt: sql`COALESCE(${parentIdentity.lastPolledAt}, ${sendingIdentities.lastPolledAt})`.mapWith(sendingIdentities.lastPolledAt),
 } as const
 
 // The project's mailboxes in priority order; with none listed, the tenant's
@@ -67,6 +78,7 @@ export async function loadProjectMailboxes(
         eq(sendingIdentities.identityId, projectSendingIdentities.identityId),
       ),
     )
+    .leftJoin(parentIdentity, parentJoin)
     .where(and(eq(projectSendingIdentities.tenantId, tenantId), eq(projectSendingIdentities.projectId, projectId)))
     .orderBy(asc(projectSendingIdentities.position))
   const rows =
@@ -75,10 +87,21 @@ export async function loadProjectMailboxes(
       : await db
           .select(mailboxColumns)
           .from(sendingIdentities)
-          .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.provider, 'gmail_oauth')))
+          .leftJoin(parentIdentity, parentJoin)
+          .where(
+            and(
+              eq(sendingIdentities.tenantId, tenantId),
+              eq(sendingIdentities.provider, 'gmail_oauth'),
+              isNull(sendingIdentities.parentIdentityId),
+            ),
+          )
           .orderBy(sql`${sendingIdentities.authRevokedAt} IS NULL DESC`, asc(sendingIdentities.grantedAt))
           .limit(1)
-  return rows.map((r) => ({ ...r, identityId: asSendingIdentityId(r.identityId) }))
+  return rows.map(({ parentIdentityId, ...r }) => ({
+    ...r,
+    identityId: asSendingIdentityId(r.identityId),
+    kind: mailboxKind(r.provider, parentIdentityId),
+  }))
 }
 
 async function withDailyStatus(

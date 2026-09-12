@@ -26,6 +26,7 @@ SKIP_CLEANUP="${SKIP_CLEANUP:-0}"
 
 RUN_TAG="e2e-si-$(date +%s)"
 SMTP_EMAIL="cold@$RUN_TAG.example"
+ALIAS_EMAIL="sales@$RUN_TAG.example"
 APP_PASSWORD="app-pw-$RUN_TAG"
 PROJECT_NAME="$RUN_TAG project"
 IDENTITY_ID="e2esi$(date +%s)$$"
@@ -106,7 +107,7 @@ restore_and_exit() {
   fi
   echo "" >&2; echo "=== teardown ===" >&2
   psql_local "DELETE FROM project_sending_identities WHERE tenant_id='$TENANT_ID' AND identity_id IN (SELECT identity_id FROM sending_identities WHERE tenant_id='$TENANT_ID' AND from_email='$SMTP_EMAIL');" >/dev/null 2>&1 || true
-  psql_local "DELETE FROM sending_identities WHERE tenant_id='$TENANT_ID' AND from_email='$SMTP_EMAIL';" >/dev/null 2>&1 || true
+  psql_local "DELETE FROM sending_identities WHERE tenant_id='$TENANT_ID' AND from_email IN ('$SMTP_EMAIL', '$ALIAS_EMAIL');" >/dev/null 2>&1 || true
   if [[ -n "$PROJECT_ID" ]]; then
     api DELETE "/api/projects/$PROJECT_ID" >/dev/null 2>&1 || true
     say "deleted project $PROJECT_ID"
@@ -158,7 +159,7 @@ assert_eq "delete succeeds after unset → 200" "$(api_status DELETE "/api/me/se
 assert_eq "list no longer contains it" "$([[ -z "$(list_for "$SMTP_EMAIL")" ]] && echo gone || echo present)" "gone"
 
 step "6. gmail_oauth not deletable; unknown id → 404"
-GMAIL_ID="$(psql_local "SELECT identity_id FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth' LIMIT 1;")"
+GMAIL_ID="$(psql_local "SELECT identity_id FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth' AND parent_identity_id IS NULL LIMIT 1;")"
 if [[ -n "$GMAIL_ID" ]]; then
   assert_eq "delete gmail identity via registry → 404" "$(api_status DELETE "/api/me/sending-identities/$GMAIL_ID")" "404"
   assert_eq "gmail row still present after the attempt" "$(psql_local "SELECT EXISTS(SELECT 1 FROM sending_identities WHERE tenant_id='$TENANT_ID' AND identity_id='$GMAIL_ID');")" "t"
@@ -167,6 +168,28 @@ else
 fi
 assert_eq "delete already-deleted id → 404" "$(api_status DELETE "/api/me/sending-identities/$IDENTITY_ID")" "404"
 assert_eq "delete bogus id → 404" "$(api_status DELETE "/api/me/sending-identities/does-not-exist-xyz")" "404"
+
+step "7. a Gmail Send-As alias is a mailbox of its own under the connected Gmail"
+ALIAS_BODY="$(jq -nc --arg e "$ALIAS_EMAIL" '{fromEmail:$e}')"
+if [[ -n "$GMAIL_ID" ]]; then
+  ALIAS="$(api POST /api/me/sending-identities/gmail-aliases "$ALIAS_BODY")"
+  ALIAS_ID="$(echo "$ALIAS" | jq -r '.identityId // ""')"
+  assert_eq "register alias → kind gmail_alias" "$(echo "$ALIAS" | jq -r '.kind')" "gmail_alias"
+  assert_eq "alias parentIdentityId = the connected Gmail" "$(echo "$ALIAS" | jq -r '.parentIdentityId')" "$GMAIL_ID"
+  assert_eq "alias provider stays gmail_oauth" "$(echo "$ALIAS" | jq -r '.provider')" "gmail_oauth"
+  assert_eq "db: alias secret IS NULL, scope IS NULL" "$(psql_local "SELECT (secret IS NULL AND scope IS NULL) FROM sending_identities WHERE tenant_id='$TENANT_ID' AND from_email='$ALIAS_EMAIL';")" "t"
+  assert_eq "register same alias again → 409" "$(api_status POST /api/me/sending-identities/gmail-aliases "$ALIAS_BODY")" "409"
+  assert_eq "register the Gmail's own address as an alias → 409" "$(api_status POST /api/me/sending-identities/gmail-aliases "$(jq -nc --arg e "$(psql_local "SELECT from_email FROM sending_identities WHERE tenant_id='$TENANT_ID' AND identity_id='$GMAIL_ID';")" '{fromEmail:$e}')")" "409"
+  assert_eq "list shows the connected Gmail as kind gmail" "$(api GET /api/me/sending-identities | jq -r --arg id "$GMAIL_ID" '.identities[] | select(.identityId==$id) | .kind')" "gmail"
+  assert_eq "PUT mailboxes [alias] → 200" "$(api_status PUT "/api/projects/$PROJECT_ID/mailboxes" "$(jq -nc --arg id "$ALIAS_ID" '{identityIds:[$id]}')")" "200"
+  assert_eq "mailbox-health names the alias with its kind" "$(api GET "/api/projects/$PROJECT_ID/mailbox-health" | jq -r '.mailboxes[0] | "\(.fromEmail) \(.kind)"')" "$ALIAS_EMAIL gmail_alias"
+  assert_eq "delete blocked while a project lists the alias → 409" "$(api_status DELETE "/api/me/sending-identities/$ALIAS_ID")" "409"
+  assert_eq "PUT mailboxes [] → 200" "$(api_status PUT "/api/projects/$PROJECT_ID/mailboxes" '{"identityIds":[]}')" "200"
+  assert_eq "delete alias → 200" "$(api_status DELETE "/api/me/sending-identities/$ALIAS_ID")" "200"
+  assert_eq "alias gone from the list" "$([[ -z "$(list_for "$ALIAS_EMAIL")" ]] && echo gone || echo present)" "gone"
+else
+  assert_eq "register alias without a connected Gmail → 412" "$(api_status POST /api/me/sending-identities/gmail-aliases "$ALIAS_BODY")" "412"
+fi
 
 step "summary"
 echo "  PASS=$PASS  FAIL=$FAIL" >&2

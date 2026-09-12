@@ -2,6 +2,8 @@ import { Hono } from 'hono'
 import {
   registerSmtpIdentitySchema,
   registerSmtpIdentity,
+  registerGmailAliasSchema,
+  registerGmailAlias,
   listSendingIdentities,
   deleteSendingIdentity,
 } from '../../services/sending-identity'
@@ -32,6 +34,21 @@ sendingIdentitiesRouter.post(
       c.get('userId'),
       c.get('edition'),
       { encryptionKey: c.env.GMAIL_TOKEN_ENCRYPTION_KEY },
+      c.req.valid('json'),
+    )
+    return result.ok ? c.json(result.value, 201) : respondWithError(c, result)
+  },
+)
+
+sendingIdentitiesRouter.post(
+  '/me/sending-identities/gmail-aliases',
+  zValidator('json', registerGmailAliasSchema),
+  async (c) => {
+    const result = await registerGmailAlias(
+      c.get('db'),
+      c.get('tenantId'),
+      c.get('userId'),
+      c.get('edition'),
       c.req.valid('json'),
     )
     return result.ok ? c.json(result.value, 201) : respondWithError(c, result)

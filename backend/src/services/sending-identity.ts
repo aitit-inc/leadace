@@ -1,9 +1,14 @@
 import { z } from 'zod'
-import { and, asc, eq, sql } from 'drizzle-orm'
+import { and, asc, eq, isNotNull, or, sql } from 'drizzle-orm'
 import type { Db } from '../db/connection'
 import { sendingIdentities, projectSendingIdentities, type SendingIdentityProvider } from '../db/schema'
 import { generateSendingIdentityId } from '../auth/google'
-import { parseSendingIdentitySecret, smtpImapSecretPayloadSchema } from '../domain/sending-identity'
+import {
+  mailboxKind,
+  parseSendingIdentitySecret,
+  smtpImapSecretPayloadSchema,
+  type MailboxKind,
+} from '../domain/sending-identity'
 import { verifySmtpCredentials } from './smtp-send'
 import { asSendingIdentityId, type SendingIdentityId, type TenantId } from '../domain/ids'
 import type { Edition } from '../domain/edition'
@@ -16,7 +21,7 @@ import {
   type MailboxSendRefusal,
 } from '../domain/warmup'
 import {
-  canRegisterSmtpIdentity,
+  canRegisterMailbox,
   countMailboxBounceWindowByIdentity,
   countMailboxEmailSendsTodayByIdentity,
   getTenantPlan,
@@ -28,6 +33,9 @@ export const registerSmtpIdentitySchema = z.object({
   ...smtpImapSecretPayloadSchema.shape,
 })
 export type RegisterSmtpIdentityInput = z.infer<typeof registerSmtpIdentitySchema>
+
+export const registerGmailAliasSchema = z.object({ fromEmail: z.email() })
+export type RegisterGmailAliasInput = z.infer<typeof registerGmailAliasSchema>
 
 // Read-only connection details for display — never the app password.
 export type SmtpConnectionView = {
@@ -41,6 +49,9 @@ export type SmtpConnectionView = {
 export type SendingIdentitySummary = {
   identityId: SendingIdentityId
   provider: SendingIdentityProvider
+  kind: MailboxKind
+  // The connected Gmail a Send-As alias sends through; null for every other kind.
+  parentIdentityId: SendingIdentityId | null
   fromEmail: string
   warmupStartedAt: Date | null
   dailyCapOverride: number | null
@@ -53,6 +64,7 @@ export type SendingIdentitySummary = {
 const summaryColumns = {
   identityId: sendingIdentities.identityId,
   provider: sendingIdentities.provider,
+  parentIdentityId: sendingIdentities.parentIdentityId,
   fromEmail: sendingIdentities.fromEmail,
   warmupStartedAt: sendingIdentities.warmupStartedAt,
   pausedUntil: sendingIdentities.pausedUntil,
@@ -64,6 +76,7 @@ const summaryColumns = {
 type SummaryRow = {
   identityId: string
   provider: SendingIdentityProvider
+  parentIdentityId: string | null
   fromEmail: string
   warmupStartedAt: Date | null
   pausedUntil: Date | null
@@ -81,6 +94,8 @@ function toSummary(
   return {
     identityId: asSendingIdentityId(row.identityId),
     provider: row.provider,
+    kind: mailboxKind(row.provider, row.parentIdentityId),
+    parentIdentityId: row.parentIdentityId === null ? null : asSendingIdentityId(row.parentIdentityId),
     fromEmail: row.fromEmail,
     warmupStartedAt: row.warmupStartedAt,
     dailyCapOverride: row.dailyCapOverride,
@@ -142,7 +157,7 @@ export async function registerSmtpIdentity(
     .where(eq(sendingIdentities.tenantId, tenantId))
 
   const { plan } = await getTenantPlan(db, tenantId, edition)
-  const guard = canRegisterSmtpIdentity(plan, existing.length)
+  const guard = canRegisterMailbox(plan, existing.length)
   if (guard) return guard
 
   if (existing.some((i) => i.fromEmail === input.fromEmail)) {
@@ -216,6 +231,68 @@ export async function registerSmtpIdentity(
   )
 }
 
+// A Send-As alias under the caller's connected Gmail: the address must already
+// be a verified "Send mail as" entry in that Gmail account — there is no scope
+// to check it here, so an unverified one fails at its first send.
+export async function registerGmailAlias(
+  db: Db,
+  tenantId: TenantId,
+  userId: string,
+  edition: Edition,
+  input: RegisterGmailAliasInput,
+): Promise<ServiceResult<SendingIdentitySummary>> {
+  const existing = await db
+    .select({
+      identityId: sendingIdentities.identityId,
+      userId: sendingIdentities.userId,
+      provider: sendingIdentities.provider,
+      parentIdentityId: sendingIdentities.parentIdentityId,
+      fromEmail: sendingIdentities.fromEmail,
+    })
+    .from(sendingIdentities)
+    .where(eq(sendingIdentities.tenantId, tenantId))
+
+  const { plan } = await getTenantPlan(db, tenantId, edition)
+  const guard = canRegisterMailbox(plan, existing.length)
+  if (guard) return guard
+
+  const parent = existing.find((i) => i.userId === userId && i.provider === 'gmail_oauth' && i.parentIdentityId === null)
+  if (!parent) {
+    return err('PRECONDITION_FAILED', 'Gmail not connected', 'Connect your Google account in Account settings before adding a Send-As alias.')
+  }
+  if (existing.some((i) => i.fromEmail === input.fromEmail)) {
+    return err('CONFLICT', 'Sending address already in use', `An identity already sends from ${input.fromEmail}.`)
+  }
+
+  const identityId = generateSendingIdentityId()
+  // ON CONFLICT (not a caught 23505): a unique violation would abort this
+  // RLS-wrapped transaction. Empty RETURNING = the fromEmail race the pre-check missed.
+  const inserted = await db
+    .insert(sendingIdentities)
+    .values({
+      tenantId,
+      identityId,
+      userId,
+      provider: 'gmail_oauth',
+      fromEmail: input.fromEmail,
+      parentIdentityId: parent.identityId,
+      scope: null,
+      secret: null,
+    })
+    .onConflictDoNothing({ target: [sendingIdentities.tenantId, sendingIdentities.fromEmail] })
+    .returning({ identityId: sendingIdentities.identityId })
+  if (inserted.length === 0) {
+    return err('CONFLICT', 'Sending address already in use', `An identity already sends from ${input.fromEmail}.`)
+  }
+
+  const [created] = await db
+    .select(summaryColumns)
+    .from(sendingIdentities)
+    .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.identityId, identityId)))
+  if (!created) return err('INTERNAL_ERROR', 'Failed to load created sending identity')
+  return ok(toSummary(created, null, mailboxDailyStatus(created, 0, DEFAULT_WARMUP, new Date()), mailboxBounceWindow()))
+}
+
 export async function deleteSendingIdentity(
   db: Db,
   tenantId: TenantId,
@@ -234,14 +311,15 @@ export async function deleteSendingIdentity(
     )
   }
 
-  // gmail_oauth is managed via the Google connect/disconnect flow; only smtp here.
+  // The connected Gmail is managed via the Google connect/disconnect flow; SMTP
+  // mailboxes and Send-As aliases are deleted here.
   const deleted = await db
     .delete(sendingIdentities)
     .where(
       and(
         eq(sendingIdentities.tenantId, tenantId),
         eq(sendingIdentities.identityId, identityId),
-        eq(sendingIdentities.provider, 'smtp_imap'),
+        or(eq(sendingIdentities.provider, 'smtp_imap'), isNotNull(sendingIdentities.parentIdentityId)),
       ),
     )
     .returning({ identityId: sendingIdentities.identityId })

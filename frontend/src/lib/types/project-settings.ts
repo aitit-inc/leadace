@@ -25,7 +25,6 @@ export type ProjectSettings = {
   outboundMode: OutboundMode;
   // The project's mailboxes in priority order; empty = the connected Gmail.
   sendingIdentityIds: string[];
-  senderEmailAlias: string | null;
   senderDisplayName: string | null;
   unsubscribeEnabled: boolean;
   footerOverride: string | null;

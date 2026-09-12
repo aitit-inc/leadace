@@ -10,7 +10,6 @@ export type ProjectSettingsData = {
   projectId: string;
   outboundMode: OutboundMode;
   sendingIdentityIds: string[];
-  senderEmailAlias: string | null;
   senderDisplayName: string | null;
   unsubscribeEnabled: boolean;
   footerOverride: string | null;

@@ -33,7 +33,6 @@ const BRAND_COLOR_REGEX = /^#[0-9A-Fa-f]{6}$/
 export const updateSettingsSchema = z
   .object({
     outboundMode: z.enum(OUTBOUND_MODES).optional(),
-    senderEmailAlias: z.email().nullable().optional(),
     senderDisplayName: z.string().min(1).max(200).nullable().optional(),
     senderCompanyName: z.string().min(1).max(200).nullable().optional(),
     senderJobTitle: z.string().min(1).max(200).nullable().optional(),
@@ -71,13 +70,12 @@ export const updateSettingsSchema = z
   .strict()
 export type UpdateSettingsPatch = z.infer<typeof updateSettingsSchema>
 
-// Fields that bound what the agent may do — which mailbox and name it sends
-// as, whether sends wait for human review, what the footer discloses, what
+// Fields that bound what the agent may do — the name it sends as, whether
+// sends wait for human review, what the footer discloses, what
 // the recipient-facing landing shows and where it sends them. Web UI only;
 // the agent proposes in chat.
 const UI_ONLY_SETTINGS = [
   'outboundMode',
-  'senderEmailAlias',
   'senderDisplayName',
   'senderCompanyName',
   'senderJobTitle',
@@ -104,7 +102,6 @@ function assertSettingsRow<T>(row: T | undefined, projectId: ProjectId): T {
 const settingsCols = {
   projectId: projectSettings.projectId,
   outboundMode: projectSettings.outboundMode,
-  senderEmailAlias: projectSettings.senderEmailAlias,
   senderDisplayName: projectSettings.senderDisplayName,
   senderCompanyName: projectSettings.senderCompanyName,
   senderJobTitle: projectSettings.senderJobTitle,
@@ -136,7 +133,6 @@ export type ProjectSettingsRow = {
   outboundMode: typeof OUTBOUND_MODES[number]
   // Not a column — the project's mailboxes in priority order (services/mailbox.ts).
   sendingIdentityIds: SendingIdentityId[]
-  senderEmailAlias: string | null
   senderDisplayName: string | null
   senderCompanyName: string | null
   senderJobTitle: string | null
@@ -182,7 +178,6 @@ export async function getOutboundMode(
 
 export type ProjectSendSettings = {
   outboundMode: OutboundMode
-  senderEmailAlias: string | null
   senderDisplayName: string | null
   unsubscribeEnabled: boolean
   footerOverride: string | null
@@ -199,7 +194,6 @@ export async function loadProjectSendSettings(
   const [row] = await db
     .select({
       outboundMode: projectSettings.outboundMode,
-      senderEmailAlias: projectSettings.senderEmailAlias,
       senderDisplayName: projectSettings.senderDisplayName,
       unsubscribeEnabled: projectSettings.unsubscribeEnabled,
       footerOverride: projectSettings.footerOverride,
@@ -422,7 +416,6 @@ export async function updateProjectSettings(
 
   const updateSet = {
     ...(patch.outboundMode !== undefined ? { outboundMode: patch.outboundMode } : {}),
-    ...(patch.senderEmailAlias !== undefined ? { senderEmailAlias: patch.senderEmailAlias } : {}),
     ...(patch.senderDisplayName !== undefined ? { senderDisplayName: patch.senderDisplayName } : {}),
     ...(patch.senderCompanyName !== undefined ? { senderCompanyName: patch.senderCompanyName } : {}),
     ...(patch.senderJobTitle !== undefined ? { senderJobTitle: patch.senderJobTitle } : {}),

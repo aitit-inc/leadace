@@ -9,7 +9,6 @@ import {
 } from '../domain/inquiry-footer'
 import {
   parseSendingIdentitySecret,
-  senderAddressFor,
   type GmailOAuthSecret,
   type SendingIdentitySecret,
 } from '../domain/sending-identity'
@@ -332,7 +331,7 @@ export async function saveGmailRefreshToken(
       now(),
       now()
     )
-    ON CONFLICT (tenant_id, user_id) WHERE provider = 'gmail_oauth' DO UPDATE SET
+    ON CONFLICT (tenant_id, user_id) WHERE provider = 'gmail_oauth' AND parent_identity_id IS NULL DO UPDATE SET
       secret = pgp_sym_encrypt(${args.refreshToken}::text, ${args.encryptionKey}),
       scope = ${args.scope},
       from_email = ${args.email},
@@ -368,6 +367,7 @@ export async function loadSendingIdentitySecret(
     WHERE tenant_id = ${args.tenantId}
       AND user_id = ${args.userId}
       AND provider = 'gmail_oauth'
+      AND parent_identity_id IS NULL
     LIMIT 1
   `)
   const row = rows[0]
@@ -379,6 +379,9 @@ export async function loadSendingIdentitySecret(
   }
 }
 
+// A Send-As alias sends with its parent's credentials: credentialIdentityId is
+// the row that holds them (the alias's parent, else the mailbox itself) and the
+// one a revoked refresh token is recorded on.
 export async function loadSendingIdentitySecretById(
   db: Db,
   args: {
@@ -386,27 +389,31 @@ export async function loadSendingIdentitySecretById(
     identityId: SendingIdentityId
     encryptionKey: string
   },
-): Promise<{ identityId: SendingIdentityId; fromEmail: string; secret: SendingIdentitySecret } | null> {
+): Promise<{ identityId: SendingIdentityId; credentialIdentityId: SendingIdentityId; fromEmail: string; secret: SendingIdentitySecret } | null> {
   const rows = await db.execute<{
     identity_id: string
+    credential_identity_id: string
     provider: 'gmail_oauth' | 'smtp_imap'
     from_email: string
     secret: string
   }>(sql`
     SELECT
-      identity_id,
-      provider,
-      from_email,
-      pgp_sym_decrypt(secret, ${args.encryptionKey})::text AS secret
-    FROM sending_identities
-    WHERE tenant_id = ${args.tenantId}
-      AND identity_id = ${args.identityId}
+      s.identity_id,
+      COALESCE(s.parent_identity_id, s.identity_id) AS credential_identity_id,
+      s.provider,
+      s.from_email,
+      pgp_sym_decrypt(COALESCE(p.secret, s.secret), ${args.encryptionKey})::text AS secret
+    FROM sending_identities s
+    LEFT JOIN sending_identities p ON p.tenant_id = s.tenant_id AND p.identity_id = s.parent_identity_id
+    WHERE s.tenant_id = ${args.tenantId}
+      AND s.identity_id = ${args.identityId}
     LIMIT 1
   `)
   const row = rows[0]
   if (!row) return null
   return {
     identityId: asSendingIdentityId(row.identity_id),
+    credentialIdentityId: asSendingIdentityId(row.credential_identity_id),
     fromEmail: row.from_email,
     secret: parseSendingIdentitySecret(row.provider, row.secret),
   }
@@ -483,11 +490,6 @@ export async function sendForIdentity(
     body: string
     inReplyTo?: string
     extraHeaders?: Record<string, string>
-    // Optional Send-As alias to use as From:. Must already be verified by the
-    // user in Gmail web UI (we have no scope to verify programmatically — that
-    // would require gmail.settings.basic which is Restricted/CASA-gated).
-    // Gmail rejects unverified aliases at send time; we surface that error.
-    senderEmailAlias?: string | null
     senderDisplayName?: string | null
     e2eRecipientOverride?: string | null
   },
@@ -514,17 +516,16 @@ export async function sendForIdentity(
     }
   }
 
-  // From is provider-determined (senderAddressFor): an SMTP mailbox can only send
-  // as its own address — a Gmail alias would break SPF/DKIM alignment. RFC822 is
-  // built per arm for Bcc: Gmail consumes the Bcc header as its envelope; the smtp
-  // arm omits it (bcc rides the explicit RCPT TO) so raw DATA never discloses bcc.
-  const sendAsEmail = senderAddressFor(identity.secret.provider, identity.fromEmail, args.senderEmailAlias)
+  const sendAsEmail = identity.fromEmail
   const fromHeader = formatFromHeader(sendAsEmail, args.senderDisplayName ?? null)
   const envelope = applyE2eRedirect(
     { to: args.to, cc: args.cc, bcc: args.bcc, extraHeaders: args.extraHeaders },
     args.e2eRecipientOverride,
   )
   const rfc822MessageId = generateRfc822MessageId(sendAsEmail)
+  // Bcc is added per arm: Gmail consumes the Bcc header as its envelope; the
+  // smtp arm omits it (bcc rides the explicit RCPT TO) so raw DATA never
+  // discloses bcc.
   const baseRfc822 = {
     from: fromHeader,
     to: envelope.to,
@@ -548,7 +549,7 @@ export async function sendForIdentity(
       } catch (e) {
         if (e instanceof GoogleAuthError && (e.status === 400 || e.status === 401)) {
           // Google rejected the refresh token (revoked / expired / scope dropped).
-          await markGmailAuthRevoked(db, { tenantId: args.tenantId, identityId: identity.identityId })
+          await markGmailAuthRevoked(db, { tenantId: args.tenantId, identityId: identity.credentialIdentityId })
           return {
             ok: false,
             httpStatus: 412,

@@ -130,7 +130,6 @@ BASELINE="$(api_body)"
 # One valid payload per UI-only field (services/project-settings.ts UI_ONLY_SETTINGS).
 UI_ONLY_PAYLOADS=(
   'outboundMode|{"outboundMode":"send"}'
-  'senderEmailAlias|{"senderEmailAlias":"alias@example.com"}'
   'senderDisplayName|{"senderDisplayName":"E2E Sender"}'
   'senderCompanyName|{"senderCompanyName":"E2E Co"}'
   'senderJobTitle|{"senderJobTitle":"CEO"}'

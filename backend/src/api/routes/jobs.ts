@@ -17,16 +17,20 @@ import type { Env, Variables } from '../types'
 export const jobsRouter = new Hono<{ Bindings: Env; Variables: Variables }>()
 
 export function jobRunner(env: Env): JobRunner {
+  const settled = async (jobId: string) => {
+    const instance = await env.JOBS.get(jobId).catch(() => null)
+    if (!instance) return true
+    const { status } = await instance.status()
+    return status === 'complete' || status === 'errored' || status === 'terminated'
+  }
   return {
     create: async (jobId, tenantId) => {
       await env.JOBS.create({ id: jobId, params: { jobId, tenantId } })
     },
+    settled,
     terminate: async (jobId) => {
-      const instance = await env.JOBS.get(jobId).catch(() => null)
-      if (!instance) return
-      const { status } = await instance.status()
-      if (status === 'complete' || status === 'errored' || status === 'terminated') return
-      await instance.terminate()
+      if (await settled(jobId)) return
+      await (await env.JOBS.get(jobId)).terminate()
     },
   }
 }

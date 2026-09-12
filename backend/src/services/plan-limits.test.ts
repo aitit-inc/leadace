@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   getPlanLimits,
-  canRegisterSmtpIdentity,
+  canRegisterMailbox,
   selectOutreachQuota,
   isOutreachQuotaExhausted,
   outreachQuotaErrorIfExhausted,
@@ -38,24 +38,24 @@ describe('getPlanLimits', () => {
   })
 })
 
-describe('canRegisterSmtpIdentity', () => {
+describe('canRegisterMailbox', () => {
   it('blocks free regardless of count (paid feature)', () => {
-    expect(canRegisterSmtpIdentity('free', 0)?.code).toBe('FORBIDDEN')
+    expect(canRegisterMailbox('free', 0)?.code).toBe('FORBIDDEN')
   })
 
   it('allows a paid plan below its cap (gmail counts toward the total)', () => {
     // starter cap = 2; with 1 existing (the connected gmail) a first smtp is allowed.
-    expect(canRegisterSmtpIdentity('starter', 1)).toBeNull()
+    expect(canRegisterMailbox('starter', 1)).toBeNull()
   })
 
   it('blocks a paid plan at its cap', () => {
-    expect(canRegisterSmtpIdentity('starter', 2)?.code).toBe('FORBIDDEN')
-    expect(canRegisterSmtpIdentity('pro', 5)?.code).toBe('FORBIDDEN')
+    expect(canRegisterMailbox('starter', 2)?.code).toBe('FORBIDDEN')
+    expect(canRegisterMailbox('pro', 5)?.code).toBe('FORBIDDEN')
   })
 
   it('never caps unlimited tiers (scale / self-host)', () => {
-    expect(canRegisterSmtpIdentity('scale', 99)).toBeNull()
-    expect(canRegisterSmtpIdentity('unlimited', 99)).toBeNull()
+    expect(canRegisterMailbox('scale', 99)).toBeNull()
+    expect(canRegisterMailbox('unlimited', 99)).toBeNull()
   })
 })
 

@@ -1,6 +1,6 @@
 ---
 name: quick-refactor
-description: "Cleanup pass right after implementing a change, before the PR. Triggers: 'quick refactor', 'quick-refactor', 'リファクタリング', 'refactor what we just did'. Forked Opus subagent at xhigh effort."
+description: "Cleanup pass on a change once its PR is open, before the Codex review. Triggers: 'quick refactor', 'quick-refactor', 'リファクタリング', 'refactor what we just did'. Forked Opus subagent at xhigh effort."
 context: fork
 model: opus
 effort: xhigh
@@ -8,7 +8,7 @@ effort: xhigh
 
 # Quick refactor
 
-Cleanup of a change just implemented. Behaviour does not change.
+Cleanup of a change whose PR is open, before the Codex review. Behaviour does not change.
 
 ## Scope
 
@@ -18,13 +18,14 @@ Cleanup of a change just implemented. Behaviour does not change.
 
 ## Pass
 
-Changed code only, in this order:
+Changed content only, in this order:
 
 1. **Comments** — delete any that restate the code. Keep only a *why* the code cannot express, as short as possible.
 2. **Waste** — remove what the change does not need. Aim for the smallest, most obvious implementation that meets the spec. Fewer lines is not the goal; no abstraction for its own sake.
 3. **Symptomatic fixes** — a guard that patches one case → write the rule instead. Only while the edit stays inside the change; anything wider goes in the report.
+4. **LLM-facing text** — prompts, skill / reference text, tool descriptions: shorten without changing meaning. No filler; plain words, short sentences.
 
-Untouched: code the change did not introduce (mention it in the report).
+Untouched: content the change did not introduce (mention it in the report).
 
 ## Verify and report
 

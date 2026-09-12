@@ -32,6 +32,7 @@ export async function loadTenantAttentionInput(
       .select({
         fromEmail: sendingIdentities.fromEmail,
         provider: sendingIdentities.provider,
+        parentIdentityId: sendingIdentities.parentIdentityId,
         scope: sendingIdentities.scope,
         authRevokedAt: sendingIdentities.authRevokedAt,
         pollFailingSince: sendingIdentities.pollFailingSince,
@@ -68,7 +69,9 @@ export async function loadTenantAttentionInput(
     hasProject: onboardingRes.value.hasProject,
     compliance: { ready: complianceRes.value.ready, missing: complianceRes.value.missing },
     gmailConnected: gmailRes.value.connected,
-    identities,
+    // A Send-As alias has no credentials or inbox of its own (its parent reports
+    // those) but it does have its own cap, so a refusal below is its own.
+    identities: identities.filter((i) => i.parentIdentityId === null),
     refusedMailboxes: identities.flatMap((i) => (i.sendRefusal ? [{ fromEmail: i.fromEmail, sentThatDay: i.sendRefusal.sentThatDay }] : [])),
     futileProjects,
     quota: {

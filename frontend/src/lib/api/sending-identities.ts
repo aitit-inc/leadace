@@ -2,6 +2,7 @@ import { request, type RequestFetch } from '../api';
 import type {
   SendingIdentity,
   RegisterSmtpIdentityInput,
+  RegisterGmailAliasInput,
   MailboxWarmupPatch,
   MailboxHealth,
 } from '$lib/types/sending-identity';
@@ -26,6 +27,20 @@ export function registerSmtpIdentity(
   return request<SendingIdentity>(fetchFn, {
     method: 'POST',
     path: '/me/sending-identities',
+    body: input,
+    auth: 'required',
+    token,
+  });
+}
+
+export function registerGmailAlias(
+  input: RegisterGmailAliasInput,
+  fetchFn: RequestFetch = fetch,
+  token?: string,
+): Promise<SendingIdentity> {
+  return request<SendingIdentity>(fetchFn, {
+    method: 'POST',
+    path: '/me/sending-identities/gmail-aliases',
     body: input,
     auth: 'required',
     token,

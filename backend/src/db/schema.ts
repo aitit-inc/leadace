@@ -391,6 +391,9 @@ export const sendingIdentityProviderEnum = pgEnum('sending_identity_provider', [
 export type SendingIdentityProvider = (typeof sendingIdentityProviderEnum.enumValues)[number]
 
 // `secret` is pgp_sym_encrypt'd at write; the DB only ever sees the encrypted bytea.
+// A Gmail Send-As alias is a row of its own under the connected Gmail
+// (parent_identity_id): its own From, warmup and cap, the parent's credentials,
+// scope and inbox — so it carries no secret or scope itself.
 export const sendingIdentities = pgTable('sending_identities', {
   tenantId: text('tenant_id')
     .notNull()
@@ -399,9 +402,10 @@ export const sendingIdentities = pgTable('sending_identities', {
   userId: text('user_id').notNull(),
   provider: sendingIdentityProviderEnum('provider').notNull(),
   fromEmail: text('from_email').notNull(),
-  // Granted OAuth scopes — gmail_oauth only; NULL for smtp_imap (no OAuth concept).
+  parentIdentityId: text('parent_identity_id'),
+  // Granted OAuth scopes — gmail_oauth only; NULL for smtp_imap (no OAuth concept) and for an alias.
   scope: text('scope'),
-  secret: bytea('secret').notNull(),
+  secret: bytea('secret'),
   warmupStartedAt: timestamp('warmup_started_at', { withTimezone: true }),
   dailyCapOverride: integer('daily_cap_override'),
   pausedUntil: timestamp('paused_until', { withTimezone: true }),
@@ -419,13 +423,20 @@ export const sendingIdentities = pgTable('sending_identities', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   primaryKey({ columns: [table.tenantId, table.identityId] }),
-  // One gmail_oauth per user (backs the reconnect upsert); partial so a tenant can
-  // hold several smtp_imap identities.
+  // One connected Gmail per user (backs the reconnect upsert); partial so a tenant
+  // can hold several smtp_imap identities and any number of aliases.
   uniqueIndex('uq_sending_identities_gmail_per_user')
     .on(table.tenantId, table.userId)
-    .where(sql`${table.provider} = 'gmail_oauth'`),
+    .where(sql`${table.provider} = 'gmail_oauth' AND ${table.parentIdentityId} IS NULL`),
   unique('uq_sending_identities_tenant_from_email').on(table.tenantId, table.fromEmail),
   index('idx_sending_identities_tenant_provider').on(table.tenantId, table.provider),
+  foreignKey({
+    columns: [table.tenantId, table.parentIdentityId],
+    foreignColumns: [table.tenantId, table.identityId],
+    name: 'fk_sending_identities_parent',
+  }).onDelete('cascade'),
+  check('chk_sending_identities_secret_owner', sql`(${table.parentIdentityId} IS NULL) = (${table.secret} IS NOT NULL)`),
+  check('chk_sending_identities_alias_provider', sql`${table.parentIdentityId} IS NULL OR ${table.provider} = 'gmail_oauth'`),
 ])
 
 export const tenantPlans = pgTable('tenant_plans', {
@@ -466,7 +477,6 @@ export const projectSettings = pgTable('project_settings', {
   // New projects draft until a human switches to send in the Web UI — the
   // agent cannot change this field (services/project-settings.ts).
   outboundMode: outboundModeEnum('outbound_mode').notNull().default('draft'),
-  senderEmailAlias: text('sender_email_alias'),
   senderDisplayName: text('sender_display_name'),
   // Recipient-facing company / brand name (e.g. "Acme Inc."). Paired with
   // senderDisplayName: the inquiry landing renders "From {senderDisplayName}
@@ -1286,9 +1296,6 @@ export const jobs = pgTable('jobs', {
   startedBy: jobOriginEnum('started_by').notNull(),
   // Chat thread to notify on completion; NULL for cron / UI / MCP starts.
   threadId: text('thread_id'),
-  // `${projectId}:${utcDate}` for the daily cycle so a cron retry or a manual
-  // start on the same day is refused, not doubled. NULL for ad-hoc jobs.
-  idempotencyKey: text('idempotency_key'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   startedAt: timestamp('started_at', { withTimezone: true }),
   finishedAt: timestamp('finished_at', { withTimezone: true }),
@@ -1298,7 +1305,10 @@ export const jobs = pgTable('jobs', {
     foreignColumns: [projects.id, projects.tenantId],
     name: 'fk_jobs_project_tenant',
   }).onDelete('cascade'),
-  unique('uq_jobs_idempotency_key').on(table.idempotencyKey),
+  // Two daily cycles at once would draft the same prospects.
+  uniqueIndex('uq_jobs_daily_cycle_in_flight')
+    .on(table.projectId)
+    .where(sql`${table.kind} = 'daily_cycle' AND ${table.status} IN ('queued', 'running')`),
   index('idx_jobs_project_created').on(table.projectId, table.createdAt),
   index('idx_jobs_tenant').on(table.tenantId),
 ])

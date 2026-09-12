@@ -96,7 +96,7 @@ mq()       { reach | jq -r ".mailboxQuota.$1"; }
 # resolves the gmail fallback — the same row the warmup columns are set on below.
 # Pool totals live at the top level; per-mailbox fields on the first (only) listed mailbox.
 mh()       { api GET "/api/projects/$PROJECT_ID/mailbox-health" | jq -r ".mailboxes[0].$1"; }
-started_null() { psql_local "SELECT (warmup_started_at IS NULL) FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth';"; }
+started_null() { psql_local "SELECT (warmup_started_at IS NULL) FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth' AND parent_identity_id IS NULL;"; }
 
 put_warmup()        { api PUT "/api/me/sending-identities/$GMAIL_IDENTITY_ID/warmup" "$1"; }
 put_warmup_status() { curl -sS -o /dev/null -w '%{http_code}' -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d "$1" "$API_URL/api/me/sending-identities/$GMAIL_IDENTITY_ID/warmup"; }
@@ -104,7 +104,7 @@ put_warmup_status() { curl -sS -o /dev/null -w '%{http_code}' -X PUT -H "Authori
 # Args are raw SQL fragments (NULL / number / NOW()-expr) so callers control
 # nullability precisely.
 set_warmup() { # started_at override paused
-  psql_local "UPDATE sending_identities SET warmup_started_at=$1, daily_cap_override=$2, paused_until=$3 WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth';" >/dev/null
+  psql_local "UPDATE sending_identities SET warmup_started_at=$1, daily_cap_override=$2, paused_until=$3 WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth' AND parent_identity_id IS NULL;" >/dev/null
 }
 
 send_status() { # prospectId channel
@@ -140,12 +140,12 @@ say "tenant_id=$TENANT_ID"
 # Snapshot the mailbox so we never destroy a real connected Gmail row. If a row
 # exists, capture the three warmup columns (empty string = SQL NULL) and restore
 # them on teardown; if not, insert a dummy and delete it on teardown.
-HAD_GMAIL="$(psql_local "SELECT EXISTS(SELECT 1 FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth');")"
+HAD_GMAIL="$(psql_local "SELECT EXISTS(SELECT 1 FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth' AND parent_identity_id IS NULL);")"
 SNAP_STARTED=""; SNAP_OVERRIDE=""; SNAP_PAUSED=""
 if [[ "$HAD_GMAIL" == "t" ]]; then
-  SNAP_STARTED="$(psql_local "SELECT COALESCE(warmup_started_at::text,'') FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth';")"
-  SNAP_OVERRIDE="$(psql_local "SELECT COALESCE(daily_cap_override::text,'') FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth';")"
-  SNAP_PAUSED="$(psql_local "SELECT COALESCE(paused_until::text,'') FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth';")"
+  SNAP_STARTED="$(psql_local "SELECT COALESCE(warmup_started_at::text,'') FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth' AND parent_identity_id IS NULL;")"
+  SNAP_OVERRIDE="$(psql_local "SELECT COALESCE(daily_cap_override::text,'') FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth' AND parent_identity_id IS NULL;")"
+  SNAP_PAUSED="$(psql_local "SELECT COALESCE(paused_until::text,'') FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth' AND parent_identity_id IS NULL;")"
   say "snapshotted existing mailbox warmup state"
 else
   psql_local "INSERT INTO sending_identities (tenant_id, identity_id, user_id, provider, from_email, scope, secret)
@@ -155,7 +155,7 @@ fi
 
 # Resolve the gmail identity_id now the row is guaranteed to exist — the
 # per-identity warmup write path (step 6) addresses the mailbox by id.
-GMAIL_IDENTITY_ID="$(api GET /api/me/sending-identities | jq -r '.identities[] | select(.provider=="gmail_oauth") | .identityId' | head -1)"
+GMAIL_IDENTITY_ID="$(api GET /api/me/sending-identities | jq -r '.identities[] | select(.kind=="gmail") | .identityId' | head -1)"
 [[ -n "$GMAIL_IDENTITY_ID" ]] || { echo "could not resolve gmail identity_id" >&2; exit 1; }
 say "gmail_identity_id=$GMAIL_IDENTITY_ID"
 
@@ -174,7 +174,7 @@ restore_and_exit() {
     set_warmup "$started_sql" "$override_sql" "$paused_sql"
     say "restored mailbox warmup state"
   else
-    psql_local "DELETE FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth' AND user_id='$USER_ID';" >/dev/null || true
+    psql_local "DELETE FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth' AND parent_identity_id IS NULL AND user_id='$USER_ID';" >/dev/null || true
     say "removed dummy mailbox row"
   fi
   if [[ -n "${PROJECT_ID:-}" ]]; then
@@ -252,7 +252,7 @@ W6A="$(put_warmup '{"dailyCapOverride":5}')"
 assert_eq "6a put kind=active" "$(echo "$W6A" | jq -r .kind)" "active"
 assert_eq "6a override is the cap, below the ramp (cap=5)" "$(echo "$W6A" | jq -r .cap)" "5"
 assert_eq "6a dailyCapOverride=5" "$(echo "$W6A" | jq -r .dailyCapOverride)" "5"
-assert_eq "6a write hit DB (daily_cap_override=5)" "$(psql_local "SELECT daily_cap_override FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth';")" "5"
+assert_eq "6a write hit DB (daily_cap_override=5)" "$(psql_local "SELECT daily_cap_override FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth' AND parent_identity_id IS NULL;")" "5"
 
 W6B="$(put_warmup '{"dailyCapOverride":50}')"
 assert_eq "6b override raises cap above the week-2 ramp (17 → 50)" "$(echo "$W6B" | jq -r .cap)" "50"

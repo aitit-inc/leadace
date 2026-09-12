@@ -152,6 +152,7 @@ async function notifyLeadByEmail(
         eq(sendingIdentities.tenantId, tenantMembers.tenantId),
         eq(sendingIdentities.userId, tenantMembers.userId),
         eq(sendingIdentities.provider, 'gmail_oauth'),
+        isNull(sendingIdentities.parentIdentityId),
       ),
     )
     .where(eq(inquirySessions.id, sessionId))

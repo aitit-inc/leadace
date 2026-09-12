@@ -1,6 +1,9 @@
 // Mirrors backend services/sending-identity.ts SendingIdentitySummary. Dates
 // arrive as ISO strings over the wire.
 export type SendingIdentityProvider = 'gmail_oauth' | 'smtp_imap';
+// Mirrors backend domain/sending-identity.ts MailboxKind: the connected Gmail, a
+// Send-As alias under it, or a custom SMTP mailbox.
+export type MailboxKind = 'gmail' | 'gmail_alias' | 'smtp';
 
 // Read-only SMTP connection view (the app password is never returned).
 export type SmtpConnectionView = {
@@ -45,6 +48,9 @@ export type MailboxSendRefusal = {
 export type SendingIdentity = {
   identityId: string;
   provider: SendingIdentityProvider;
+  kind: MailboxKind;
+  // The connected Gmail a Send-As alias sends through; null for every other kind.
+  parentIdentityId: string | null;
   fromEmail: string;
   warmupStartedAt: string | null;
   dailyCapOverride: number | null;
@@ -64,6 +70,12 @@ export type RegisterSmtpIdentityInput = {
   imapPort: number;
   username: string;
   appPassword: string;
+};
+
+// Body for POST /me/sending-identities/gmail-aliases: a verified "Send mail as"
+// address of the connected Gmail.
+export type RegisterGmailAliasInput = {
+  fromEmail: string;
 };
 
 // Partial warmup patch for PUT /me/sending-identities/:id/warmup.
