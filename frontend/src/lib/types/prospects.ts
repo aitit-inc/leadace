@@ -23,8 +23,10 @@ export interface Prospect {
   industry: string | null;
   websiteUrl: string;
   email: string | null;
+  emailNoSolicitation: boolean;
   contactFormUrl: string | null;
   formType: string | null;
+  formNoSolicitation: boolean;
   snsAccounts: SnsAccounts | null;
   platformUrl: string | null;
   doNotContact: boolean;

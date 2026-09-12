@@ -666,6 +666,10 @@ export const prospects = pgTable('prospects', {
   // entry, referral-derived, pre-provenance rows) — same convention as
   // discovery_strategy below.
   emailSourceUrl: text('email_source_url'),
+  // Published with a no-solicitation notice (営業お断り): kept as the suppression
+  // record, never used; reset when the value changes.
+  emailNoSolicitation: boolean('email_no_solicitation').notNull().default(false),
+  formNoSolicitation: boolean('form_no_solicitation').notNull().default(false),
   // Discovery-strategy slug; deliberately FK-less like variant_id (strategy
   // definitions live in the sales_strategy document). NULL = provenance not
   // recorded (manual/CSV import, referral-derived, pre-provenance rows).
@@ -1184,6 +1188,13 @@ export const masterDocuments = pgTable('master_documents', {
   content: text('content').notNull(),
   version: integer('version').notNull().default(1),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+})
+
+// Grounding queries per UTC month across every tenant: Google's free quota
+// is per API project. Not tenant-scoped, no RLS (like master_documents).
+export const groundingUsage = pgTable('grounding_usage', {
+  month: text('month').primaryKey(),
+  searchQueries: integer('search_queries').notNull(),
 })
 
 // Reviewed out-of-band by the maintainer — no admin UI yet.

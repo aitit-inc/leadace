@@ -24,7 +24,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/fetch_url.py --url "<URL>" --prompt "<extr
 ### 1. Understand Site Structure (Always do this first)
 
 First, retrieve the **top page** with `fetch_url.py` and check:
-- **Check for sales refusal notices (highest priority)**: Look for text like "No sales emails", "Please refrain from sales inquiries", "No solicitation", etc. **If found, stop the contact search** and set `"do_not_contact": true` and `"notes": "Site states no sales outreach: {matching text}"` in the output JSON, then proceed to the next candidate
+- **Check for sales refusal notices (highest priority)**: Look for text like "No sales emails", "Please refrain from sales inquiries", "No solicitation", etc. A notice is a property of the contact it sits with, not of the organization: a site-wide notice (header, footer, a general statement on the contact page) covers every address and form on this site; a notice next to one address or on one form covers that one only. **Keep looking for the contact**, and mark what the notice covers — `"email_no_solicitation": true` for the address, `"form_no_solicitation": true` for the form — with `"notes": "Site states no sales outreach: {matching text}"`. A covered contact is registered as a suppression record (so the site is not read again) and is never written to; an address found elsewhere for the same organization stays usable
 - Whether the header/footer contains an email address (if so, stop here)
 - From the navigation/footer link list, identify pages likely to contain contact information
 
@@ -74,7 +74,7 @@ Only if no email address was found, look for an inquiry form. Use the link list 
 - B2B-oriented forms such as "For Corporate Clients" or "Business Partnership"
 
 **Inappropriate forms (do not register):**
-- If the form page states "No sales inquiries" or "Please refrain from sales outreach" → set `do_not_contact: true`
+- If the form page states "No sales inquiries" or "Please refrain from sales outreach" → register the form with `form_no_solicitation: true` (it is kept as a suppression record and never submitted)
 - Forms for specific purposes: "Request materials", "Admission inquiry", "Job application", "Trial signup", etc.
 - Feedback-only forms: "Comments/suggestions", "Customer feedback", etc.
 - Chat-only channels (no URL to save for auto-fill)
@@ -139,12 +139,12 @@ For each candidate, return retrieved information in JSON format. **Field names m
 - SNS: `sns_accounts` (JSON object, e.g., `{"x": "@handle", "linkedin": "URL"}`; not `sns_url` or `sns_type`)
 - `priority` is a numeric value 1-5 (not a string like "high"/"low")
 - `form_type`: Form type (`"google_forms"` / `"native_html"` / `"wordpress_cf7"` / `"iframe_embed"` / `"with_captcha"` / `null`). Null if `contact_form_url` is null
-- `do_not_contact`: Set to `true` if the site has a sales refusal notice (omit or `false` otherwise)
-- `notes`: Supplementary information such as reason for do_not_contact (optional)
+- `email_no_solicitation` / `form_no_solicitation`: `true` when a sales refusal notice covers that address / that form (omit or `false` otherwise)
+- `notes`: Supplementary information such as the refusal notice text (optional)
 - `organization_name`: Legal entity name if different from `name` (e.g., a holding company that operates multiple brands)
 
 **Other:**
 - If `email` is found, `contact_form_url` is not needed (can be null)
 - If neither is found, return both as null (register anyway; will be skipped during outbound)
 - Preserve `match_reason`, `priority`, and other information passed from Phase 1
-- **Candidates with do_not_contact detected should still be registered** (to avoid revisiting the same site). They will be registered with `do_not_contact: true` and thus excluded from outbound
+- **A contact under a refusal notice is still registered** (to avoid revisiting the same site), flagged `email_no_solicitation` / `form_no_solicitation`, and excluded from outbound on that channel only

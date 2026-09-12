@@ -1,0 +1,2 @@
+ALTER TABLE "prospects" ADD COLUMN "email_no_solicitation" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "prospects" ADD COLUMN "form_no_solicitation" boolean DEFAULT false NOT NULL;

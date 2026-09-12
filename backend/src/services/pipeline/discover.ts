@@ -23,6 +23,7 @@ import { checkProspectDedup } from '../prospect-import'
 import { saveDocument } from '../documents'
 import { utcDateKey } from '../../domain/time'
 import { runWithRls } from '../../db/rls'
+import { recordGroundingQueries } from '../grounding-usage'
 import {
   apexDomainOf,
   loadDoc,
@@ -216,13 +217,15 @@ export async function runDiscover(
       }),
     })),
   )
+  const searches = settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : []))
+  // Queries are spent whether or not every pass answered: count before failing.
+  await recordGroundingQueries(db, searches.reduce((n, s) => n + s.search.searchQueries, 0), new Date())
   const failed = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected')
   if (failed) {
     const reason: unknown = failed.reason
     if (reason instanceof GeminiError) return err('BAD_GATEWAY', 'Search step failed upstream', reason.message)
     throw reason
   }
-  const searches = settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : []))
 
   const found: DiscoverCandidate[] = []
   const planCompliance: Array<{ slug: string; planned: number; found: number }> = []

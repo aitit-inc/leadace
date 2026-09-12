@@ -82,8 +82,10 @@ const prospectInputSchema = z.object({
   websiteUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG),
   email: z.email().optional(),
   emailSourceUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
+  emailNoSolicitation: z.boolean().optional(),
   contactFormUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
   formType: z.enum(formTypeEnum.enumValues).optional(),
+  formNoSolicitation: z.boolean().optional(),
   snsAccounts: snsAccountsSchema.optional(),
   platformUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
   notes: z.string().optional(),
@@ -101,6 +103,12 @@ const prospectInputSchema = z.object({
 ).refine(
   (p) => !p.emailSourceUrl || p.email,
   { message: 'emailSourceUrl describes the stored email address, so it requires email' },
+).refine(
+  (p) => !p.emailNoSolicitation || p.email,
+  { message: 'emailNoSolicitation describes the stored email address, so it requires email' },
+).refine(
+  (p) => !p.formNoSolicitation || p.contactFormUrl,
+  { message: 'formNoSolicitation describes the stored contact form, so it requires contactFormUrl' },
 )
 type ProspectInput = z.infer<typeof prospectInputSchema>
 
@@ -258,8 +266,10 @@ function prospectInsertValues(
     websiteUrl: input.websiteUrl,
     email: input.email ?? null,
     emailSourceUrl: input.emailSourceUrl ?? null,
+    emailNoSolicitation: input.emailNoSolicitation ?? false,
     contactFormUrl: input.contactFormUrl ?? null,
     formType: input.formType ?? null,
+    formNoSolicitation: input.formNoSolicitation ?? false,
     snsAccounts: (input.snsAccounts as SnsAccounts) ?? null,
     platformUrl: input.platformUrl ?? null,
     notes: input.notes ?? null,
@@ -298,10 +308,17 @@ function prospectUpdateSet(input: ProspectInput, orgId: number, now: Date) {
           ...(input.emailSourceUrl === undefined
             ? { emailSourceUrl: sql`CASE WHEN ${prospects.email} IS DISTINCT FROM ${input.email} THEN NULL ELSE ${prospects.emailSourceUrl} END` }
             : {}),
+          // The notice belongs to the address: a new address starts clean.
+          emailNoSolicitation: sql`CASE WHEN ${prospects.email} IS DISTINCT FROM ${input.email} THEN false ELSE ${prospects.emailNoSolicitation} END`,
         }
       : {}),
     ...(input.emailSourceUrl !== undefined ? { emailSourceUrl: input.emailSourceUrl } : {}),
-    ...(input.contactFormUrl !== undefined ? { contactFormUrl: input.contactFormUrl } : {}),
+    ...(input.contactFormUrl !== undefined
+      ? {
+          contactFormUrl: input.contactFormUrl,
+          formNoSolicitation: sql`CASE WHEN ${prospects.contactFormUrl} IS DISTINCT FROM ${input.contactFormUrl} THEN false ELSE ${prospects.formNoSolicitation} END`,
+        }
+      : {}),
     ...(input.formType !== undefined ? { formType: input.formType } : {}),
     ...(input.snsAccounts !== undefined ? { snsAccounts: input.snsAccounts as SnsAccounts } : {}),
     ...(input.platformUrl !== undefined ? { platformUrl: input.platformUrl } : {}),
@@ -553,7 +570,7 @@ export async function batchRegister(
 
     claimRow(dedup, projectId, input)
     inserted.push(newProspect.id)
-    if (input.email) emailsToVerify.push(input.email)
+    if (input.email && !input.emailNoSolicitation) emailsToVerify.push(input.email)
   }
 
   return ok({

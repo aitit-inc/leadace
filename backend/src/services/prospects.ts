@@ -64,12 +64,17 @@ import { floorRescuedWeights } from '../domain/arm-bandit'
 const emailUsableExpr: SQL = and(
   isNotNull(prospects.email),
   ne(prospects.emailDeliverability, UNDELIVERABLE),
+  eq(prospects.emailNoSolicitation, false),
+)!
+const formUsableExpr: SQL = and(
+  isNotNull(prospects.contactFormUrl),
+  eq(prospects.formNoSolicitation, false),
 )!
 
 function channelAvailabilityClause(ch: OutboundChannel): SQL {
   switch (ch) {
     case 'email': return emailUsableExpr
-    case 'form': return isNotNull(prospects.contactFormUrl)
+    case 'form': return formUsableExpr
     case 'sns_twitter': return sql`${prospects.snsAccounts}->>'x' IS NOT NULL`
     case 'sns_linkedin': return sql`${prospects.snsAccounts}->>'linkedin' IS NOT NULL`
     case 'platform': return isNotNull(prospects.platformUrl)
@@ -507,9 +512,10 @@ export async function listReachable(
         overview: prospects.overview,
         industry: prospects.industry,
         websiteUrl: prospects.websiteUrl,
-        email: prospects.email,
-        contactFormUrl: prospects.contactFormUrl,
-        formType: prospects.formType,
+        // Readers of this list see only channels they may use.
+        email: sql<string | null>`CASE WHEN ${prospects.emailNoSolicitation} THEN NULL ELSE ${prospects.email} END`,
+        contactFormUrl: sql<string | null>`CASE WHEN ${prospects.formNoSolicitation} THEN NULL ELSE ${prospects.contactFormUrl} END`,
+        formType: sql<(typeof formTypeEnum.enumValues)[number] | null>`CASE WHEN ${prospects.formNoSolicitation} THEN NULL ELSE ${prospects.formType} END`,
         snsAccounts: prospects.snsAccounts,
         platformUrl: prospects.platformUrl,
         discoveryStrategy: prospects.discoveryStrategy,
@@ -542,9 +548,9 @@ export async function listReachable(
         total: sql<number>`COUNT(*)::int`,
         withinChannels: sql<number>`COUNT(*) FILTER (WHERE ${drawFilter})::int`,
         email: sql<number>`COUNT(*) FILTER (WHERE ${emailUsableExpr})::int`,
-        formOnly: sql<number>`COUNT(*) FILTER (WHERE NOT (${emailUsableExpr}) AND ${prospects.contactFormUrl} IS NOT NULL)::int`,
-        snsOnly: sql<number>`COUNT(*) FILTER (WHERE NOT (${emailUsableExpr}) AND ${prospects.contactFormUrl} IS NULL AND ${prospects.snsAccounts} IS NOT NULL)::int`,
-        platformOnly: sql<number>`COUNT(*) FILTER (WHERE NOT (${emailUsableExpr}) AND ${prospects.contactFormUrl} IS NULL AND ${prospects.snsAccounts} IS NULL AND ${prospects.platformUrl} IS NOT NULL)::int`,
+        formOnly: sql<number>`COUNT(*) FILTER (WHERE NOT (${emailUsableExpr}) AND ${formUsableExpr})::int`,
+        snsOnly: sql<number>`COUNT(*) FILTER (WHERE NOT (${emailUsableExpr}) AND NOT (${formUsableExpr}) AND ${prospects.snsAccounts} IS NOT NULL)::int`,
+        platformOnly: sql<number>`COUNT(*) FILTER (WHERE NOT (${emailUsableExpr}) AND NOT (${formUsableExpr}) AND ${prospects.snsAccounts} IS NULL AND ${prospects.platformUrl} IS NOT NULL)::int`,
       })
       .from(projectProspects)
       .innerJoin(prospects, eq(prospects.id, projectProspects.prospectId))
@@ -854,8 +860,10 @@ const projectProspectSelection = {
   industry: prospects.industry,
   websiteUrl: prospects.websiteUrl,
   email: prospects.email,
+  emailNoSolicitation: prospects.emailNoSolicitation,
   contactFormUrl: prospects.contactFormUrl,
   formType: prospects.formType,
+  formNoSolicitation: prospects.formNoSolicitation,
   snsAccounts: prospects.snsAccounts,
   platformUrl: prospects.platformUrl,
   doNotContact: prospects.doNotContact,
@@ -1030,8 +1038,10 @@ export async function listTenantProspects(
         industry: prospects.industry,
         websiteUrl: prospects.websiteUrl,
         email: prospects.email,
+        emailNoSolicitation: prospects.emailNoSolicitation,
         contactFormUrl: prospects.contactFormUrl,
         formType: prospects.formType,
+        formNoSolicitation: prospects.formNoSolicitation,
         snsAccounts: prospects.snsAccounts,
         platformUrl: prospects.platformUrl,
         notes: prospects.notes,
@@ -1181,6 +1191,7 @@ export async function updateProspect(
   // row is already loaded), so re-submitting the same address keeps any prior
   // 'undeliverable' verdict and skips a redundant background re-stamp.
   const emailChanged = patch.email !== undefined && patch.email !== existing.email
+  const formChanged = patch.contactFormUrl !== undefined && patch.contactFormUrl !== existing.contactFormUrl
   const now = new Date()
   const updateSet = {
     ...(patch.name !== undefined ? { name: patch.name } : {}),
@@ -1190,8 +1201,9 @@ export async function updateProspect(
     ...(patch.industry !== undefined ? { industry: patch.industry } : {}),
     ...(patch.websiteUrl !== undefined ? { websiteUrl: patch.websiteUrl } : {}),
     ...(patch.email !== undefined ? { email: patch.email } : {}),
-    ...(emailChanged ? { emailDeliverability: 'unknown' as const, mailboxVerifiedAt: null } : {}),
+    ...(emailChanged ? { emailDeliverability: 'unknown' as const, mailboxVerifiedAt: null, emailNoSolicitation: false } : {}),
     ...(patch.contactFormUrl !== undefined ? { contactFormUrl: patch.contactFormUrl } : {}),
+    ...(formChanged ? { formNoSolicitation: false } : {}),
     ...(patch.formType !== undefined ? { formType: patch.formType } : {}),
     ...(patch.snsAccounts !== undefined ? { snsAccounts: patch.snsAccounts } : {}),
     ...(patch.platformUrl !== undefined ? { platformUrl: patch.platformUrl } : {}),

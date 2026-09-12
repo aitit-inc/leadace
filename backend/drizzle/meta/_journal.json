@@ -603,6 +603,20 @@
       "when": 1789139827589,
       "tag": "0085_nasty_forge",
       "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1789189378582,
+      "tag": "0086_clean_warpath",
+      "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1789194033026,
+      "tag": "0087_lazy_ogun",
+      "breakpoints": true
     }
   ]
 }

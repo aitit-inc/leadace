@@ -391,6 +391,10 @@ For each prospect, construct the object as follows:
 - `email`: email address (optional*)
 - `contactFormUrl`: contact form URL (optional*)
 - `formType`: one of `google_forms`, `native_html`, `wordpress_cf7`, `iframe_embed`, `with_captcha` (optional)
+- `emailNoSolicitation` / `formNoSolicitation`: `true` when the enrichment found a
+  no-solicitation notice covering that address / that form (the `email_no_solicitation`
+  / `form_no_solicitation` fields of the enrichment output). The contact is stored as
+  a suppression record and never used on that channel; omit when false
 - `snsAccounts`: `{ x?, linkedin?, instagram?, facebook? }` (optional*)
 - `platformUrl`: external-platform action page (posting/listing URL) a playbook-driven
   strategy answers in-platform (optional*)

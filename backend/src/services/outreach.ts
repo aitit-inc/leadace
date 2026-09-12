@@ -370,10 +370,13 @@ async function assertProspectContactable(
   db: Db,
   tenantId: TenantId,
   prospectId: number,
+  channel: Channel,
 ): Promise<ServiceResult<undefined>> {
   const [row] = await db
     .select({
       doNotContact: sql<boolean>`${prospects.doNotContact} OR ${organizations.doNotContact}`,
+      emailNoSolicitation: prospects.emailNoSolicitation,
+      formNoSolicitation: prospects.formNoSolicitation,
     })
     .from(prospects)
     .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
@@ -383,6 +386,10 @@ async function assertProspectContactable(
   if (!row) return ok(undefined)
   if (row.doNotContact) {
     return err('UNPROCESSABLE', 'Prospect is on do-not-contact list')
+  }
+  const refused = channel === 'email' ? row.emailNoSolicitation : channel === 'form' ? row.formNoSolicitation : false
+  if (refused) {
+    return err('UNPROCESSABLE', `Prospect's ${channel} channel is published with a no-solicitation notice`)
   }
   return ok(undefined)
 }
@@ -396,6 +403,7 @@ async function resolveDeliverableRecipient(
   const [row] = await db
     .select({
       email: prospects.email,
+      emailNoSolicitation: prospects.emailNoSolicitation,
       emailDeliverability: prospects.emailDeliverability,
       mailboxVerifiedAt: prospects.mailboxVerifiedAt,
     })
@@ -404,6 +412,9 @@ async function resolveDeliverableRecipient(
     .limit(1)
   if (!row) return err('NOT_FOUND', 'Prospect not found')
   if (!row.email) return err('UNPROCESSABLE', 'Prospect has no email address')
+  if (row.emailNoSolicitation) {
+    return err('UNPROCESSABLE', 'Recipient email address is published with a no-solicitation notice')
+  }
   if (row.emailDeliverability === UNDELIVERABLE) {
     return err('UNPROCESSABLE', 'Recipient email address cannot receive mail')
   }
@@ -479,7 +490,7 @@ export async function recordOutreach(
       )
       if (mailboxErr) return mailboxErr
     }
-    const contactable = await assertProspectContactable(db, tenantId, input.prospectId)
+    const contactable = await assertProspectContactable(db, tenantId, input.prospectId, input.channel)
     if (!contactable.ok) return contactable
     const country = await assertProspectCountryAllowed(db, tenantId, input.prospectId)
     if (!country.ok) return country
@@ -600,7 +611,7 @@ export async function recordOutreachWithInquiry(
   const willSend = sendSettings.outboundMode === 'send'
 
   if (willSend) {
-    const contactable = await assertProspectContactable(db, tenantId, input.prospectId)
+    const contactable = await assertProspectContactable(db, tenantId, input.prospectId, input.channel)
     if (!contactable.ok) return contactable
     const quota = await getRemainingOutreachQuota(db, tenantId, edition)
     const quotaErr = outreachQuotaErrorIfExhausted(quota)
@@ -779,7 +790,7 @@ export async function sendAndRecord(
   const hostGuard = assertPublicHttpsSendHosts(ctx)
   if (!hostGuard.ok) return hostGuard
 
-  const contactable = await assertProspectContactable(db, tenantId, input.prospectId)
+  const contactable = await assertProspectContactable(db, tenantId, input.prospectId, 'email')
   if (!contactable.ok) return contactable
 
   const quota = await getRemainingOutreachQuota(db, tenantId, edition)

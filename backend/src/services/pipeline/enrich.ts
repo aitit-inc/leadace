@@ -22,9 +22,9 @@ type DatedEvent = z.infer<typeof datedEventSchema>
 
 const pageReadSchema = z.object({
   noSolicitationText: z.string().nullable(),
-  emails: z.array(z.object({ address: z.string(), foundOnUrl: z.string() })),
+  emails: z.array(z.object({ address: z.string(), foundOnUrl: z.string(), noSolicitation: z.boolean() })),
   pagesToRead: z.array(z.string()),
-  contactForm: z.object({ url: z.string(), formType: z.enum(FORM_TYPES) }).nullable(),
+  contactForm: z.object({ url: z.string(), formType: z.enum(FORM_TYPES), noSolicitation: z.boolean() }).nullable(),
   contactName: z.string().nullable(),
   department: z.string().nullable(),
   snsAccounts: z.object({ x: z.string().nullable(), linkedin: z.string().nullable() }),
@@ -48,20 +48,22 @@ const eventsReadSchema = z.object({
   pagesToRead: z.array(z.string()),
 })
 
-type EnrichSkip = 'site_unreadable' | 'read_failed' | 'no_solicitation'
+type EnrichSkip = 'site_unreadable' | 'read_failed'
 
 type Enriched = {
   candidate: DiscoverCandidate
   skip: EnrichSkip | null
   email: string | null
   emailSourceUrl: string | null
+  emailNoSolicitation: boolean
   contactFormUrl: string | null
   formType: (typeof FORM_TYPES)[number] | null
+  formNoSolicitation: boolean
   snsAccounts: { x?: string; linkedin?: string } | null
   contactName: string | null
   department: string | null
   country: string | null
-  doNotContact: boolean
+  noSolicitation: boolean
   notes: string | null
   hypothesis: PageRead['hypothesis']
   signals: string[]
@@ -82,10 +84,10 @@ Procedure (follow its priorities: sales-refusal notice first, then email, then a
 ${args.procedure}
 
 Answer rules:
-- Record only what appears verbatim on a page you read. Every email address must be a literal string on the page (a mailto: link or visible text) and foundOnUrl must be the exact page URL it appeared on. Never construct an address from a name and a domain, never guess.
-- noSolicitationText: the notice text when the site refuses sales approaches, else null.
-- pagesToRead: up to 6 absolute URLs on this site that likely carry a contact (contact, about, company, team, imprint / legal, 特定商取引法), most likely first; empty when an email was already found.
-- contactForm: only a general or B2B inquiry form (never signup, support, careers, feedback, or a form stating no sales inquiries), with its formType per the procedure; null otherwise.
+- Record only what appears verbatim on a page you read. Every email address must be a literal string on the page (a mailto: link or visible text) and foundOnUrl must be the exact page URL it appeared on; noSolicitation is true when a sales-refusal notice sits next to that address. Never construct an address from a name and a domain, never guess.
+- noSolicitationText: the notice text when a page you read refuses sales approaches for the organization as a whole (a header, footer or contact-page statement such as 営業お断り), else null. A notice attached to one address or one form is not site-wide: mark that address or form instead.
+- pagesToRead: up to 6 absolute URLs on this site that likely carry a contact (contact, about, company, team, imprint / legal, 特定商取引法), most likely first; empty when an email without a refusal notice was already found.
+- contactForm: only a general or B2B inquiry form (never signup, support, careers, feedback), with its formType per the procedure and noSolicitation true when the form or its page states no sales inquiries; null otherwise.
 - contactName / department: only when a specific person and role is clearly stated (CEO, founder, head of the buying function); never a guess.
 - country: ISO 3166-1 alpha-2 of the organization's address if shown, else null.
 - hypothesis: 1–3 short pain hypotheses about this organization given what we offer, the matching value bullets in the same order, and the department / role most likely to buy; leave arrays empty rather than inventing.
@@ -97,6 +99,25 @@ export function datedEvents(events: DatedEvent[], retrieved: string[], now: Date
   return events
     .filter((s) => inRetrieved(s.foundOnUrl, retrieved) && isRecentSignal(s.text, now))
     .map((s) => `${s.text} (${apexDomainOf(s.foundOnUrl) ?? s.foundOnUrl})`)
+}
+
+type ReadEmail = PageRead['emails'][number]
+type ReadForm = NonNullable<PageRead['contactForm']>
+
+// An address without a notice wins over one with it, so a refused info@ does
+// not hide a usable address; an address seen with a notice on any page keeps it.
+export function pickEvidencedEmail(emails: ReadEmail[], retrieved: string[]): ReadEmail | undefined {
+  const evidenced = emails.filter((e) => z.email().safeParse(e.address).success && inRetrieved(e.foundOnUrl, retrieved))
+  const refused = new Set(evidenced.filter((e) => e.noSolicitation).map((e) => e.address.toLowerCase()))
+  const merged = evidenced.map((e) => ({ ...e, noSolicitation: refused.has(e.address.toLowerCase()) }))
+  return merged.find((e) => !e.noSolicitation) ?? merged[0]
+}
+
+// The same form keeps a notice either read saw; of two forms, the one without wins.
+export function mergeContactForm(a: ReadForm | null, b: ReadForm | null): ReadForm | null {
+  if (a === null || b === null) return a ?? b
+  if (a.url === b.url) return { ...a, noSolicitation: a.noSolicitation || b.noSolicitation }
+  return a.noSolicitation && !b.noSolicitation ? b : a
 }
 
 export function newestFirst(signals: string[]): string[] {
@@ -189,13 +210,15 @@ export async function enrichCandidate(
     skip: null,
     email: null,
     emailSourceUrl: null,
+    emailNoSolicitation: false,
     contactFormUrl: null,
     formType: null,
+    formNoSolicitation: false,
     snsAccounts: null,
     contactName: null,
     department: null,
     country: candidate.country ?? null,
-    doNotContact: false,
+    noSolicitation: false,
     notes: null,
     hypothesis: { targetDepartment: null, targetRolePattern: null, hypothesizedPain: [], valueMapping: [] },
     signals: [],
@@ -214,13 +237,20 @@ export async function enrichCandidate(
   let read = first.value
   let retrieved = first.retrievedUrls
   const followUps = sameSiteUrls(candidate.websiteUrl, read.pagesToRead, 4)
-  if (read.noSolicitationText === null && read.emails.length === 0 && followUps.length > 0) {
+  // A usable address ends the search; under a site-wide notice any channel
+  // does, since stored as refused it keeps discover from reading this site again.
+  const topEmail = pickEvidencedEmail(read.emails, retrieved)
+  const settled = read.noSolicitationText !== null ? topEmail !== undefined || read.contactForm !== null : topEmail !== undefined && !topEmail.noSolicitation
+  if (!settled && followUps.length > 0) {
     try {
       const second = await readPages(env, 'enrich.pages', readPrompt({ candidate, urls: followUps, ...window, ...ctx }))
       if (second.retrievedUrls.length > 0) {
         retrieved = [...retrieved, ...second.retrievedUrls]
         read = {
           ...second.value,
+          noSolicitationText: read.noSolicitationText ?? second.value.noSolicitationText,
+          emails: [...read.emails, ...second.value.emails],
+          contactForm: mergeContactForm(read.contactForm, second.value.contactForm),
           hypothesis: read.hypothesis.hypothesizedPain.length > 0 ? read.hypothesis : second.value.hypothesis,
           events: [...read.events, ...second.value.events],
           country: read.country ?? second.value.country,
@@ -235,31 +265,35 @@ export async function enrichCandidate(
     }
   }
 
-  if (read.noSolicitationText) {
-    return { ...empty, skip: 'no_solicitation', doNotContact: true, notes: `Site states no sales outreach: ${read.noSolicitationText.slice(0, 300)}` }
-  }
-  const evidenced = read.emails.find((e) => z.email().safeParse(e.address).success && inRetrieved(e.foundOnUrl, retrieved))
+  const siteRefused = read.noSolicitationText !== null
+  const evidenced = pickEvidencedEmail(read.emails, retrieved)
+  const emailNoSolicitation = evidenced !== undefined && (siteRefused || evidenced.noSolicitation)
+  const emailUsable = evidenced !== undefined && !emailNoSolicitation
+  const form = emailUsable ? null : read.contactForm
+  const formNoSolicitation = form !== null && (siteRefused || form.noSolicitation)
   const sns = {
     ...(read.snsAccounts.x ? { x: read.snsAccounts.x } : {}),
     ...(read.snsAccounts.linkedin ? { linkedin: read.snsAccounts.linkedin } : {}),
   }
-  const contactFormUrl = evidenced ? null : read.contactForm?.url ?? null
   const snsAccounts = Object.keys(sns).length > 0 ? sns : null
-  // Without a channel the candidate is never registered, so no paid confirmation.
-  const signals = evidenced || contactFormUrl || snsAccounts ? newestFirst([...datedEvents(read.events, retrieved, now), ...(await confirmSignals(env, candidate, now))]) : []
+  // Without a usable channel nothing is ever drafted, so no paid confirmation.
+  const usable = emailUsable || (form !== null && !formNoSolicitation) || snsAccounts !== null
+  const signals = usable ? newestFirst([...datedEvents(read.events, retrieved, now), ...(await confirmSignals(env, candidate, now))]) : []
   return {
     candidate,
     skip: null,
     email: evidenced?.address.toLowerCase() ?? null,
     emailSourceUrl: evidenced?.foundOnUrl ?? null,
-    contactFormUrl,
-    formType: evidenced ? null : read.contactForm?.formType ?? null,
+    emailNoSolicitation,
+    contactFormUrl: form?.url ?? null,
+    formType: form?.formType ?? null,
+    formNoSolicitation,
     snsAccounts,
     contactName: read.contactName,
     department: read.department,
     country: candidate.country ?? read.country,
-    doNotContact: false,
-    notes: null,
+    noSolicitation: siteRefused || emailNoSolicitation || formNoSolicitation,
+    notes: read.noSolicitationText ? `Site states no sales outreach: ${read.noSolicitationText.slice(0, 300)}` : null,
     hypothesis: read.hypothesis,
     signals: signals.slice(0, 5),
   }
@@ -331,8 +365,10 @@ function toProspectInput(e: Enriched): BatchInput['prospects'][number] | null {
     websiteUrl: c.websiteUrl,
     ...(e.email ? { email: e.email } : {}),
     ...(e.email && e.emailSourceUrl ? { emailSourceUrl: e.emailSourceUrl } : {}),
+    ...(e.emailNoSolicitation ? { emailNoSolicitation: true } : {}),
     ...(e.contactFormUrl ? { contactFormUrl: e.contactFormUrl } : {}),
     ...(e.formType ? { formType: e.formType } : {}),
+    ...(e.formNoSolicitation ? { formNoSolicitation: true } : {}),
     ...(e.snsAccounts ? { snsAccounts: e.snsAccounts } : {}),
     ...(e.notes ? { notes: e.notes } : {}),
     hypothesis: {
@@ -343,7 +379,6 @@ function toProspectInput(e: Enriched): BatchInput['prospects'][number] | null {
       // Present even when empty: it stamps prospects.site_read_at.
       timingSignals: e.signals.slice(0, 3),
     },
-    doNotContact: e.doNotContact,
     matchReason: c.matchReason,
     priority: c.priority,
     ...(c.discoveryStrategy ? { discoveryStrategy: c.discoveryStrategy } : {}),
@@ -384,9 +419,9 @@ export async function runEnrich(
   const inputs = enriched.map(toProspectInput)
   const registrable = inputs.filter((p): p is NonNullable<typeof p> => p !== null)
   const noChannel = enriched.filter((_, i) => inputs[i] === null).map((e) => ({ name: e.candidate.name, reason: e.skip ?? ('no_contact_found' as const) }))
-  const reasons = { site_unreadable: 0, read_failed: 0, no_solicitation: 0, no_contact_found: 0 }
+  const reasons = { site_unreadable: 0, read_failed: 0, no_contact_found: 0 }
   for (const s of noChannel) reasons[s.reason]++
-  console.log({ message: '[enrich] read', candidates: enriched.length, ...reasons })
+  console.log({ message: '[enrich] read', candidates: enriched.length, ...reasons, no_solicitation: enriched.filter((e) => e.noSolicitation).length })
   let registered = 0
   const skippedDetails: Array<{ name: string; reason: string }> = [...noChannel]
   const emailsToVerify: string[] = []
@@ -399,7 +434,7 @@ export async function runEnrich(
   }
   if (emailsToVerify.length > 0) await stampEmailDeliverability(env.DATABASE_URL, tenantId, emailsToVerify)
 
-  const withEmail = enriched.filter((e) => e.email !== null).length
+  const withEmail = enriched.filter((e) => e.email !== null && !e.emailNoSolicitation).length
   return ok({
     kind: 'enrich',
     summary: `Registered ${registered} of ${candidates.length} candidates (${withEmail} with an email address); ${skippedDetails.length} skipped.`,

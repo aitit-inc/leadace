@@ -63,8 +63,13 @@ function logUsage(call: GeminiCall, response: GenerateContentResponse, tier: Ser
     output: u?.candidatesTokenCount ?? 0,
     thoughts: u?.thoughtsTokenCount ?? 0,
     tier: tier ?? ServiceTier.STANDARD,
-    searchQueries: response.candidates?.[0]?.groundingMetadata?.webSearchQueries?.length ?? 0,
+    searchQueries: searchQueriesOf(response),
   })
+}
+
+// Google bills the unique non-empty queries of a request.
+function searchQueriesOf(response: GenerateContentResponse): number {
+  return new Set((response.candidates?.[0]?.groundingMetadata?.webSearchQueries ?? []).filter((q) => q !== '')).size
 }
 
 const FLEX_SHED_STATUSES = [429, 503]
@@ -205,7 +210,7 @@ type GeminiGroundedTextArgs = GeminiCall & {
 }
 
 export type Citation = { passage: string; pages: string[] }
-export type GroundedText = { text: string; citations: Citation[] }
+export type GroundedText = { text: string; citations: Citation[]; searchQueries: number }
 
 // Search-grounded reading: Google Search for discovery plus url_context so
 // the model can open what it finds. Text out — grounding tools and JSON mode
@@ -225,7 +230,7 @@ export async function callGeminiGroundedText(args: GeminiGroundedTextArgs): Prom
   // three leaves room for the other passes' requests.
   for (let i = 0; i < links.length; i += 3) pages.push(...(await Promise.all(links.slice(i, i + 3).map(pageOf))))
   const supports = (grounding?.groundingSupports ?? []).map((s) => ({ passage: s.segment?.text ?? '', chunks: s.groundingChunkIndices ?? [] }))
-  return { text: textOf(response), citations: citationsOf(supports, pages) }
+  return { text: textOf(response), citations: citationsOf(supports, pages), searchQueries: searchQueriesOf(response) }
 }
 
 // Grounding cites each result by a Google redirect link; its Location is the page.

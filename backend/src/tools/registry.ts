@@ -349,7 +349,9 @@ export function buildToolRegistry(): ToolDef[] {
         websiteUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG),
         email: z.email().optional().describe('At least one contact channel (email / contactFormUrl / snsAccounts / platformUrl) required.'),
         emailSourceUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional().describe('Page the address was published on. Also the legal record for the published-address exemption, so it must be the page actually carrying the address, not a homepage guess. Omit when the address did not come from a public page.'),
+        emailNoSolicitation: z.boolean().optional().describe('true when the page carrying the address shows a no-solicitation notice (営業お断り): the address is kept as a suppression record and never written to.'),
         contactFormUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
+        formNoSolicitation: z.boolean().optional().describe('true when the form or its page refuses sales inquiries: kept as a suppression record, never submitted.'),
         formType: z.enum(['google_forms', 'native_html', 'wordpress_cf7', 'iframe_embed', 'with_captcha']).optional(),
         snsAccounts: z.object({
           x: z.string().optional(),
