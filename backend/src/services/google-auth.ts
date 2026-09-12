@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { and, eq, isNull } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import {
   GoogleAuthError,
   applyE2eRedirect,
@@ -9,7 +9,7 @@ import {
   saveGmailRefreshToken,
   sendGmailMessage,
 } from '../auth/google'
-import { GMAIL_SEND_SCOPE } from '../domain/sending-identity'
+import { hasGmailSendScope } from '../domain/sending-identity'
 import { sendingIdentities } from '../db/schema'
 import type { Db } from '../db/connection'
 import type { TenantId } from '../domain/ids'
@@ -40,8 +40,7 @@ export async function saveCredentials(
   ctx: { encryptionKey: string },
   input: SaveCredentialsInput,
 ): Promise<ServiceResult<{ ok: true }>> {
-  const grantedScopes = input.scope.split(/\s+/)
-  if (!grantedScopes.includes(GMAIL_SEND_SCOPE)) {
+  if (!hasGmailSendScope(input.scope)) {
     logFunnel({ event: 'gmail_scope_rejected', tenantId })
     return err(
       'INVALID_INPUT',
@@ -50,15 +49,16 @@ export async function saveCredentials(
     )
   }
 
-  const { firstConnect } = await saveGmailRefreshToken(db, {
+  const saved = await saveGmailRefreshToken(db, {
     tenantId,
     userId,
     refreshToken: input.refreshToken,
     scope: input.scope,
     email: input.email,
+    signIn: true,
     encryptionKey: ctx.encryptionKey,
   })
-  if (firstConnect) logFunnel({ event: 'gmail_connected', tenantId, signupCta: input.fromSignupCta })
+  if (saved?.firstConnect) logFunnel({ event: 'gmail_connected', tenantId, signupCta: input.fromSignupCta })
 
   return ok({ ok: true })
 }
@@ -84,8 +84,7 @@ export async function getCredentialsStatus(
       and(
         eq(sendingIdentities.tenantId, tenantId),
         eq(sendingIdentities.userId, userId),
-        eq(sendingIdentities.provider, 'gmail_oauth'),
-        isNull(sendingIdentities.parentIdentityId),
+        eq(sendingIdentities.signInAccount, true),
       ),
     )
     .limit(1)

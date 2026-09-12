@@ -4,18 +4,21 @@
   import type { PlanTier } from '$lib/types/plan';
 
   let {
+    parent,
     identities,
     planTier,
     token,
     onChanged,
   }: {
+    // The connected Gmail the aliases send through.
+    parent: SendingIdentity;
     identities: SendingIdentity[];
     planTier: PlanTier | undefined;
     token: string | undefined;
     onChanged: () => void | Promise<void>;
   } = $props();
 
-  let aliases = $derived(identities.filter((i) => i.kind === 'gmail_alias'));
+  let aliases = $derived(identities.filter((i) => i.parentIdentityId === parent.identityId));
   let freeBlocked = $derived(planTier === 'free');
 
   let fromEmail = $state('');
@@ -35,7 +38,7 @@
     addMessage = '';
     saving = true;
     try {
-      await registerGmailAlias({ fromEmail: email }, fetch, token);
+      await registerGmailAlias({ fromEmail: email, parentIdentityId: parent.identityId }, fetch, token);
       fromEmail = '';
       await onChanged();
       addMessage = 'Alias added.';
@@ -64,8 +67,8 @@
   <p class="text-xs font-medium text-text-secondary">Send-As aliases</p>
   <p class="mt-1 text-xs text-text-muted">
     Each alias is a mailbox of its own — its own From: address, warmup and daily cap — sending
-    through this Gmail connection. Replies land in this inbox. Assign aliases to a project in its
-    Project settings.
+    through <span class="font-mono">{parent.fromEmail}</span>. Replies land in that inbox. Assign
+    aliases to a project in its Project settings.
   </p>
 
   {#if aliases.length > 0}

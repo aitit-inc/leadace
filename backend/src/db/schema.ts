@@ -391,7 +391,7 @@ export const sendingIdentityProviderEnum = pgEnum('sending_identity_provider', [
 export type SendingIdentityProvider = (typeof sendingIdentityProviderEnum.enumValues)[number]
 
 // `secret` is pgp_sym_encrypt'd at write; the DB only ever sees the encrypted bytea.
-// A Gmail Send-As alias is a row of its own under the connected Gmail
+// A Gmail Send-As alias is a row of its own under a connected Gmail
 // (parent_identity_id): its own From, warmup and cap, the parent's credentials,
 // scope and inbox — so it carries no secret or scope itself.
 export const sendingIdentities = pgTable('sending_identities', {
@@ -403,6 +403,11 @@ export const sendingIdentities = pgTable('sending_identities', {
   provider: sendingIdentityProviderEnum('provider').notNull(),
   fromEmail: text('from_email').notNull(),
   parentIdentityId: text('parent_identity_id'),
+  // The Gmail of the Google account the user signs in with: its token is
+  // re-issued by every sign-in, it is the fallback mailbox of a project that
+  // lists none, and it cannot be removed. Any other Gmail is connected from
+  // Account settings and holds its own grant.
+  signInAccount: boolean('sign_in_account').notNull().default(false),
   // Granted OAuth scopes — gmail_oauth only; NULL for smtp_imap (no OAuth concept) and for an alias.
   scope: text('scope'),
   secret: bytea('secret'),
@@ -423,11 +428,10 @@ export const sendingIdentities = pgTable('sending_identities', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   primaryKey({ columns: [table.tenantId, table.identityId] }),
-  // One connected Gmail per user (backs the reconnect upsert); partial so a tenant
-  // can hold several smtp_imap identities and any number of aliases.
-  uniqueIndex('uq_sending_identities_gmail_per_user')
+  // One sign-in Gmail per user (backs the sign-in reconnect upsert).
+  uniqueIndex('uq_sending_identities_sign_in_per_user')
     .on(table.tenantId, table.userId)
-    .where(sql`${table.provider} = 'gmail_oauth' AND ${table.parentIdentityId} IS NULL`),
+    .where(sql`${table.signInAccount}`),
   unique('uq_sending_identities_tenant_from_email').on(table.tenantId, table.fromEmail),
   index('idx_sending_identities_tenant_provider').on(table.tenantId, table.provider),
   foreignKey({
@@ -437,6 +441,7 @@ export const sendingIdentities = pgTable('sending_identities', {
   }).onDelete('cascade'),
   check('chk_sending_identities_secret_owner', sql`(${table.parentIdentityId} IS NULL) = (${table.secret} IS NOT NULL)`),
   check('chk_sending_identities_alias_provider', sql`${table.parentIdentityId} IS NULL OR ${table.provider} = 'gmail_oauth'`),
+  check('chk_sending_identities_sign_in_gmail', sql`NOT ${table.signInAccount} OR (${table.provider} = 'gmail_oauth' AND ${table.parentIdentityId} IS NULL)`),
 ])
 
 export const tenantPlans = pgTable('tenant_plans', {

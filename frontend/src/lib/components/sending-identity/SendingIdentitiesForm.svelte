@@ -113,10 +113,11 @@
 </script>
 
 <p class="text-sm text-text">
-  Send cold outreach from a dedicated SMTP mailbox (e.g. a Google Workspace or other mailbox on a
-  separate domain) instead of your primary Gmail — this keeps your main domain's sending reputation clean.
-  LeadAce sends from this mailbox server-side; assign one to a project in its Project settings. The
-  mailbox is verified when you add it.
+  Send cold outreach from a dedicated SMTP mailbox on a separate domain instead of your primary
+  Gmail — this keeps your main domain's sending reputation clean. For a Google account, connect it
+  above instead. LeadAce sends from this mailbox server-side and reads its inbox over IMAP for
+  replies; assign one to a project in its Project settings. Both connections are verified when you
+  add it.
 </p>
 
 {#if smtpIdentities.length > 0}

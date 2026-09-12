@@ -47,6 +47,8 @@ Set this up once before the first `npx supabase start`:
    create an OAuth 2.0 Client ID (Application type: Web application).
    - **Authorised JavaScript origins:** `http://localhost:5273`
    - **Authorised redirect URIs:** `http://localhost:54321/auth/v1/callback`
+     (sign-in, via Supabase) and `http://localhost:5273/auth/google-mailbox/callback`
+     (connecting further Google accounts as mailboxes from Account settings)
 2. Persist the client id / secret to your shell so the
    `[auth.external.google]` block in `supabase/config.toml` (which uses
    `env(...)` interpolation) can read them. The Supabase CLI does not

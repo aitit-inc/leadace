@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import type { Db } from '../db/connection'
 import { projectSendingIdentities, sendingIdentities, type SendingIdentityProvider } from '../db/schema'
@@ -61,8 +61,8 @@ const mailboxColumns = {
   lastPolledAt: sql`COALESCE(${parentIdentity.lastPolledAt}, ${sendingIdentities.lastPolledAt})`.mapWith(sendingIdentities.lastPolledAt),
 } as const
 
-// The project's mailboxes in priority order; with none listed, the tenant's
-// connected Gmail (a revoked one included, so its state can still be reported).
+// The project's mailboxes in priority order; with none listed, the sign-in
+// Gmail (a revoked one included, so its state can still be reported).
 export async function loadProjectMailboxes(
   db: Db,
   tenantId: TenantId,
@@ -88,14 +88,7 @@ export async function loadProjectMailboxes(
           .select(mailboxColumns)
           .from(sendingIdentities)
           .leftJoin(parentIdentity, parentJoin)
-          .where(
-            and(
-              eq(sendingIdentities.tenantId, tenantId),
-              eq(sendingIdentities.provider, 'gmail_oauth'),
-              isNull(sendingIdentities.parentIdentityId),
-            ),
-          )
-          .orderBy(sql`${sendingIdentities.authRevokedAt} IS NULL DESC`, asc(sendingIdentities.grantedAt))
+          .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.signInAccount, true)))
           .limit(1)
   return rows.map(({ parentIdentityId, ...r }) => ({
     ...r,
@@ -150,7 +143,7 @@ export async function listProjectMailboxIds(db: Db, tenantId: TenantId, projectI
 
 export const replaceProjectMailboxesSchema = z
   .object({
-    // Priority order; empty = the connected Gmail.
+    // Priority order; empty = the sign-in Gmail.
     identityIds: z
       .array(sendingIdentityIdSchema)
       .max(50)

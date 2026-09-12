@@ -31,7 +31,7 @@
   let listed = $derived(pool.flatMap((id) => byId.get(id) ?? []));
   let available = $derived(identities.filter((i) => !pool.includes(i.identityId)));
   // What an empty list sends from (services/mailbox.ts loadProjectMailboxes).
-  let connectedGmail = $derived(identities.find((i) => i.kind === 'gmail') ?? null);
+  let signInGmail = $derived(identities.find((i) => i.signInAccount) ?? null);
 
   let dragIndex = $state<number | null>(null);
   let saving = $state(false);
@@ -106,10 +106,10 @@
 
   {#if listed.length === 0}
     <p class="text-sm text-text-secondary">
-      {#if connectedGmail}
-        None listed — every email goes out from the connected Gmail,
-        <span class="font-mono">{connectedGmail.fromEmail}</span>. List mailboxes to send from an
-        alias or a custom mailbox, or to spread sends over several.
+      {#if signInGmail}
+        None listed — every email goes out from the sign-in Gmail,
+        <span class="font-mono">{signInGmail.fromEmail}</span>. List mailboxes to send from another
+        Google account, an alias or a custom mailbox, or to spread sends over several.
       {:else}
         None listed and no Gmail connected — email sending is off until you list a mailbox.
       {/if}

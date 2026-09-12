@@ -13,7 +13,7 @@ outbound outreach, and iterates on strategy — all hands-free.
 
 - Claude Cowork (in the Claude Desktop app) or Claude Code, on an Anthropic Pro or Max plan — verified on macOS. Email-only automation needs neither: `/setup-cron` prefers a server-side schedule that LeadAce runs on its own, and falls back to a Cowork scheduled task for the browser channels
 - A LeadAce account (sign up at https://app.leadace.ai — Free tier, no card)
-- A connected Gmail account — for sending email (granted when you sign in with Google, or via the "Connect Gmail" banner in the web app)
+- A connected Gmail account — for sending email (granted when you sign in with Google, or via the "Connect Gmail" banner in the web app; further Google accounts and SMTP mailboxes are added in Account settings)
 - Gmail MCP (claude.ai built-in) — for checking email replies
 - A browser, only for browser channels — contact forms run on Cowork's built-in browser or any browser-automation MCP you configure (e.g. Playwright); SNS DMs and SNS reply checking require Claude in Chrome. A scheduled run reaches the browser only while Claude Desktop is open, with its default browser chosen beforehand
 

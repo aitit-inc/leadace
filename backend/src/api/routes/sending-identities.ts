@@ -4,8 +4,13 @@ import {
   registerSmtpIdentity,
   registerGmailAliasSchema,
   registerGmailAlias,
+  googleMailboxAuthorizationSchema,
+  googleMailboxAuthorizationUrl,
+  registerGoogleMailboxSchema,
+  registerGoogleMailbox,
   listSendingIdentities,
   deleteSendingIdentity,
+  type GoogleMailboxCtx,
 } from '../../services/sending-identity'
 import { updateMailboxWarmup, updateMailboxWarmupSchema } from '../../services/plan-limits'
 import { sendingIdentityIdParamSchema } from '../../domain/ids'
@@ -14,6 +19,13 @@ import { respondWithError } from '../respond'
 import type { Env, Variables } from '../types'
 
 export const sendingIdentitiesRouter = new Hono<{ Bindings: Env; Variables: Variables }>()
+
+const googleMailboxCtx = (env: Env): GoogleMailboxCtx => ({
+  encryptionKey: env.GMAIL_TOKEN_ENCRYPTION_KEY,
+  clientId: env.GOOGLE_CLIENT_ID,
+  clientSecret: env.GOOGLE_CLIENT_SECRET,
+  appUrl: env.APP_URL,
+})
 
 sendingIdentitiesRouter.get('/me/sending-identities', async (c) => {
   const identities = await listSendingIdentities(
@@ -49,6 +61,28 @@ sendingIdentitiesRouter.post(
       c.get('tenantId'),
       c.get('userId'),
       c.get('edition'),
+      c.req.valid('json'),
+    )
+    return result.ok ? c.json(result.value, 201) : respondWithError(c, result)
+  },
+)
+
+sendingIdentitiesRouter.post(
+  '/me/sending-identities/google-mailboxes/authorization-url',
+  zValidator('json', googleMailboxAuthorizationSchema),
+  (c) => c.json(googleMailboxAuthorizationUrl(googleMailboxCtx(c.env), c.req.valid('json'))),
+)
+
+sendingIdentitiesRouter.post(
+  '/me/sending-identities/google-mailboxes',
+  zValidator('json', registerGoogleMailboxSchema),
+  async (c) => {
+    const result = await registerGoogleMailbox(
+      c.get('db'),
+      c.get('tenantId'),
+      c.get('userId'),
+      c.get('edition'),
+      googleMailboxCtx(c.env),
       c.req.valid('json'),
     )
     return result.ok ? c.json(result.value, 201) : respondWithError(c, result)

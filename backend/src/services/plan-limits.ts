@@ -56,8 +56,8 @@ export function getPlanLimits(plan: PlanTier): PlanLimits {
   return PLAN_LIMITS[plan]
 }
 
-// The connected Gmail counts toward the total; an SMTP mailbox and a Gmail
-// Send-As alias are each one more.
+// The sign-in Gmail counts toward the total; another Google account, an SMTP
+// mailbox and a Gmail Send-As alias are each one more.
 export function canRegisterMailbox(
   plan: PlanTier,
   currentIdentityCount: number,
@@ -67,7 +67,7 @@ export function canRegisterMailbox(
       ok: false,
       code: 'FORBIDDEN',
       error: 'Additional sending mailboxes require a paid plan',
-      detail: 'Upgrade to Starter or higher to add an SMTP mailbox or a Gmail Send-As alias.',
+      detail: 'Upgrade to Starter or higher to add another Google account, an SMTP mailbox or a Gmail Send-As alias.',
     }
   }
   const cap = getPlanLimits(plan).maxSendingIdentities

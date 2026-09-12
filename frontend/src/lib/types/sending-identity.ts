@@ -51,6 +51,9 @@ export type SendingIdentity = {
   kind: MailboxKind;
   // The connected Gmail a Send-As alias sends through; null for every other kind.
   parentIdentityId: string | null;
+  // The Gmail of the account the user signs in with: reconnected by signing in
+  // again, never removed from the registry.
+  signInAccount: boolean;
   fromEmail: string;
   warmupStartedAt: string | null;
   dailyCapOverride: number | null;
@@ -60,8 +63,8 @@ export type SendingIdentity = {
 } & MailboxDailyStatus &
   MailboxBounceWindow;
 
-// Body for POST /me/sending-identities (smtp_imap only). imapHost/imapPort are
-// stored for future reply collection (P3); P1 sending uses SMTP only.
+// Body for POST /me/sending-identities (smtp_imap only). Both connections are
+// verified at registration: SMTP for sending, IMAP for reply collection.
 export type RegisterSmtpIdentityInput = {
   fromEmail: string;
   smtpHost: string;
@@ -73,9 +76,23 @@ export type RegisterSmtpIdentityInput = {
 };
 
 // Body for POST /me/sending-identities/gmail-aliases: a verified "Send mail as"
-// address of the connected Gmail.
+// address of the connected Gmail `parentIdentityId`.
 export type RegisterGmailAliasInput = {
   fromEmail: string;
+  parentIdentityId: string;
+};
+
+// Body for POST /me/sending-identities/google-mailboxes/authorization-url: the
+// browser's CSRF nonce, echoed back by Google; loginHint preselects the account.
+export type GoogleMailboxAuthorizationInput = {
+  state: string;
+  loginHint?: string;
+};
+
+// Body for POST /me/sending-identities/google-mailboxes: the authorization code
+// Google sent to /auth/google-mailbox/callback.
+export type RegisterGoogleMailboxInput = {
+  code: string;
 };
 
 // Partial warmup patch for PUT /me/sending-identities/:id/warmup.

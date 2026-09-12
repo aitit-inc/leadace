@@ -303,9 +303,13 @@ export function generateRfc822MessageId(fromEmail: string): string {
   return `<${randomFromAlphabet(MESSAGE_ID_ALPHABET, 32)}@${domain}>`
 }
 
-// On reconnect (ON CONFLICT) the warmup state, identity_id and granted_at are
-// left untouched so the ramp clock survives; granted_at = updated_at therefore
-// holds exactly when this statement inserted the row.
+// Keyed per user for a sign-in, per address for a mailbox connected from
+// Account settings — so reconnecting refreshes that row in place, converting it
+// if the address was registered over SMTP. Either way the warmup state,
+// identity_id and granted_at are left untouched so the ramp clock survives;
+// granted_at = updated_at therefore holds exactly when this statement inserted
+// the row. Null = nothing written: the address is a Send-As alias, which cannot
+// hold a grant of its own.
 export async function saveGmailRefreshToken(
   db: Db,
   args: {
@@ -314,24 +318,30 @@ export async function saveGmailRefreshToken(
     refreshToken: string
     scope: string
     email: string
+    signIn: boolean
     encryptionKey: string
   },
-): Promise<{ firstConnect: boolean }> {
-  const [row] = await db.execute<{ first_connect: boolean }>(sql`
+): Promise<{ identityId: SendingIdentityId; firstConnect: boolean } | null> {
+  const conflictTarget = args.signIn
+    ? sql`(tenant_id, user_id) WHERE sign_in_account`
+    : sql`(tenant_id, from_email)`
+  const [row] = await db.execute<{ identity_id: string; first_connect: boolean }>(sql`
     INSERT INTO sending_identities
-      (tenant_id, identity_id, user_id, provider, from_email, scope, secret, granted_at, updated_at)
+      (tenant_id, identity_id, user_id, provider, from_email, sign_in_account, scope, secret, granted_at, updated_at)
     VALUES (
       ${args.tenantId},
       ${generateSendingIdentityId()},
       ${args.userId},
       'gmail_oauth',
       ${args.email},
+      ${args.signIn},
       ${args.scope},
       pgp_sym_encrypt(${args.refreshToken}::text, ${args.encryptionKey}),
       now(),
       now()
     )
-    ON CONFLICT (tenant_id, user_id) WHERE provider = 'gmail_oauth' AND parent_identity_id IS NULL DO UPDATE SET
+    ON CONFLICT ${conflictTarget} DO UPDATE SET
+      provider = 'gmail_oauth',
       secret = pgp_sym_encrypt(${args.refreshToken}::text, ${args.encryptionKey}),
       scope = ${args.scope},
       from_email = ${args.email},
@@ -339,9 +349,44 @@ export async function saveGmailRefreshToken(
       poll_failing_since = NULL,
       last_poll_error = NULL,
       updated_at = now()
-    RETURNING (granted_at = updated_at) AS first_connect
+    WHERE sending_identities.parent_identity_id IS NULL
+    RETURNING identity_id, (granted_at = updated_at) AS first_connect
   `)
-  return { firstConnect: row?.first_connect === true }
+  if (!row) return null
+  return { identityId: asSendingIdentityId(row.identity_id), firstConnect: row.first_connect }
+}
+
+export type GoogleCodeExchange = {
+  refreshToken: string | null
+  scope: string
+  idToken: string | null
+}
+
+// Google requires the redirect URI to match the one the consent was started with.
+export async function exchangeGoogleAuthorizationCode(args: {
+  code: string
+  clientId: string
+  clientSecret: string
+  redirectUri: string
+}): Promise<GoogleCodeExchange> {
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code',
+    code: args.code,
+    client_id: args.clientId,
+    client_secret: args.clientSecret,
+    redirect_uri: args.redirectUri,
+  })
+  const res = await fetch(GOOGLE_TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  })
+  if (!res.ok) {
+    const detail = await res.text()
+    throw new GoogleAuthError(`Google code exchange failed (${res.status}): ${detail}`, res.status)
+  }
+  const data = (await res.json()) as { refresh_token?: string; scope?: string; id_token?: string }
+  return { refreshToken: data.refresh_token ?? null, scope: data.scope ?? '', idToken: data.id_token ?? null }
 }
 
 export async function loadSendingIdentitySecret(
@@ -366,8 +411,7 @@ export async function loadSendingIdentitySecret(
     FROM sending_identities
     WHERE tenant_id = ${args.tenantId}
       AND user_id = ${args.userId}
-      AND provider = 'gmail_oauth'
-      AND parent_identity_id IS NULL
+      AND sign_in_account
     LIMIT 1
   `)
   const row = rows[0]

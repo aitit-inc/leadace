@@ -1,4 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { dev } from '$app/environment';
+import { googleMailboxAuthorizationUrl } from '$lib/api/sending-identities';
 
 // The Google OAuth scopes we request, and the callback's persisted-scope fallback.
 // These exact strings must match backend domain/sending-identity.ts.
@@ -24,4 +26,29 @@ export async function connectGmail(supabase: SupabaseClient): Promise<string | n
     },
   });
   return error ? error.message : null;
+}
+
+// Ties the Google redirect back to this browser and to the account that
+// started it: `<nonce>.<user id>`. The callback compares the nonce with the
+// `state` Google echoes and the user id with the session finishing the flow.
+export const GOOGLE_MAILBOX_STATE_COOKIE = 'lp-gmail-state';
+
+// Connect a Google account as a mailbox of its own (any account — not the one
+// signed in with). On success the browser navigates away to Google, so a
+// returned string is always an error.
+export async function connectGoogleMailbox(
+  session: { access_token: string; user: { id: string } } | null,
+  loginHint?: string,
+): Promise<string | null> {
+  if (!session) return 'Not signed in.';
+  const state = crypto.randomUUID();
+  document.cookie = `${GOOGLE_MAILBOX_STATE_COOKIE}=${state}.${session.user.id}; Path=/; SameSite=Lax; Max-Age=600${dev ? '' : '; Secure'}`;
+  const token = session.access_token;
+  try {
+    const url = await googleMailboxAuthorizationUrl({ state, loginHint }, fetch, token);
+    window.location.href = url;
+    return null;
+  } catch (e) {
+    return e instanceof Error ? e.message : 'Failed to start the Google connection.';
+  }
 }

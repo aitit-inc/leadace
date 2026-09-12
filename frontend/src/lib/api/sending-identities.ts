@@ -3,6 +3,8 @@ import type {
   SendingIdentity,
   RegisterSmtpIdentityInput,
   RegisterGmailAliasInput,
+  GoogleMailboxAuthorizationInput,
+  RegisterGoogleMailboxInput,
   MailboxWarmupPatch,
   MailboxHealth,
 } from '$lib/types/sending-identity';
@@ -41,6 +43,34 @@ export function registerGmailAlias(
   return request<SendingIdentity>(fetchFn, {
     method: 'POST',
     path: '/me/sending-identities/gmail-aliases',
+    body: input,
+    auth: 'required',
+    token,
+  });
+}
+
+export function googleMailboxAuthorizationUrl(
+  input: GoogleMailboxAuthorizationInput,
+  fetchFn: RequestFetch = fetch,
+  token?: string,
+): Promise<string> {
+  return request<{ url: string }>(fetchFn, {
+    method: 'POST',
+    path: '/me/sending-identities/google-mailboxes/authorization-url',
+    body: input,
+    auth: 'required',
+    token,
+  }).then((r) => r.url);
+}
+
+export function registerGoogleMailbox(
+  input: RegisterGoogleMailboxInput,
+  fetchFn: RequestFetch = fetch,
+  token?: string,
+): Promise<SendingIdentity> {
+  return request<SendingIdentity>(fetchFn, {
+    method: 'POST',
+    path: '/me/sending-identities/google-mailboxes',
     body: input,
     auth: 'required',
     token,

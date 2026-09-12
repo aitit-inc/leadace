@@ -1,20 +1,26 @@
 <script lang="ts">
   import { invalidate } from '$app/navigation';
+  import { page } from '$app/state';
   import { revokeMcpSession } from '$lib/api/mcp';
   import { connectGmail } from '$lib/gmail-oauth';
   import MailboxWarmupForm from '$lib/components/mailbox/MailboxWarmupForm.svelte';
   import SendingIdentitiesForm from '$lib/components/sending-identity/SendingIdentitiesForm.svelte';
   import GmailAliasesForm from '$lib/components/sending-identity/GmailAliasesForm.svelte';
+  import GoogleMailboxesForm from '$lib/components/sending-identity/GoogleMailboxesForm.svelte';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
   let token = $derived(data.session?.access_token);
   let supabase = $derived(data.supabase);
+  let signInGmail = $derived(data.sendingIdentities.find((i) => i.signInAccount) ?? null);
 
   let revokingFamilyId = $state<string | null>(null);
   let mcpSessionMessage = $state('');
   let connectingGmail = $state(false);
   let gmailMessage = $state('');
+  // /auth/google-mailbox/callback lands here with the outcome in the query string.
+  const connectedMailbox = page.url.searchParams.get('mailbox_connected');
+  const mailboxError = page.url.searchParams.get('mailbox_error');
 
   // Google OAuth populates user_metadata with avatar_url/picture and full_name;
   // fields may be missing on a non-Google identity, hence the fallbacks.
@@ -102,7 +108,7 @@
 
 <section class="mb-10">
   <h3 class="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">
-    Gmail permissions
+    Sign-in Gmail
   </h3>
   <div class="rounded-md border border-border p-5">
     {#if data.gmailStatus.state === 'connected'}
@@ -145,8 +151,9 @@
     {:else}
       <p class="text-danger text-sm">{data.gmailStatus.message}</p>
     {/if}
-    {#if data.gmailStatus.state === 'connected' || data.gmailStatus.state === 'revoked'}
+    {#if signInGmail}
       <GmailAliasesForm
+        parent={signInGmail}
         identities={data.sendingIdentities}
         planTier={data.plan?.plan}
         {token}
@@ -163,6 +170,29 @@
   </div>
 </section>
 
+<section class="mb-10">
+  <h3 class="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">
+    Other Google accounts
+  </h3>
+  <div class="rounded-md border border-border p-5">
+    {#if connectedMailbox}
+      <p class="mb-3 text-xs text-text-muted">
+        Connected <span class="font-mono">{connectedMailbox}</span>.
+      </p>
+    {:else if mailboxError}
+      <p class="mb-3 text-xs text-danger">{mailboxError}</p>
+    {/if}
+    <GoogleMailboxesForm
+      identities={data.sendingIdentities}
+      planTier={data.plan?.plan}
+      session={data.session}
+      onChanged={async () => {
+        await Promise.all([invalidate('app:sending-identities'), invalidate('app:attention')]);
+      }}
+    />
+  </div>
+</section>
+
 {#if data.sendingIdentities.length > 0}
   <section class="mb-10">
     <h3 class="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">
@@ -172,7 +202,9 @@
       {#each data.sendingIdentities as identity (identity.identityId)}
         <div class="rounded-md border border-border p-5">
           <p class="mb-3 text-xs font-medium text-text-secondary">
-            {{ gmail: 'Connected Gmail', gmail_alias: 'Gmail Send-As alias', smtp: 'Custom SMTP mailbox' }[identity.kind]}
+            {identity.signInAccount
+              ? 'Sign-in Gmail'
+              : { gmail: 'Connected Google account', gmail_alias: 'Gmail Send-As alias', smtp: 'Custom SMTP mailbox' }[identity.kind]}
           </p>
           <MailboxWarmupForm
             {identity}

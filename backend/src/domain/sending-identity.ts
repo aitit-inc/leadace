@@ -3,6 +3,13 @@ import type { SendingIdentityProvider } from '../db/schema'
 
 export const GMAIL_SEND_SCOPE = 'https://www.googleapis.com/auth/gmail.send'
 export const GMAIL_READONLY_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly'
+// What a Google mailbox connected from Account settings asks for: the account's
+// email (to name the mailbox), sending, and read-only reply collection.
+export const GOOGLE_MAILBOX_SCOPES = `openid email ${GMAIL_SEND_SCOPE} ${GMAIL_READONLY_SCOPE}`
+
+export function hasGmailSendScope(scope: string): boolean {
+  return scope.split(/\s+/).includes(GMAIL_SEND_SCOPE)
+}
 
 export function hasReplyReadScope(scope: string | null): boolean {
   return (scope ?? '').split(/\s+/).includes(GMAIL_READONLY_SCOPE)
@@ -27,7 +34,7 @@ export type SendingIdentitySecret =
 
 export type GmailOAuthSecret = Extract<SendingIdentitySecret, { provider: 'gmail_oauth' }>
 
-// What a mailbox row is: the connected Gmail, a Send-As alias under it (its own
+// What a mailbox row is: a connected Gmail, a Send-As alias under one (its own
 // From, warmup and cap; the parent's credentials and inbox), or an SMTP mailbox.
 export type MailboxKind = 'gmail' | 'gmail_alias' | 'smtp'
 

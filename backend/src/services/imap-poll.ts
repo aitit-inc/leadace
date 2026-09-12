@@ -38,6 +38,9 @@ function toCaptured(rawBinary: string): CapturedReply {
 }
 
 const POLL_TIMEOUT_MS = 30_000
+// Verify runs inside the request's RLS DB transaction, so its tighter ceiling
+// bounds how long a hung mailbox can pin the pooled connection.
+const VERIFY_TIMEOUT_MS = 10_000
 // Cap the buffer so one oversized mailbox can't OOM-kill the shared cron isolate
 // and starve every other identity; an over-cap poll fails for that identity only.
 const MAX_RESPONSE_BYTES = 25 * 1024 * 1024
@@ -48,11 +51,18 @@ const enc = new TextEncoder()
 
 class ImapError extends Error {}
 
-async function runPoll(
+type ImapSession = {
+  command: (line: string) => Promise<{ tag: string; response: string }>
+  expectOk: (tag: string, response: string, what: string) => void
+}
+
+async function withImapSession<T>(
   conn: ImapConnection,
-  since: Date,
-  maxMessages: number,
-): Promise<RawImapMessage[]> {
+  timeoutMs: number,
+  body: (session: ImapSession) => Promise<T>,
+): Promise<T> {
+  // Dynamic import: cloudflare:sockets exists only in the Workers runtime, so this
+  // keeps the module loadable under Vitest's node environment.
   const { connect } = await import('cloudflare:sockets')
   const socket = connect(
     { hostname: conn.host, port: conn.port },
@@ -62,7 +72,7 @@ async function runPoll(
   const timer = setTimeout(() => {
     timedOut = true
     void socket.close().catch(() => {})
-  }, POLL_TIMEOUT_MS)
+  }, timeoutMs)
 
   try {
     await socket.opened
@@ -135,6 +145,26 @@ async function runPoll(
       }
     }
 
+    return await body({ command, expectOk })
+  } catch (e) {
+    if (timedOut) throw new ImapError(`IMAP timed out after ${timeoutMs}ms`)
+    throw e
+  } finally {
+    clearTimeout(timer)
+    try {
+      await socket.close()
+    } catch {
+      /* already closing */
+    }
+  }
+}
+
+async function runPoll(
+  conn: ImapConnection,
+  since: Date,
+  maxMessages: number,
+): Promise<RawImapMessage[]> {
+  return withImapSession(conn, POLL_TIMEOUT_MS, async ({ command, expectOk }) => {
     const sel = await command('SELECT INBOX')
     expectOk(sel.tag, sel.response, 'SELECT')
 
@@ -154,16 +184,21 @@ async function runPoll(
 
     await command('LOGOUT').catch(() => {})
     return messages
+  })
+}
+
+// Connect + AUTH only, to reject bad IMAP credentials at registration rather
+// than at the first reply poll.
+export async function verifyImapCredentials(
+  conn: ImapConnection,
+): Promise<{ ok: true } | { ok: false; detail: string }> {
+  try {
+    await withImapSession(conn, VERIFY_TIMEOUT_MS, async ({ command }) => {
+      await command('LOGOUT').catch(() => {})
+    })
+    return { ok: true }
   } catch (e) {
-    if (timedOut) throw new ImapError(`IMAP timed out after ${POLL_TIMEOUT_MS}ms`)
-    throw e
-  } finally {
-    clearTimeout(timer)
-    try {
-      await socket.close()
-    } catch {
-      /* already closing */
-    }
+    return { ok: false, detail: e instanceof Error ? e.message : String(e) }
   }
 }
 
