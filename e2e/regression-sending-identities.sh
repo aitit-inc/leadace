@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regression for the sending-identity registry:
 #   services/sending-identity.ts (register/list/delete) + routes/sending-identities.ts
-#   + schema (sending_identities constraints, project_settings.sending_identity_id FK).
+#   + schema (sending_identities constraints, project_sending_identities FK).
 #
 # Sending happens server-side over 465 implicit-TLS (services/smtp-send), and
 # registration VERIFIES the mailbox by connecting before storing. A real
@@ -76,7 +76,7 @@ unreachable_body() { # fromEmail
 insert_identity() { # identityId fromEmail
   local payload
   payload="$(jq -nc --arg e "$2" --arg pw "$APP_PASSWORD" \
-    '{smtpHost:"smtp.zoho.com", smtpPort:465, imapHost:"imap.zoho.com", imapPort:993, username:$e, appPassword:$pw}')"
+    '{smtpHost:"smtp.gmail.com", smtpPort:465, imapHost:"imap.gmail.com", imapPort:993, username:$e, appPassword:$pw}')"
   psql_local "INSERT INTO sending_identities (tenant_id, identity_id, user_id, provider, from_email, scope, secret, granted_at, updated_at) VALUES ('$TENANT_ID', '$1', '$USER_ID', 'smtp_imap', '$2', NULL, pgp_sym_encrypt('$payload'::text, '$ENC_KEY'), now(), now());" >/dev/null
 }
 list_for() { api GET /api/me/sending-identities | jq -c --arg e "$1" '.identities[]? | select(.fromEmail==$e)'; }
@@ -105,7 +105,7 @@ restore_and_exit() {
     exit "$rc"
   fi
   echo "" >&2; echo "=== teardown ===" >&2
-  psql_local "UPDATE project_settings SET sending_identity_id=NULL WHERE tenant_id='$TENANT_ID' AND sending_identity_id IN (SELECT identity_id FROM sending_identities WHERE tenant_id='$TENANT_ID' AND from_email='$SMTP_EMAIL');" >/dev/null 2>&1 || true
+  psql_local "DELETE FROM project_sending_identities WHERE tenant_id='$TENANT_ID' AND identity_id IN (SELECT identity_id FROM sending_identities WHERE tenant_id='$TENANT_ID' AND from_email='$SMTP_EMAIL');" >/dev/null 2>&1 || true
   psql_local "DELETE FROM sending_identities WHERE tenant_id='$TENANT_ID' AND from_email='$SMTP_EMAIL';" >/dev/null 2>&1 || true
   if [[ -n "$PROJECT_ID" ]]; then
     api DELETE "/api/projects/$PROJECT_ID" >/dev/null 2>&1 || true
@@ -127,7 +127,7 @@ insert_identity "$IDENTITY_ID" "$SMTP_EMAIL"
 LISTED="$(list_for "$SMTP_EMAIL")"
 assert_eq "list contains the identity" "$(echo "$LISTED" | jq -r '.provider')" "smtp_imap"
 assert_eq "list dailyCapOverride defaults null (follows the warmup ramp)" "$(echo "$LISTED" | jq -r '.dailyCapOverride')" "null"
-assert_eq "list exposes smtp.smtpHost" "$(echo "$LISTED" | jq -r '.smtp.smtpHost')" "smtp.zoho.com"
+assert_eq "list exposes smtp.smtpHost" "$(echo "$LISTED" | jq -r '.smtp.smtpHost')" "smtp.gmail.com"
 assert_eq "list exposes smtp.smtpPort (number)" "$(echo "$LISTED" | jq -r '.smtp.smtpPort')" "465"
 assert_eq "list exposes smtp.username" "$(echo "$LISTED" | jq -r '.smtp.username')" "$SMTP_EMAIL"
 assert_eq "smtp view does NOT carry appPassword" "$(echo "$LISTED" | jq -r '.smtp | has("appPassword")')" "false"
@@ -143,15 +143,17 @@ assert_eq "secret carries smtpPort as a number" "$(echo "$DECRYPTED" | jq -r '.s
 step "4. duplicate From address → 409 (before the verify)"
 assert_eq "register same fromEmail → 409" "$(api_status POST /api/me/sending-identities "$(unreachable_body "$SMTP_EMAIL")")" "409"
 
-step "5. assign identity to a project, then delete-conflict + unset"
+step "5. list the identity as a project mailbox, then delete-conflict + unset"
 PROJECT_ID="$(api POST /api/projects "$(jq -nc --arg n "$PROJECT_NAME" '{name:$n}')" | jq -r '.id // ""')"
 [[ -n "$PROJECT_ID" ]] || { echo "create-project failed" >&2; exit 1; }
-assert_eq "PUT settings with unknown identity → 400" "$(api_status PUT "/api/projects/$PROJECT_ID/settings" '{"sendingIdentityId":"bogus-does-not-exist"}')" "400"
-assert_eq "PUT settings sendingIdentityId → 200" "$(api_status PUT "/api/projects/$PROJECT_ID/settings" "$(jq -nc --arg id "$IDENTITY_ID" '{sendingIdentityId:$id}')")" "200"
-assert_eq "GET settings echoes sendingIdentityId" "$(api GET "/api/projects/$PROJECT_ID/settings" | jq -r '.sendingIdentityId')" "$IDENTITY_ID"
-assert_eq "delete blocked while a project references it → 409" "$(api_status DELETE "/api/me/sending-identities/$IDENTITY_ID")" "409"
-assert_eq "PUT settings sendingIdentityId=null → 200" "$(api_status PUT "/api/projects/$PROJECT_ID/settings" '{"sendingIdentityId":null}')" "200"
-assert_eq "GET settings sendingIdentityId now null" "$(api GET "/api/projects/$PROJECT_ID/settings" | jq -r '.sendingIdentityId')" "null"
+assert_eq "PUT mailboxes with unknown identity → 400" "$(api_status PUT "/api/projects/$PROJECT_ID/mailboxes" '{"identityIds":["bogus-does-not-exist"]}')" "400"
+assert_eq "PUT mailboxes with a repeated identity → 400" "$(api_status PUT "/api/projects/$PROJECT_ID/mailboxes" "$(jq -nc --arg id "$IDENTITY_ID" '{identityIds:[$id,$id]}')")" "400"
+assert_eq "PUT mailboxes [identity] → 200" "$(api_status PUT "/api/projects/$PROJECT_ID/mailboxes" "$(jq -nc --arg id "$IDENTITY_ID" '{identityIds:[$id]}')")" "200"
+assert_eq "GET settings echoes sendingIdentityIds" "$(api GET "/api/projects/$PROJECT_ID/settings" | jq -r '.sendingIdentityIds | join(",")')" "$IDENTITY_ID"
+assert_eq "mailbox-health lists it first" "$(api GET "/api/projects/$PROJECT_ID/mailbox-health" | jq -r '.mailboxes[0].fromEmail')" "$SMTP_EMAIL"
+assert_eq "delete blocked while a project lists it → 409" "$(api_status DELETE "/api/me/sending-identities/$IDENTITY_ID")" "409"
+assert_eq "PUT mailboxes [] → 200" "$(api_status PUT "/api/projects/$PROJECT_ID/mailboxes" '{"identityIds":[]}')" "200"
+assert_eq "GET settings sendingIdentityIds now empty" "$(api GET "/api/projects/$PROJECT_ID/settings" | jq -r '.sendingIdentityIds | length')" "0"
 assert_eq "delete succeeds after unset → 200" "$(api_status DELETE "/api/me/sending-identities/$IDENTITY_ID")" "200"
 assert_eq "list no longer contains it" "$([[ -z "$(list_for "$SMTP_EMAIL")" ]] && echo gone || echo present)" "gone"
 

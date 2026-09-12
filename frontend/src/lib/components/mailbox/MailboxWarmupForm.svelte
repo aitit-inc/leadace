@@ -65,7 +65,7 @@
     return new Date(iso).toLocaleString();
   }
 
-  // SMTP replies can carry HTML (Zoho's links); show their text.
+  // SMTP replies can carry HTML (some providers link the unblock page); show their text.
   function replyText(detail: string): string {
     return detail.replace(/<[^>]*>/g, '');
   }

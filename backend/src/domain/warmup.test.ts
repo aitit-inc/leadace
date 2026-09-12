@@ -3,6 +3,8 @@ import {
   DEFAULT_WARMUP,
   mailboxDailyCap,
   mailboxDailyStatus,
+  pickFromMailboxPool,
+  type MailboxDailyStatus,
   warmupWeeksElapsed,
   type MailboxWarmupState,
 } from './warmup'
@@ -125,3 +127,46 @@ describe('warmupWeeksElapsed', () => {
 })
 
 const WEEK = 7 * 24 * 60 * 60 * 1000
+
+describe('pickFromMailboxPool', () => {
+  const entry = (identityId: string, cap: number, used: number, extra: Partial<MailboxDailyStatus> = {}) => ({
+    identityId,
+    cap,
+    used,
+    remaining: Math.max(0, cap - used),
+    pausedUntil: null,
+    heldUntil: null,
+    rampWeek: 0,
+    rampWeeks: 4,
+    steadyStatePerDay: 25,
+    ...extra,
+  })
+  const t = (iso: string) => new Date(iso)
+
+  it('takes the first mailbox with sends left, in list order, and totals the pool', () => {
+    const pick = pickFromMailboxPool([entry('a', 10, 10), entry('b', 25, 3), entry('c', 25, 0)])
+    expect(pick).toEqual({ kind: 'ready', identityId: 'b', cap: 60, used: 13, remaining: 47 })
+  })
+
+  it('is exhausted with no resume time when any mailbox merely hit its cap', () => {
+    const pick = pickFromMailboxPool([entry('a', 10, 10), entry('b', 0, 0, { pausedUntil: t('2026-06-22T00:00:00Z') })])
+    expect(pick).toEqual({ kind: 'exhausted', cap: 10, used: 10, remaining: 0, resumesAt: null })
+  })
+
+  it('resumes at the earliest pause or hold when every mailbox waits on one', () => {
+    const pick = pickFromMailboxPool([
+      entry('a', 0, 0, { pausedUntil: t('2026-06-25T00:00:00Z') }),
+      entry('b', 0, 0, { heldUntil: t('2026-06-22T00:00:00Z') }),
+    ])
+    expect(pick).toMatchObject({ kind: 'exhausted', resumesAt: t('2026-06-22T00:00:00Z') })
+  })
+
+  it('a mailbox paused and held at once waits for the later of the two', () => {
+    const pick = pickFromMailboxPool([entry('a', 0, 0, { pausedUntil: t('2026-06-21T18:00:00Z'), heldUntil: t('2026-06-22T00:00:00Z') })])
+    expect(pick).toMatchObject({ resumesAt: t('2026-06-22T00:00:00Z') })
+  })
+
+  it('an empty pool is exhausted with nothing to wait for', () => {
+    expect(pickFromMailboxPool([])).toEqual({ kind: 'exhausted', cap: 0, used: 0, remaining: 0, resumesAt: null })
+  })
+})

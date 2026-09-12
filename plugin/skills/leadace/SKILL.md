@@ -139,7 +139,7 @@ Answer the user's question using the context already gathered (`PROJECTS`, `GMAI
 - "結果は?" / "evaluation" / "改善案" / current results → `get_eval_data` (live metrics & response rates, also visualized in the `/evaluations` and `/dashboard` Web UI; the distilled "what worked / what didn't" memory lives in the `learnings` document)
 - Project documents (business / sales_strategy / etc.) → `get_document` / `list_documents`
 - Project / tenant settings → `get_project_settings` / `get_tenant_settings`
-- Which mailbox / From address a project sends from, daily send cap / warmup → `get_mailbox_health` (read-only; mailbox and cap changes are Web UI only)
+- Which mailboxes a project sends from (priority order), daily send caps / warmup → `get_mailbox_health` (read-only; mailbox and cap changes are Web UI or hosted-chat only)
 - "提案は?" / pending AI suggestions → `list_suggestions` (acting on an add-means one = Step 3h)
 
 Keep the answer to a few lines. Do not invoke other skills.

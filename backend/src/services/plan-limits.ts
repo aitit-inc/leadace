@@ -21,6 +21,7 @@ import {
   type MailboxBounceCounts,
   type MailboxBounceWindow,
   type MailboxDailyStatus,
+  type MailboxPoolPick,
   type MailboxSendRefusal,
 } from '../domain/warmup'
 
@@ -291,51 +292,11 @@ export function formatOutreachQuotaError(quota: OutreachQuota): string {
   }
 }
 
-// Per-mailbox safe daily send cap. Orthogonal to the billing quota AND the
-// edition gate (every plan and self-host is protected) because the failure mode
-// is reputational, not commercial.
-export type MailboxDailyQuota =
-  | { kind: 'no_mailbox' }
-  | {
-      kind: 'capped'
-      cap: number
-      used: number
-      remaining: number
-      pausedUntil: Date | null
-      heldUntil: Date | null
-    }
-
-export async function getMailboxDailyQuota(
-  db: Db,
-  tenantId: TenantId,
-  identityId: SendingIdentityId | null,
-  now: Date = new Date(),
-): Promise<MailboxDailyQuota> {
-  if (!identityId) return { kind: 'no_mailbox' }
-  const [mailbox] = await db
-    .select({
-      warmupStartedAt: sendingIdentities.warmupStartedAt,
-      dailyCapOverride: sendingIdentities.dailyCapOverride,
-      pausedUntil: sendingIdentities.pausedUntil,
-      sendRefusal: sendingIdentities.sendRefusal,
-    })
-    .from(sendingIdentities)
-    .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.identityId, identityId)))
-    .limit(1)
-
-  if (!mailbox) return { kind: 'no_mailbox' }
-
-  const used = await countMailboxEmailSendsToday(db, tenantId, identityId, now)
-  const status = mailboxDailyStatus(mailbox, used, DEFAULT_WARMUP, now)
-  return {
-    kind: 'capped',
-    cap: status.cap,
-    used: status.used,
-    remaining: status.remaining,
-    pausedUntil: status.pausedUntil,
-    heldUntil: status.heldUntil,
-  }
-}
+// Per-mailbox safe daily send cap, summed over the project's mailbox pool
+// (services/mailbox.ts picks the mailbox). Orthogonal to the billing quota AND
+// the edition gate (every plan and self-host is protected) because the failure
+// mode is reputational, not commercial.
+export type MailboxDailyQuota = { kind: 'no_mailbox' } | MailboxPoolPick<SendingIdentityId>
 
 // Counted by sending_identity_id, not from_email: a Send-As alias drifts
 // from_email while the mailbox/reputation stays the same identity.
@@ -401,7 +362,7 @@ export async function countMailboxEmailSendsTodayByIdentity(
 }
 
 export function isMailboxQuotaExhausted(quota: MailboxDailyQuota): boolean {
-  return quota.kind === 'capped' && quota.remaining <= 0
+  return quota.kind === 'exhausted'
 }
 
 export function mailboxQuotaErrorIfExhausted(quota: MailboxDailyQuota): ServiceError | null {
@@ -415,14 +376,11 @@ export function mailboxQuotaErrorIfExhausted(quota: MailboxDailyQuota): ServiceE
 }
 
 export function formatMailboxQuotaError(quota: MailboxDailyQuota): string {
-  if (quota.kind !== 'capped') return 'Mailbox daily send cap reached.'
-  if (quota.pausedUntil) {
-    return `Sending from this mailbox is paused until ${quota.pausedUntil.toISOString()}.`
+  if (quota.kind !== 'exhausted') return 'Mailbox daily send cap reached.'
+  if (quota.resumesAt) {
+    return `Every mailbox this project sends from is paused or held after a provider refusal; the earliest lifts at ${quota.resumesAt.toISOString()} (a mailbox at its cap then still waits for UTC midnight). Check each mailbox in Account settings.`
   }
-  if (quota.heldUntil) {
-    return `The mail provider refused this mailbox, so sending from it is held until ${quota.heldUntil.toISOString()}. Once it is resolved with the provider, mark it resolved in Account settings.`
-  }
-  return `This mailbox's safe daily send limit (${quota.cap}/day) is reached. This protects your sending domain's reputation; it resets at UTC midnight. Reach remaining prospects by form/SNS, or continue tomorrow.`
+  return `Every mailbox this project sends from is at its safe daily send limit (${quota.cap}/day in total). This protects your sending domains' reputation; it resets at UTC midnight. Reach remaining prospects by form/SNS, or continue tomorrow.`
 }
 
 export async function recordMailboxRefusal(
@@ -468,8 +426,8 @@ export async function clearMailboxSendRefusal(
     ))
 }
 
-// Exposes the warmup state behind the per-mailbox daily cap —
-// getMailboxDailyQuota only returns the resulting cap/used/remaining, so
+// Exposes the warmup state behind the per-mailbox daily cap — the send guard
+// (pickProjectMailbox) only returns the resulting cap/used/remaining, so
 // operators can't see ramp progress from it.
 export type MailboxHealth =
   | { kind: 'no_mailbox' }

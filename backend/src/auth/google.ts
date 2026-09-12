@@ -19,7 +19,6 @@ import { quotedPrintableEncode } from '../domain/smtp'
 import type { Locale } from '../domain/locale'
 import {
   asSendingIdentityId,
-  type ProjectId,
   type SendingIdentityId,
   type TenantId,
 } from '../domain/ids'
@@ -378,23 +377,6 @@ export async function loadSendingIdentitySecret(
     fromEmail: row.from_email,
     secret: parseSendingIdentitySecret(row.provider, row.secret),
   }
-}
-
-export async function resolveSendingIdentityId(
-  db: Db,
-  args: { tenantId: TenantId; projectId: ProjectId },
-): Promise<SendingIdentityId | null> {
-  const rows = await db.execute<{ identity_id: string | null }>(sql`
-    SELECT COALESCE(
-      (SELECT sending_identity_id FROM project_settings
-         WHERE tenant_id = ${args.tenantId} AND project_id = ${args.projectId}),
-      (SELECT identity_id FROM sending_identities
-         WHERE tenant_id = ${args.tenantId} AND provider = 'gmail_oauth'
-           AND auth_revoked_at IS NULL LIMIT 1)
-    ) AS identity_id
-  `)
-  const id = rows[0]?.identity_id
-  return id ? asSendingIdentityId(id) : null
 }
 
 export async function loadSendingIdentitySecretById(

@@ -150,9 +150,9 @@ PROJECT_ID="$(api POST /api/projects "$(jq -nc --arg n "$PROJECT_NAME" '{name:$n
 [[ -n "$PROJECT_ID" ]] || { echo "create-project failed" >&2; exit 1; }
 say "project_id=$PROJECT_ID"
 
-SETTINGS_RESP="$(api PUT "/api/projects/$PROJECT_ID/settings" "$(jq -nc --arg i "$IDENTITY_ID" \
-  '{sendingIdentityId:$i, leverConfig:{priorStrength:5, explorationShare:0}}')")"
-assert_eq "identity assigned" "$(echo "$SETTINGS_RESP" | jq -r '.sendingIdentityId // ""')" "$IDENTITY_ID"
+ASSIGN_RESP="$(api PUT "/api/projects/$PROJECT_ID/mailboxes" "$(jq -nc --arg i "$IDENTITY_ID" '{identityIds:[$i]}')")"
+assert_eq "identity assigned" "$(echo "$ASSIGN_RESP" | jq -r '.sendingIdentityIds[0] // ""')" "$IDENTITY_ID"
+api PUT "/api/projects/$PROJECT_ID/settings" '{"leverConfig":{"priorStrength":5, "explorationShare":0}}' > /dev/null
 
 # add_prospects skips unregistered slugs (unknown_strategy).
 api PUT "/api/projects/$PROJECT_ID/discovery-strategies" "$(jq -nc '{slug:"hot-src", approach:"e2e: hot source"}')" > /dev/null

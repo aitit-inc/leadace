@@ -80,10 +80,10 @@ export interface MailboxDailyStatus {
   steadyStatePerDay: number
 }
 
-// The send guard (getMailboxDailyQuota), the health read (getMailboxHealth), and
-// the per-identity list (listSendingIdentities) all derive from this one pure
-// function — they differ only in how they wrap it (no_mailbox vs identity
-// metadata), never in how they compute cap/remaining.
+// The send guard (pickProjectMailbox), the health reads (getMailboxHealth,
+// getProjectMailboxHealth) and the per-identity list (listSendingIdentities) all
+// derive from this one pure function — they differ only in how they wrap it,
+// never in how they compute cap/remaining.
 export function mailboxDailyStatus(
   state: MailboxWarmupState,
   used: number,
@@ -125,5 +125,38 @@ export function mailboxBounceWindow(counts: MailboxBounceCounts = NO_SENDS_IN_WI
     bounceWindowDays: BOUNCE_RATE_WINDOW_DAYS,
     ...counts,
     bounceRate: replyRate(counts.bounced, counts.sentInWindow),
+  }
+}
+
+export type MailboxPoolEntry<Id extends string = string> = { identityId: Id } & MailboxDailyStatus
+
+export type MailboxPoolPick<Id extends string = string> =
+  | { kind: 'ready'; identityId: Id; cap: number; used: number; remaining: number }
+  // resumesAt: the earliest a pause or hold lifts, known only while every
+  // mailbox waits on one. A lifted mailbox may still sit at its cap until UTC
+  // midnight — the status does not carry the cap it returns to.
+  | { kind: 'exhausted'; cap: number; used: number; remaining: 0; resumesAt: Date | null }
+
+function resumesAt(m: MailboxDailyStatus): Date | null {
+  if (m.pausedUntil && m.heldUntil) return m.pausedUntil > m.heldUntil ? m.pausedUntil : m.heldUntil
+  return m.pausedUntil ?? m.heldUntil
+}
+
+// The first mailbox with sends left today; the totals describe the whole pool.
+export function pickFromMailboxPool<Id extends string>(pool: MailboxPoolEntry<Id>[]): MailboxPoolPick<Id> {
+  const cap = pool.reduce((sum, m) => sum + m.cap, 0)
+  const used = pool.reduce((sum, m) => sum + m.used, 0)
+  const ready = pool.find((m) => m.remaining > 0)
+  if (ready) {
+    return { kind: 'ready', identityId: ready.identityId, cap, used, remaining: pool.reduce((sum, m) => sum + m.remaining, 0) }
+  }
+  const waits = pool.map(resumesAt)
+  const allWaiting = waits.length > 0 && waits.every((t): t is Date => t !== null)
+  return {
+    kind: 'exhausted',
+    cap,
+    used,
+    remaining: 0,
+    resumesAt: allWaiting ? new Date(Math.min(...waits.map((t) => t.getTime()))) : null,
   }
 }

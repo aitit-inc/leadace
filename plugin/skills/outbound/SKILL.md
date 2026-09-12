@@ -93,14 +93,15 @@ And for channel selection in step 2:
 
 **Mailbox pre-flight (send mode + email enabled).** If outbound mode is `send` and `email`
 is in `outboundChannels`, call `get_mailbox_health` (`projectId: "$0"`).
-It names the mailbox this project sends from (custom SMTP mailbox, else the connected Gmail). A
-no-mailbox answer means email sends will be rejected at send time (HTTP 412) — warn, point the
-user at https://app.leadace.ai, and let form / SNS prospects proceed. Courtesy check only; the
+It lists the mailboxes this project sends from in priority order (its listed mailboxes, else the
+connected Gmail); the server picks the first with sends left for each email. A no-mailbox answer
+means email sends will be rejected at send time (HTTP 412) — warn, point the user at
+https://app.leadace.ai, and let form / SNS prospects proceed. Courtesy check only; the
 412 is the authoritative guard and draft mode needs no mailbox.
 
 **Mailbox email cap (warmup).** The targets response carries `Mailbox email cap (warmup):
-N/cap sends remaining today` — a per-mailbox daily limit separate from the billing quota that
-protects the sending domain's reputation. Cap **email** sends this run at `N` (the backend
+N/cap sends remaining today across the project's mailboxes` — the sum of per-mailbox daily
+limits, separate from the billing quota, that protects each sending domain's reputation. Cap **email** sends this run at `N` (the backend
 rejects the rest with HTTP 403); reach further prospects by form / SNS and defer email-only
 ones to a later day. A `⚠️` cap message means it is already reached — skip email entirely this
 run. `get_mailbox_health` (`projectId: "$0"`) reports the full warmup
@@ -254,17 +255,17 @@ Having composed the body, call `send_email_and_record`:
   backend appends it)
 - `variantId`: from `pick_message_variant`; omit when no variants exist
 
-The server reads the project's `outboundMode` and which mailbox the project uses, then reports one of two outcomes. The email is sent server-side whichever mailbox the project uses — a connected Gmail or a custom SMTP mailbox — so **never branch on `outboundMode` or sending-identity type in your own logic:**
+The server reads the project's `outboundMode` and picks the mailbox (the first of the project's mailboxes with sends left today), then reports one of two outcomes. The email is sent server-side whichever mailbox is picked — a connected Gmail or a custom SMTP mailbox — so **never branch on `outboundMode` or sending-identity type in your own logic:**
 - **sent** — the email went out from the reported From address and the outreach was logged. Nothing more to do.
 - **drafted** — no send; stored as a `pending_review` draft for the user to review and send from https://app.leadace.ai/drafts. Drafts do not count against the outreach quota.
 
 Track which outcome each call reported for the step 8 report (sent vs. drafted counts).
 
-On a 502 `Send failed`, the outreach is still logged with `status: "failed"` and the prospect's re-eligibility is deferred by the project's no-response recycle window — do not retry manually. On a 412 `Gmail not connected` / `Gmail token revoked`, abort all email sending for this run and surface the message; the user fixes the mailbox in the web app (reconnect Gmail, or assign a custom SMTP mailbox). On a 422 `Recipient email address cannot receive mail`, nothing was sent and the server has retired the email channel for that prospect — never retry email, and use the fallback attempt on another available channel if there is one.
+On a 502 `Send failed`, the outreach is still logged with `status: "failed"` and the prospect's re-eligibility is deferred by the project's no-response recycle window — do not retry manually. On a 412 `Gmail not connected` / `Gmail token revoked`, abort all email sending for this run and surface the message; the user fixes the mailbox in the web app (reconnect Gmail, or list a custom SMTP mailbox in the project settings). On a 422 `Recipient email address cannot receive mail`, nothing was sent and the server has retired the email channel for that prospect — never retry email, and use the fallback attempt on another available channel if there is one.
 
 **Notes:**
 - The body must be the complete content including the signature
-- The `From:` address is the project's sending mailbox: a custom SMTP mailbox sends as its own address; the connected Gmail sends as its primary address, or as `senderEmailAlias` when that Gmail Send-As alias is set. An alias not yet verified in the user's Gmail account fails with a Gmail error — surface it in the report and tell the user to verify the alias at https://mail.google.com → Settings → Accounts → "Send mail as"
+- The `From:` address is the mailbox the server picked for that send (the project's mailboxes in priority order): a custom SMTP mailbox sends as its own address; the connected Gmail sends as its primary address, or as `senderEmailAlias` when that Gmail Send-As alias is set. An alias not yet verified in the user's Gmail account fails with a Gmail error — surface it in the report and tell the user to verify the alias at https://mail.google.com → Settings → Accounts → "Send mail as"
 
 ### 3b. Re-approach Branching (cycle.kind != 'first')
 

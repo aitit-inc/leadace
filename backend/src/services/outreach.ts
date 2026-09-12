@@ -6,7 +6,6 @@ import {
   projectProspects,
   prospects,
   responses,
-  sendingIdentities,
   channelEnum,
   skipReasonEnum,
   inquirySessions,
@@ -33,7 +32,6 @@ export { outreachLogIdParamSchema } from '../domain/ids'
 import {
   getRemainingOutreachQuota,
   outreachQuotaErrorIfExhausted,
-  getMailboxDailyQuota,
   mailboxQuotaErrorIfExhausted,
   recordMailboxRefusal,
   clearMailboxSendRefusal,
@@ -41,7 +39,6 @@ import {
 import {
   sendForIdentity,
   buildComplianceAttachments,
-  resolveSendingIdentityId,
   stampMailboxFirstSendIfNeeded,
 } from '../auth/google'
 import { ok, err, type ServiceResult } from './result'
@@ -53,6 +50,7 @@ import { isMailboxVerdictFresh } from '../domain/email-verification'
 import { DASHBOARD_PERIODS, periodToWindow } from '../domain/dashboard'
 import { requireProspect } from './prospects'
 import { allocateInquiryUrl } from './inquiry-token'
+import { firstProjectMailboxId, loadProjectMailboxes, pickProjectMailbox } from './mailbox'
 import {
   loadProjectReapproachSettings,
   loadProjectSendSettings,
@@ -484,11 +482,9 @@ export async function recordOutreach(
   if (sending) {
     // Backstop: record_outreach('sent') logs an already-completed send.
     if (input.channel === 'email') {
-      sendingIdentityId = await resolveSendingIdentityId(db, { tenantId, projectId })
-      const mailboxErr = mailboxQuotaErrorIfExhausted(
-        await getMailboxDailyQuota(db, tenantId, sendingIdentityId),
-      )
+      const mailboxErr = mailboxQuotaErrorIfExhausted(await pickProjectMailbox(db, tenantId, projectId))
       if (mailboxErr) return mailboxErr
+      sendingIdentityId = await firstProjectMailboxId(db, tenantId, projectId)
     }
     const contactable = await assertProspectContactable(db, tenantId, input.prospectId, input.channel)
     if (!contactable.ok) return contactable
@@ -797,10 +793,10 @@ export async function sendAndRecord(
   const quotaErr = outreachQuotaErrorIfExhausted(quota)
   if (quotaErr) return quotaErr
 
-  const sendingIdentityId = await resolveSendingIdentityId(db, { tenantId, projectId })
-  const mailboxQuota = await getMailboxDailyQuota(db, tenantId, sendingIdentityId)
-  const mailboxErr = mailboxQuotaErrorIfExhausted(mailboxQuota)
+  const mailbox = await pickProjectMailbox(db, tenantId, projectId)
+  const mailboxErr = mailboxQuotaErrorIfExhausted(mailbox)
   if (mailboxErr) return mailboxErr
+  const sendingIdentityId = mailbox.kind === 'ready' ? mailbox.identityId : null
 
   const country = await assertProspectCountryAllowed(db, tenantId, input.prospectId)
   if (!country.ok) return country
@@ -956,32 +952,19 @@ export async function listRecentOutreach(
   return ok({ ...listed.value, replyCollection })
 }
 
+// The pool's first mailbox that is not collecting names the visibility gap;
+// otherwise the first mailbox reports as collecting. Unlike the send path, a
+// revoked default Gmail must still resolve.
 async function loadReplyCollectionStatus(
   db: Db,
   tenantId: TenantId,
   projectId: ProjectId,
 ): Promise<ReplyCollectionStatus> {
-  // Unlike the send path, a revoked default Gmail must still resolve.
-  const identityId = sql<string>`COALESCE(
-    (SELECT sending_identity_id FROM project_settings
-       WHERE tenant_id = ${tenantId} AND project_id = ${projectId}),
-    (SELECT identity_id FROM sending_identities
-       WHERE tenant_id = ${tenantId} AND provider = 'gmail_oauth'
-       ORDER BY auth_revoked_at IS NULL DESC LIMIT 1)
-  )`
-  const [row] = await db
-    .select({
-      fromEmail: sendingIdentities.fromEmail,
-      provider: sendingIdentities.provider,
-      scope: sendingIdentities.scope,
-      authRevokedAt: sendingIdentities.authRevokedAt,
-      pollFailingSince: sendingIdentities.pollFailingSince,
-      lastPollError: sendingIdentities.lastPollError,
-      lastPolledAt: sendingIdentities.lastPolledAt,
-    })
-    .from(sendingIdentities)
-    .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.identityId, identityId)))
-  return deriveReplyCollectionStatus(row ?? null, new Date())
+  const now = new Date()
+  const statuses = (await loadProjectMailboxes(db, tenantId, projectId)).map((row) =>
+    deriveReplyCollectionStatus(row, now),
+  )
+  return statuses.find((s) => s.kind !== 'collecting') ?? statuses[0] ?? { kind: 'none' }
 }
 
 // Funnel-stage event predicates for the dashboard drill-down filter. These MUST
@@ -1309,14 +1292,10 @@ export async function sendDraft(
   const quotaErr = outreachQuotaErrorIfExhausted(quota)
   if (quotaErr) return quotaErr
 
-  const sendingIdentityId = await resolveSendingIdentityId(db, {
-    tenantId,
-    projectId: draft.projectId as ProjectId,
-  })
-  const mailboxErr = mailboxQuotaErrorIfExhausted(
-    await getMailboxDailyQuota(db, tenantId, sendingIdentityId),
-  )
+  const mailbox = await pickProjectMailbox(db, tenantId, draft.projectId as ProjectId)
+  const mailboxErr = mailboxQuotaErrorIfExhausted(mailbox)
   if (mailboxErr) return mailboxErr
+  const sendingIdentityId = mailbox.kind === 'ready' ? mailbox.identityId : null
 
   const [sendSettings, complianceResult, countryResult] = await Promise.all([
     loadProjectSendSettings(db, draft.projectId as ProjectId),

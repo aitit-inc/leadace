@@ -55,7 +55,7 @@ const preview = (outboundMode: 'send' | 'draft'): OutboundPreview => ({
   outboundMode,
   reachable: 12,
   quota: { plan: 'starter', kind: 'capped', used: 13, limit: 100, remaining: 87, bindingConstraint: 'monthly' },
-  mailbox: { email: 'me@example.com', remaining: 9 },
+  mailbox: { next: 'me@example.com', remaining: 9 },
   blocked: null,
 })
 

@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { and, asc, eq, sql } from 'drizzle-orm'
 import type { Db } from '../db/connection'
-import { sendingIdentities, projectSettings, type SendingIdentityProvider } from '../db/schema'
+import { sendingIdentities, projectSendingIdentities, type SendingIdentityProvider } from '../db/schema'
 import { generateSendingIdentityId } from '../auth/google'
 import { parseSendingIdentitySecret, smtpImapSecretPayloadSchema } from '../domain/sending-identity'
 import { verifySmtpCredentials } from './smtp-send'
@@ -221,16 +221,16 @@ export async function deleteSendingIdentity(
   tenantId: TenantId,
   identityId: SendingIdentityId,
 ): Promise<ServiceResult<{ deleted: true }>> {
-  // A project still pointing here would block the FK delete — surface a clean conflict.
+  // A project still listing it would block the FK delete — surface a clean conflict.
   const refs = await db
-    .select({ projectId: projectSettings.projectId })
-    .from(projectSettings)
-    .where(and(eq(projectSettings.tenantId, tenantId), eq(projectSettings.sendingIdentityId, identityId)))
+    .select({ projectId: projectSendingIdentities.projectId })
+    .from(projectSendingIdentities)
+    .where(and(eq(projectSendingIdentities.tenantId, tenantId), eq(projectSendingIdentities.identityId, identityId)))
   if (refs.length > 0) {
     return err(
       'CONFLICT',
       'Sending identity is in use',
-      `Used by ${refs.length} project(s). Change their sending identity first.`,
+      `Used by ${refs.length} project(s). Remove it from their sending mailboxes first.`,
     )
   }
 

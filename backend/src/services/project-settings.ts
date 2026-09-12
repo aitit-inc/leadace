@@ -3,7 +3,6 @@ import { and, eq, isNotNull } from 'drizzle-orm'
 import {
   projectSettings,
   projectProspects,
-  sendingIdentities,
   OUTBOUND_MODES,
   OUTBOUND_CHANNELS,
   INQUIRY_CTA_TYPES,
@@ -12,10 +11,10 @@ import {
   type InquiryCtaType,
 } from '../db/schema'
 import type { Db } from '../db/connection'
-import type { ProjectId, ProjectRef, TenantId } from '../domain/ids'
-import { sendingIdentityIdSchema } from '../domain/ids'
+import type { ProjectId, ProjectRef, SendingIdentityId, TenantId } from '../domain/ids'
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
+import { listProjectMailboxIds } from './mailbox'
 import { isHttpsUrl, HTTPS_ONLY_MSG } from '../domain/url'
 import { ALLOWED_SEND_COUNTRIES } from '../domain/country'
 import { composeFooterBlock, replyUnsubscribeFooterLine } from '../domain/inquiry-footer'
@@ -34,8 +33,6 @@ const BRAND_COLOR_REGEX = /^#[0-9A-Fa-f]{6}$/
 export const updateSettingsSchema = z
   .object({
     outboundMode: z.enum(OUTBOUND_MODES).optional(),
-    // null falls back to the tenant's connected Gmail.
-    sendingIdentityId: sendingIdentityIdSchema.nullable().optional(),
     senderEmailAlias: z.email().nullable().optional(),
     senderDisplayName: z.string().min(1).max(200).nullable().optional(),
     senderCompanyName: z.string().min(1).max(200).nullable().optional(),
@@ -80,7 +77,6 @@ export type UpdateSettingsPatch = z.infer<typeof updateSettingsSchema>
 // the agent proposes in chat.
 const UI_ONLY_SETTINGS = [
   'outboundMode',
-  'sendingIdentityId',
   'senderEmailAlias',
   'senderDisplayName',
   'senderCompanyName',
@@ -108,7 +104,6 @@ function assertSettingsRow<T>(row: T | undefined, projectId: ProjectId): T {
 const settingsCols = {
   projectId: projectSettings.projectId,
   outboundMode: projectSettings.outboundMode,
-  sendingIdentityId: projectSettings.sendingIdentityId,
   senderEmailAlias: projectSettings.senderEmailAlias,
   senderDisplayName: projectSettings.senderDisplayName,
   senderCompanyName: projectSettings.senderCompanyName,
@@ -139,7 +134,8 @@ const settingsCols = {
 export type ProjectSettingsRow = {
   projectId: ProjectId
   outboundMode: typeof OUTBOUND_MODES[number]
-  sendingIdentityId: string | null
+  // Not a column — the project's mailboxes in priority order (services/mailbox.ts).
+  sendingIdentityIds: SendingIdentityId[]
   senderEmailAlias: string | null
   senderDisplayName: string | null
   senderCompanyName: string | null
@@ -337,6 +333,7 @@ export async function getProjectSettings(
   return ok({
     ...r,
     projectId: r.projectId as ProjectId,
+    sendingIdentityIds: await listProjectMailboxIds(db, tenantId, projectId),
     footerDefault: footerDefault.value,
     publicScoreboardEligible: projectId === showcaseProjectId,
     outboundChannels: r.outboundChannels as OutboundChannel[],
@@ -421,23 +418,10 @@ export async function updateProjectSettings(
     if (violation) return err('INVALID_INPUT', 'Invalid lever config', violation)
   }
 
-  // FK is the atomic guarantee; this pre-check turns the common case into a clean 400.
-  if (patch.sendingIdentityId != null) {
-    const [identity] = await db
-      .select({ id: sendingIdentities.identityId })
-      .from(sendingIdentities)
-      .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.identityId, patch.sendingIdentityId)))
-      .limit(1)
-    if (!identity) {
-      return err('INVALID_INPUT', 'Unknown sending identity', `No sending identity ${patch.sendingIdentityId} for this tenant.`)
-    }
-  }
-
   const now = new Date()
 
   const updateSet = {
     ...(patch.outboundMode !== undefined ? { outboundMode: patch.outboundMode } : {}),
-    ...(patch.sendingIdentityId !== undefined ? { sendingIdentityId: patch.sendingIdentityId } : {}),
     ...(patch.senderEmailAlias !== undefined ? { senderEmailAlias: patch.senderEmailAlias } : {}),
     ...(patch.senderDisplayName !== undefined ? { senderDisplayName: patch.senderDisplayName } : {}),
     ...(patch.senderCompanyName !== undefined ? { senderCompanyName: patch.senderCompanyName } : {}),
@@ -497,6 +481,7 @@ export async function updateProjectSettings(
   return ok({
     ...r,
     projectId: r.projectId as ProjectId,
+    sendingIdentityIds: await listProjectMailboxIds(db, tenantId, projectId),
     footerDefault: footerDefault.value,
     publicScoreboardEligible: projectId === showcaseProjectId,
     outboundChannels: r.outboundChannels as OutboundChannel[],

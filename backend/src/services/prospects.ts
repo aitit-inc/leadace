@@ -29,14 +29,13 @@ import {
   getRemainingOutreachQuota,
   formatOutreachQuotaError,
   isOutreachQuotaExhausted,
-  getMailboxDailyQuota,
   isMailboxQuotaExhausted,
   formatMailboxQuotaError,
   type MailboxDailyQuota,
 } from './plan-limits'
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
-import { resolveSendingIdentityId } from '../auth/google'
+import { pickProjectMailbox } from './mailbox'
 import { getOutboundMode, loadLeverConfig, loadProjectOutboundAllowlist } from './project-settings'
 import { getActiveStrategySlugs } from './discovery-strategies'
 import {
@@ -339,10 +338,7 @@ export async function listReachable(
 
   const [quota, mailboxQuota, outboundMode, allowlist, leverConfig, stateRows, activeStrategySlugs] = await Promise.all([
     getRemainingOutreachQuota(db, tenantId, edition),
-    // Resolve runs alongside the independent queries; only the mailbox cap depends on it.
-    resolveSendingIdentityId(db, { tenantId, projectId }).then((id) =>
-      getMailboxDailyQuota(db, tenantId, id),
-    ),
+    pickProjectMailbox(db, tenantId, projectId),
     getOutboundMode(db, projectId),
     loadProjectOutboundAllowlist(db, projectId),
     loadLeverConfig(db, projectId),

@@ -161,8 +161,8 @@ PROJECT_ID="$(api POST /api/projects "$(jq -nc --arg n "$PROJECT_NAME" '{name:$n
 [[ -n "$PROJECT_ID" ]] || { echo "create-project failed" >&2; exit 1; }
 say "project_id=$PROJECT_ID"
 
-ASSIGN_RESP="$(api PUT "/api/projects/$PROJECT_ID/settings" "$(jq -nc --arg i "$IDENTITY_ID" '{sendingIdentityId:$i}')")"
-assert_eq "project assigned to dummy identity" "$(echo "$ASSIGN_RESP" | jq -r '.sendingIdentityId // ""')" "$IDENTITY_ID"
+ASSIGN_RESP="$(api PUT "/api/projects/$PROJECT_ID/mailboxes" "$(jq -nc --arg i "$IDENTITY_ID" '{identityIds:[$i]}')")"
+assert_eq "project assigned to dummy identity" "$(echo "$ASSIGN_RESP" | jq -r '.sendingIdentityIds[0] // ""')" "$IDENTITY_ID"
 
 step "Test A: employee_band bootstrap, INSERT-only on dedup match, explicit PATCH"
 # P1 org registers with band 11-50.

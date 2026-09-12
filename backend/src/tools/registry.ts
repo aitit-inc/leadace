@@ -73,7 +73,8 @@ export type OutboundPreview = {
   outboundMode: 'send' | 'draft'
   reachable: number
   quota: OutreachQuota | undefined
-  mailbox: { email: string; remaining: number } | null
+  // next = the address the first send uses; null when every listed mailbox is spent.
+  mailbox: { next: string | null; remaining: number } | null
   blocked: string | null
 }
 
@@ -91,12 +92,12 @@ async function outboundPreview(ctx: ToolCtx, projectRef: string): Promise<Outbou
     outboundBlocked: boolean
     message?: string
   }
-  const h = health as { kind: 'no_mailbox' } | { kind: 'active'; email: string; remaining: number } | null
+  const h = health as { kind: 'no_mailbox' } | { kind: 'active'; next: string | null; remaining: number } | null
   return {
     outboundMode: r.outboundMode,
     reachable: r.total,
     quota: r.quota,
-    mailbox: h?.kind === 'active' ? { email: h.email, remaining: h.remaining } : null,
+    mailbox: h?.kind === 'active' ? { next: h.next, remaining: h.remaining } : null,
     blocked: r.outboundBlocked ? (r.message ?? 'Nothing can go out right now.') : null,
   }
 }
@@ -150,8 +151,8 @@ export function startJobConfirmSummary(
   if (mode !== 'draft' && preview) {
     const { mailbox, quota } = preview
     if (mailbox) {
-      facts.push({ label: 'From', value: mailbox.email })
-      facts.push({ label: 'Mailbox today', value: `${plural(mailbox.remaining, 'email')} left` })
+      facts.push({ label: 'From', value: mailbox.next ?? 'no mailbox with sends left today' })
+      facts.push({ label: 'Mailboxes today', value: `${plural(mailbox.remaining, 'email')} left` })
     }
     if (quota) {
       facts.push({
@@ -499,7 +500,8 @@ export function buildToolRegistry(): ToolDef[] {
         // Wire shape: Date fields arrive as ISO strings through res.json().
         mailboxQuota?:
           | { kind: 'no_mailbox' }
-          | { kind: 'capped'; cap: number; used: number; remaining: number; pausedUntil: string | null; heldUntil: string | null }
+          | { kind: 'ready'; cap: number; used: number; remaining: number }
+          | { kind: 'exhausted'; cap: number; used: number; remaining: 0; resumesAt: string | null }
         outboundMode: 'send' | 'draft'
         message?: string
       }
@@ -519,13 +521,11 @@ export function buildToolRegistry(): ToolDef[] {
       })()
       const mbq = result.mailboxQuota
       const mailboxLine =
-        mbq && mbq.kind === 'capped'
-          ? mbq.pausedUntil
-            ? `\nMailbox email sending paused until ${mbq.pausedUntil}`
-            : mbq.heldUntil
-              ? `\nMailbox email sending held until ${mbq.heldUntil}: the mail provider refused the mailbox`
-              : `\nMailbox email cap (warmup): ${mbq.remaining}/${mbq.cap} sends remaining today`
-          : ''
+        mbq?.kind === 'exhausted' && mbq.resumesAt
+          ? `\nMailbox email sending paused or held; the earliest lifts at ${mbq.resumesAt}`
+          : mbq && mbq.kind !== 'no_mailbox'
+            ? `\nMailbox email cap (warmup): ${mbq.remaining}/${mbq.cap} sends remaining today across the project's mailboxes`
+            : ''
       const msgLine = result.message ? `\n⚠️ ${result.message}` : ''
       const modeLine = `\nOutbound mode: ${result.outboundMode}`
 
@@ -539,9 +539,55 @@ export function buildToolRegistry(): ToolDef[] {
     { readOnly: true },
   )
 
+  type MailboxHealthWire = {
+    identityId: string
+    authRevokedAt: string | null
+    fromEmail: string
+    warmupStartedAt: string | null
+    dailyCapOverride: number | null
+    pausedUntil: string | null
+    heldUntil: string | null
+    sendRefusal: { since: string; lastAt: string; detail: string; sentThatDay: number } | null
+    rampWeek: number
+    rampWeeks: number
+    steadyStatePerDay: number
+    cap: number
+    used: number
+    remaining: number
+    bounceWindowDays: number
+    sentInWindow: number
+    bounced: number
+    bounceRate: number
+  }
+  const mailboxHealthLines = (h: MailboxHealthWire): string[] => {
+    const warmupLine = h.dailyCapOverride !== null
+      ? `fixed daily cap ${h.dailyCapOverride}/day (warmup ramp bypassed)`
+      : h.rampWeek >= h.rampWeeks
+        ? `warmup complete (steady ${h.steadyStatePerDay}/day)`
+        : `warming up — week ${h.rampWeek} of ${h.rampWeeks} toward steady ${h.steadyStatePerDay}/day${h.warmupStartedAt ? '' : ' (no email sent yet)'}`
+    const lines = [
+      `Mailbox: ${h.fromEmail}`,
+      `Cap: ${warmupLine}`,
+      `Today (email only): ${h.used}/${h.cap} sent, ${h.remaining} remaining — resets at UTC midnight`,
+      h.sentInWindow === 0
+        ? `Bounces (last ${h.bounceWindowDays}d): no threadable email sends yet`
+        : `Bounces (last ${h.bounceWindowDays}d): ${h.bounced}/${h.sentInWindow} = ${h.bounceRate}% (threaded-only lower bound). If elevated, review list/source quality and consider pausing this mailbox at app.leadace.ai.`,
+    ]
+    if (h.authRevokedAt) lines.push(`⚠️ Gmail access revoked (${h.authRevokedAt}): this mailbox cannot send until the user reconnects it at app.leadace.ai; sends skip to the next mailbox.`)
+    if (h.pausedUntil) lines.push(`⚠️ Sending PAUSED until ${h.pausedUntil}`)
+    if (h.sendRefusal) {
+      const r = h.sendRefusal
+      const hold = h.heldUntil
+        ? `Sending is held until ${h.heldUntil}; the next send after that checks whether it is lifted.`
+        : 'The next send checks whether it is lifted.'
+      lines.push(`⚠️ The mail provider refused this mailbox (first ${r.since}, after ${r.sentThatDay} sends that UTC day; latest ${r.lastAt}): ${r.detail}. ${hold} The user resolves it with the provider (e.g. unblocks the account), then marks it resolved at app.leadace.ai; a successful send also clears it.`)
+    }
+    return lines
+  }
+
   defineTool(
     'get_mailbox_health',
-    'Warmup and daily-cap state of the mailbox this project sends from (assigned custom mailbox, else connected Gmail). This per-mailbox email cap is separate from the plan/billing outreach quota — email sends only, resets at UTC midnight. Returns the mailbox email, warmup ramp (week X of N) or fixed cap override, today\'s cap/used/remaining, any pause, an unresolved provider refusal of the mailbox, and a trailing 30-day bounceRate (threaded-only lower bound). Returns a no-mailbox state when the project has no assigned mailbox and no linked Gmail.',
+    "Warmup and daily-cap state of the mailboxes this project sends from, in priority order (its listed mailboxes, else the connected Gmail): the cap / used / remaining today over the mailboxes able to send and which one the next send uses, then per mailbox its address, warmup ramp (week X of N) or fixed cap override, today's cap / used / remaining, any pause, a revoked Gmail connection, an unresolved provider refusal, and a trailing 30-day bounce rate (threaded-only lower bound). This per-mailbox email cap is separate from the plan/billing outreach quota — email sends only, resets at UTC midnight. Answers with a no-mailbox state when the project lists no mailbox and has no linked Gmail.",
     {
       projectId: z.string().min(1).describe('Project name or ID'),
     },
@@ -554,50 +600,16 @@ export function buildToolRegistry(): ToolDef[] {
       // Wire shape: Date fields arrive as ISO strings through res.json().
       const h = data as
         | { kind: 'no_mailbox' }
-        | {
-            kind: 'active'
-            email: string
-            warmupStartedAt: string | null
-            dailyCapOverride: number | null
-            pausedUntil: string | null
-            heldUntil: string | null
-            sendRefusal: { since: string; lastAt: string; detail: string; sentThatDay: number } | null
-            rampWeek: number
-            rampWeeks: number
-            steadyStatePerDay: number
-            cap: number
-            used: number
-            remaining: number
-            bounceWindowDays: number
-            sentInWindow: number
-            bounced: number
-            bounceRate: number
-          }
+        | { kind: 'active'; cap: number; used: number; remaining: number; next: string | null; mailboxes: MailboxHealthWire[] }
       if (h.kind === 'no_mailbox') {
-        return { content: [{ type: 'text' as const, text: 'No sending mailbox: connect a Gmail account or assign a custom SMTP mailbox at https://app.leadace.ai to enable email sends and warmup.' }] }
+        return { content: [{ type: 'text' as const, text: 'No sending mailbox: connect a Gmail account or list a custom SMTP mailbox in the project settings at https://app.leadace.ai to enable email sends and warmup.' }] }
       }
-      const warmupLine = h.dailyCapOverride !== null
-        ? `fixed daily cap ${h.dailyCapOverride}/day (warmup ramp bypassed)`
-        : h.rampWeek >= h.rampWeeks
-          ? `warmup complete (steady ${h.steadyStatePerDay}/day)`
-          : `warming up — week ${h.rampWeek} of ${h.rampWeeks} toward steady ${h.steadyStatePerDay}/day${h.warmupStartedAt ? '' : ' (no email sent yet)'}`
-      const lines = [
-        `Mailbox: ${h.email}`,
-        `Cap: ${warmupLine}`,
-        `Today (email only): ${h.used}/${h.cap} sent, ${h.remaining} remaining — resets at UTC midnight`,
-        h.sentInWindow === 0
-          ? `Bounces (last ${h.bounceWindowDays}d): no threadable email sends yet`
-          : `Bounces (last ${h.bounceWindowDays}d): ${h.bounced}/${h.sentInWindow} = ${h.bounceRate}% (threaded-only lower bound). If elevated, review list/source quality and consider pausing this mailbox at app.leadace.ai.`,
+      const header = [
+        `Project mailboxes (priority order): ${h.mailboxes.length} — today ${h.used}/${h.cap} sent, ${h.remaining} remaining in total`,
+        h.next ? `Next send uses: ${h.next}` : 'Next send: none — every mailbox is at its cap, paused, held or revoked',
       ]
-      if (h.pausedUntil) lines.push(`⚠️ Sending PAUSED until ${h.pausedUntil}`)
-      if (h.sendRefusal) {
-        const r = h.sendRefusal
-        const hold = h.heldUntil
-          ? `Sending is held until ${h.heldUntil}; the next send after that checks whether it is lifted.`
-          : 'The next send checks whether it is lifted.'
-        lines.push(`⚠️ The mail provider refused this mailbox (first ${r.since}, after ${r.sentThatDay} sends that UTC day; latest ${r.lastAt}): ${r.detail}. ${hold} The user resolves it with the provider (e.g. unblocks the account), then marks it resolved at app.leadace.ai; a successful send also clears it.`)
-      }
-      return { content: [{ type: 'text' as const, text: lines.join('\n') }] }
+      const blocks = h.mailboxes.map((m, i) => [`#${i + 1}`, ...mailboxHealthLines(m)].join('\n'))
+      return { content: [{ type: 'text' as const, text: [...header, ...blocks].join('\n\n') }] }
     },
     { readOnly: true },
   )
@@ -682,6 +694,52 @@ export function buildToolRegistry(): ToolDef[] {
         }
         facts.push({ label: 'Applies to', value: 'Every project sending from this mailbox' })
         return { title: 'Change mailbox sending', facts, confirmLabel: 'Apply' }
+      },
+    },
+  )
+
+  defineTool(
+    'set_project_mailboxes',
+    'Set which mailboxes a project sends email from, in priority order: each send uses the first listed mailbox with sends left today, moving down the list as caps fill. An empty list means the connected Gmail. Answers with the resulting order.',
+    {
+      projectId: z.string().min(1).describe('Project name or ID'),
+      mailboxes: z.array(z.email()).max(50).describe('Mailbox addresses in priority order, as get_mailbox_health names them; empty for the connected Gmail.'),
+    },
+    async ({ projectId, mailboxes }, ctx) => {
+      const identityIds: string[] = []
+      for (const email of mailboxes) {
+        const found = await findMailbox(ctx, email)
+        if (!found) {
+          return { content: [{ type: 'text' as const, text: `Error: no sending mailbox ${email} in this workspace` }], isError: true }
+        }
+        identityIds.push(found.identityId)
+      }
+      const { ok, data } = await ctx.callApi('PUT', `/projects/${encodeURIComponent(projectId)}/mailboxes`, { identityIds })
+      if (!ok) {
+        const e = data as { error: string; detail?: string }
+        return { content: [{ type: 'text' as const, text: `Error: ${e.detail ? `${e.error}: ${e.detail}` : e.error}` }], isError: true }
+      }
+      const text = mailboxes.length === 0
+        ? 'Saved: the project sends from the connected Gmail.'
+        : `Saved, in priority order: ${mailboxes.join(' → ')}`
+      return { content: [{ type: 'text' as const, text }] }
+    },
+    {
+      surface: 'chat',
+      confirm: async ({ projectId, mailboxes }, ctx) => {
+        const health = (await readApi(ctx, `/projects/${encodeURIComponent(projectId)}/mailbox-health`)) as
+          | { kind: 'no_mailbox' }
+          | { kind: 'active'; mailboxes: Array<{ fromEmail: string }> }
+          | null
+        const current = health?.kind === 'active' ? health.mailboxes.map((m) => m.fromEmail).join(' → ') : 'none'
+        return {
+          title: 'Change project mailboxes',
+          facts: [
+            { label: 'Project', value: projectId },
+            { label: 'Mailboxes', value: `${current} → ${mailboxes.length === 0 ? 'connected Gmail' : mailboxes.join(' → ')}` },
+          ],
+          confirmLabel: 'Apply',
+        }
       },
     },
   )
@@ -1962,7 +2020,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'update_project_settings',
-    'Update the project settings the agent owns. Any omitted field keeps its current value; null clears nullable fields. Outbound mode, sender identity, footer override, the landing CTA / media / branding and publicScoreboardEnabled are Web UI only (Project / Inquiry settings) — propose them to the user instead.',
+    'Update the project settings the agent owns. Any omitted field keeps its current value; null clears nullable fields. Outbound mode, sender alias / display name, footer override, the landing CTA / media / branding and publicScoreboardEnabled are Web UI only (Project / Inquiry settings) — propose them to the user instead. Which mailboxes a project sends from is set_project_mailboxes (chat only).',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       unsubscribeEnabled: z.boolean().optional()

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Regression for the per-mailbox warmup send cap (G3 slice 1):
-#   domain/warmup.ts mailboxDailyCap + services/plan-limits.ts getMailboxDailyQuota
+#   domain/warmup.ts mailboxDailyCap + services/mailbox.ts pickProjectMailbox
 #   + outreach.ts enforcement/stamp + prospects.ts listReachable surfacing.
 #
 # The pure ramp math is unit-tested (domain/warmup.test.ts). This drives the
@@ -17,10 +17,10 @@
 #   5. Channel isolation: a FORM send is NOT blocked by the (email-only) cap.
 #
 # Also covers the project-scoped read endpoint GET /projects/:id/mailbox-health
-# (services/mailbox.ts getProjectMailboxHealth → plan-limits.ts getMailboxHealth):
-# it resolves the project's sending identity (here the gmail fallback), mirrors the
-# surfaced cap, exposes ramp progress (rampWeek/rampWeeks/steadyStatePerDay), and
-# reports a pause (cap 0 + pausedUntil) — see steps 1b/1c.
+# (services/mailbox.ts getProjectMailboxHealth): its first listed mailbox (here
+# the gmail fallback) mirrors the surfaced cap, exposes ramp progress
+# (rampWeek/rampWeeks/steadyStatePerDay), and reports a pause (cap 0 +
+# pausedUntil) — see steps 1b/1c.
 #
 # And the per-identity operator write path PUT /me/sending-identities/:id/warmup
 # (updateMailboxWarmup) — step 6: override / partial patch / pause / resume / no
@@ -94,7 +94,8 @@ reach()    { api GET "/api/projects/$PROJECT_ID/prospects/reachable?limit=200"; 
 mq()       { reach | jq -r ".mailboxQuota.$1"; }
 # Project-scoped health: the test project has no assigned sending identity, so it
 # resolves the gmail fallback — the same row the warmup columns are set on below.
-mh()       { api GET "/api/projects/$PROJECT_ID/mailbox-health" | jq -r ".$1"; }
+# Pool totals live at the top level; per-mailbox fields on the first (only) listed mailbox.
+mh()       { api GET "/api/projects/$PROJECT_ID/mailbox-health" | jq -r ".mailboxes[0].$1"; }
 started_null() { psql_local "SELECT (warmup_started_at IS NULL) FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth';"; }
 
 put_warmup()        { api PUT "/api/me/sending-identities/$GMAIL_IDENTITY_ID/warmup" "$1"; }
@@ -208,11 +209,11 @@ say "baseline email used today=$BASELINE"
 
 step "1. ramp wiring: 15d-old mailbox (week 2) surfaces the week-2 ramp cap (17)"
 set_warmup "NOW() - INTERVAL '15 days'" NULL NULL
-assert_eq "mailboxQuota.kind=capped" "$(mq kind)" "capped"
+assert_eq "mailboxQuota.kind=ready" "$(mq kind)" "ready"
 assert_eq "ramp cap = week-2 step (17)" "$(mq cap)" "17"
 
 step "1b. /projects/:id/mailbox-health mirrors the cap and surfaces ramp progress"
-assert_eq "health kind=active" "$(mh kind)" "active"
+assert_eq "health kind=active" "$(api GET "/api/projects/$PROJECT_ID/mailbox-health" | jq -r .kind)" "active"
 assert_eq "health cap = week-2 step (17)" "$(mh cap)" "17"
 assert_eq "health rampWeek=2" "$(mh rampWeek)" "2"
 assert_eq "health rampWeeks=4" "$(mh rampWeeks)" "4"
@@ -220,7 +221,7 @@ assert_eq "health steadyStatePerDay=25" "$(mh steadyStatePerDay)" "25"
 
 step "1c. paused mailbox: health caps at 0 and reports the pause"
 set_warmup "NOW() - INTERVAL '15 days'" NULL "NOW() + INTERVAL '1 day'"
-assert_eq "health still active" "$(mh kind)" "active"
+assert_eq "health still active" "$(api GET "/api/projects/$PROJECT_ID/mailbox-health" | jq -r .kind)" "active"
 assert_eq "health cap=0 while paused" "$(mh cap)" "0"
 assert_eq "health pausedUntil present" "$([[ "$(mh pausedUntil)" == null || -z "$(mh pausedUntil)" ]] && echo absent || echo present)" "present"
 

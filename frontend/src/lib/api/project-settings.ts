@@ -28,3 +28,18 @@ export function updateProjectSettings<T = ProjectSettings>(
     token,
   });
 }
+
+export function replaceProjectMailboxes(
+  projectId: string,
+  identityIds: string[],
+  fetchFn: RequestFetch = fetch,
+  token?: string,
+): Promise<{ sendingIdentityIds: string[] }> {
+  return request<{ sendingIdentityIds: string[] }>(fetchFn, {
+    method: 'PUT',
+    path: `/projects/${projectId}/mailboxes`,
+    body: { identityIds },
+    auth: 'required',
+    token,
+  });
+}

@@ -23,7 +23,8 @@ export type FollowUpSequence = {
 export type ProjectSettings = {
   projectId: string;
   outboundMode: OutboundMode;
-  sendingIdentityId: string | null;
+  // The project's mailboxes in priority order; empty = the connected Gmail.
+  sendingIdentityIds: string[];
   senderEmailAlias: string | null;
   senderDisplayName: string | null;
   unsubscribeEnabled: boolean;

@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest'
 import { parseSendingIdentitySecret, senderAddressFor } from './sending-identity'
 
 const validSmtp = JSON.stringify({
-  smtpHost: 'smtp.zoho.com',
+  smtpHost: 'smtp.gmail.com',
   smtpPort: 465,
-  imapHost: 'imap.zoho.com',
+  imapHost: 'imap.gmail.com',
   imapPort: 993,
   username: 'cold@example.com',
   appPassword: 'app-pw-123',
@@ -21,9 +21,9 @@ describe('parseSendingIdentitySecret', () => {
   it('parses a valid smtp_imap JSON payload into the typed variant', () => {
     expect(parseSendingIdentitySecret('smtp_imap', validSmtp)).toEqual({
       provider: 'smtp_imap',
-      smtpHost: 'smtp.zoho.com',
+      smtpHost: 'smtp.gmail.com',
       smtpPort: 465,
-      imapHost: 'imap.zoho.com',
+      imapHost: 'imap.gmail.com',
       imapPort: 993,
       username: 'cold@example.com',
       appPassword: 'app-pw-123',
@@ -58,7 +58,7 @@ describe('senderAddressFor', () => {
   // The crux: an SMTP mailbox can only send as its own address — a stale Gmail
   // alias must never leak into the SMTP envelope/From (would break SPF/DKIM).
   it('smtp_imap always uses the mailbox address, ignoring any alias', () => {
-    expect(senderAddressFor('smtp_imap', 'cold@zoho-domain.com', 'alias@brand.com')).toBe('cold@zoho-domain.com')
-    expect(senderAddressFor('smtp_imap', 'cold@zoho-domain.com', null)).toBe('cold@zoho-domain.com')
+    expect(senderAddressFor('smtp_imap', 'cold@cold-domain.com', 'alias@brand.com')).toBe('cold@cold-domain.com')
+    expect(senderAddressFor('smtp_imap', 'cold@cold-domain.com', null)).toBe('cold@cold-domain.com')
   })
 })

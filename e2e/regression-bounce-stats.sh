@@ -162,8 +162,8 @@ PROJECT_ID="$(api POST /api/projects "$(jq -nc --arg n "$PROJECT_NAME" '{name:$n
 [[ -n "$PROJECT_ID" ]] || { echo "create-project failed" >&2; exit 1; }
 say "project_id=$PROJECT_ID"
 
-ASSIGN_RESP="$(api PUT "/api/projects/$PROJECT_ID/settings" "$(jq -nc --arg i "$IDENTITY_ID" '{sendingIdentityId:$i}')")"
-assert_eq "project assigned to dummy identity" "$(echo "$ASSIGN_RESP" | jq -r '.sendingIdentityId // ""')" "$IDENTITY_ID"
+ASSIGN_RESP="$(api PUT "/api/projects/$PROJECT_ID/mailboxes" "$(jq -nc --arg i "$IDENTITY_ID" '{identityIds:[$i]}')")"
+assert_eq "project assigned to dummy identity" "$(echo "$ASSIGN_RESP" | jq -r '.sendingIdentityIds[0] // ""')" "$IDENTITY_ID"
 
 STRAT_RESP="$(api PUT "/api/projects/$PROJECT_ID/discovery-strategies" "$(jq -nc --arg s "$SLUG" '{slug:$s, approach:"e2e: bounce probe strategy"}')")"
 assert_eq "strategy $SLUG registered active" "$(echo "$STRAT_RESP" | jq -r '.archivedAt // "active"')" "active"
@@ -205,7 +205,7 @@ assert_eq "bounces=1 (unthreaded bounce excluded)" "$(echo "$BUCKET" | jq -r '.b
 assert_eq "bounceRate=50 (threadable denominator)" "$(echo "$BUCKET" | jq -r '.bounceRate')" "50"
 
 step "Test 2: mailbox-health per-identity trailing-30d bounce fields"
-MH="$(api GET "/api/projects/$PROJECT_ID/mailbox-health")"
+MH="$(api GET "/api/projects/$PROJECT_ID/mailbox-health" | jq -c '.mailboxes[0]')"
 assert_eq "bounceWindowDays=30" "$(echo "$MH" | jq -r '.bounceWindowDays')" "30"
 assert_eq "sentInWindow=2 (threadable only)" "$(echo "$MH" | jq -r '.sentInWindow')" "2"
 assert_eq "bounced=1" "$(echo "$MH" | jq -r '.bounced')" "1"

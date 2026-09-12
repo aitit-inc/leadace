@@ -468,8 +468,6 @@ export const projectSettings = pgTable('project_settings', {
   outboundMode: outboundModeEnum('outbound_mode').notNull().default('draft'),
   senderEmailAlias: text('sender_email_alias'),
   senderDisplayName: text('sender_display_name'),
-  // Per-project sending identity; NULL falls back to the tenant's connected Gmail.
-  sendingIdentityId: text('sending_identity_id'),
   // Recipient-facing company / brand name (e.g. "Acme Inc."). Paired with
   // senderDisplayName: the inquiry landing renders "From {senderDisplayName}
   // at {senderCompanyName}". NULL omits the "at ..." suffix. Distinct from
@@ -554,13 +552,6 @@ export const projectSettings = pgTable('project_settings', {
     foreignColumns: [projects.id, projects.tenantId],
     name: 'fk_project_settings_project_tenant',
   }).onDelete('cascade'),
-  // Same-tenant FK; NO ACTION blocks deleting an identity a project still points
-  // at (deleteSendingIdentity pre-checks for a friendly conflict).
-  foreignKey({
-    columns: [table.tenantId, table.sendingIdentityId],
-    foreignColumns: [sendingIdentities.tenantId, sendingIdentities.identityId],
-    name: 'fk_project_settings_sending_identity',
-  }),
   // signup mode is meaningless without a destination. The application-level
   // pre-check in updateProjectSettings races under concurrent partial PUTs
   // (one PUT flips type → 'signup', another nulls the URL — both pass their
@@ -579,6 +570,34 @@ export const projectSettings = pgTable('project_settings', {
     'chk_target_language',
     sql`${table.targetLanguage} IN ('en', 'ja')`,
   ),
+])
+
+
+// The mailboxes a project sends email from, in priority order: the send path
+// takes the first one with sends left today (services/mailbox.ts). No rows =
+// the tenant's connected Gmail.
+export const projectSendingIdentities = pgTable('project_sending_identities', {
+  projectId: text('project_id').notNull(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  identityId: text('identity_id').notNull(),
+  position: integer('position').notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.projectId, table.identityId] }),
+  unique('uq_project_sending_identities_position').on(table.projectId, table.position),
+  foreignKey({
+    columns: [table.projectId, table.tenantId],
+    foreignColumns: [projects.id, projects.tenantId],
+    name: 'fk_project_sending_identities_project_tenant',
+  }).onDelete('cascade'),
+  // Same-tenant FK; NO ACTION blocks deleting a mailbox a project still lists
+  // (deleteSendingIdentity pre-checks for a friendly conflict).
+  foreignKey({
+    columns: [table.tenantId, table.identityId],
+    foreignColumns: [sendingIdentities.tenantId, sendingIdentities.identityId],
+    name: 'fk_project_sending_identities_identity',
+  }),
 ])
 
 export const organizations = pgTable('organizations', {

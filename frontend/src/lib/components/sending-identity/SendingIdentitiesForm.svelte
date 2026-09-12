@@ -113,8 +113,8 @@
 </script>
 
 <p class="text-sm text-text">
-  Send cold outreach from a dedicated SMTP mailbox (e.g. a low-cost Zoho mailbox on a separate
-  domain) instead of your primary Gmail — this keeps your main domain's sending reputation clean.
+  Send cold outreach from a dedicated SMTP mailbox (e.g. a Google Workspace or other mailbox on a
+  separate domain) instead of your primary Gmail — this keeps your main domain's sending reputation clean.
   LeadAce sends from this mailbox server-side; assign one to a project in its Project settings. The
   mailbox is verified when you add it.
 </p>
@@ -177,7 +177,7 @@
         <input
           aria-label="SMTP host"
           type="text"
-          placeholder="smtp.zoho.com"
+          placeholder="smtp.gmail.com"
           bind:value={draft.smtpHost}
           disabled={saving}
           class="w-full rounded border border-border bg-page px-2 py-1.5 font-mono text-sm text-text disabled:opacity-50"
@@ -201,7 +201,7 @@
         <input
           aria-label="IMAP host"
           type="text"
-          placeholder="imap.zoho.com"
+          placeholder="imap.gmail.com"
           bind:value={draft.imapHost}
           disabled={saving}
           class="w-full rounded border border-border bg-page px-2 py-1.5 font-mono text-sm text-text disabled:opacity-50"
