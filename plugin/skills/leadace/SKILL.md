@@ -62,7 +62,7 @@ Run these in parallel:
 - **Plugin version**: `Read` `${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json` and take `version`.
 - **Server version + min plugin**: `get_server_version` -> `{ serverVersion, minPluginVersion }`.
 - **Project list**: `list_projects` (may be empty).
-- **Gmail connection** (account-level — a project may send from a custom SMTP mailbox instead): `get_gmail_status` -> `{ connected, email? }`.
+- **Gmail connection** (the sign-in Google account — a project may list other mailboxes instead): `get_gmail_status` -> `{ connected, email? }`.
 - **Current date/time**: `Bash` `date '+%Y-%m-%d %H:%M %Z'`.
 - **Runtime detect** (best-effort): `Bash` `printf '%s|%s|%s\n' "${CLAUDE_PLUGIN_ROOT:-?}" "$(command -v codex 2>/dev/null || echo none)" "$([ -d "$HOME/.claude" ] && echo y || echo n)"`. Classify as `claude_code` (most common — `~/.claude` exists), `codex` (codex command found), or `other`.
 
@@ -307,7 +307,7 @@ Print:
 1. **Header**: `Setup complete - <PROJECT_NAME>`
 2. **What was created**: project, `business` doc, `sales_strategy` doc, outbound channels / language in project settings, initial `inquiry_chat_brief`, message-angle variants.
 3. **Finish in the Web UI** — the settings the chain never writes, each with the value found on the homepage (or `(not found)`) for copy-paste:
-   - Workspace identity (legal name / postal address / sender country): https://app.leadace.ai/workspace-settings — `/outbound` and `/daily-cycle` refuse until all three are set; so does a missing sending mailbox (Gmail not connected; fix: https://app.leadace.ai).
+   - Workspace identity (legal name / postal address / sender country): https://app.leadace.ai/workspace-settings — `/outbound` and `/daily-cycle` refuse until all three are set; so does a missing sending mailbox (no sending mailbox: connect the sign-in Google account, or list another mailbox in Project settings at https://app.leadace.ai).
    - Sender display name / company name, and outbound mode (`draft` until switched): https://app.leadace.ai/project-settings
    - Landing CTA (scheduling or signup URL), video / PDF / logo: https://app.leadace.ai/inquiry-settings
    Once those are in, sending can start — nothing else is pending on the Claude Code side.

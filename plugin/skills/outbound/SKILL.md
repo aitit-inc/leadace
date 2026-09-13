@@ -94,7 +94,7 @@ And for channel selection in step 2:
 **Mailbox pre-flight (send mode + email enabled).** If outbound mode is `send` and `email`
 is in `outboundChannels`, call `get_mailbox_health` (`projectId: "$0"`).
 It lists the mailboxes this project sends from in priority order (its listed mailboxes, else the
-connected Gmail); the server picks the first with sends left for each email. A no-mailbox answer
+sign-in Google account); the server picks the first with sends left for each email. A no-mailbox answer
 means email sends will be rejected at send time (HTTP 412) — warn, point the user at
 https://app.leadace.ai, and let form / SNS prospects proceed. Courtesy check only; the
 412 is the authoritative guard and draft mode needs no mailbox.
@@ -255,17 +255,17 @@ Having composed the body, call `send_email_and_record`:
   backend appends it)
 - `variantId`: from `pick_message_variant`; omit when no variants exist
 
-The server reads the project's `outboundMode` and picks the mailbox (the first of the project's mailboxes with sends left today), then reports one of two outcomes. The email is sent server-side whichever mailbox is picked — a connected Gmail or a custom SMTP mailbox — so **never branch on `outboundMode` or sending-identity type in your own logic:**
+The server reads the project's `outboundMode` and picks the mailbox (the first of the project's mailboxes with sends left today), then reports one of two outcomes. The email is sent server-side whichever mailbox is picked — a Google account, a Send-As alias, or an SMTP mailbox — so **never branch on `outboundMode` or sending-identity type in your own logic:**
 - **sent** — the email went out from the reported From address and the outreach was logged. Nothing more to do.
 - **drafted** — no send; stored as a `pending_review` draft for the user to review and send from https://app.leadace.ai/drafts. Drafts do not count against the outreach quota.
 
 Track which outcome each call reported for the step 8 report (sent vs. drafted counts).
 
-On a 502 `Send failed`, the outreach is still logged with `status: "failed"` and the prospect's re-eligibility is deferred by the project's no-response recycle window — do not retry manually. On a 412 `Gmail not connected` / `Gmail token revoked`, abort all email sending for this run and surface the message; the user fixes the mailbox in the web app (reconnect Gmail, or list a custom SMTP mailbox in the project settings). On a 422 `Recipient email address cannot receive mail`, nothing was sent and the server has retired the email channel for that prospect — never retry email, and use the fallback attempt on another available channel if there is one.
+On a 502 `Send failed`, the outreach is still logged with `status: "failed"` and the prospect's re-eligibility is deferred by the project's no-response recycle window — do not retry manually. On a 412 `Gmail not connected` / `Gmail token revoked`, abort all email sending for this run and surface the message; the user fixes the mailbox in the web app (reconnect the Google account in Account settings, or list another mailbox in Project settings). On a 422 `Recipient email address cannot receive mail`, nothing was sent and the server has retired the email channel for that prospect — never retry email, and use the fallback attempt on another available channel if there is one.
 
 **Notes:**
 - The body must be the complete content including the signature
-- The `From:` address is the mailbox the server picked for that send (the project's mailboxes in priority order, each sending as its own address): the connected Gmail, a Gmail Send-As alias registered as a mailbox under it, or a custom SMTP mailbox. An alias not yet verified in the user's Gmail account fails with a Gmail error — surface it in the report and tell the user to verify the alias at https://mail.google.com → Settings → Accounts → "Send mail as"
+- The `From:` address is the mailbox the server picked for that send (the project's mailboxes in priority order, each sending as its own address): a Google account, a Send-As alias registered as a mailbox under it, or an SMTP mailbox. An alias not yet verified in the user's Gmail account fails with a Gmail error — surface it in the report and tell the user to verify the alias at https://mail.google.com → Settings → Accounts → "Send mail as"
 
 ### 3b. Re-approach Branching (cycle.kind != 'first')
 

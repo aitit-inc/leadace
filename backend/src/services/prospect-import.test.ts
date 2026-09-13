@@ -11,6 +11,7 @@ const FULL_HEADER = [
   'email',
   'priority',
   'doNotContact',
+  'emailNoSolicitation',
   'snsAccounts.x',
 ]
 const baseRow = (over: Partial<Record<string, string>> = {}): string[] => {
@@ -24,6 +25,7 @@ const baseRow = (over: Partial<Record<string, string>> = {}): string[] => {
     email: 'foo@example.com',
     priority: '2',
     doNotContact: '',
+    emailNoSolicitation: '',
     'snsAccounts.x': '',
     ...over,
   }
@@ -59,6 +61,20 @@ describe('csvRowToInput', () => {
     const r = csvRowToInput(FULL_HEADER, baseRow({ doNotContact: 'maybe' }))
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.error).toMatch(/doNotContact/)
+  })
+
+  it('parses emailNoSolicitation with the same vocabulary and ties it to email', () => {
+    const flagged = csvRowToInput(FULL_HEADER, baseRow({ emailNoSolicitation: 'yes' }))
+    expect(flagged.ok && flagged.value.emailNoSolicitation).toBe(true)
+    const noEmail = csvRowToInput(FULL_HEADER, baseRow({ email: '', 'snsAccounts.x': 'foohandle', emailNoSolicitation: '1' }))
+    expect(noEmail.ok).toBe(false)
+    if (!noEmail.ok) expect(noEmail.error).toMatch(/requires email/)
+  })
+
+  it('ties formNoSolicitation to contactFormUrl', () => {
+    const r = csvRowToInput([...FULL_HEADER, 'formNoSolicitation'], [...baseRow(), 'true'])
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toMatch(/requires contactFormUrl/)
   })
 
   it('rejects a non-integer priority', () => {

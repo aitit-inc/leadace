@@ -13,6 +13,8 @@ function identity(over: Partial<SendingIdentity>): SendingIdentity {
     warmupStartedAt: null,
     dailyCapOverride: null,
     sendRefusal: null,
+    revokedSince: null,
+    projects: [],
     grantedAt: '2026-01-01T00:00:00Z',
     smtp: null,
     pausedUntil: null,
@@ -39,21 +41,21 @@ describe('mailboxState', () => {
       sendRefusal: { since: '', lastAt: '', detail: '', sentThatDay: 0 },
       pausedUntil: '2026-09-20T00:00:00Z',
     });
-    expect(mailboxState(i, true, NOW).label).toBe('Reconnect needed');
-    expect(mailboxState(i, false, NOW).label).toBe('Refused by provider');
-    expect(mailboxState(identity({ pausedUntil: '2026-09-20T00:00:00Z' }), false, NOW).tone).toBe(
-      'warning',
+    expect(mailboxState({ ...i, revokedSince: '2026-09-01T00:00:00Z' }, NOW).label).toBe(
+      'Reconnect needed',
     );
+    expect(mailboxState(i, NOW).label).toBe('Refused by provider');
+    expect(mailboxState(identity({ pausedUntil: '2026-09-20T00:00:00Z' }), NOW).tone).toBe('warning');
   });
 
   it('ignores a pause already in the past', () => {
-    expect(mailboxState(identity({ pausedUntil: '2026-09-01T00:00:00Z' }), false, NOW).label).toBe(
+    expect(mailboxState(identity({ pausedUntil: '2026-09-01T00:00:00Z' }), NOW).label).toBe(
       'Active',
     );
   });
 
   it('flags a zero cap override', () => {
-    expect(mailboxState(identity({ dailyCapOverride: 0 }), false, NOW).label).toBe('Cap set to 0');
+    expect(mailboxState(identity({ dailyCapOverride: 0 }), NOW).label).toBe('Cap set to 0');
   });
 });
 

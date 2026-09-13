@@ -2,8 +2,8 @@ import type { SendingIdentity } from '$lib/types/sending-identity';
 
 export type MailboxState = { tone: 'ok' | 'warning' | 'danger'; label: string };
 
-export function mailboxState(i: SendingIdentity, revoked: boolean, now = Date.now()): MailboxState {
-  if (revoked) return { tone: 'danger', label: 'Reconnect needed' };
+export function mailboxState(i: SendingIdentity, now = Date.now()): MailboxState {
+  if (i.revokedSince !== null) return { tone: 'danger', label: 'Reconnect needed' };
   if (i.sendRefusal) return { tone: 'danger', label: 'Refused by provider' };
   if (i.pausedUntil && new Date(i.pausedUntil).getTime() > now) {
     return {

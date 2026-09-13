@@ -156,7 +156,9 @@ const ALLOWED_CSV_HEADERS = new Set<string>([
   'department',
   'industry',
   'email',
+  'emailNoSolicitation',
   'contactFormUrl',
+  'formNoSolicitation',
   'formType',
   'snsAccounts.x',
   'snsAccounts.linkedin',
@@ -192,8 +194,9 @@ export function validateCsvHeader(
   return { ok: true }
 }
 
-const DNC_TRUTHY = new Set(['1', 'true', 'yes', 'on'])
-const DNC_FALSY = new Set(['0', 'false', 'no', 'off'])
+const CSV_BOOLEAN_HEADERS = new Set(['doNotContact', 'emailNoSolicitation', 'formNoSolicitation'])
+const CSV_TRUTHY = new Set(['1', 'true', 'yes', 'on'])
+const CSV_FALSY = new Set(['0', 'false', 'no', 'off'])
 
 const MAX_IMPORT_ROWS = 1000
 
@@ -212,11 +215,11 @@ export function csvRowToInput(header: string[], row: string[]): { ok: true; valu
       const n = Number.parseInt(val, 10)
       if (!Number.isFinite(n)) return { ok: false, error: 'priority: not an integer' }
       obj.priority = n
-    } else if (key === 'doNotContact') {
+    } else if (CSV_BOOLEAN_HEADERS.has(key)) {
       const lower = val.toLowerCase()
-      if (DNC_TRUTHY.has(lower)) obj.doNotContact = true
-      else if (DNC_FALSY.has(lower)) obj.doNotContact = false
-      else return { ok: false, error: `doNotContact: not a boolean (got "${val}")` }
+      if (CSV_TRUTHY.has(lower)) obj[key] = true
+      else if (CSV_FALSY.has(lower)) obj[key] = false
+      else return { ok: false, error: `${key}: not a boolean (got "${val}")` }
     } else {
       obj[key] = val
     }
@@ -308,15 +311,16 @@ function prospectUpdateSet(input: ProspectInput, orgId: number, now: Date) {
           ...(input.emailSourceUrl === undefined
             ? { emailSourceUrl: sql`CASE WHEN ${prospects.email} IS DISTINCT FROM ${input.email} THEN NULL ELSE ${prospects.emailSourceUrl} END` }
             : {}),
-          // The notice belongs to the address: a new address starts clean.
-          emailNoSolicitation: sql`CASE WHEN ${prospects.email} IS DISTINCT FROM ${input.email} THEN false ELSE ${prospects.emailNoSolicitation} END`,
+          // A recorded notice ratchets like doNotContact, but only while the
+          // address it describes is unchanged.
+          emailNoSolicitation: sql`CASE WHEN ${prospects.email} IS DISTINCT FROM ${input.email} THEN ${input.emailNoSolicitation ?? false} ELSE (${prospects.emailNoSolicitation} OR ${input.emailNoSolicitation ?? false}) END`,
         }
       : {}),
     ...(input.emailSourceUrl !== undefined ? { emailSourceUrl: input.emailSourceUrl } : {}),
     ...(input.contactFormUrl !== undefined
       ? {
           contactFormUrl: input.contactFormUrl,
-          formNoSolicitation: sql`CASE WHEN ${prospects.contactFormUrl} IS DISTINCT FROM ${input.contactFormUrl} THEN false ELSE ${prospects.formNoSolicitation} END`,
+          formNoSolicitation: sql`CASE WHEN ${prospects.contactFormUrl} IS DISTINCT FROM ${input.contactFormUrl} THEN ${input.formNoSolicitation ?? false} ELSE (${prospects.formNoSolicitation} OR ${input.formNoSolicitation ?? false}) END`,
         }
       : {}),
     ...(input.formType !== undefined ? { formType: input.formType } : {}),

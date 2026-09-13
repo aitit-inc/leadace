@@ -43,9 +43,11 @@
   .prose-chat :global(p) {
     margin: 0 0 0.5rem;
   }
+  /* padding, not margin: an outside marker sits left of the content edge, where the scrolling column clips it */
   .prose-chat :global(ul),
   .prose-chat :global(ol) {
-    margin: 0 0 0.5rem 1.1rem;
+    margin: 0 0 0.5rem;
+    padding-left: 2rem;
     list-style: disc;
   }
   .prose-chat :global(ol) {

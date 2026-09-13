@@ -20,6 +20,8 @@
   bind:this={root}
   onkeydown={(e) => {
     if (e.key === 'Escape' && open) {
+      // Cancelling the key is what keeps a native <dialog> around it open.
+      e.preventDefault();
       e.stopPropagation();
       open = false;
     }

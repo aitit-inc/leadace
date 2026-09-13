@@ -1,6 +1,7 @@
 <script lang="ts">
   import { registerSmtpIdentity } from '$lib/api/sending-identities';
   import Hint from '$lib/components/Hint.svelte';
+  import Modal from '$lib/components/Modal.svelte';
   import type { RegisterSmtpIdentityInput } from '$lib/types/sending-identity';
 
   let {
@@ -67,18 +68,8 @@
   const label = 'flex items-center gap-1.5 text-xs text-text-secondary';
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div
-  class="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
-  onkeydown={(e) => e.key === 'Escape' && !saving && onclose()}
->
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div class="fixed inset-0" onclick={() => !saving && onclose()}></div>
-  <form
-    onsubmit={submit}
-    class="relative z-10 max-h-full w-full max-w-md overflow-y-auto rounded-md border border-border bg-page p-6"
-    aria-labelledby="add-smtp-title"
-  >
+<Modal labelledBy="add-smtp-title" closable={!saving} {onclose}>
+  <form onsubmit={submit}>
     <h3 id="add-smtp-title" class="text-sm font-semibold text-text">Add an SMTP mailbox</h3>
     <p class="mt-1 text-xs text-text-secondary">
       For a provider other than Google. Both connections are checked when you add it. For a Google
@@ -203,4 +194,4 @@
       </button>
     </div>
   </form>
-</div>
+</Modal>

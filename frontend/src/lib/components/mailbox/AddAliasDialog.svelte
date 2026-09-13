@@ -1,6 +1,7 @@
 <script lang="ts">
   import { registerGmailAlias } from '$lib/api/sending-identities';
   import Hint from '$lib/components/Hint.svelte';
+  import Modal from '$lib/components/Modal.svelte';
   import type { SendingIdentity } from '$lib/types/sending-identity';
 
   let {
@@ -44,18 +45,8 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div
-  class="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
-  onkeydown={(e) => e.key === 'Escape' && !saving && onclose()}
->
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div class="fixed inset-0" onclick={() => !saving && onclose()}></div>
-  <form
-    onsubmit={submit}
-    class="relative z-10 w-full max-w-md rounded-md border border-border bg-page p-6"
-    aria-labelledby="add-alias-title"
-  >
+<Modal labelledBy="add-alias-title" closable={!saving} {onclose}>
+  <form onsubmit={submit}>
     <h3 id="add-alias-title" class="text-sm font-semibold text-text">Add a Send-As alias</h3>
     <p class="mt-1 text-xs text-text-secondary">
       An address your Google account already sends as. It becomes a mailbox of its own, with its own
@@ -127,4 +118,4 @@
       </button>
     </div>
   </form>
-</div>
+</Modal>

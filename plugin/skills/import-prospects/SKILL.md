@@ -45,7 +45,9 @@ A skill that imports existing prospect / contact lists (CSV, Excel, SQLite, plai
 | `department` | no | |
 | `industry` | no | Exact value from the `tpl_industries` vocabulary (master document). Rows with any other value are rejected row-level (`errorDetails`). |
 | `email` | no\* | |
+| `emailNoSolicitation` | no | Boolean (same vocabulary as `doNotContact`). The page carrying `email` shows a no-solicitation notice (営業お断り): kept as a suppression record, never written to. Requires `email`. |
 | `contactFormUrl` | no\* | |
+| `formNoSolicitation` | no | Boolean (same vocabulary as `doNotContact`). The form or its page refuses sales inquiries: kept as a suppression record, never submitted. Requires `contactFormUrl`. |
 | `formType` | no | One of `google_forms`, `native_html`, `wordpress_cf7`, `iframe_embed`, `with_captcha` |
 | `snsAccounts.x` | no\* | |
 | `snsAccounts.linkedin` | no\* | |

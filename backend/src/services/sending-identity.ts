@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { and, asc, eq, or, sql } from 'drizzle-orm'
 import type { Db } from '../db/connection'
-import { sendingIdentities, projectSendingIdentities, type SendingIdentityProvider } from '../db/schema'
+import { projects, sendingIdentities, projectSendingIdentities, type SendingIdentityProvider } from '../db/schema'
 import {
   GoogleAuthError,
   exchangeGoogleAuthorizationCode,
@@ -96,6 +96,10 @@ export type SendingIdentitySummary = {
   warmupStartedAt: Date | null
   dailyCapOverride: number | null
   sendRefusal: MailboxSendRefusal | null
+  // Google refused the grant; an alias reports its parent's.
+  revokedSince: Date | null
+  // Projects listing this mailbox, plus for the sign-in account every project that lists none.
+  projects: string[]
   grantedAt: Date
   smtp: SmtpConnectionView | null
 } & MailboxDailyStatus &
@@ -111,6 +115,7 @@ const summaryColumns = {
   pausedUntil: sendingIdentities.pausedUntil,
   dailyCapOverride: sendingIdentities.dailyCapOverride,
   sendRefusal: sendingIdentities.sendRefusal,
+  authRevokedAt: sendingIdentities.authRevokedAt,
   grantedAt: sendingIdentities.grantedAt,
 } as const
 
@@ -124,6 +129,7 @@ type SummaryRow = {
   pausedUntil: Date | null
   dailyCapOverride: number | null
   sendRefusal: MailboxSendRefusal | null
+  authRevokedAt: Date | null
   grantedAt: Date
 }
 
@@ -132,6 +138,8 @@ function toSummary(
   smtp: SmtpConnectionView | null,
   status: MailboxDailyStatus,
   bounce: MailboxBounceWindow,
+  revokedSince: Date | null,
+  projectNames: string[],
 ): SendingIdentitySummary {
   return {
     identityId: asSendingIdentityId(row.identityId),
@@ -143,11 +151,43 @@ function toSummary(
     warmupStartedAt: row.warmupStartedAt,
     dailyCapOverride: row.dailyCapOverride,
     sendRefusal: row.sendRefusal,
+    revokedSince,
+    projects: projectNames,
     grantedAt: row.grantedAt,
     smtp,
     ...status,
     ...bounce,
   }
+}
+
+// A project listing no mailbox sends from the sign-in account, as
+// loadProjectMailboxes falls back to it — so it counts as that mailbox's.
+async function projectNamesByIdentity(db: Db, tenantId: TenantId): Promise<Map<string, string[]>> {
+  const [rows, [signIn]] = await Promise.all([
+    db
+      .select({ name: projects.name, identityId: projectSendingIdentities.identityId })
+      .from(projects)
+      .leftJoin(
+        projectSendingIdentities,
+        and(eq(projectSendingIdentities.projectId, projects.id), eq(projectSendingIdentities.tenantId, tenantId)),
+      )
+      .where(eq(projects.tenantId, tenantId))
+      .orderBy(asc(projects.name)),
+    db
+      .select({ identityId: sendingIdentities.identityId })
+      .from(sendingIdentities)
+      .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.signInAccount, true)))
+      .limit(1),
+  ])
+  const byIdentity = new Map<string, string[]>()
+  for (const row of rows) {
+    const identityId = row.identityId ?? signIn?.identityId
+    if (identityId === undefined) continue
+    const names = byIdentity.get(identityId) ?? []
+    names.push(row.name)
+    byIdentity.set(identityId, names)
+  }
+  return byIdentity
 }
 
 function smtpView(provider: SendingIdentityProvider, decryptedSecret: string | null): SmtpConnectionView | null {
@@ -180,13 +220,23 @@ export async function listSendingIdentities(
     .from(sendingIdentities)
     .where(eq(sendingIdentities.tenantId, tenantId))
     .orderBy(asc(sendingIdentities.grantedAt))
-  const [usedByIdentity, bounceByIdentity] = await Promise.all([
+  const [usedByIdentity, bounceByIdentity, projectsByIdentity] = await Promise.all([
     countMailboxEmailSendsTodayByIdentity(db, tenantId, now),
     countMailboxBounceWindowByIdentity(db, tenantId, now),
+    projectNamesByIdentity(db, tenantId),
   ])
+  const byId = new Map(rows.map((r) => [r.identityId, r]))
   return rows.map(({ secret, ...row }) => {
     const status = mailboxDailyStatus(row, usedByIdentity.get(row.identityId) ?? 0, DEFAULT_WARMUP, now)
-    return toSummary(row, smtpView(row.provider, secret), status, mailboxBounceWindow(bounceByIdentity.get(row.identityId)))
+    const credential = row.parentIdentityId === null ? row : (byId.get(row.parentIdentityId) ?? row)
+    return toSummary(
+      row,
+      smtpView(row.provider, secret),
+      status,
+      mailboxBounceWindow(bounceByIdentity.get(row.identityId)),
+      credential.authRevokedAt,
+      projectsByIdentity.get(row.identityId) ?? [],
+    )
   })
 }
 
@@ -292,6 +342,8 @@ export async function registerSmtpIdentity(
       },
       status,
       mailboxBounceWindow(),
+      null,
+      [],
     ),
   )
 }
@@ -313,6 +365,7 @@ export async function registerGmailAlias(
       provider: sendingIdentities.provider,
       parentIdentityId: sendingIdentities.parentIdentityId,
       fromEmail: sendingIdentities.fromEmail,
+      authRevokedAt: sendingIdentities.authRevokedAt,
     })
     .from(sendingIdentities)
     .where(eq(sendingIdentities.tenantId, tenantId))
@@ -357,7 +410,9 @@ export async function registerGmailAlias(
     .from(sendingIdentities)
     .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.identityId, identityId)))
   if (!created) return err('INTERNAL_ERROR', 'Failed to load created sending identity')
-  return ok(toSummary(created, null, mailboxDailyStatus(created, 0, DEFAULT_WARMUP, new Date()), mailboxBounceWindow()))
+  return ok(
+    toSummary(created, null, mailboxDailyStatus(created, 0, DEFAULT_WARMUP, new Date()), mailboxBounceWindow(), parent.authRevokedAt, []),
+  )
 }
 
 export function googleMailboxAuthorizationUrl(
@@ -448,12 +503,22 @@ export async function registerGoogleMailbox(
     .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.identityId, saved.identityId)))
   if (!row) return err('INTERNAL_ERROR', 'Failed to load connected Google mailbox')
   const now = new Date()
-  const [usedByIdentity, bounceByIdentity] = await Promise.all([
+  const [usedByIdentity, bounceByIdentity, projectsByIdentity] = await Promise.all([
     countMailboxEmailSendsTodayByIdentity(db, tenantId, now),
     countMailboxBounceWindowByIdentity(db, tenantId, now),
+    projectNamesByIdentity(db, tenantId),
   ])
   const status = mailboxDailyStatus(row, usedByIdentity.get(row.identityId) ?? 0, DEFAULT_WARMUP, now)
-  return ok(toSummary(row, null, status, mailboxBounceWindow(bounceByIdentity.get(row.identityId))))
+  return ok(
+    toSummary(
+      row,
+      null,
+      status,
+      mailboxBounceWindow(bounceByIdentity.get(row.identityId)),
+      row.authRevokedAt,
+      projectsByIdentity.get(row.identityId) ?? [],
+    ),
+  )
 }
 
 export async function deleteSendingIdentity(

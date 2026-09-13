@@ -161,6 +161,7 @@ assert_eq "PUT mailboxes with a repeated identity → 400" "$(api_status PUT "/a
 assert_eq "PUT mailboxes [identity] → 200" "$(api_status PUT "/api/projects/$PROJECT_ID/mailboxes" "$(jq -nc --arg id "$IDENTITY_ID" '{identityIds:[$id]}')")" "200"
 assert_eq "GET settings echoes sendingIdentityIds" "$(api GET "/api/projects/$PROJECT_ID/settings" | jq -r '.sendingIdentityIds | join(",")')" "$IDENTITY_ID"
 assert_eq "mailbox-health lists it first" "$(api GET "/api/projects/$PROJECT_ID/mailbox-health" | jq -r '.mailboxes[0].fromEmail')" "$SMTP_EMAIL"
+assert_eq "list names the project on the mailbox; SMTP never reports revokedSince" "$(list_for "$SMTP_EMAIL" | jq -r '"\(.projects | join(",")) \(.revokedSince)"')" "$PROJECT_NAME null"
 assert_eq "delete blocked while a project lists it → 409" "$(api_status DELETE "/api/me/sending-identities/$IDENTITY_ID")" "409"
 assert_eq "PUT mailboxes [] → 200" "$(api_status PUT "/api/projects/$PROJECT_ID/mailboxes" '{"identityIds":[]}')" "200"
 assert_eq "GET settings sendingIdentityIds now empty" "$(api GET "/api/projects/$PROJECT_ID/settings" | jq -r '.sendingIdentityIds | length')" "0"
@@ -171,6 +172,7 @@ step "6. the sign-in Gmail is not deletable; unknown id → 404"
 GMAIL_ID="$(psql_local "SELECT identity_id FROM sending_identities WHERE tenant_id='$TENANT_ID' AND sign_in_account LIMIT 1;")"
 if [[ -n "$GMAIL_ID" ]]; then
   assert_eq "list flags the sign-in Gmail" "$(api GET /api/me/sending-identities | jq -r --arg id "$GMAIL_ID" '.identities[] | select(.identityId==$id) | .signInAccount')" "true"
+  assert_eq "a project listing no mailbox counts as the sign-in Gmail's" "$(api GET /api/me/sending-identities | jq -r --arg id "$GMAIL_ID" --arg n "$PROJECT_NAME" '.identities[] | select(.identityId==$id) | .projects | any(. == $n)')" "true"
   assert_eq "delete sign-in gmail via registry → 404" "$(api_status DELETE "/api/me/sending-identities/$GMAIL_ID")" "404"
   assert_eq "gmail row still present after the attempt" "$(psql_local "SELECT EXISTS(SELECT 1 FROM sending_identities WHERE tenant_id='$TENANT_ID' AND identity_id='$GMAIL_ID');")" "t"
 else
@@ -194,6 +196,7 @@ if [[ -n "$GMAIL_ID" ]]; then
   assert_eq "list shows the connected Gmail as kind gmail" "$(api GET /api/me/sending-identities | jq -r --arg id "$GMAIL_ID" '.identities[] | select(.identityId==$id) | .kind')" "gmail"
   assert_eq "PUT mailboxes [alias] → 200" "$(api_status PUT "/api/projects/$PROJECT_ID/mailboxes" "$(jq -nc --arg id "$ALIAS_ID" '{identityIds:[$id]}')")" "200"
   assert_eq "mailbox-health names the alias with its kind" "$(api GET "/api/projects/$PROJECT_ID/mailbox-health" | jq -r '.mailboxes[0] | "\(.fromEmail) \(.kind)"')" "$ALIAS_EMAIL gmail_alias"
+  assert_eq "list names the project on the alias, no longer on the Gmail" "$(api GET /api/me/sending-identities | jq -r --arg a "$ALIAS_ID" --arg g "$GMAIL_ID" --arg n "$PROJECT_NAME" '[(.identities[] | select(.identityId==$a)), (.identities[] | select(.identityId==$g))] | map(.projects | any(. == $n)) | join(" ")')" "true false"
   assert_eq "delete blocked while a project lists the alias → 409" "$(api_status DELETE "/api/me/sending-identities/$ALIAS_ID")" "409"
   assert_eq "PUT mailboxes [] → 200" "$(api_status PUT "/api/projects/$PROJECT_ID/mailboxes" '{"identityIds":[]}')" "200"
   assert_eq "delete alias → 200" "$(api_status DELETE "/api/me/sending-identities/$ALIAS_ID")" "200"
@@ -209,6 +212,9 @@ assert_eq "list shows it as kind gmail, not the sign-in account" "$(echo "$GLIST
 GALIAS="$(api POST /api/me/sending-identities/gmail-aliases "$(jq -nc --arg e "$GOOGLE_ALIAS_EMAIL" --arg p "$GOOGLE_ID" '{fromEmail:$e, parentIdentityId:$p}')")"
 GALIAS_ID="$(echo "$GALIAS" | jq -r '.identityId // ""')"
 assert_eq "alias parentIdentityId = the connected Google account" "$(echo "$GALIAS" | jq -r '.parentIdentityId')" "$GOOGLE_ID"
+assert_eq "fresh account and alias report no revokedSince" "$(api GET /api/me/sending-identities | jq -r --arg g "$GOOGLE_ID" --arg a "$GALIAS_ID" '[(.identities[] | select(.identityId==$g)), (.identities[] | select(.identityId==$a))] | map(.revokedSince == null) | join(" ")')" "true true"
+psql_local "UPDATE sending_identities SET auth_revoked_at = now() WHERE tenant_id='$TENANT_ID' AND identity_id='$GOOGLE_ID';" >/dev/null
+assert_eq "a revoked account reports revokedSince, and its alias reports the parent's" "$(api GET /api/me/sending-identities | jq -r --arg g "$GOOGLE_ID" --arg a "$GALIAS_ID" '[(.identities[] | select(.identityId==$g)), (.identities[] | select(.identityId==$a))] | map(.revokedSince != null) | join(" ")')" "true true"
 assert_eq "PUT mailboxes [google alias] → 200" "$(api_status PUT "/api/projects/$PROJECT_ID/mailboxes" "$(jq -nc --arg id "$GALIAS_ID" '{identityIds:[$id]}')")" "200"
 assert_eq "delete the account blocked while a project lists its alias → 409" "$(api_status DELETE "/api/me/sending-identities/$GOOGLE_ID")" "409"
 assert_eq "PUT mailboxes [] → 200" "$(api_status PUT "/api/projects/$PROJECT_ID/mailboxes" '{"identityIds":[]}')" "200"

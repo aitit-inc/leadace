@@ -3,6 +3,7 @@
   import { page } from '$app/state';
   import { createProject } from '$lib/api/projects';
   import { setActiveProject } from '$lib/active-project';
+  import Modal from '$lib/components/Modal.svelte';
   import type { Project } from '$lib/types/projects';
 
   let {
@@ -43,18 +44,9 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div
-  class="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
-  onkeydown={(e) => e.key === 'Escape' && onclose()}
->
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div class="fixed inset-0" onclick={onclose}></div>
-  <form
-    onsubmit={handleSubmit}
-    class="relative z-10 w-full max-w-sm rounded-md bg-page border border-border p-6"
-  >
-    <h3 class="text-sm font-semibold text-text mb-3">Create project</h3>
+<Modal labelledBy="create-project-title" size="sm" closable={!saving} {onclose}>
+  <form onsubmit={handleSubmit}>
+    <h3 id="create-project-title" class="text-sm font-semibold text-text mb-3">Create project</h3>
     <label for="project-name" class="block text-xs font-medium text-text-secondary mb-1">
       Project name
     </label>
@@ -87,4 +79,4 @@
       </button>
     </div>
   </form>
-</div>
+</Modal>

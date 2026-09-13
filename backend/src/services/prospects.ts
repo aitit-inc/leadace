@@ -176,7 +176,9 @@ export const updateProspectBodySchema = z.object({
     .refine((v) => v == null || isKnownIndustry(v), 'not in the tpl_industries vocabulary'),
   websiteUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
   email: z.email().nullable().optional(),
+  emailNoSolicitation: z.boolean().optional(),
   contactFormUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).nullable().optional(),
+  formNoSolicitation: z.boolean().optional(),
   formType: z.enum(formTypeEnum.enumValues).nullable().optional(),
   snsAccounts: snsAccountsSchema.nullable().optional(),
   platformUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).nullable().optional(),
@@ -1188,6 +1190,12 @@ export async function updateProspect(
       'At least one contact channel (email, contactFormUrl, snsAccounts, or platformUrl) is required',
     )
   }
+  if (patch.emailNoSolicitation && !finalEmail) {
+    return err('UNPROCESSABLE', 'emailNoSolicitation describes the stored email address, so it requires email')
+  }
+  if (patch.formNoSolicitation && !finalForm) {
+    return err('UNPROCESSABLE', 'formNoSolicitation describes the stored contact form, so it requires contactFormUrl')
+  }
 
   // Reset the deliverability verdict only on an actual email change (the existing
   // row is already loaded), so re-submitting the same address keeps any prior
@@ -1204,8 +1212,10 @@ export async function updateProspect(
     ...(patch.websiteUrl !== undefined ? { websiteUrl: patch.websiteUrl } : {}),
     ...(patch.email !== undefined ? { email: patch.email } : {}),
     ...(emailChanged ? { emailDeliverability: 'unknown' as const, mailboxVerifiedAt: null, emailNoSolicitation: false } : {}),
+    ...(patch.emailNoSolicitation !== undefined ? { emailNoSolicitation: patch.emailNoSolicitation } : {}),
     ...(patch.contactFormUrl !== undefined ? { contactFormUrl: patch.contactFormUrl } : {}),
     ...(formChanged ? { formNoSolicitation: false } : {}),
+    ...(patch.formNoSolicitation !== undefined ? { formNoSolicitation: patch.formNoSolicitation } : {}),
     ...(patch.formType !== undefined ? { formType: patch.formType } : {}),
     ...(patch.snsAccounts !== undefined ? { snsAccounts: patch.snsAccounts } : {}),
     ...(patch.platformUrl !== undefined ? { platformUrl: patch.platformUrl } : {}),
@@ -1235,7 +1245,7 @@ export async function updateProspect(
     throw e
   }
 
-  const emailToVerify = emailChanged && typeof patch.email === 'string' ? patch.email : undefined
+  const emailToVerify = emailChanged && !patch.emailNoSolicitation && typeof patch.email === 'string' ? patch.email : undefined
   return ok({ updated: true, prospectId, emailToVerify })
 }
 

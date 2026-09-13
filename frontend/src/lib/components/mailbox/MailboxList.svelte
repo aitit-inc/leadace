@@ -128,7 +128,6 @@
     <MailboxRow
       {identity}
       {identities}
-      revoked={identity.signInAccount && gmailStatus.state === 'revoked'}
       freeBlocked={planTier === 'free'}
       {session}
       {onChanged}

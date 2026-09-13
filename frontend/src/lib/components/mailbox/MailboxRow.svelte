@@ -11,7 +11,6 @@
   let {
     identity,
     identities,
-    revoked,
     freeBlocked,
     session,
     onChanged,
@@ -20,8 +19,6 @@
   }: {
     identity: SendingIdentity;
     identities: SendingIdentity[];
-    // The sign-in Google account lost its grant; only meaningful on that row.
-    revoked: boolean;
     freeBlocked: boolean;
     session: { access_token: string; user: { id: string } } | null;
     onChanged: () => void | Promise<void>;
@@ -32,7 +29,10 @@
   let token = $derived(session?.access_token);
   let parent = $derived(identities.find((i) => i.identityId === identity.parentIdentityId));
   let aliases = $derived(identities.filter((i) => i.parentIdentityId === identity.identityId));
-  let status = $derived(mailboxState(identity, revoked));
+  let revoked = $derived(identity.revokedSince !== null);
+  // An alias sends through its parent's grant, so it is the parent that reconnects.
+  let account = $derived(parent ?? identity);
+  let status = $derived(mailboxState(identity));
   let isAlias = $derived(identity.kind === 'gmail_alias');
 
   // A row that needs action opens on load so the fix is one click away.
@@ -52,12 +52,12 @@
   async function reconnect() {
     connecting = true;
     actionError = '';
-    if (identity.signInAccount) {
+    if (account.signInAccount) {
       await onReconnectSignIn();
       connecting = false;
       return;
     }
-    const err = await connectGoogleMailbox(session, identity.fromEmail);
+    const err = await connectGoogleMailbox(session, account.fromEmail);
     if (err) {
       actionError = err;
       connecting = false;
@@ -167,6 +167,14 @@
             <dt class="text-text-muted">Replies</dt>
             <dd class="text-text">Land in <span class="font-mono">{parent.fromEmail}</span></dd>
           {/if}
+          <dt class="text-text-muted">Projects</dt>
+          <dd class="text-text">
+            {#if identity.projects.length === 0}
+              <span class="text-text-muted">No project sends from it</span>
+            {:else}
+              {identity.projects.join(', ')}
+            {/if}
+          </dd>
           {#if identity.kind === 'gmail' && aliases.length > 0}
             <dt class="text-text-muted">Aliases</dt>
             <dd class="font-mono text-text">{aliases.map((a) => a.fromEmail).join(', ')}</dd>
@@ -184,7 +192,7 @@
 
       <div class="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
         <div class="flex flex-wrap items-center gap-2">
-          {#if identity.kind === 'gmail'}
+          {#if identity.kind === 'gmail' || (isAlias && revoked)}
             <button
               type="button"
               onclick={reconnect}
@@ -193,8 +201,10 @@
                 ? 'border-danger/40 text-danger'
                 : 'border-border bg-page text-text'}"
             >
-              {connecting ? 'Connecting…' : 'Reconnect'}
+              {connecting ? 'Connecting…' : isAlias ? `Reconnect ${account.fromEmail}` : 'Reconnect'}
             </button>
+          {/if}
+          {#if identity.kind === 'gmail'}
             <button
               type="button"
               onclick={() => onAddAlias(identity)}

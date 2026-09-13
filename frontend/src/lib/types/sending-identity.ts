@@ -58,6 +58,10 @@ export type SendingIdentity = {
   warmupStartedAt: string | null;
   dailyCapOverride: number | null;
   sendRefusal: MailboxSendRefusal | null;
+  // Google refused the grant; an alias reports its parent's.
+  revokedSince: string | null;
+  // Projects listing this mailbox, plus for the sign-in account every project that lists none.
+  projects: string[];
   grantedAt: string;
   smtp: SmtpConnectionView | null;
 } & MailboxDailyStatus &
