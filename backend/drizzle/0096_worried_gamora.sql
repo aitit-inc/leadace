@@ -1,0 +1,1 @@
+ALTER TABLE "outreach_logs" ADD COLUMN "charges_credits" boolean DEFAULT false NOT NULL;

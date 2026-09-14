@@ -7,6 +7,12 @@ import {
   createCheckoutSession,
   createPortalSession,
 } from '../../services/billing'
+import {
+  creditCheckoutBodySchema,
+  createCreditCheckoutSession,
+  updateAutoTopUp,
+} from '../../services/credits'
+import { autoTopUpSchema } from '../../domain/credits'
 import { requireCloudEdition, requireStripeEnv } from '../../services/runtime-guards'
 import { respondWithError } from '../respond'
 import type { Env, Variables } from '../types'
@@ -52,6 +58,40 @@ billingRouter.post('/me/portal', zValidator('json', portalBodySchema), async (c)
       secretKey: stripe.value.secretKey,
       origin: c.req.header('origin') ?? '',
     },
+    c.req.valid('json'),
+  )
+  if (!result.ok) return respondWithError(c, result)
+  return c.json(result.value)
+})
+
+billingRouter.post('/me/credits/checkout', zValidator('json', creditCheckoutBodySchema), async (c) => {
+  const cloud = requireCloudEdition(c.get('edition'))
+  if (!cloud.ok) return respondWithError(c, cloud)
+  const stripe = requireStripeEnv(c.env)
+  if (!stripe.ok) return respondWithError(c, stripe)
+  const result = await createCreditCheckoutSession(
+    cloud.value,
+    c.get('db'),
+    c.get('tenantId'),
+    c.get('edition'),
+    { secretKey: stripe.value.secretKey, origin: c.req.header('origin') ?? '' },
+    c.req.valid('json'),
+  )
+  if (!result.ok) return respondWithError(c, result)
+  return c.json(result.value)
+})
+
+billingRouter.put('/me/credits/auto-top-up', zValidator('json', autoTopUpSchema), async (c) => {
+  const cloud = requireCloudEdition(c.get('edition'))
+  if (!cloud.ok) return respondWithError(c, cloud)
+  const stripe = requireStripeEnv(c.env)
+  if (!stripe.ok) return respondWithError(c, stripe)
+  const result = await updateAutoTopUp(
+    cloud.value,
+    c.get('db'),
+    c.get('tenantId'),
+    c.get('edition'),
+    { secretKey: stripe.value.secretKey },
     c.req.valid('json'),
   )
   if (!result.ok) return respondWithError(c, result)

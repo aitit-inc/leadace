@@ -110,6 +110,18 @@ export async function createCheckoutSession(
   return ok({ url: data['url'] })
 }
 
+// The Stripe Customer a plan Checkout attached; a manually seeded paid tier
+// has none, so the portal and credits are unavailable to it.
+export async function requireStripeCustomer(db: Db, tenantId: TenantId): Promise<ServiceResult<string>> {
+  const [row] = await db
+    .select({ stripeCustomerId: tenantPlans.stripeCustomerId })
+    .from(tenantPlans)
+    .where(eq(tenantPlans.tenantId, tenantId))
+    .limit(1)
+  if (!row?.stripeCustomerId) return err('NOT_FOUND', 'No active subscription found')
+  return ok(row.stripeCustomerId)
+}
+
 // See createCheckoutSession for the role of `_cloud`.
 export async function createPortalSession(
   _cloud: CloudEdition,
@@ -118,20 +130,13 @@ export async function createPortalSession(
   ctx: { secretKey: string; origin: string },
   body: PortalBody,
 ): Promise<ServiceResult<{ url: unknown }>> {
-  const [row] = await db
-    .select({ stripeCustomerId: tenantPlans.stripeCustomerId })
-    .from(tenantPlans)
-    .where(eq(tenantPlans.tenantId, tenantId))
-    .limit(1)
-
-  if (!row?.stripeCustomerId) {
-    return err('NOT_FOUND', 'No active subscription found')
-  }
+  const customer = await requireStripeCustomer(db, tenantId)
+  if (!customer.ok) return customer
 
   const returnUrl = body.returnUrl ?? `${ctx.origin}/plans`
 
   const { ok: stripeOk, data } = await stripeApiRequest('POST', '/billing_portal/sessions', {
-    customer: row.stripeCustomerId,
+    customer: customer.value,
     return_url: returnUrl,
   }, ctx.secretKey)
 

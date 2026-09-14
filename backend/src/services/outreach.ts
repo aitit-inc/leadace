@@ -35,6 +35,7 @@ import {
   recordMailboxRefusal,
   clearMailboxSendRefusal,
 } from './plan-limits'
+import { debitContacted, refundContacted } from './credits'
 import {
   sendForIdentity,
   buildComplianceAttachments,
@@ -462,7 +463,7 @@ export async function recordOutreach(
   // stamps must remain recordable on incomplete tenants so failed-send logs
   // aren't lost.
   const sending = input.status === 'sent'
-  const [resolved, prospectGuard, quotaErr, compliance] = await Promise.all([
+  const [resolved, prospectGuard, quota, compliance] = await Promise.all([
     resolveProject(db, tenantId, input.projectId),
     requireProspect(db, tenantId, input.prospectId),
     sending ? assertProspectContactQuota(db, tenantId, edition, input.prospectId) : Promise.resolve(null),
@@ -472,7 +473,7 @@ export async function recordOutreach(
   const projectId = resolved.value
   if (!prospectGuard.ok) return prospectGuard
   if (compliance && !compliance.ok) return compliance
-  if (quotaErr) return quotaErr
+  if (quota && !quota.ok) return quota
 
   // Resolved once per email send: the cap check, the row's sending_identity_id,
   // and the first-send ramp stamp.
@@ -513,7 +514,7 @@ export async function recordOutreach(
   // listReachable excludes them via a separate NOT EXISTS so the status
   // keeps its real-world meaning.
   if (input.status === 'sent' && log) {
-    await markProspectContacted(db, projectId, input.prospectId, sentAt, log.id)
+    await markProspectContacted(db, tenantId, projectId, input.prospectId, sentAt, log.id, quota?.value.chargeCredits ?? false)
     if (input.channel === 'email') {
       await stampMailboxFirstSendIfNeeded(db, tenantId, sendingIdentityId, sentAt)
       await clearMailboxSendRefusal(db, tenantId, sendingIdentityId, sentAt)
@@ -604,11 +605,13 @@ export async function recordOutreachWithInquiry(
 
   const willSend = sendSettings.outboundMode === 'send'
 
+  let chargesCredits = false
   if (willSend) {
     const contactable = await assertProspectContactable(db, tenantId, input.prospectId, input.channel)
     if (!contactable.ok) return contactable
-    const quotaErr = await assertProspectContactQuota(db, tenantId, edition, input.prospectId)
-    if (quotaErr) return quotaErr
+    const quota = await assertProspectContactQuota(db, tenantId, edition, input.prospectId)
+    if (!quota.ok) return quota
+    chargesCredits = quota.value.chargeCredits
     const country = await assertProspectCountryAllowed(db, tenantId, input.prospectId)
     if (!country.ok) return country
   }
@@ -637,10 +640,12 @@ export async function recordOutreachWithInquiry(
       variantId: input.variantId ?? null,
       status,
       sentAt,
+      chargesCredits,
     })
     .returning({ id: outreachLogs.id })
 
   if (!log) return err('INTERNAL_ERROR', 'Failed to allocate outreach log row')
+  if (chargesCredits) await debitContacted(db, tenantId, input.prospectId)
 
   // Platform messages are solicited in-platform responses governed by the
   // platform's ToS, not email anti-spam law — no footer, no inquiry URL.
@@ -678,6 +683,7 @@ export async function recordOutreachWithInquiry(
 export async function updateOutreachStatus(
   db: Db,
   tenantId: TenantId,
+  edition: Edition,
   id: number,
   input: UpdateOutreachStatusInput,
 ): Promise<ServiceResult<{ id: number }>> {
@@ -701,6 +707,7 @@ export async function updateOutreachStatus(
       projectId: outreachLogs.projectId,
       prospectId: outreachLogs.prospectId,
       sentAt: outreachLogs.sentAt,
+      chargesCredits: outreachLogs.chargesCredits,
     })
 
   if (!updated) {
@@ -709,9 +716,11 @@ export async function updateOutreachStatus(
 
   if (input.status === 'sent') {
     // Only form/SNS pre_send rows reach here; email sends complete inline in
-    // sendAndRecord / sendDraft (where the warmup clock is stamped).
-    await markProspectContacted(db, updated.projectId as ProjectId, updated.prospectId, updated.sentAt, updated.id)
+    // sendAndRecord / sendDraft (where the warmup clock is stamped). The
+    // reservation already holds its debit, so none is taken here.
+    await markProspectContacted(db, tenantId, updated.projectId as ProjectId, updated.prospectId, updated.sentAt, updated.id, false)
   } else if (input.status === 'failed') {
+    if (updated.chargesCredits) await refundContacted(db, tenantId, updated.prospectId)
     await deferProspectReeligibility(db, updated.projectId as ProjectId, updated.prospectId, updated.sentAt)
   }
 
@@ -786,8 +795,8 @@ export async function sendAndRecord(
   const contactable = await assertProspectContactable(db, tenantId, input.prospectId, 'email')
   if (!contactable.ok) return contactable
 
-  const quotaErr = await assertProspectContactQuota(db, tenantId, edition, input.prospectId)
-  if (quotaErr) return quotaErr
+  const quota = await assertProspectContactQuota(db, tenantId, edition, input.prospectId)
+  if (!quota.ok) return quota
 
   const mailbox = await pickProjectMailbox(db, tenantId, projectId)
   const mailboxErr = mailboxQuotaErrorIfExhausted(mailbox)
@@ -891,7 +900,7 @@ export async function sendAndRecord(
     .update(outreachLogs)
     .set({ status: 'sent', fromEmail: result.from, messageId: result.rfc822MessageId })
     .where(eq(outreachLogs.id, log.id))
-  await markProspectContacted(db, projectId, input.prospectId, sentAt, log.id)
+  await markProspectContacted(db, tenantId, projectId, input.prospectId, sentAt, log.id, quota.value.chargeCredits)
   await stampMailboxFirstSendIfNeeded(db, tenantId, sendingIdentityId, sentAt)
   await clearMailboxSendRefusal(db, tenantId, sendingIdentityId, sentAt)
 
@@ -1281,8 +1290,8 @@ export async function sendDraft(
   }
   const hostGuard = assertPublicHttpsSendHosts(ctx)
   if (!hostGuard.ok) return hostGuard
-  const quotaErr = await assertProspectContactQuota(db, tenantId, edition, draft.prospectId)
-  if (quotaErr) return quotaErr
+  const quota = await assertProspectContactQuota(db, tenantId, edition, draft.prospectId)
+  if (!quota.ok) return quota
 
   const mailbox = await pickProjectMailbox(db, tenantId, draft.projectId as ProjectId)
   const mailboxErr = mailboxQuotaErrorIfExhausted(mailbox)
@@ -1364,7 +1373,7 @@ export async function sendDraft(
     return err('BAD_GATEWAY', result.error, result.detail, { outreachId: draft.id })
   }
 
-  await markProspectContacted(db, draft.projectId as ProjectId, draft.prospectId, sentAt, draft.id)
+  await markProspectContacted(db, tenantId, draft.projectId as ProjectId, draft.prospectId, sentAt, draft.id, quota.value.chargeCredits)
   await stampMailboxFirstSendIfNeeded(db, tenantId, sendingIdentityId, sentAt)
   await clearMailboxSendRefusal(db, tenantId, sendingIdentityId, attemptedAt)
 
@@ -1462,8 +1471,8 @@ export async function markDraftSent(
   if (draft.doNotContact) {
     return err('UNPROCESSABLE', 'Prospect is on do-not-contact list')
   }
-  const quotaErr = await assertProspectContactQuota(db, tenantId, edition, draft.prospectId)
-  if (quotaErr) return quotaErr
+  const quota = await assertProspectContactQuota(db, tenantId, edition, draft.prospectId)
+  if (!quota.ok) return quota
 
   // Re-apply send guards at confirm time. The form/SNS draft path runs
   // compliance only at allocation and skips country in draft mode, so legacy /
@@ -1482,7 +1491,7 @@ export async function markDraftSent(
     .set({ status: 'sent', sentAt })
     .where(eq(outreachLogs.id, draft.id))
 
-  await markProspectContacted(db, draft.projectId as ProjectId, draft.prospectId, sentAt, draft.id)
+  await markProspectContacted(db, tenantId, draft.projectId as ProjectId, draft.prospectId, sentAt, draft.id, quota.value.chargeCredits)
 
   return ok({ outreachId: draft.id })
 }
@@ -1577,13 +1586,18 @@ export async function discardDrafts(
 // prospect never advances the stamp and listReachable re-picks it every run. A
 // send with no active day-scale sequence (first contact or a recycle re-send)
 // starts a fresh sequence at touch 1; an in-progress one continues the count.
+// `chargeCredits` carries the quota guard's decision, debited here so it lands
+// with the rest of the send's bookkeeping.
 async function markProspectContacted(
   db: Db,
+  tenantId: TenantId,
   projectId: ProjectId,
   prospectId: number,
   at: Date,
   outreachLogId: number,
+  chargeCredits: boolean,
 ): Promise<void> {
+  if (chargeCredits) await debitContacted(db, tenantId, prospectId)
   // FOR UPDATE serializes concurrent send finalizations for the same prospect on
   // the touch advance below (a read-then-write of followupTouches). Already inside
   // the per-request RLS transaction, so no nested db.transaction() is needed.

@@ -13,6 +13,7 @@ import { listReachable, recordSiteRead, type ReachableProspect, type ReachableQu
 import { pickMessageVariant, type PickedVariant } from '../message-variants'
 import { getOutboundMode, getProjectSettings, type ProjectSettingsRow } from '../project-settings'
 import { recordOutreachWithInquiry, sendAndRecord, skipProspect } from '../outreach'
+import { kickAutoTopUp } from '../credits'
 import { assertTenantComplianceReady } from '../tenants'
 import { editionOf, loadDoc, loadMasterDoc, requireStrategyDocs, sendContextOf, type HostedEnv } from './context'
 import { languageNameOf } from '../../domain/locale'
@@ -341,6 +342,7 @@ export async function draftOne(
       }),
     )
     if (!sent.ok) return { kind: 'failed', error: `${sent.error}${sent.detail ? ` — ${typeof sent.detail === 'string' ? sent.detail : JSON.stringify(sent.detail)}` : ''}`, at: 'send' }
+    await kickAutoTopUp(env, tenantId)
     return { kind: sent.value.mode, outreachId: sent.value.outreachId, channel, variantId, subject: composed.subject }
   }
   // Form / SNS only reach here in draft mode (pickChannel), so the row lands

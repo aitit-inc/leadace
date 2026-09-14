@@ -35,6 +35,7 @@ const MODE = KEY.startsWith('sk_test_') ? 'test' : 'live'
 
 const WEBHOOK_EVENTS = [
   'checkout.session.completed',
+  'checkout.session.async_payment_succeeded',
   'customer.subscription.updated',
   'customer.subscription.deleted',
   'invoice.paid',

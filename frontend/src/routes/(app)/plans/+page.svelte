@@ -4,6 +4,9 @@
   import { page } from '$app/state';
   import { createCheckoutSession, createPortalSession } from '$lib/api/billing';
   import { formatQuota, QUOTA_WINDOW_LABEL } from '$lib/format';
+  import { creditsCoverOverage } from '$lib/credits';
+  import { USAGE_PRICE_CENTS } from '$lib/types/plan';
+  import CreditsPanel from '$lib/components/plans/CreditsPanel.svelte';
   import { EDITION, STRIPE_PRICES } from '$lib/config';
   import type { PlanTier } from '$lib/types/plan';
   import type { PageProps } from './$types';
@@ -58,31 +61,42 @@
   }
 
   // Stripe webhooks land at the API a few seconds after the redirect — poll
-  // /me/plan via invalidate until plan changes, with an upper bound.
-  async function pollPlanUntilUpdated(
-    fromPlan: string | null,
+  // /me/plan via invalidate until the watched value changes, with an upper bound.
+  async function pollPlanUntilChanged(
+    read: () => string | number | null,
     maxAttempts = 8,
     intervalMs = 1500,
   ) {
+    const before = read();
     for (let i = 0; i < maxAttempts; i++) {
       await invalidate('app:plan');
-      const current = data.plan?.plan ?? null;
-      if (current !== fromPlan) return;
+      if (read() !== before) return;
       await new Promise((r) => setTimeout(r, intervalMs));
     }
   }
+
+  const creditBalance = () =>
+    data.plan?.quota.kind === 'capped' ? (data.plan.quota.credits?.balanceCents ?? null) : null;
 
   onMount(() => {
     if (EDITION === 'cloud') {
       const status = page.url.searchParams.get('checkout');
       if (status === 'success') {
         message = 'Subscription activated. Waiting for confirmation…';
-        const fromPlan = data.plan?.plan ?? null;
-        pollPlanUntilUpdated(fromPlan).then(() => {
+        pollPlanUntilChanged(() => data.plan?.plan ?? null).then(() => {
           message = 'Subscription activated.';
         });
       } else if (status === 'cancel') {
         message = 'Checkout cancelled.';
+      }
+      const credits = page.url.searchParams.get('credits');
+      if (credits === 'success') {
+        message = 'Credits purchased. Waiting for confirmation…';
+        pollPlanUntilChanged(creditBalance).then(() => {
+          message = 'Credits added.';
+        });
+      } else if (credits === 'cancel') {
+        message = 'Credit purchase cancelled.';
       }
     }
     window.addEventListener('pageshow', resetLoadingState);
@@ -199,7 +213,7 @@
               </p>
               <div class="mt-1.5 h-1 w-full rounded-full bg-surface">
                 <div
-                  class="h-1 rounded-full {usage.remaining === 0 && !plan.quota.overageEnabled
+                  class="h-1 rounded-full {usage.remaining === 0 && !creditsCoverOverage(plan.quota.credits, USAGE_PRICE_CENTS.contacted)
                     ? 'bg-accent'
                     : 'bg-text'}"
                   style="width: {Math.min(100, (usage.used / usage.limit) * 100)}%"
@@ -208,8 +222,8 @@
             </div>
           {/each}
           <p class="text-xs text-text-muted">
-            Follow-ups are free.{plan.quota.overageEnabled
-              ? ' Overage is on: usage past an allowance is billed.'
+            Follow-ups are free.{creditsCoverOverage(plan.quota.credits, USAGE_PRICE_CENTS.contacted)
+              ? ' Usage past an allowance comes out of your credits.'
               : ''}
           </p>
         {/if}
@@ -232,6 +246,14 @@
       {/if}
     </div>
   </div>
+
+  {#if EDITION === 'cloud' && plan.quota.kind === 'capped' && plan.quota.credits}
+    <CreditsPanel
+      credits={plan.quota.credits}
+      {token}
+      onChanged={() => invalidate('app:plan')}
+    />
+  {/if}
 
   {#if EDITION === 'cloud' && plan.plan === 'free'}
     <p class="text-xs font-medium text-text-secondary mb-4">Upgrade</p>

@@ -115,6 +115,7 @@ describe('deriveAttentionItems', () => {
     refusedMailboxes: [],
     futileProjects: [],
     quota: { exhausted: false, constraint: null },
+    creditTopUpFailedAt: null,
     now: NOW,
     project: { outboundChannelsConfigured: true, pendingDrafts: 0, hotLeadsRecent: 0 },
   }

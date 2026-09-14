@@ -10,6 +10,7 @@ import type { ProjectId, TenantId } from '../domain/ids'
 import type { DiscoverCandidate, JobLogEntry, JobParamsOf, JobResult } from '../domain/jobs'
 import type { ServiceResult } from '../services/result'
 import { appendJobLog, loadJobForRun, writeJobProgress, type LoadedJob } from '../services/jobs'
+import { kickAutoTopUp } from '../services/credits'
 import { runDiscover } from '../services/pipeline/discover'
 import { runEnrich } from '../services/pipeline/enrich'
 import { draftLogEntry, draftOne, loadCompositionContext, loadDraftBatch, refillDrawSize, summarizeDraftOutcomes, type DraftOutcome } from '../services/pipeline/draft'
@@ -200,6 +201,7 @@ export async function sendStage(ctx: StageCtx, params: JobParamsOf<'send'>): Pro
       if (await isCancelled(ctx, db)) return { ok: false as const, cancelled: true as const, error: 'job cancelled' }
       await progressWriter(ctx, db, 'send')(`draft ${id}`, i, params.draftIds.length)
       const r = await runWithRls(db, tenantId, (tx) => sendDraft(tx, tenantId, editionOf(ctx.env), sendContextOf(ctx.env), id))
+      if (r.ok) await kickAutoTopUp(ctx.env, tenantId)
       return r.ok ? { ok: true as const } : { ok: false as const, cancelled: false as const, error: r.error }
     })
     if (!outcome.ok && outcome.cancelled) break

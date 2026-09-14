@@ -30,6 +30,8 @@ import {
   countTenantProspects,
 } from './plan-limits'
 import { ok, err, type ServiceResult } from './result'
+import { debitFound } from './credits'
+import { nextFoundRegistration } from '../domain/credits'
 import { resolveProject } from './projects'
 import { listDiscoveryStrategiesById } from './discovery-strategies'
 import { parseCsv } from '../domain/csv'
@@ -524,12 +526,18 @@ export async function batchRegister(
   // not refused, so a pipeline run that crosses it mid-batch still completes.
   // The tenant-level lock serializes concurrent discovery batches (two
   // projects' jobs) on the budget read, so they cannot both spend the last slot.
+  // Past the free slots each row debits credits while the balance covers it
+  // (domain/credits.ts nextFoundRegistration); the caller tops up afterwards.
+  let foundBudget: { freeSlots: number; balanceCents: number | null } | null = null
   if (origin === 'found') {
     await db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${tenantId}))`)
     const quota = await getRemainingProspectQuotaForPlan(db, tenantId, tp)
-    if (quota.kind === 'capped' && !quota.overageEnabled) {
-      const foundBudget = discoveryPausedReason(quota) ? 0 : quota.found.remaining
-      prospectBudget = prospectBudget === null ? foundBudget : Math.min(prospectBudget, foundBudget)
+    if (quota.kind === 'capped') {
+      if (discoveryPausedReason(quota)) {
+        prospectBudget = 0
+      } else {
+        foundBudget = { freeSlots: quota.found.remaining, balanceCents: quota.credits?.balanceCents ?? null }
+      }
     }
   }
 
@@ -541,6 +549,13 @@ export async function batchRegister(
 
   for (const input of inputs) {
     if (prospectBudget !== null && inserted.length >= prospectBudget) {
+      skipped.push({ name: input.name, reason: 'plan_limit' })
+      continue
+    }
+    const registration = foundBudget
+      ? nextFoundRegistration(foundBudget.freeSlots, foundBudget.balanceCents)
+      : ({ charge: false } as const)
+    if (!registration) {
       skipped.push({ name: input.name, reason: 'plan_limit' })
       continue
     }
@@ -579,11 +594,19 @@ export async function batchRegister(
       .insert(prospects)
       .values(prospectInsertValues(tenantId, input, org.id, now, origin))
       .returning({ id: prospects.id })
-    if (newProspect && origin === 'found') {
-      await db.insert(discoveryCharges).values({ tenantId, prospectId: newProspect.id, createdAt: now })
-    }
-
     if (!newProspect) continue
+
+    if (origin === 'found') {
+      await db.insert(discoveryCharges).values({ tenantId, prospectId: newProspect.id, createdAt: now })
+      if (foundBudget) {
+        if (registration.charge) {
+          await debitFound(db, tenantId, newProspect.id)
+          foundBudget.balanceCents = registration.balanceAfterCents
+        } else {
+          foundBudget.freeSlots -= 1
+        }
+      }
+    }
 
     if (projectId) {
       await db.insert(projectProspects).values(projectProspectInsertValues({

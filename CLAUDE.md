@@ -44,8 +44,12 @@ The three check commands are the pre-release checklist. Local E2E harness:
   the hosted discovery registers count separately against the found
   allowance at registration (`prospects.origin`); Free's window is the
   tenant lifetime, a paid plan's is the Stripe period from
-  `current_period_start`; `overage_enabled` turns a refusal into metered
-  usage. Enforcement: `backend/src/services/plan-limits.ts`.
+  `current_period_start`; past an allowance a paid plan debits prepaid credits
+  ($0.40 per contacted prospect, $0.60 per found one, `credit_ledger`) instead
+  of refusing, while the balance pays for the unit in full — it never goes
+  negative; auto top-up refills it right after the debit that crosses the
+  threshold. Enforcement: `backend/src/services/plan-limits.ts`, debits and
+  top-ups in `backend/src/services/credits.ts`.
 - Self-host: code is open source; the same plan-limits code runs and defaults
   to Free ([docs/self-host.md](docs/self-host.md)).
 - Multi-tenancy: every tenant-scoped table carries `tenant_id`, every query

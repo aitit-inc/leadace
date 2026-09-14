@@ -383,8 +383,11 @@ tenant. Shared helpers live in `e2e/lib-cloud.sh`.
   → 403, a follow-up to a contacted prospect → 200, `reachable` narrows to
   contacted prospects with the message), a follow-up never counting, an
   in-flight `pre_send` row counting as a first touch, the starter period
-  allowance (100) anchored at `current_period_start`, and `overage_enabled`
-  lifting the refusal (no `effectiveLimit` clamp).
+  allowance (100) anchored at `current_period_start`, and prepaid credits
+  (`credit_ledger`) lifting the refusal: each first touch past the allowance
+  debits $0.40 once per prospect, a balance below the unit price refuses again
+  (auto top-up on or not — the balance never goes negative), enabling auto
+  top-up needs a Stripe customer, and `/me/credits/*` is 403 on free.
 - `regression-cloud-limits.sh` — `maxProjects` (free=1, pro=5 → 403 at the cap,
   N+1 allowed after delete) and the `maxProspects` 500 budget (mid-batch
   truncation to remaining budget with `plan_limit` skips; full 403 at budget 0;
@@ -394,10 +397,16 @@ tenant. Shared helpers live in `e2e/lib-cloud.sh`.
   data-driven `tenant_plans` mutations: `customer.subscription.updated` grants
   the tier / mirrors the period / finds the plan price when it is not the first
   item / is idempotent / no-ops on missing metadata;
-  `customer.subscription.deleted` downgrades to free and switches overage off;
-  and the `unlimited`-tier protection refuses both. Events are HMAC-signed
-  locally by `sign-stripe-event.sh`. The `checkout.session.completed` + refund
-  paths are out of scope (they call the real `api.stripe.com`).
+  `customer.subscription.deleted` downgrades to free and switches auto top-up
+  off; the `unlimited`-tier protection refuses both; a credit-pack Checkout
+  (`checkout.session.completed` mode=payment / `async_payment_succeeded`)
+  credits `credit_ledger` once per session; and an auto top-up invoice
+  (`invoice.paid` / `invoice.payment_failed` with LeadAce metadata) credits
+  the ledger / switches auto top-up off only for the invoice in flight, and a
+  lapsed subscription switches it off. Events are HMAC-signed locally by
+  `sign-stripe-event.sh`. The subscription `checkout.session.completed` +
+  refund paths and the top-up's invoice creation are out of scope (they call
+  the real `api.stripe.com`).
 - `regression-cloud-inquiry-quota.sh` — the free-tier inquiry-chat lifetime cap
   (25 turns) returning 403 before the OpenAI call (so no LLM round-trip / cost),
   plus the per-session hard-cap (5) precedence and the revoked-token 404 gate.

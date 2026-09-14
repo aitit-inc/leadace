@@ -25,13 +25,29 @@ export type ProspectQuota =
       plan: PlanTier;
       kind: 'capped';
       window: QuotaWindowKind;
-      // Past an allowance the excess is billed instead of refused.
-      overageEnabled: boolean;
+      // Prepaid credits (backend domain/credits.ts CreditState); null = the plan
+      // cannot hold them. Past an allowance the excess is debited while the
+      // balance pays for the unit in full.
+      credits: CreditState;
       // Distinct prospects first contacted in the window; follow-ups are free.
       contacted: AllowanceUsage;
       // Prospects the hosted discovery registered in the window.
       found: AllowanceUsage;
     };
+
+export interface AutoTopUp {
+  enabled: boolean;
+  amountCents: number;
+  thresholdCents: number;
+  failedAt: string | null;
+}
+
+export type CreditState = { balanceCents: number; autoTopUp: AutoTopUp } | null;
+
+// Mirrors backend/src/domain/credits.ts.
+export const USAGE_PRICE_CENTS = { contacted: 40, found: 60 } as const;
+export const CREDIT_PACK_CENTS = [1000, 2500, 5000] as const;
+export type CreditPackCents = (typeof CREDIT_PACK_CENTS)[number];
 
 export interface PlanInfo {
   plan: PlanTier;

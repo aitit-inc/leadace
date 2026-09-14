@@ -7,12 +7,14 @@ import {
   sendingIdentities,
   prospects,
   discoveryCharges,
+  creditLedger,
   inquirySessions,
   PRE_SEND_TTL_MINUTES,
 } from '../db/schema'
 import type { createDb } from '../db/connection'
 import { ok, err, type ServiceError, type ServiceResult } from '../services/result'
 import type { Edition } from '../domain/edition'
+import { creditsCoverOverage, USAGE_PRICE_CENTS, type AutoTopUp, type CreditState } from '../domain/credits'
 import { type SendingIdentityId, type TenantId } from '../domain/ids'
 import {
   BOUNCE_RATE_WINDOW_DAYS,
@@ -98,8 +100,11 @@ export interface TenantPlan {
   plan: PlanTier
   currentPeriodStart: Date | null
   currentPeriodEnd: Date | null
-  overageEnabled: boolean
+  // null = the plan cannot hold prepaid credits (free, unlimited, self-host).
+  autoTopUp: AutoTopUp | null
 }
+
+const NO_SUBSCRIPTION = { currentPeriodStart: null, currentPeriodEnd: null, autoTopUp: null } as const
 
 // Edition gate at this single chokepoint means every downstream cap check inherits the self-host override.
 export async function getTenantPlan(
@@ -107,32 +112,55 @@ export async function getTenantPlan(
   tenantId: TenantId,
   edition: Edition,
 ): Promise<TenantPlan> {
-  if (edition !== 'cloud') {
-    return { plan: 'unlimited', currentPeriodStart: null, currentPeriodEnd: null, overageEnabled: false }
-  }
+  if (edition !== 'cloud') return { plan: 'unlimited', ...NO_SUBSCRIPTION }
 
   const [row] = await db
     .select({
       plan: tenantPlans.plan,
       currentPeriodStart: tenantPlans.currentPeriodStart,
       currentPeriodEnd: tenantPlans.currentPeriodEnd,
-      overageEnabled: tenantPlans.overageEnabled,
+      autoTopUpEnabled: tenantPlans.autoTopUpEnabled,
+      autoTopUpAmountCents: tenantPlans.autoTopUpAmountCents,
+      autoTopUpThresholdCents: tenantPlans.autoTopUpThresholdCents,
+      autoTopUpFailedAt: tenantPlans.autoTopUpFailedAt,
     })
     .from(tenantPlans)
     .where(eq(tenantPlans.tenantId, tenantId))
     .limit(1)
 
-  if (!row) {
-    return { plan: 'free', currentPeriodStart: null, currentPeriodEnd: null, overageEnabled: false }
-  }
+  if (!row) return { plan: 'free', ...NO_SUBSCRIPTION }
 
   return {
     plan: row.plan,
     currentPeriodStart: row.currentPeriodStart,
     currentPeriodEnd: row.currentPeriodEnd,
-    // Free has no Stripe subscription to meter to.
-    overageEnabled: row.plan !== 'free' && row.overageEnabled,
+    autoTopUp: holdsCredits(row.plan)
+      ? {
+          enabled: row.autoTopUpEnabled,
+          amountCents: row.autoTopUpAmountCents,
+          thresholdCents: row.autoTopUpThresholdCents,
+          failedAt: row.autoTopUpFailedAt,
+        }
+      : null,
   }
+}
+
+export const PAID_PLAN_TIERS = ['starter', 'pro', 'scale'] as const
+export type PaidPlanTier = (typeof PAID_PLAN_TIERS)[number]
+
+// Credits are bought against the subscription's Stripe customer, so only a
+// paid tier holds them; free has nothing to charge and unlimited nothing to
+// cover.
+export function holdsCredits(plan: PlanTier): plan is PaidPlanTier {
+  return PAID_PLAN_TIERS.some((tier) => tier === plan)
+}
+
+export async function sumCreditBalance(db: Db, tenantId: TenantId): Promise<number> {
+  const [row] = await db
+    .select({ balance: sql<number>`COALESCE(SUM(${creditLedger.amountCents}), 0)::int` })
+    .from(creditLedger)
+    .where(eq(creditLedger.tenantId, tenantId))
+  return row?.balance ?? 0
 }
 
 export function startOfTodayUtc(now: Date = new Date()): Date {
@@ -167,8 +195,9 @@ export type ProspectQuota =
       plan: PlanTier
       kind: 'capped'
       window: QuotaWindowKind
-      // Past an allowance the excess is metered to Stripe instead of refused.
-      overageEnabled: boolean
+      // Past an allowance the excess is debited from prepaid credits instead
+      // of refused, while creditsCoverOverage holds.
+      credits: CreditState
       contacted: QuotaUsage
       found: QuotaUsage
     }
@@ -176,7 +205,7 @@ export type ProspectQuota =
 export function buildProspectQuota(
   plan: PlanTier,
   caps: ProspectCaps,
-  overageEnabled: boolean,
+  credits: CreditState,
   used: { contacted: number; found: number },
 ): ProspectQuota {
   const usage = (limit: number, n: number): QuotaUsage => ({ used: n, limit, remaining: Math.max(0, limit - n) })
@@ -184,7 +213,7 @@ export function buildProspectQuota(
     plan,
     kind: 'capped',
     window: caps.window,
-    overageEnabled,
+    credits,
     contacted: usage(caps.contacted, used.contacted),
     found: usage(caps.found, used.found),
   }
@@ -242,7 +271,7 @@ export async function getRemainingProspectQuotaForPlan(
     .groupBy(outreachLogs.prospectId)
     .as('first_touches')
 
-  const [[contacted], [found]] = await Promise.all([
+  const [[contacted], [found], balanceCents] = await Promise.all([
     db
       .select({ used: sql<number>`COUNT(*)::int` })
       .from(firstTouches)
@@ -254,21 +283,23 @@ export async function getRemainingProspectQuotaForPlan(
         eq(discoveryCharges.tenantId, tenantId),
         sinceIso ? sql`${discoveryCharges.createdAt} >= ${sinceIso}::timestamptz` : undefined,
       )),
+    tp.autoTopUp ? sumCreditBalance(db, tenantId) : Promise.resolve(0),
   ])
 
-  return buildProspectQuota(tp.plan, caps, tp.overageEnabled, {
+  const credits: CreditState = tp.autoTopUp ? { balanceCents, autoTopUp: tp.autoTopUp } : null
+  return buildProspectQuota(tp.plan, caps, credits, {
     contacted: contacted?.used ?? 0,
     found: found?.used ?? 0,
   })
 }
 
-// Exhausted = nothing new may go out; a metered overage never exhausts.
+// Exhausted = nothing new may go out; credits that cover the excess never exhaust.
 export function isContactQuotaExhausted(quota: ProspectQuota): boolean {
-  return quota.kind === 'capped' && !quota.overageEnabled && quota.contacted.remaining <= 0
+  return quota.kind === 'capped' && quota.contacted.remaining <= 0 && !creditsCoverOverage(quota.credits, USAGE_PRICE_CENTS.contacted)
 }
 
 export function isFoundQuotaExhausted(quota: ProspectQuota): boolean {
-  return quota.kind === 'capped' && !quota.overageEnabled && quota.found.remaining <= 0
+  return quota.kind === 'capped' && quota.found.remaining <= 0 && !creditsCoverOverage(quota.credits, USAGE_PRICE_CENTS.found)
 }
 
 const WINDOW_PHRASE: Record<QuotaWindowKind, string> = {
@@ -281,7 +312,7 @@ export function formatContactQuotaError(quota: ProspectQuota): string {
   const { limit } = quota.contacted
   const resume = quota.window === 'lifetime'
     ? 'Upgrade to reach new prospects.'
-    : 'New prospects resume next period; enable overage or upgrade on the plans page to continue now.'
+    : 'New prospects resume next period; buy credits or upgrade on the plans page to continue now.'
   return `Your ${quota.plan} plan includes ${limit} prospects ${WINDOW_PHRASE[quota.window]} and all ${limit} have been contacted. Follow-ups still go out. ${resume}`
 }
 
@@ -290,7 +321,7 @@ export function formatFoundQuotaError(quota: ProspectQuota): string {
   const { limit } = quota.found
   const resume = quota.window === 'lifetime'
     ? 'Bring your own list, or upgrade.'
-    : 'Bring your own list, or enable overage or upgrade on the plans page.'
+    : 'Bring your own list, or buy credits or upgrade on the plans page.'
   return `Your ${quota.plan} plan lets LeadAce find ${limit} prospects ${WINDOW_PHRASE[quota.window]}, and that allowance is used. ${resume}`
 }
 
@@ -315,23 +346,30 @@ async function hasPriorSend(db: Db, tenantId: TenantId, prospectId: number): Pro
   return row !== undefined
 }
 
-// The send-path guard: a first touch past the allowance is refused; a
-// follow-up to a prospect already contacted never is.
+// The send-path guard, run before the outbound row is written: a first touch
+// past the allowance is refused unless credits cover it — then the send
+// debits them once it is 'sent' (markProspectContacted). A follow-up to a
+// prospect already contacted is never refused and never debited.
+//
+// A send on credits holds the tenant lock from here to commit (the same lock
+// discovery takes for a found batch), so two debits cannot both read a
+// balance that covers only one of them: the balance never goes negative.
+export type ContactQuotaDecision = { chargeCredits: boolean }
+
 export async function assertProspectContactQuota(
   db: Db,
   tenantId: TenantId,
   edition: Edition,
   prospectId: number,
-): Promise<ServiceError | null> {
+): Promise<ServiceResult<ContactQuotaDecision>> {
   const quota = await getRemainingProspectQuota(db, tenantId, edition)
-  if (!isContactQuotaExhausted(quota)) return null
-  if (await hasPriorSend(db, tenantId, prospectId)) return null
-  return {
-    ok: false,
-    code: 'FORBIDDEN',
-    error: 'Prospect limit reached',
-    detail: formatContactQuotaError(quota),
-  }
+  if (quota.kind !== 'capped' || quota.contacted.remaining > 0) return ok({ chargeCredits: false })
+  if (await hasPriorSend(db, tenantId, prospectId)) return ok({ chargeCredits: false })
+  if (quota.credits === null) return err('FORBIDDEN', 'Prospect limit reached', formatContactQuotaError(quota))
+  await db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${tenantId}))`)
+  const balanceCents = await sumCreditBalance(db, tenantId)
+  if (creditsCoverOverage({ ...quota.credits, balanceCents }, USAGE_PRICE_CENTS.contacted)) return ok({ chargeCredits: true })
+  return err('FORBIDDEN', 'Prospect limit reached', formatContactQuotaError(quota))
 }
 
 // Per-mailbox safe daily send cap, summed over the project's mailbox pool

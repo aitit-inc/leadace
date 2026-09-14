@@ -10,6 +10,7 @@ import { ALLOWED_SEND_COUNTRIES } from '../domain/country'
 import { discoveryStrategySchema, suggestionKindSchema, variantIdSchema } from '../domain/ids'
 import { localeSchema } from '../domain/locale'
 import type { ReplyCollectionStatus } from '../domain/attention'
+import { creditsCoverOverage, USAGE_PRICE_CENTS } from '../domain/credits'
 import { isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG } from '../domain/url'
 import type { ProspectQuota, QuotaWindowKind } from '../services/plan-limits'
 import { SERVER_VERSION } from '../mcp/version'
@@ -110,7 +111,7 @@ const QUOTA_WINDOW: Record<QuotaWindowKind, string> = {
 function formatQuotaUsage(q: ProspectQuota, which: 'contacted' | 'found'): string {
   if (q.kind === 'unlimited') return 'unlimited'
   const u = q[which]
-  return `${u.remaining} of ${u.limit} left ${QUOTA_WINDOW[q.window]}${q.overageEnabled ? ' (overage on)' : ''}`
+  return `${u.remaining} of ${u.limit} left ${QUOTA_WINDOW[q.window]}${creditsCoverOverage(q.credits, USAGE_PRICE_CENTS[which]) ? ' (credits cover more)' : ''}`
 }
 
 // The one definition of which job kinds need approval.

@@ -58,7 +58,7 @@ const preview = (outboundMode: 'send' | 'draft'): OutboundPreview => ({
     plan: 'starter',
     kind: 'capped',
     window: 'monthly',
-    overageEnabled: false,
+    credits: null,
     contacted: { used: 13, limit: 100, remaining: 87 },
     found: { used: 4, limit: 100, remaining: 96 },
   },

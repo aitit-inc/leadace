@@ -34,6 +34,7 @@ import {
   type MailboxDailyQuota,
   type ProspectQuota,
 } from './plan-limits'
+import { creditsCoverOverage, USAGE_PRICE_CENTS } from '../domain/credits'
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { pickProjectMailbox } from './mailbox'
@@ -397,7 +398,7 @@ export async function listReachable(
 
   // Follow-ups never spend the allowance, so the draw is not sized by it;
   // the first touches among the drawn rows are capped after the draw.
-  const firstTouchCap = quota.kind === 'capped' && !quota.overageEnabled ? quota.contacted.remaining : null
+  const firstTouchCap = quota.kind === 'capped' && !creditsCoverOverage(quota.credits, USAGE_PRICE_CENTS.contacted) ? quota.contacted.remaining : null
 
   const channelFilter: SQL | undefined = or(...enabledChannels.map(channelAvailabilityClause))
   const drawFilter: SQL = or(...drawChannels.map(channelAvailabilityClause)) ?? sql`false`

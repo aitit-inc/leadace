@@ -79,6 +79,7 @@ export async function loadTenantAttentionInput(
       exhausted: isContactQuotaExhausted(quota),
       constraint: quota.kind === 'capped' ? quota.window : null,
     },
+    creditTopUpFailedAt: quota.kind === 'capped' ? quota.credits?.autoTopUp.failedAt ?? null : null,
     now: new Date(),
   })
 }

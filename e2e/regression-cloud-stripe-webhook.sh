@@ -14,8 +14,12 @@
 #     period dates mirrored; the plan price is found when it is not the first
 #     item; active+missing metadata leaves the row untouched (config-drift
 #     guard); idempotent on re-delivery
-#   - customer.subscription.deleted: downgrades to free and switches overage off
+#   - customer.subscription.deleted: downgrades to free and switches auto top-up off
 #   - unlimited-tier protection: updated/deleted both refuse to overwrite 'unlimited'
+#   - prepaid credits: checkout.session.completed (mode=payment) and
+#     checkout.session.async_payment_succeeded credit the ledger once per
+#     session; invoice.paid / invoice.payment_failed with LeadAce metadata
+#     settle an auto top-up (credit + clear the pending invoice / switch off)
 #
 # OUT OF SCOPE (require the real Stripe API, like the real-Gmail leg of
 # regression-outbound.sh): checkout.session.completed and the cancel+refund
@@ -72,6 +76,13 @@ sub_updated_nometa() { jq -nc --arg id "$SUB" --arg st "$1" --argjson ps "$NOW" 
 sub_updated_2nd_item() { jq -nc --arg id "$SUB" --arg plan "$1" --arg st "$2" --argjson ps "$NOW" --argjson pe "$PEND" \
   '{type:"customer.subscription.updated", data:{object:{id:$id, status:$st, current_period_start:$ps, current_period_end:$pe, items:{data:[{price:{metadata:{}}},{price:{metadata:{plan:$plan}}}]}}}}'; }
 sub_deleted()        { jq -nc --arg id "$SUB" '{type:"customer.subscription.deleted", data:{object:{id:$id}}}'; }
+credit_session()     { jq -nc --arg type "$1" --arg id "$2" --arg ps "$3" --arg t "$T" \
+  '{type:$type, data:{object:{id:$id, mode:"payment", payment_status:$ps, metadata:{leadace_tenant_id:$t, leadace_credit_cents:"2500"}}}}'; }
+topup_invoice()      { jq -nc --arg type "$1" --arg id "$2" --arg t "$T" \
+  '{type:$type, data:{object:{id:$id, metadata:{leadace_tenant_id:$t, leadace_credit_cents:"1000"}}}}'; }
+renewal_invoice()    { jq -nc --arg type "$1" --arg id "$2" \
+  '{type:$type, data:{object:{id:$id, subscription:"sub_x", amount_paid:4900, currency:"usd", billing_reason:"subscription_cycle", metadata:{}}}}'; }
+balance() { psql_local "SELECT COALESCE(SUM(amount_cents), 0)::int FROM credit_ledger WHERE tenant_id='$T';"; }
 
 step "A. signature verification (no DB state required)"
 CODE="$(curl -sS -o "$API_OUT" -w '%{http_code}' -X POST "$API_URL/api/stripe/webhook" --data "$(sub_deleted)")"
@@ -115,12 +126,13 @@ assert_eq "reset to starter" "$(plan_of)" "starter"
 assert_eq "updated(active, NO metadata) → 200" "$(post_event "$(sub_updated_nometa active)")" "200"
 assert_eq "  plan left untouched at starter (operator must fix Price metadata)" "$(plan_of)" "starter"
 
-step "E. subscription.deleted downgrades to free and switches overage off"
-psql_local "UPDATE tenant_plans SET overage_enabled = true WHERE tenant_id='$T';" > /dev/null
+step "E. subscription.deleted downgrades to free and switches auto top-up off"
+psql_local "UPDATE tenant_plans SET auto_top_up_enabled = true, auto_top_up_invoice_id = 'in_stale' WHERE tenant_id='$T';" > /dev/null
 assert_eq "deleted → 200" "$(post_event "$(sub_deleted)")" "200"
 assert_eq "  tenant downgraded to free" "$(plan_of)" "free"
-assert_eq "  overage_enabled reset to false" \
-  "$(psql_local "SELECT overage_enabled FROM tenant_plans WHERE tenant_id='$T';")" "f"
+assert_eq "  auto top-up off; voiding the fake invoice fails at Stripe, so the reference stays" \
+  "$(psql_local "SELECT auto_top_up_enabled || ',' || COALESCE(auto_top_up_invoice_id, '-') FROM tenant_plans WHERE tenant_id='$T';")" "false,in_stale"
+psql_local "UPDATE tenant_plans SET auto_top_up_invoice_id = NULL WHERE tenant_id='$T';" > /dev/null
 
 step "F. unlimited-tier protection (webhook never overwrites a manual unlimited)"
 cloud_seed_plan "$T" unlimited "$SUB"
@@ -129,5 +141,44 @@ assert_eq "updated(active, pro) against unlimited → 200" "$(post_event "$(sub_
 assert_eq "  still unlimited (update refused)" "$(plan_of)" "unlimited"
 assert_eq "deleted against unlimited → 200" "$(post_event "$(sub_deleted)")" "200"
 assert_eq "  still unlimited (downgrade refused)" "$(plan_of)" "unlimited"
+
+step "G. a credit pack Checkout (mode=payment) credits the ledger once per session"
+CS="cs_e2e_$TS"
+assert_eq "checkout.session.completed(payment, paid) → 200" "$(post_event "$(credit_session checkout.session.completed "$CS" paid)")" "200"
+assert_eq "  balance 2500" "$(balance)" "2500"
+assert_eq "redelivered → 200" "$(post_event "$(credit_session checkout.session.completed "$CS" paid)")" "200"
+assert_eq "  still 2500 (idempotent on the session id)" "$(balance)" "2500"
+assert_eq "completed but unpaid (async method) → 200" "$(post_event "$(credit_session checkout.session.completed "${CS}_async" unpaid)")" "200"
+assert_eq "  nothing credited yet" "$(balance)" "2500"
+assert_eq "async_payment_succeeded → 200" "$(post_event "$(credit_session checkout.session.async_payment_succeeded "${CS}_async" paid)")" "200"
+assert_eq "  balance 5000" "$(balance)" "5000"
+assert_eq "  purchase rows reference their sessions" \
+  "$(psql_local "SELECT string_agg(reference, ',' ORDER BY reference) FROM credit_ledger WHERE tenant_id='$T' AND kind='purchase';")" "${CS},${CS}_async"
+
+step "H. auto top-up invoices settle through invoice.paid / invoice.payment_failed"
+cloud_seed_plan "$T" starter "$SUB"
+psql_local "UPDATE tenant_plans SET auto_top_up_enabled = true, auto_top_up_invoice_id = 'in_e2e_$TS' WHERE tenant_id='$T';" > /dev/null
+assert_eq "invoice.paid (LeadAce metadata) → 200" "$(post_event "$(topup_invoice invoice.paid "in_e2e_$TS")")" "200"
+assert_eq "  balance 6000" "$(balance)" "6000"
+assert_eq "  pending invoice cleared, auto top-up still on" \
+  "$(psql_local "SELECT auto_top_up_enabled || ',' || COALESCE(auto_top_up_invoice_id, '-') FROM tenant_plans WHERE tenant_id='$T';")" "true,-"
+assert_eq "invoice.paid redelivered → 200" "$(post_event "$(topup_invoice invoice.paid "in_e2e_$TS")")" "200"
+assert_eq "  still 6000" "$(balance)" "6000"
+assert_eq "renewal invoice.paid (no metadata) → 200" "$(post_event "$(renewal_invoice invoice.paid "in_renewal_$TS")")" "200"
+assert_eq "  ledger untouched by a renewal" "$(balance)" "6000"
+assert_eq "invoice.payment_failed for an invoice NOT in flight (late redelivery) → 200" "$(post_event "$(topup_invoice invoice.payment_failed "in_e2e_stale_$TS")")" "200"
+assert_eq "  ignored: auto top-up still on, no failed_at" \
+  "$(psql_local "SELECT auto_top_up_enabled || ',' || (auto_top_up_failed_at IS NOT NULL) FROM tenant_plans WHERE tenant_id='$T';")" "true,false"
+psql_local "UPDATE tenant_plans SET auto_top_up_invoice_id = 'in_e2e_fail_$TS' WHERE tenant_id='$T';" > /dev/null
+assert_eq "invoice.payment_failed for the pending invoice → 200" "$(post_event "$(topup_invoice invoice.payment_failed "in_e2e_fail_$TS")")" "200"
+assert_eq "  auto top-up off with failed_at stamped, pending cleared" \
+  "$(psql_local "SELECT auto_top_up_enabled || ',' || (auto_top_up_failed_at IS NOT NULL) || ',' || COALESCE(auto_top_up_invoice_id, '-') FROM tenant_plans WHERE tenant_id='$T';")" "false,true,-"
+assert_eq "  balance unchanged" "$(balance)" "6000"
+
+step "I. a lapsed subscription (updated → past_due) switches auto top-up off"
+psql_local "UPDATE tenant_plans SET auto_top_up_enabled = true, auto_top_up_failed_at = NULL WHERE tenant_id='$T';" > /dev/null
+assert_eq "updated(past_due, pro) → 200" "$(post_event "$(sub_updated pro past_due)")" "200"
+assert_eq "  tenant on free with auto top-up off" \
+  "$(psql_local "SELECT plan || ',' || auto_top_up_enabled FROM tenant_plans WHERE tenant_id='$T';")" "free,false"
 
 cloud_summary

@@ -14,6 +14,9 @@ export type AttentionItem =
   | { kind: 'mailbox_send_refused'; fromEmail: string; sentThatDay: number }
   | { kind: 'no_outbound_channels' }
   | { kind: 'quota_exhausted'; constraint: QuotaConstraint }
+  // The off-session credit charge was declined; auto top-up is off until
+  // the tenant fixes the card and switches it back on.
+  | { kind: 'credit_top_up_failed'; since: string }
   | { kind: 'reply_collection_scope_missing'; fromEmail: string }
   | { kind: 'reply_collection_failing'; fromEmail: string; since: string; detail: string | null }
   // The verdict is per project but the feed is tenant-wide, so the item
@@ -104,6 +107,7 @@ export type AttentionInput = {
   identities: IdentityHealthInput[]
   refusedMailboxes: Array<{ fromEmail: string; sentThatDay: number }>
   quota: { exhausted: boolean; constraint: QuotaConstraint | null }
+  creditTopUpFailedAt: Date | null
   futileProjects: Array<{ projectId: string; projectName: string; sends: number; replies: number }>
   now: Date
   // null = tenant-wide feed (bell, banners).
@@ -137,6 +141,9 @@ export function deriveAttentionItems(input: AttentionInput): AttentionItem[] {
   }
   if (input.quota.exhausted && input.quota.constraint) {
     items.push({ kind: 'quota_exhausted', constraint: input.quota.constraint })
+  }
+  if (input.creditTopUpFailedAt) {
+    items.push({ kind: 'credit_top_up_failed', since: input.creditTopUpFailedAt.toISOString() })
   }
   items.push(...degraded)
   for (const p of input.futileProjects) {

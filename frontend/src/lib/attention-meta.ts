@@ -5,6 +5,7 @@ import {
 	MailQuestion,
 	MailX,
 	Megaphone,
+	CreditCard,
 	Rocket,
 	ShieldAlert,
 	Target,
@@ -144,9 +145,18 @@ export function attentionMeta(item: AttentionItem): AttentionMeta {
 				title: 'Prospect allowance used',
 				desc:
 					item.constraint === 'monthly'
-						? 'New prospects resume next period — follow-ups still go out; enable overage or upgrade to continue now'
+						? 'New prospects resume next period — follow-ups still go out; buy credits or upgrade to continue now'
 						: 'Every prospect in your plan has been contacted — follow-ups still go out; upgrade to reach new ones',
 				ctaLabel: item.constraint === 'monthly' ? 'View plan' : 'Upgrade',
+				href: '/plans',
+			};
+		case 'credit_top_up_failed':
+			return {
+				icon: CreditCard,
+				tone: 'danger',
+				title: 'Credit auto top-up was declined',
+				desc: 'Your card refused the charge, so auto top-up is off — update the card in the Stripe portal, then switch it back on',
+				ctaLabel: 'Fix billing',
 				href: '/plans',
 			};
 	}

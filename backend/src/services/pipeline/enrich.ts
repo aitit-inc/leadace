@@ -13,6 +13,7 @@ import { batchRegister, type BatchInput } from '../prospect-import'
 import { discoveryPausedReason, getRemainingProspectQuota } from '../plan-limits'
 import { getActiveStrategySlugs, listDiscoveryStrategiesById } from '../discovery-strategies'
 import { stampEmailDeliverability } from '../dns-check'
+import { kickAutoTopUp } from '../credits'
 import { apexDomainOf, editionOf, loadDoc, loadMasterDoc, noProgress, type HostedEnv, type ProgressFn } from './context'
 import { runWithRls } from '../../db/rls'
 
@@ -447,6 +448,7 @@ export async function runEnrich(
     skippedDetails.push(...result.value.skippedDetails.map((s) => ({ name: s.name, reason: s.reason })))
     emailsToVerify.push(...result.value.emailsToVerify)
   }
+  await kickAutoTopUp(env, tenantId)
   if (emailsToVerify.length > 0) await stampEmailDeliverability(env.DATABASE_URL, tenantId, emailsToVerify)
 
   const withEmail = enriched.filter((e) => e.email !== null && !e.emailNoSolicitation).length

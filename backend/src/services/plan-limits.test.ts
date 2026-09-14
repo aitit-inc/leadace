@@ -18,7 +18,7 @@ const capped = (over: Partial<Extract<ProspectQuota, { kind: 'capped' }>>): Pros
   plan: 'starter',
   kind: 'capped',
   window: 'monthly',
-  overageEnabled: false,
+  credits: { balanceCents: 0, autoTopUp: { enabled: false, amountCents: 2500, thresholdCents: 500, failedAt: null } },
   contacted: { used: 0, limit: 100, remaining: 100 },
   found: { used: 0, limit: 100, remaining: 100 },
   ...over,
@@ -67,7 +67,7 @@ describe('canRegisterMailbox', () => {
 
 describe('buildProspectQuota', () => {
   it('clamps remaining at 0 when used exceeds the limit', () => {
-    const q = buildProspectQuota('free', { window: 'lifetime', contacted: 30, found: 30 }, false, { contacted: 33, found: 2 })
+    const q = buildProspectQuota('free', { window: 'lifetime', contacted: 30, found: 30 }, null, { contacted: 33, found: 2 })
     expect(q).toMatchObject({
       kind: 'capped',
       window: 'lifetime',
@@ -85,11 +85,22 @@ describe('exhaustion', () => {
     expect(isContactQuotaExhausted({ plan: 'unlimited', kind: 'unlimited' })).toBe(false)
   })
 
-  it('never exhausts while overage is metered', () => {
-    const q = capped({ overageEnabled: true, contacted: { used: 120, limit: 100, remaining: 0 }, found: { used: 101, limit: 100, remaining: 0 } })
+  it('never exhausts while the balance pays for the next unit', () => {
+    const past = { contacted: { used: 120, limit: 100, remaining: 0 }, found: { used: 101, limit: 100, remaining: 0 } }
+    const q = capped({ ...past, credits: { balanceCents: 60, autoTopUp: { enabled: false, amountCents: 2500, thresholdCents: 500, failedAt: null } } })
     expect(isContactQuotaExhausted(q)).toBe(false)
     expect(isFoundQuotaExhausted(q)).toBe(false)
     expect(discoveryPausedReason(q)).toBeNull()
+  })
+
+  it('exhausts per unit price once the balance is below it, auto top-up or not', () => {
+    const past = { contacted: { used: 120, limit: 100, remaining: 0 }, found: { used: 101, limit: 100, remaining: 0 } }
+    const forty = capped({ ...past, credits: { balanceCents: 40, autoTopUp: { enabled: true, amountCents: 2500, thresholdCents: 500, failedAt: null } } })
+    expect(isContactQuotaExhausted(forty)).toBe(false)
+    expect(isFoundQuotaExhausted(forty)).toBe(true)
+    const spent = capped({ ...past, credits: { balanceCents: 39, autoTopUp: { enabled: true, amountCents: 2500, thresholdCents: 500, failedAt: null } } })
+    expect(isContactQuotaExhausted(spent)).toBe(true)
+    expect(isContactQuotaExhausted(capped({ ...past, plan: 'free', window: 'lifetime', credits: null }))).toBe(true)
   })
 })
 

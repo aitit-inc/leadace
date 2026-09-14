@@ -1,5 +1,5 @@
 import { request, type RequestFetch } from '../api';
-import type { PlanInfo } from '$lib/types/plan';
+import type { AutoTopUp, CreditPackCents, PlanInfo } from '$lib/types/plan';
 
 export function getPlan(
   fetchFn: RequestFetch = fetch,
@@ -45,6 +45,46 @@ export function createPortalSession(
   return request<{ url: string }>(fetchFn, {
     method: 'POST',
     path: '/me/portal',
+    body,
+    auth: 'required',
+    token,
+  });
+}
+
+export type CreateCreditCheckoutBody = {
+  packCents: CreditPackCents;
+  successUrl: string;
+  cancelUrl: string;
+};
+
+export function createCreditCheckoutSession(
+  body: CreateCreditCheckoutBody,
+  fetchFn: RequestFetch = fetch,
+  token?: string,
+): Promise<{ url: string }> {
+  return request<{ url: string }>(fetchFn, {
+    method: 'POST',
+    path: '/me/credits/checkout',
+    body,
+    auth: 'required',
+    token,
+  });
+}
+
+export type AutoTopUpPatch = {
+  enabled: boolean;
+  amountCents?: CreditPackCents;
+  thresholdCents?: number;
+};
+
+export function updateAutoTopUp(
+  body: AutoTopUpPatch,
+  fetchFn: RequestFetch = fetch,
+  token?: string,
+): Promise<AutoTopUp> {
+  return request<AutoTopUp>(fetchFn, {
+    method: 'PUT',
+    path: '/me/credits/auto-top-up',
     body,
     auth: 'required',
     token,

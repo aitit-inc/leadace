@@ -29,6 +29,7 @@ import {
 } from '../../services/outreach'
 import { projectRefParamSchema } from '../../services/projects'
 import { respondWithError } from '../respond'
+import { scheduleAutoTopUp } from '../auto-top-up'
 import type { Env, Variables } from '../types'
 import type { Context } from 'hono'
 
@@ -42,6 +43,7 @@ outreachRouter.post('/outreach', zValidator('json', recordOutreachSchema), async
     c.req.valid('json'),
   )
   if (!result.ok) return respondWithError(c, result)
+  scheduleAutoTopUp(c)
   return c.json(result.value, 201)
 })
 
@@ -63,6 +65,7 @@ outreachRouter.post(
       c.req.valid('json'),
     )
     if (!result.ok) return respondWithError(c, result)
+    scheduleAutoTopUp(c)
     return c.json(result.value, 201)
   },
 )
@@ -91,10 +94,12 @@ outreachRouter.patch(
     const result = await updateOutreachStatus(
       c.get('db'),
       c.get('tenantId'),
+      c.get('edition'),
       c.req.valid('param').id,
       c.req.valid('json'),
     )
     if (!result.ok) return respondWithError(c, result)
+    scheduleAutoTopUp(c)
     return c.json(result.value)
   },
 )
@@ -169,6 +174,7 @@ outreachRouter.post(
       c.req.valid('param').id,
     )
     if (!result.ok) return respondWithError(c, result)
+    scheduleAutoTopUp(c)
     return c.json(result.value, 200)
   },
 )
@@ -200,6 +206,7 @@ outreachRouter.post(
       c.req.valid('param').id,
     )
     if (!result.ok) return respondWithError(c, result)
+    scheduleAutoTopUp(c)
     return c.json(result.value, 200)
   },
 )

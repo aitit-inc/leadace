@@ -461,12 +461,41 @@ export const tenantPlans = pgTable('tenant_plans', {
   stripeSubscriptionId: text('stripe_subscription_id'),
   currentPeriodStart: timestamp('current_period_start', { withTimezone: true }),
   currentPeriodEnd: timestamp('current_period_end', { withTimezone: true }),
-  // Paid plans only: past the allowance, sends and discovery continue and the
-  // excess is metered to Stripe instead of refused. Ignored on free.
-  overageEnabled: boolean('overage_enabled').notNull().default(false),
+  // Prepaid-credit auto top-up (paid plans only; see credit_ledger). A debit
+  // that leaves the balance under the threshold invoices the amount against
+  // the subscription's payment method right away. A declined charge switches
+  // it off and stamps failed_at until the tenant changes the setting again.
+  autoTopUpEnabled: boolean('auto_top_up_enabled').notNull().default(false),
+  autoTopUpAmountCents: integer('auto_top_up_amount_cents').notNull().default(2500),
+  autoTopUpThresholdCents: integer('auto_top_up_threshold_cents').notNull().default(500),
+  // The invoice in flight; one top-up at a time.
+  autoTopUpInvoiceId: text('auto_top_up_invoice_id'),
+  autoTopUpFailedAt: timestamp('auto_top_up_failed_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 })
+
+export const CREDIT_ENTRY_KINDS = ['purchase', 'auto_top_up', 'usage_contacted', 'usage_found'] as const
+export type CreditEntryKind = (typeof CREDIT_ENTRY_KINDS)[number]
+export const creditEntryKindEnum = pgEnum('credit_entry_kind', CREDIT_ENTRY_KINDS)
+
+// Prepaid credits: the balance is the sum of amount_cents — purchases and
+// top-ups positive, usage past an allowance negative (prices in
+// domain/credits.ts). `reference` makes every row idempotent: the Checkout
+// session / invoice id for money in, `prospect:<id>` for usage.
+export const creditLedger = pgTable('credit_ledger', {
+  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  kind: creditEntryKindEnum('kind').notNull(),
+  amountCents: integer('amount_cents').notNull(),
+  reference: text('reference').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  unique('uq_credit_ledger_reference').on(table.tenantId, table.kind, table.reference),
+  index('idx_credit_ledger_tenant').on(table.tenantId, table.createdAt),
+])
 
 export const projects = pgTable('projects', {
   id: text('id').primaryKey(),
@@ -820,6 +849,11 @@ export const outreachLogs = pgTable('outreach_logs', {
   sentAt: timestamp('sent_at', { withTimezone: true }).defaultNow().notNull(),
   errorMessage: text('error_message'),
   skipReason: skipReasonEnum('skip_reason'),
+  // A pre_send reservation past the allowance holds its credit debit from
+  // allocation (taken under the tenant lock, so the balance stays covered);
+  // a failed confirm refunds it. A live re-read at confirm time would see the
+  // neighbours' reservations and charge the wrong prospects.
+  chargesCredits: boolean('charges_credits').notNull().default(false),
   // Subject-line A/B variant id (free-form short slug; no FK so old/removed
   // variants stay analysable). Populated by /outbound when the project has
   // multiple variants registered. NULL when the email used a one-off subject.

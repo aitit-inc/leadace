@@ -3,7 +3,8 @@ import type { Db } from '../db/connection'
 import { tenantPlans, tenantMembers } from '../db/schema'
 import { timingSafeEqual } from '../domain/timing-safe'
 import { stripeApiRequest } from './stripe-api'
-import type { PlanTier } from './plan-limits'
+import { PAID_PLAN_TIERS, type PaidPlanTier, type PlanTier } from './plan-limits'
+import { abandonPendingTopUp, settleCreditPurchase, settleTopUpFailedEvent, settleTopUpPaidEvent } from './credits'
 
 // Lives in the service tier (not domain) because crypto.subtle and the wall
 // clock are restricted to the service layer per backend-architecture.md.
@@ -51,12 +52,9 @@ export async function verifyStripeSignature(
   return parts.signatures.some((sig) => timingSafeEqual(sig, expected))
 }
 
-export type PaidPlanTier = 'starter' | 'pro' | 'scale'
-
 export function planFromMetadata(metadata: Record<string, string> | undefined): PaidPlanTier | null {
   const plan = metadata?.['plan']
-  if (plan === 'starter' || plan === 'pro' || plan === 'scale') return plan
-  return null
+  return PAID_PLAN_TIERS.find((tier) => tier === plan) ?? null
 }
 
 export type StripeSubscriptionItems = {
@@ -158,24 +156,32 @@ export async function handleStripeEvent(
   event: StripeEvent,
 ): Promise<void> {
   switch (event.type) {
+    // mode=payment is a credit pack (services/credits.ts); mode=subscription
+    // a plan. An async payment method completes the session unpaid and
+    // confirms with async_payment_succeeded.
     case 'checkout.session.completed':
-      await handleCheckoutSessionCompleted(db, secretKey, event.data.object)
+      if (event.data.object['mode'] === 'payment') await settleCreditPurchase(db, event.data.object)
+      else await handleCheckoutSessionCompleted(db, secretKey, event.data.object)
+      return
+    case 'checkout.session.async_payment_succeeded':
+      if (event.data.object['mode'] === 'payment') await settleCreditPurchase(db, event.data.object)
       return
     case 'customer.subscription.updated':
-      await handleSubscriptionUpdated(db, event.data.object)
+      await handleSubscriptionUpdated(db, secretKey, event.data.object)
       return
     case 'customer.subscription.deleted':
-      await handleSubscriptionDeleted(db, event.data.object)
+      await handleSubscriptionDeleted(db, secretKey, event.data.object)
       return
-    // Renewal-time invoice events. Plan state is mirrored from
+    // A credit top-up invoice (LeadAce metadata) settles the ledger. Renewal
+    // invoices are observation-only: plan state is mirrored from
     // customer.subscription.updated (which fires on every renewal as
-    // current_period_start/end change), so these are observation-only —
-    // log for billing visibility, don't touch tenant_plans.
+    // current_period_start/end change), so log for billing visibility and
+    // don't touch tenant_plans.
     case 'invoice.paid':
-      logInvoicePaid(event.data.object)
+      if (!(await settleTopUpPaidEvent(db, event.data.object))) logInvoicePaid(event.data.object)
       return
     case 'invoice.payment_failed':
-      logInvoicePaymentFailed(event.data.object)
+      if (!(await settleTopUpFailedEvent(db, event.data.object))) logInvoicePaymentFailed(event.data.object)
       return
     default:
       return
@@ -293,6 +299,7 @@ async function handleCheckoutSessionCompleted(
 
 async function handleSubscriptionUpdated(
   db: Db,
+  secretKey: string,
   sub: Record<string, unknown>,
 ): Promise<void> {
   const subscriptionId = sub['id'] as string
@@ -336,15 +343,19 @@ async function handleSubscriptionUpdated(
 
   const activePlan = effectivePlanFromStatus(status, plan)
 
+  // A lapsed subscription (past_due, unpaid, …) has nothing to charge a
+  // top-up to, so auto top-up goes off and any invoice in flight is voided.
   await db
     .update(tenantPlans)
     .set({
       plan: activePlan,
       currentPeriodStart: periodStart ? new Date(periodStart * 1000) : undefined,
       currentPeriodEnd: periodEnd ? new Date(periodEnd * 1000) : undefined,
+      ...(activePlan === 'free' ? { autoTopUpEnabled: false, autoTopUpFailedAt: null } : {}),
       updatedAt: new Date(),
     })
     .where(eq(tenantPlans.tenantId, row.tenantId))
+  if (activePlan === 'free') await abandonPendingTopUp(db, row.tenantId, secretKey)
 
   console.log(`Tenant ${row.tenantId} plan updated to ${activePlan}`)
 }
@@ -366,6 +377,7 @@ function logInvoicePaymentFailed(invoice: Record<string, unknown>): void {
 
 async function handleSubscriptionDeleted(
   db: Db,
+  secretKey: string,
   sub: Record<string, unknown>,
 ): Promise<void> {
   const subscriptionId = sub['id'] as string
@@ -389,11 +401,13 @@ async function handleSubscriptionDeleted(
     return
   }
 
-  // Overage is a choice made for this subscription; the next one starts off.
+  // Auto top-up charged this subscription's payment method; the next one
+  // starts with it off. The credit balance itself stays (credits never expire).
   await db
     .update(tenantPlans)
-    .set({ plan: 'free', overageEnabled: false, updatedAt: new Date() })
+    .set({ plan: 'free', autoTopUpEnabled: false, autoTopUpFailedAt: null, updatedAt: new Date() })
     .where(eq(tenantPlans.tenantId, row.tenantId))
+  await abandonPendingTopUp(db, row.tenantId, secretKey)
 
   console.log(`Subscription ${subscriptionId} deleted, tenant ${row.tenantId} downgraded to free`)
 }

@@ -1,0 +1,1 @@
+ALTER TABLE "tenant_plans" DROP COLUMN "overage_enabled";
