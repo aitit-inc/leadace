@@ -11,9 +11,10 @@
 #   - signature verification: missing header → 400, bad sig → 401, stale ts → 401,
 #     valid sig for an unknown subscription → 200 (logged, no-op)
 #   - customer.subscription.updated: active+plan metadata grants the tier;
-#     period dates mirrored; active+missing metadata leaves the row untouched
-#     (config-drift guard); idempotent on re-delivery
-#   - customer.subscription.deleted: downgrades to free
+#     period dates mirrored; the plan price is found when it is not the first
+#     item; active+missing metadata leaves the row untouched (config-drift
+#     guard); idempotent on re-delivery
+#   - customer.subscription.deleted: downgrades to free and switches overage off
 #   - unlimited-tier protection: updated/deleted both refuse to overwrite 'unlimited'
 #
 # OUT OF SCOPE (require the real Stripe API, like the real-Gmail leg of
@@ -68,6 +69,8 @@ sub_updated()        { jq -nc --arg id "$SUB" --arg plan "$1" --arg st "$2" --ar
   '{type:"customer.subscription.updated", data:{object:{id:$id, status:$st, current_period_start:$ps, current_period_end:$pe, items:{data:[{price:{metadata:{plan:$plan}}}]}}}}'; }
 sub_updated_nometa() { jq -nc --arg id "$SUB" --arg st "$1" --argjson ps "$NOW" --argjson pe "$PEND" \
   '{type:"customer.subscription.updated", data:{object:{id:$id, status:$st, current_period_start:$ps, current_period_end:$pe, items:{data:[{price:{metadata:{}}}]}}}}'; }
+sub_updated_2nd_item() { jq -nc --arg id "$SUB" --arg plan "$1" --arg st "$2" --argjson ps "$NOW" --argjson pe "$PEND" \
+  '{type:"customer.subscription.updated", data:{object:{id:$id, status:$st, current_period_start:$ps, current_period_end:$pe, items:{data:[{price:{metadata:{}}},{price:{metadata:{plan:$plan}}}]}}}}'; }
 sub_deleted()        { jq -nc --arg id "$SUB" '{type:"customer.subscription.deleted", data:{object:{id:$id}}}'; }
 
 step "A. signature verification (no DB state required)"
@@ -96,6 +99,12 @@ assert_eq "  tenant promoted to pro" "$(plan_of)" "pro"
 assert_eq "  current_period_start mirrored from the event (recent)" \
   "$(psql_local "SELECT (current_period_start > NOW() - INTERVAL '10 minutes') FROM tenant_plans WHERE tenant_id='$T';")" "t"
 
+step "B2. the plan price is found when it is not the first item"
+assert_eq "updated(active, [other item, plan=scale]) → 200" "$(post_event "$(sub_updated_2nd_item scale active)")" "200"
+assert_eq "  tenant promoted to scale" "$(plan_of)" "scale"
+assert_eq "back to pro → 200" "$(post_event "$(sub_updated pro active)")" "200"
+assert_eq "  tenant back on pro" "$(plan_of)" "pro"
+
 step "C. idempotent re-delivery"
 assert_eq "same updated event re-delivered → 200" "$(post_event "$(sub_updated pro active)")" "200"
 assert_eq "  plan still pro (UPDATE is idempotent)" "$(plan_of)" "pro"
@@ -106,9 +115,12 @@ assert_eq "reset to starter" "$(plan_of)" "starter"
 assert_eq "updated(active, NO metadata) → 200" "$(post_event "$(sub_updated_nometa active)")" "200"
 assert_eq "  plan left untouched at starter (operator must fix Price metadata)" "$(plan_of)" "starter"
 
-step "E. subscription.deleted downgrades to free"
+step "E. subscription.deleted downgrades to free and switches overage off"
+psql_local "UPDATE tenant_plans SET overage_enabled = true WHERE tenant_id='$T';" > /dev/null
 assert_eq "deleted → 200" "$(post_event "$(sub_deleted)")" "200"
 assert_eq "  tenant downgraded to free" "$(plan_of)" "free"
+assert_eq "  overage_enabled reset to false" \
+  "$(psql_local "SELECT overage_enabled FROM tenant_plans WHERE tenant_id='$T';")" "f"
 
 step "F. unlimited-tier protection (webhook never overwrites a manual unlimited)"
 cloud_seed_plan "$T" unlimited "$SUB"

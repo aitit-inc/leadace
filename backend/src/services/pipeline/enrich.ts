@@ -10,6 +10,7 @@ import { utcDateKey } from '../../domain/time'
 import { ok, err, type ServiceResult } from '../result'
 import { callGeminiUrlContextJson, GeminiError, HOSTED_MODEL } from '../gemini'
 import { batchRegister, type BatchInput } from '../prospect-import'
+import { discoveryPausedReason, getRemainingProspectQuota } from '../plan-limits'
 import { getActiveStrategySlugs, listDiscoveryStrategiesById } from '../discovery-strategies'
 import { stampEmailDeliverability } from '../dns-check'
 import { apexDomainOf, editionOf, loadDoc, loadMasterDoc, noProgress, type HostedEnv, type ProgressFn } from './context'
@@ -399,12 +400,26 @@ export async function runEnrich(
   candidates: DiscoverCandidate[],
   progress: ProgressFn = noProgress,
 ): Promise<ServiceResult<EnrichResult>> {
-  const [procedure, business, strategies, activeSlugs] = await Promise.all([
+  const [procedure, business, strategies, activeSlugs, quota] = await Promise.all([
     loadMasterDoc(db, 'tpl_enrich_contacts'),
     loadDoc(db, tenantId, projectId, 'business'),
     listDiscoveryStrategiesById(db, projectId),
     getActiveStrategySlugs(db, projectId),
+    getRemainingProspectQuota(db, tenantId, editionOf(env)),
   ])
+  // Site reads are the cost; a chunk that starts after the allowance is spent
+  // (mid-run, or a standalone enrich job) reads nothing.
+  const paused = discoveryPausedReason(quota)
+  if (paused) {
+    return ok({
+      kind: 'enrich',
+      summary: `Skipped ${candidates.length} candidates: ${paused}`,
+      registered: 0,
+      skipped: candidates.length,
+      withEmail: 0,
+      skippedDetails: candidates.map((c) => ({ name: c.name, reason: 'plan_limit' })),
+    })
+  }
   const approaches = strategies.filter((s) => activeSlugs.includes(s.slug)).map((s) => s.approach)
   const offer = business ? business.split('\n').slice(0, 20).join('\n') : '(business document missing)'
 
@@ -426,7 +441,7 @@ export async function runEnrich(
   const skippedDetails: Array<{ name: string; reason: string }> = [...noChannel]
   const emailsToVerify: string[] = []
   for (let i = 0; i < registrable.length; i += 100) {
-    const result = await runWithRls(db, tenantId, (tx) => batchRegister(tx, tenantId, editionOf(env), { projectId, prospects: registrable.slice(i, i + 100) }))
+    const result = await runWithRls(db, tenantId, (tx) => batchRegister(tx, tenantId, editionOf(env), { projectId, prospects: registrable.slice(i, i + 100) }, 'found'))
     if (!result.ok) return result
     registered += result.value.inserted
     skippedDetails.push(...result.value.skippedDetails.map((s) => ({ name: s.name, reason: s.reason })))

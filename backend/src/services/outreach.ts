@@ -30,8 +30,7 @@ import {
 } from '../domain/ids'
 export { outreachLogIdParamSchema } from '../domain/ids'
 import {
-  getRemainingOutreachQuota,
-  outreachQuotaErrorIfExhausted,
+  assertProspectContactQuota,
   mailboxQuotaErrorIfExhausted,
   recordMailboxRefusal,
   clearMailboxSendRefusal,
@@ -463,17 +462,16 @@ export async function recordOutreach(
   // stamps must remain recordable on incomplete tenants so failed-send logs
   // aren't lost.
   const sending = input.status === 'sent'
-  const [resolved, prospectGuard, quota, compliance] = await Promise.all([
+  const [resolved, prospectGuard, quotaErr, compliance] = await Promise.all([
     resolveProject(db, tenantId, input.projectId),
     requireProspect(db, tenantId, input.prospectId),
-    sending ? getRemainingOutreachQuota(db, tenantId, edition) : Promise.resolve(null),
+    sending ? assertProspectContactQuota(db, tenantId, edition, input.prospectId) : Promise.resolve(null),
     sending ? assertTenantComplianceReady(db, tenantId) : Promise.resolve(null),
   ])
   if (!resolved.ok) return resolved
   const projectId = resolved.value
   if (!prospectGuard.ok) return prospectGuard
   if (compliance && !compliance.ok) return compliance
-  const quotaErr = quota ? outreachQuotaErrorIfExhausted(quota) : null
   if (quotaErr) return quotaErr
 
   // Resolved once per email send: the cap check, the row's sending_identity_id,
@@ -609,8 +607,7 @@ export async function recordOutreachWithInquiry(
   if (willSend) {
     const contactable = await assertProspectContactable(db, tenantId, input.prospectId, input.channel)
     if (!contactable.ok) return contactable
-    const quota = await getRemainingOutreachQuota(db, tenantId, edition)
-    const quotaErr = outreachQuotaErrorIfExhausted(quota)
+    const quotaErr = await assertProspectContactQuota(db, tenantId, edition, input.prospectId)
     if (quotaErr) return quotaErr
     const country = await assertProspectCountryAllowed(db, tenantId, input.prospectId)
     if (!country.ok) return country
@@ -789,8 +786,7 @@ export async function sendAndRecord(
   const contactable = await assertProspectContactable(db, tenantId, input.prospectId, 'email')
   if (!contactable.ok) return contactable
 
-  const quota = await getRemainingOutreachQuota(db, tenantId, edition)
-  const quotaErr = outreachQuotaErrorIfExhausted(quota)
+  const quotaErr = await assertProspectContactQuota(db, tenantId, edition, input.prospectId)
   if (quotaErr) return quotaErr
 
   const mailbox = await pickProjectMailbox(db, tenantId, projectId)
@@ -1255,26 +1251,23 @@ export async function sendDraft(
   ctx: SendContext,
   id: number,
 ): Promise<ServiceResult<SendOutcome>> {
-  const [draft, quota] = await Promise.all([
-    db
-      .select({
-        id: outreachLogs.id,
-        projectId: outreachLogs.projectId,
-        prospectId: outreachLogs.prospectId,
-        channel: outreachLogs.channel,
-        subject: outreachLogs.subject,
-        body: outreachLogs.body,
-        status: outreachLogs.status,
-        doNotContact: sql<boolean>`${prospects.doNotContact} OR ${organizations.doNotContact}`,
-      })
-      .from(outreachLogs)
-      .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
-      .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
-      .where(and(eq(outreachLogs.id, id), eq(outreachLogs.tenantId, tenantId)))
-      .limit(1)
-      .then((rows) => rows[0]),
-    getRemainingOutreachQuota(db, tenantId, edition),
-  ])
+  const draft = await db
+    .select({
+      id: outreachLogs.id,
+      projectId: outreachLogs.projectId,
+      prospectId: outreachLogs.prospectId,
+      channel: outreachLogs.channel,
+      subject: outreachLogs.subject,
+      body: outreachLogs.body,
+      status: outreachLogs.status,
+      doNotContact: sql<boolean>`${prospects.doNotContact} OR ${organizations.doNotContact}`,
+    })
+    .from(outreachLogs)
+    .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
+    .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
+    .where(and(eq(outreachLogs.id, id), eq(outreachLogs.tenantId, tenantId)))
+    .limit(1)
+    .then((rows) => rows[0])
 
   if (!draft) return err('NOT_FOUND', 'Draft not found')
   if (draft.status !== 'pending_review') {
@@ -1288,7 +1281,7 @@ export async function sendDraft(
   }
   const hostGuard = assertPublicHttpsSendHosts(ctx)
   if (!hostGuard.ok) return hostGuard
-  const quotaErr = outreachQuotaErrorIfExhausted(quota)
+  const quotaErr = await assertProspectContactQuota(db, tenantId, edition, draft.prospectId)
   if (quotaErr) return quotaErr
 
   const mailbox = await pickProjectMailbox(db, tenantId, draft.projectId as ProjectId)
@@ -1443,24 +1436,21 @@ export async function markDraftSent(
   edition: Edition,
   id: number,
 ): Promise<ServiceResult<{ outreachId: number }>> {
-  const [draft, quota] = await Promise.all([
-    db
-      .select({
-        id: outreachLogs.id,
-        projectId: outreachLogs.projectId,
-        prospectId: outreachLogs.prospectId,
-        channel: outreachLogs.channel,
-        status: outreachLogs.status,
-        doNotContact: sql<boolean>`${prospects.doNotContact} OR ${organizations.doNotContact}`,
-      })
-      .from(outreachLogs)
-      .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
-      .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
-      .where(and(eq(outreachLogs.id, id), eq(outreachLogs.tenantId, tenantId)))
-      .limit(1)
-      .then((rows) => rows[0]),
-    getRemainingOutreachQuota(db, tenantId, edition),
-  ])
+  const draft = await db
+    .select({
+      id: outreachLogs.id,
+      projectId: outreachLogs.projectId,
+      prospectId: outreachLogs.prospectId,
+      channel: outreachLogs.channel,
+      status: outreachLogs.status,
+      doNotContact: sql<boolean>`${prospects.doNotContact} OR ${organizations.doNotContact}`,
+    })
+    .from(outreachLogs)
+    .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
+    .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
+    .where(and(eq(outreachLogs.id, id), eq(outreachLogs.tenantId, tenantId)))
+    .limit(1)
+    .then((rows) => rows[0])
 
   if (!draft) return err('NOT_FOUND', 'Draft not found')
   if (draft.status !== 'pending_review') {
@@ -1472,7 +1462,7 @@ export async function markDraftSent(
   if (draft.doNotContact) {
     return err('UNPROCESSABLE', 'Prospect is on do-not-contact list')
   }
-  const quotaErr = outreachQuotaErrorIfExhausted(quota)
+  const quotaErr = await assertProspectContactQuota(db, tenantId, edition, draft.prospectId)
   if (quotaErr) return quotaErr
 
   // Re-apply send guards at confirm time. The form/SNS draft path runs

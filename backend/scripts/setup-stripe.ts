@@ -2,8 +2,10 @@
  * Set up Stripe Products, Prices, Customer Portal, and optionally the Webhook
  * endpoint (when WEBHOOK_URL is provided).
  *
- * Idempotent: re-runs skip anything that already exists (matched by metadata).
- * Safe to use in both test and live mode — the secret key determines which.
+ * Idempotent: re-runs reuse anything that already exists (matched by
+ * metadata); a price whose amount changed, and every yearly price, is
+ * archived. Safe to use in both test and live mode — the secret key
+ * determines which.
  *
  * Usage:
  *   STRIPE_SECRET_KEY=sk_test_... \
@@ -17,7 +19,7 @@
  *   WEBHOOK_URL       — if set, create/update a webhook endpoint at this URL.
  *                       On first creation, the signing secret (whsec_...) is printed.
  *
- * Outputs the 6 Price IDs at the end in a copy-paste-ready format.
+ * Outputs the 3 monthly Price IDs at the end in a copy-paste-ready format.
  */
 
 const KEY = process.env['STRIPE_SECRET_KEY']
@@ -52,13 +54,13 @@ interface PlanDef {
   name: string
   description: string
   monthlyUsd: number
-  yearlyUsd: number
 }
 
+// Keep in sync with PLAN_LIMITS in src/services/plan-limits.ts.
 const PLANS: PlanDef[] = [
-  { tier: 'starter', name: 'Starter', description: '1 project, 1,500 outreach actions per month.', monthlyUsd: 29, yearlyUsd: 290 },
-  { tier: 'pro', name: 'Pro', description: '5 projects, 4,000 outreach actions per month.', monthlyUsd: 79, yearlyUsd: 790 },
-  { tier: 'scale', name: 'Scale', description: 'Unlimited projects and outreach actions.', monthlyUsd: 199, yearlyUsd: 1990 },
+  { tier: 'starter', name: 'Starter', description: '100 new prospects per month, 1 project, 1 mailbox.', monthlyUsd: 49 },
+  { tier: 'pro', name: 'Pro', description: '300 new prospects per month, 5 projects, 3 mailboxes.', monthlyUsd: 99 },
+  { tier: 'scale', name: 'Scale', description: '800 new prospects per month, unlimited projects, 10 mailboxes.', monthlyUsd: 199 },
 ]
 
 // ---------------------------------------------------------------------------
@@ -85,21 +87,28 @@ async function stripeApi(method: 'GET' | 'POST', path: string, body?: Record<str
 }
 
 interface StripeListItem { id: string; metadata?: Record<string, string> }
+interface StripePrice extends StripeListItem { unit_amount: number | null }
 
 async function searchProduct(plan: PlanTier): Promise<string | null> {
   const data = await stripeApi('GET', '/products/search', {
     query: `active:"true" AND metadata["plan"]:"${plan}"`,
+    limit: '100',
   })
   const list = (data['data'] as StripeListItem[]) ?? []
   return list[0]?.id ?? null
 }
 
-async function searchPrice(productId: string, plan: PlanTier, interval: 'month' | 'year'): Promise<string | null> {
+async function searchPrices(productId: string, plan: PlanTier, interval: 'month' | 'year'): Promise<StripePrice[]> {
   const data = await stripeApi('GET', '/prices/search', {
     query: `active:"true" AND product:"${productId}" AND metadata["plan"]:"${plan}" AND metadata["interval"]:"${interval}"`,
+    limit: '100',
   })
-  const list = (data['data'] as StripeListItem[]) ?? []
-  return list[0]?.id ?? null
+  return (data['data'] as StripePrice[]) ?? []
+}
+
+async function archivePrice(id: string, why: string): Promise<void> {
+  await stripeApi('POST', `/prices/${id}`, { active: 'false' })
+  console.log(`    [-]  Price ${id} archived (${why})`)
 }
 
 async function ensureProduct(plan: PlanDef): Promise<string> {
@@ -121,23 +130,33 @@ async function ensureProduct(plan: PlanDef): Promise<string> {
   return p['id'] as string
 }
 
-async function ensurePrice(productId: string, plan: PlanDef, interval: 'month' | 'year'): Promise<string> {
-  const existing = await searchPrice(productId, plan.tier, interval)
-  if (existing) {
-    console.log(`    [ok] Price ${plan.name} ${interval}ly: ${existing} (reused)`)
-    return existing
+// Stripe prices are immutable, so a new amount means a new price. The old one
+// is archived; subscriptions already on it keep it until they change plan.
+async function ensureMonthlyPrice(productId: string, plan: PlanDef): Promise<string> {
+  const amount = plan.monthlyUsd * 100
+  let keep: string | null = null
+  for (const price of await searchPrices(productId, plan.tier, 'month')) {
+    if (price.unit_amount === amount && keep === null) {
+      keep = price.id
+      console.log(`    [ok] Price ${plan.name} monthly: ${price.id} (reused)`)
+    } else {
+      await archivePrice(price.id, `amount ${price.unit_amount} != ${amount}`)
+    }
   }
-  const amount = interval === 'month' ? plan.monthlyUsd * 100 : plan.yearlyUsd * 100
+  for (const price of await searchPrices(productId, plan.tier, 'year')) {
+    await archivePrice(price.id, 'yearly billing discontinued')
+  }
+  if (keep) return keep
   const p = await stripeApi('POST', '/prices', {
     product: productId,
     currency: 'usd',
     unit_amount: String(amount),
-    'recurring[interval]': interval,
-    nickname: `${plan.name} ${interval}ly`,
+    'recurring[interval]': 'month',
+    nickname: `${plan.name} monthly`,
     'metadata[plan]': plan.tier,
-    'metadata[interval]': interval,
+    'metadata[interval]': 'month',
   })
-  console.log(`    [+]  Price ${plan.name} ${interval}ly: ${p['id']}`)
+  console.log(`    [+]  Price ${plan.name} monthly: ${p['id']}`)
   return p['id'] as string
 }
 
@@ -209,17 +228,16 @@ async function main() {
   console.log(`\n=== Stripe setup (${MODE} mode) ===\n`)
 
   console.log('Products & Prices:')
-  const results: Array<{ plan: PlanDef; productId: string; monthly: string; yearly: string }> = []
+  const results: Array<{ plan: PlanDef; productId: string; monthly: string }> = []
   for (const plan of PLANS) {
     const productId = await ensureProduct(plan)
-    const monthly = await ensurePrice(productId, plan, 'month')
-    const yearly = await ensurePrice(productId, plan, 'year')
-    results.push({ plan, productId, monthly, yearly })
+    const monthly = await ensureMonthlyPrice(productId, plan)
+    results.push({ plan, productId, monthly })
   }
 
   console.log('\nCustomer Portal:')
   await ensurePortalConfig(
-    results.map((r) => ({ productId: r.productId, priceIds: [r.monthly, r.yearly] })),
+    results.map((r) => ({ productId: r.productId, priceIds: [r.monthly] })),
   )
 
   let webhookSecret: string | null = null
@@ -235,7 +253,6 @@ async function main() {
   for (const r of results) {
     const up = r.plan.tier.toUpperCase()
     console.log(`PUBLIC_STRIPE_PRICE_${up}_MONTHLY=${r.monthly}`)
-    console.log(`PUBLIC_STRIPE_PRICE_${up}_YEARLY=${r.yearly}`)
   }
 
   if (webhookSecret) {

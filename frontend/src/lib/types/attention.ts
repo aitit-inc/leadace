@@ -1,5 +1,5 @@
 // Mirrors backend/src/domain/attention.ts `AttentionItem`.
-export type QuotaConstraint = 'daily' | 'lifetime' | 'monthly';
+export type QuotaConstraint = 'lifetime' | 'monthly';
 
 export type AttentionItem =
 	| { kind: 'hot_leads'; count: number }

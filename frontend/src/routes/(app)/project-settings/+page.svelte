@@ -480,8 +480,9 @@
         <p class="mt-2 text-xs text-text-muted">
           When a prospect doesn't reply, <span class="font-mono">/outbound</span> queues a short,
           fresh-angle follow-up on this cadence and stops automatically on any real reply, bounce, or
-          unsubscribe (auto-replies don't stop it). Each follow-up consumes 1 outreach action
-          (quota), so an N-email sequence multiplies send volume by N.
+          unsubscribe (auto-replies don't stop it). Follow-ups don't count against your plan — a
+          prospect counts once, when its first email goes out — but an N-email sequence still
+          multiplies your mailbox's daily send volume by N.
         </p>
       </div>
 

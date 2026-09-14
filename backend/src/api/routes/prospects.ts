@@ -44,6 +44,7 @@ prospectsRouter.post('/prospects/batch', zValidator('json', batchSchema), async 
     c.get('tenantId'),
     c.get('edition'),
     c.req.valid('json'),
+    'brought_in',
   )
   if (!result.ok) return respondWithError(c, result)
   const { emailsToVerify, ...body } = result.value

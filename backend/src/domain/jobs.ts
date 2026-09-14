@@ -68,6 +68,8 @@ export const jobParamsSchema = z.discriminatedUnion('kind', [
     count: z.number().int().min(1).max(100).default(10),
     // Pin one registered strategy instead of following the tick's batch plan.
     strategySlug: discoveryStrategySchema.optional(),
+    // Set by the unattended cycle only, so a person's count is never lifted.
+    minCandidatesPerSearch: z.number().int().min(1).max(50).optional(),
   }),
   z.object({
     kind: z.literal('enrich'),

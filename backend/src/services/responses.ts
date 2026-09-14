@@ -403,6 +403,7 @@ async function createDerivedProspect(
     .insert(prospects)
     .values({
       tenantId,
+      origin: 'brought_in',
       name: derivedDisplayName(pointer, referring.name),
       contactName: pointer.name,
       organizationId: referring.organizationId,

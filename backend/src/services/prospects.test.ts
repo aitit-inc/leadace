@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { classifyProspectDeletion } from './prospects'
+import { capFirstTouches, classifyProspectDeletion } from './prospects'
 
 const deletable = {
   exists: true,
@@ -42,5 +42,15 @@ describe('classifyProspectDeletion', () => {
     expect(classifyProspectDeletion({ ...deletable, projectLinkCount: 2 })).toBe(
       'linked_to_multiple_projects',
     )
+  })
+})
+
+describe('capFirstTouches', () => {
+  const row = (id: number, contactedBefore: boolean) => ({ id, contactedBefore })
+
+  it('keeps every follow-up and only the first `cap` first touches, in draw order', () => {
+    const rows = [row(1, false), row(2, true), row(3, false), row(4, false), row(5, true)]
+    expect(capFirstTouches(rows, 2).map((r) => r.id)).toEqual([1, 2, 3, 5])
+    expect(capFirstTouches(rows, 0).map((r) => r.id)).toEqual([2, 5])
   })
 })

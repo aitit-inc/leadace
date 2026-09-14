@@ -141,12 +141,12 @@ export function attentionMeta(item: AttentionItem): AttentionMeta {
 			return {
 				icon: Zap,
 				tone: 'warning',
-				title: 'Outreach quota reached',
+				title: 'Prospect allowance used',
 				desc:
-					item.constraint === 'daily'
-						? "Today's sending limit is used up — it resets tomorrow"
-						: 'Your plan limit is used up — upgrade to keep sending',
-				ctaLabel: item.constraint === 'daily' ? 'View plan' : 'Upgrade',
+					item.constraint === 'monthly'
+						? 'New prospects resume next period — follow-ups still go out; enable overage or upgrade to continue now'
+						: 'Every prospect in your plan has been contacted — follow-ups still go out; upgrade to reach new ones',
+				ctaLabel: item.constraint === 'monthly' ? 'View plan' : 'Upgrade',
 				href: '/plans',
 			};
 	}

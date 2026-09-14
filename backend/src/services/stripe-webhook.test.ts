@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { planFromMetadata, effectivePlanFromStatus, verifyStripeSignature } from './stripe-webhook'
+import {
+  planFromMetadata,
+  planFromSubscriptionItems,
+  periodFromSubscription,
+  effectivePlanFromStatus,
+  verifyStripeSignature,
+  type StripeSubscriptionItems,
+} from './stripe-webhook'
 
 // Timestamps stay relative to the real clock so the tolerance branch is
 // deterministic without injecting one.
@@ -81,6 +88,38 @@ describe('planFromMetadata', () => {
     expect(planFromMetadata({})).toBeNull()
     expect(planFromMetadata({ plan: 'enterprise' })).toBeNull()
     expect(planFromMetadata({ plan: 'free' })).toBeNull()
+  })
+})
+
+describe('planFromSubscriptionItems', () => {
+  it('finds the plan price when it is not the first item', () => {
+    const items: StripeSubscriptionItems = {
+      data: [{ price: { metadata: {} } }, { price: { metadata: { plan: 'pro' } } }],
+    }
+    expect(planFromSubscriptionItems(items)).toBe('pro')
+  })
+
+  it('returns null when no item carries plan metadata', () => {
+    expect(planFromSubscriptionItems({ data: [{ price: { metadata: {} } }] })).toBeNull()
+    expect(planFromSubscriptionItems(undefined)).toBeNull()
+  })
+})
+
+describe('periodFromSubscription', () => {
+  const items: StripeSubscriptionItems = {
+    data: [{ price: { metadata: {} } }, { price: { metadata: { plan: 'pro' } }, current_period_start: 10, current_period_end: 20 }],
+  }
+
+  it('reads the period from the subscription root when present', () => {
+    expect(periodFromSubscription({ current_period_start: 1, current_period_end: 2 }, items)).toEqual({ start: 1, end: 2 })
+  })
+
+  it('falls back to the plan item when the root carries no period (Basil)', () => {
+    expect(periodFromSubscription({}, items)).toEqual({ start: 10, end: 20 })
+  })
+
+  it('answers undefined when neither carries one', () => {
+    expect(periodFromSubscription({}, { data: [{ price: { metadata: { plan: 'pro' } } }] })).toEqual({ start: undefined, end: undefined })
   })
 })
 

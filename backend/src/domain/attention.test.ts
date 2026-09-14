@@ -189,7 +189,7 @@ describe('deriveAttentionItems', () => {
     const items = deriveAttentionItems({
       ...clean,
       identities: [gmail({ authRevokedAt: new Date('2026-07-29T09:00:00.000Z') })],
-      quota: { exhausted: true, constraint: 'daily' },
+      quota: { exhausted: true, constraint: 'lifetime' },
     })
     expect(items.map((i) => i.kind)).toEqual(['gmail_auth_revoked', 'quota_exhausted'])
   })
@@ -203,13 +203,13 @@ describe('deriveAttentionItems', () => {
     const items = deriveAttentionItems({
       ...clean,
       compliance: { ready: false, missing: ['physicalAddress', 'defaultSenderCountry'] },
-      quota: { exhausted: true, constraint: 'daily' },
+      quota: { exhausted: true, constraint: 'lifetime' },
     })
     expect(items).toContainEqual({
       kind: 'compliance_incomplete',
       missing: ['physicalAddress', 'defaultSenderCountry'],
     })
-    expect(items).toContainEqual({ kind: 'quota_exhausted', constraint: 'daily' })
+    expect(items).toContainEqual({ kind: 'quota_exhausted', constraint: 'lifetime' })
   })
 
   it('emits no project items for the tenant-wide feed (project: null)', () => {

@@ -612,7 +612,7 @@ Most self-hosters will leave Stripe off entirely.
 | `PUBLIC_SUPABASE_URL` | Supabase project URL. |
 | `PUBLIC_SUPABASE_ANON_KEY` | Supabase anon/publishable key. |
 | `PUBLIC_LEADACE_EDITION` | `self-hosted` (default) or `cloud`. Mirrors backend. Hides billing UI when not `cloud`. |
-| `PUBLIC_STRIPE_PRICE_*` | Six Stripe Price IDs (starter/pro/scale × monthly/yearly). Only used when `PUBLIC_LEADACE_EDITION=cloud`. |
+| `PUBLIC_STRIPE_PRICE_*` | Three Stripe Price IDs (starter/pro/scale, monthly). Only used when `PUBLIC_LEADACE_EDITION=cloud`. |
 
 ## Operational notes
 

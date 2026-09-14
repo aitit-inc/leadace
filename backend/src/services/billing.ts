@@ -4,9 +4,9 @@ import { tenantPlans } from '../db/schema'
 import {
   getTenantPlan,
   getPlanLimits,
-  getRemainingOutreachQuotaForPlan,
+  getRemainingProspectQuotaForPlan,
   countTenantProspects,
-  type OutreachQuota,
+  type ProspectQuota,
   type PlanLimits,
   type PlanTier,
 } from './plan-limits'
@@ -32,12 +32,10 @@ export type PlanInfo = {
   plan: PlanTier
   limits: {
     maxProjects: number | null
-    maxOutreachPerDay: number | null
-    maxOutreachLifetime: number | null
-    maxOutreachPerMonth: number | null
     maxProspects: number | null
   }
-  outreach: OutreachQuota
+  quota: ProspectQuota
+  // Stored prospects against the storage cap; absent when uncapped.
   prospects?: { used: number; remaining: number; limit: number }
 }
 
@@ -50,7 +48,7 @@ export async function getPlanInfo(
   const limits: PlanLimits = getPlanLimits(tenantPlan.plan)
 
   const [quota, prospectCount] = await Promise.all([
-    getRemainingOutreachQuotaForPlan(db, tenantId, tenantPlan),
+    getRemainingProspectQuotaForPlan(db, tenantId, tenantPlan),
     limits.maxProspects !== null ? countTenantProspects(db, tenantId) : Promise.resolve(null),
   ])
 
@@ -58,12 +56,9 @@ export async function getPlanInfo(
     plan: tenantPlan.plan,
     limits: {
       maxProjects: limits.maxProjects,
-      maxOutreachPerDay: limits.maxOutreachPerDay,
-      maxOutreachLifetime: limits.maxOutreachLifetime,
-      maxOutreachPerMonth: limits.maxOutreachPerMonth,
       maxProspects: limits.maxProspects,
     },
-    outreach: quota,
+    quota,
   }
 
   if (limits.maxProspects !== null && prospectCount !== null) {

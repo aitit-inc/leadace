@@ -10,6 +10,7 @@ import type { VitalsAssessment } from '../domain/vital-signs'
 import type { Edition } from '../domain/edition'
 import type { TenantId } from '../domain/ids'
 import { getPlanInfo } from './billing'
+import { isContactQuotaExhausted } from './plan-limits'
 import { getCredentialsStatus } from './google-auth'
 import { ok, type ServiceResult } from './result'
 import { getOnboardingStatus, getTenantComplianceStatus } from './tenants'
@@ -64,7 +65,7 @@ export async function loadTenantAttentionInput(
       : []
   })
 
-  const quota = planRes.value.outreach
+  const quota = planRes.value.quota
   return ok({
     hasProject: onboardingRes.value.hasProject,
     compliance: { ready: complianceRes.value.ready, missing: complianceRes.value.missing },
@@ -75,8 +76,8 @@ export async function loadTenantAttentionInput(
     refusedMailboxes: identities.flatMap((i) => (i.sendRefusal ? [{ fromEmail: i.fromEmail, sentThatDay: i.sendRefusal.sentThatDay }] : [])),
     futileProjects,
     quota: {
-      exhausted: quota.kind === 'capped' && quota.remaining <= 0,
-      constraint: quota.kind === 'capped' ? quota.bindingConstraint : null,
+      exhausted: isContactQuotaExhausted(quota),
+      constraint: quota.kind === 'capped' ? quota.window : null,
     },
     now: new Date(),
   })

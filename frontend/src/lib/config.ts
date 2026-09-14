@@ -19,16 +19,7 @@ export const EDITION: Edition = parseEdition(env.PUBLIC_LEADACE_EDITION);
 // Gate Stripe routes on EDITION === 'cloud', not on individual price IDs
 // (self-host has them all undefined).
 export const STRIPE_PRICES = {
-  starter: {
-    monthly: env.PUBLIC_STRIPE_PRICE_STARTER_MONTHLY,
-    yearly: env.PUBLIC_STRIPE_PRICE_STARTER_YEARLY,
-  },
-  pro: {
-    monthly: env.PUBLIC_STRIPE_PRICE_PRO_MONTHLY,
-    yearly: env.PUBLIC_STRIPE_PRICE_PRO_YEARLY,
-  },
-  scale: {
-    monthly: env.PUBLIC_STRIPE_PRICE_SCALE_MONTHLY,
-    yearly: env.PUBLIC_STRIPE_PRICE_SCALE_YEARLY,
-  },
+  starter: env.PUBLIC_STRIPE_PRICE_STARTER_MONTHLY,
+  pro: env.PUBLIC_STRIPE_PRICE_PRO_MONTHLY,
+  scale: env.PUBLIC_STRIPE_PRICE_SCALE_MONTHLY,
 } as const;

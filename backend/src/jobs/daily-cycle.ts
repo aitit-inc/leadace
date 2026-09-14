@@ -9,9 +9,11 @@ import type { JobKind, JobParamsOf, JobResult } from '../domain/jobs'
 import { shouldBuildFirst, type ReachableSnapshot } from '../domain/cycle-plan'
 import { runLeverTick } from '../services/levers'
 import { getActiveStrategySlugs } from '../services/discovery-strategies'
+import { discoveryPausedReason, getRemainingProspectQuota } from '../services/plan-limits'
 import { assertTenantComplianceReady } from '../services/tenants'
 import { notifyUser } from '../services/notifications'
-import { googleCtxOf } from '../services/pipeline/context'
+import { editionOf, googleCtxOf } from '../services/pipeline/context'
+import { CYCLE_MIN_CANDIDATES_PER_SEARCH } from '../services/pipeline/discover'
 import { listHostedReachable } from '../services/pipeline/draft'
 import type { CycleDigest } from '../services/pipeline/journal'
 import { discoverStage, draftStage, evaluateStage, journalStage, logStep, STEP_RETRY, tenantTx, unwrap, type StageCtx } from './stages'
@@ -56,16 +58,21 @@ export async function runDailyCycle(ctx: StageCtx, params: JobParamsOf<'daily_cy
   await decide(tick.ran ? `lever tick ran (archived ${tick.archived}${tick.vitals ? `, vitals ${tick.vitals}` : ''})` : 'lever tick already ran today')
   if (tick.vitals === 'futile') await decide('FUTILE vitals: recent mature sends draw no replies — check deliverability and targeting')
 
-  const canDiscover = await ctx.step.do('strategies', STEP_RETRY, () =>
-    tenantTx(ctx, async (db) => (await getActiveStrategySlugs(db, projectId)).length > 0),
+  const discovery = await ctx.step.do('strategies', STEP_RETRY, () =>
+    tenantTx(ctx, async (db) => ({
+      hasStrategies: (await getActiveStrategySlugs(db, projectId)).length > 0,
+      paused: discoveryPausedReason(await getRemainingProspectQuota(db, tenantId, editionOf(ctx.env))),
+    })),
   )
-  if (!canDiscover) await decide('no active discovery strategies → discovery skipped (set them up from the website URL in the chat)')
+  const canDiscover = discovery.hasStrategies && discovery.paused === null
+  if (!discovery.hasStrategies) await decide('no active discovery strategies → discovery skipped (set them up from the website URL in the chat)')
+  else if (discovery.paused) await decide(`discovery skipped: ${discovery.paused}`)
 
   let reachable = await reachableSnapshot(ctx, 'reachable:before')
   let built = false
   if (canDiscover && shouldBuildFirst(reachable, params.outboundCount)) {
     await decide(`list low (${reachable.deliverable} reachable${reachable.needsHands > 0 ? `, ${reachable.needsHands} more need a browser` : ''}) → discovery before outbound`)
-    const found = await discoverStage(ctx, { kind: 'discover', count: params.outboundCount }, 'discover:first')
+    const found = await discoverStage(ctx, { kind: 'discover', count: params.outboundCount, minCandidatesPerSearch: CYCLE_MIN_CANDIDATES_PER_SEARCH }, 'discover:first')
     await stage('discover', found.summary)
     built = true
     reachable = await reachableSnapshot(ctx, 'reachable:after-build')
@@ -86,9 +93,17 @@ export async function runDailyCycle(ctx: StageCtx, params: JobParamsOf<'daily_cy
   }
 
   if (canDiscover && !built && !reachable.blocked && reachable.deliverable - processed < 3 * params.outboundCount) {
-    await decide(`remaining list ${reachable.deliverable - processed} < ${3 * params.outboundCount} → discovery after outbound`)
-    const found = await discoverStage(ctx, { kind: 'discover', count: params.outboundCount }, 'discover:after')
-    await stage('discover', found.summary)
+    // Today's sends may have spent the last of the allowance.
+    const pausedAfter = await ctx.step.do('strategies:after', STEP_RETRY, () =>
+      tenantTx(ctx, async (db) => discoveryPausedReason(await getRemainingProspectQuota(db, tenantId, editionOf(ctx.env)))),
+    )
+    if (pausedAfter) {
+      await decide(`discovery skipped: ${pausedAfter}`)
+    } else {
+      await decide(`remaining list ${reachable.deliverable - processed} < ${3 * params.outboundCount} → discovery after outbound`)
+      const found = await discoverStage(ctx, { kind: 'discover', count: params.outboundCount, minCandidatesPerSearch: CYCLE_MIN_CANDIDATES_PER_SEARCH }, 'discover:after')
+      await stage('discover', found.summary)
+    }
   }
 
   const digest: CycleDigest = { stages, decisions }

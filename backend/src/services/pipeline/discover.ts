@@ -20,12 +20,14 @@ import { callGeminiGroundedText, callGeminiJson, GeminiError, HOSTED_MODEL, type
 import { getLeverStateById } from '../levers'
 import { loadProjectOutboundAllowlist } from '../project-settings'
 import { checkProspectDedup } from '../prospect-import'
+import { discoveryPausedReason, getRemainingProspectQuota } from '../plan-limits'
 import { saveDocument } from '../documents'
 import { utcDateKey } from '../../domain/time'
 import { runWithRls } from '../../db/rls'
 import { recordGroundingQueries } from '../grounding-usage'
 import {
   apexDomainOf,
+  editionOf,
   loadDoc,
   loadMasterDoc,
   noProgress,
@@ -41,7 +43,12 @@ export type DiscoverOutput = {
   result: Extract<JobResult, { kind: 'discover' }>
 }
 
-type PlanEntry = { slug: string; approach: string; count: number }
+type PlanEntry = { slug: string; approach: string; count: number; planned: number }
+
+// Grounding bills per query, and a search spends 12–40 queries whether it is
+// asked for 3 candidates or 30 (probe 2026-09-13); the surplus registers as
+// prospects later cycles draw on instead of searching again.
+export const CYCLE_MIN_CANDIDATES_PER_SEARCH = 10
 
 export const extractionSchema = z.object({
   candidates: z.array(
@@ -55,7 +62,7 @@ export const extractionSchema = z.object({
 })
 
 export function searchPrompt(args: {
-  plan: PlanEntry
+  plan: Pick<PlanEntry, 'slug' | 'approach' | 'count'>
   business: string
   salesStrategy: string
   searchNotes: string | null
@@ -159,17 +166,20 @@ export async function runDiscover(
 ): Promise<ServiceResult<DiscoverOutput>> {
   const docs = await requireStrategyDocs(db, tenantId, projectId)
   if (!docs.ok) return docs
-  const [searchNotes, learnings, industriesDoc, allowlist, lever] = await Promise.all([
+  const [searchNotes, learnings, industriesDoc, allowlist, lever, quota] = await Promise.all([
     loadDoc(db, tenantId, projectId, 'search_notes'),
     loadDoc(db, tenantId, projectId, 'learnings'),
     loadMasterDoc(db, 'tpl_industries'),
     loadProjectOutboundAllowlist(db, projectId),
     getLeverStateById(db, tenantId, projectId, params.count),
+    getRemainingProspectQuota(db, tenantId, editionOf(env)),
   ])
   if (!lever.ok) return lever
   if (allowlist.outboundChannels.length === 0) {
     return err('PRECONDITION_FAILED', 'Outbound is paused for this project', 'Enable at least one outbound channel in project settings before collecting prospects.')
   }
+  const paused = discoveryPausedReason(quota)
+  if (paused) return err('PRECONDITION_FAILED', 'Prospect discovery limit reached', paused)
   const industries = parseIndustryVocabulary(industriesDoc)
   const active = lever.value.discovery.strategies.filter((s) => s.archivedAt === null)
   if (active.length === 0) {
@@ -180,13 +190,13 @@ export async function runDiscover(
   if (params.strategySlug) {
     const pinned = active.find((s) => s.slug === params.strategySlug)
     if (!pinned) return err('NOT_FOUND', `Discovery strategy "${params.strategySlug}" is not active on this project`)
-    plan = [{ slug: pinned.slug, approach: pinned.approach, count: params.count }]
+    plan = [{ slug: pinned.slug, approach: pinned.approach, count: params.count, planned: params.count }]
   } else {
     plan = lever.value.discovery.batchPlan
       .filter((p) => p.count > 0)
       .flatMap((p) => {
         const s = active.find((a) => a.slug === p.slug)
-        return s ? [{ slug: s.slug, approach: s.approach, count: p.count }] : []
+        return s ? [{ slug: s.slug, approach: s.approach, count: Math.max(p.count, params.minCandidatesPerSearch ?? 0), planned: p.count }] : []
       })
   }
 
@@ -258,7 +268,7 @@ export async function runDiscover(
         signals: sourcedSignals(c.signals, search.citations),
       }))
       .slice(0, Math.ceil(entry.count * 1.5))
-    planCompliance.push({ slug: entry.slug, planned: entry.count, found: withStrategy.length })
+    planCompliance.push({ slug: entry.slug, planned: entry.planned, found: withStrategy.length })
     found.push(...withStrategy)
     notes = extracted.searchNotes
   }
@@ -270,14 +280,15 @@ export async function runDiscover(
     if (!byDomain.has(domain)) byDomain.set(domain, c)
   }
   const unique = [...byDomain.values()]
-  let fresh: DiscoverCandidate[] = []
-  if (unique.length > 0) {
+  const fresh: DiscoverCandidate[] = []
+  for (let i = 0; i < unique.length; i += 100) {
+    const chunk = unique.slice(i, i + 100)
     const dedup = await checkProspectDedup(db, tenantId, {
       projectId,
-      candidates: unique.slice(0, 100).map((c) => ({ organizationDomain: apexDomainOf(c.websiteUrl)! })),
+      candidates: chunk.map((c) => ({ organizationDomain: apexDomainOf(c.websiteUrl)! })),
     })
     if (!dedup.ok) return dedup
-    fresh = unique.slice(0, 100).filter((_, i) => dedup.value.decisions[i]?.kind === 'fresh')
+    fresh.push(...chunk.filter((_, k) => dedup.value.decisions[k]?.kind === 'fresh'))
   }
 
   if (notes && notes !== searchNotes) {

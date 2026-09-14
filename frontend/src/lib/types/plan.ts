@@ -1,6 +1,7 @@
 export type PlanTier = 'free' | 'starter' | 'pro' | 'scale' | 'unlimited';
 
-export type OutreachWindowKind = 'daily' | 'lifetime' | 'monthly';
+// Mirrors backend/src/services/plan-limits.ts `ProspectQuota`.
+export type QuotaWindowKind = 'lifetime' | 'monthly';
 
 export interface QuotaUsage {
   used: number;
@@ -8,40 +9,37 @@ export interface QuotaUsage {
   limit: number | null;
 }
 
-export interface OutreachQuotaWindow {
+export interface AllowanceUsage {
   used: number;
   remaining: number;
   limit: number;
 }
 
-// kind 'unlimited' = Scale, complimentary 'unlimited', or any plan with no configured caps.
-export type OutreachQuota =
+// kind 'unlimited' = the complimentary 'unlimited' tier or a self-hosted install.
+export type ProspectQuota =
   | {
       plan: PlanTier;
       kind: 'unlimited';
-      used: number;
     }
   | {
       plan: PlanTier;
       kind: 'capped';
-      used: number;
-      limit: number;
-      remaining: number;
-      bindingConstraint: OutreachWindowKind;
-      daily?: OutreachQuotaWindow;
-      lifetime?: OutreachQuotaWindow;
-      monthly?: OutreachQuotaWindow;
+      window: QuotaWindowKind;
+      // Past an allowance the excess is billed instead of refused.
+      overageEnabled: boolean;
+      // Distinct prospects first contacted in the window; follow-ups are free.
+      contacted: AllowanceUsage;
+      // Prospects the hosted discovery registered in the window.
+      found: AllowanceUsage;
     };
 
 export interface PlanInfo {
   plan: PlanTier;
   limits: {
     maxProjects: number | null;
-    maxOutreachPerDay: number | null;
-    maxOutreachLifetime: number | null;
-    maxOutreachPerMonth: number | null;
     maxProspects: number | null;
   };
-  outreach: OutreachQuota;
+  quota: ProspectQuota;
+  // Stored prospects against the storage cap; absent when uncapped.
   prospects?: QuotaUsage;
 }

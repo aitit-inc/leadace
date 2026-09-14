@@ -257,7 +257,7 @@ Having composed the body, call `send_email_and_record`:
 
 The server reads the project's `outboundMode` and picks the mailbox (the first of the project's mailboxes with sends left today), then reports one of two outcomes. The email is sent server-side whichever mailbox is picked — a Google account, a Send-As alias, or an SMTP mailbox — so **never branch on `outboundMode` or sending-identity type in your own logic:**
 - **sent** — the email went out from the reported From address and the outreach was logged. Nothing more to do.
-- **drafted** — no send; stored as a `pending_review` draft for the user to review and send from https://app.leadace.ai/drafts. Drafts do not count against the outreach quota.
+- **drafted** — no send; stored as a `pending_review` draft for the user to review and send from https://app.leadace.ai/drafts. Drafts do not count against the plan's prospect allowance.
 
 Track which outcome each call reported for the step 8 report (sent vs. drafted counts).
 

@@ -4,6 +4,7 @@ import {
   organizations,
   prospects,
   projectProspects,
+  discoveryCharges,
   formTypeEnum,
   prioritySchema,
   EMPLOYEE_BANDS,
@@ -11,6 +12,7 @@ import {
   type ProspectHypothesis,
   type CountrySource,
   type EmployeeBand,
+  type ProspectOrigin,
 } from '../db/schema'
 import type { Db } from '../db/connection'
 import {
@@ -23,6 +25,8 @@ import {
 import {
   getTenantPlan,
   getPlanLimits,
+  getRemainingProspectQuotaForPlan,
+  discoveryPausedReason,
   countTenantProspects,
 } from './plan-limits'
 import { ok, err, type ServiceResult } from './result'
@@ -257,9 +261,11 @@ function prospectInsertValues(
   input: ProspectInput,
   orgId: number,
   now: Date,
+  origin: ProspectOrigin,
 ) {
   return {
     tenantId,
+    origin,
     name: input.name,
     contactName: input.contactName ?? null,
     organizationId: orgId,
@@ -450,11 +456,14 @@ export type BatchRegisterResult = {
   emailsToVerify: string[]
 }
 
+// `origin` is the registering path's own claim, never the request body's:
+// the hosted discovery pipeline registers 'found', every API caller 'brought_in'.
 export async function batchRegister(
   db: Db,
   tenantId: TenantId,
   edition: Edition,
   input: BatchInput,
+  origin: ProspectOrigin,
 ): Promise<ServiceResult<BatchRegisterResult>> {
   const { projectId: projectRef, prospects: inputs } = input
 
@@ -511,6 +520,18 @@ export async function batchRegister(
       )
     }
   }
+  // The found allowance is the discovery cost guard: rows past it are skipped,
+  // not refused, so a pipeline run that crosses it mid-batch still completes.
+  // The tenant-level lock serializes concurrent discovery batches (two
+  // projects' jobs) on the budget read, so they cannot both spend the last slot.
+  if (origin === 'found') {
+    await db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${tenantId}))`)
+    const quota = await getRemainingProspectQuotaForPlan(db, tenantId, tp)
+    if (quota.kind === 'capped' && !quota.overageEnabled) {
+      const foundBudget = discoveryPausedReason(quota) ? 0 : quota.found.remaining
+      prospectBudget = prospectBudget === null ? foundBudget : Math.min(prospectBudget, foundBudget)
+    }
+  }
 
   const dedup = await buildDedupIndex(db, tenantId, projectId, inputs)
 
@@ -556,8 +577,11 @@ export async function batchRegister(
 
     const [newProspect] = await db
       .insert(prospects)
-      .values(prospectInsertValues(tenantId, input, org.id, now))
+      .values(prospectInsertValues(tenantId, input, org.id, now, origin))
       .returning({ id: prospects.id })
+    if (newProspect && origin === 'found') {
+      await db.insert(discoveryCharges).values({ tenantId, prospectId: newProspect.id, createdAt: now })
+    }
 
     if (!newProspect) continue
 
@@ -788,7 +812,7 @@ export async function importCsv(
 
     const [newProspect] = await db
       .insert(prospects)
-      .values(prospectInsertValues(tenantId, rowInput, org.id, now))
+      .values(prospectInsertValues(tenantId, rowInput, org.id, now, 'brought_in'))
       .returning({ id: prospects.id })
     if (!newProspect) continue
 

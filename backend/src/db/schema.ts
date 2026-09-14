@@ -135,6 +135,14 @@ export const formTypeEnum = pgEnum('form_type', [
 
 export const planEnum = pgEnum('plan', ['free', 'starter', 'pro', 'scale', 'unlimited'])
 
+// Who paid to find the prospect: 'found' = the hosted discovery pipeline
+// (search + site reads on our bill, metered by the plan's found allowance);
+// 'brought_in' = the tenant supplied it (CSV, add_prospects, a referral in a
+// reply). Decided by the registering code path, never by the caller.
+export const PROSPECT_ORIGINS = ['found', 'brought_in'] as const
+export type ProspectOrigin = (typeof PROSPECT_ORIGINS)[number]
+export const prospectOriginEnum = pgEnum('prospect_origin', PROSPECT_ORIGINS)
+
 export const tenantRoleEnum = pgEnum('tenant_role', ['owner', 'admin', 'member'])
 
 // Trust ranking for country values: manual is authoritative; tld_inferred is
@@ -453,6 +461,9 @@ export const tenantPlans = pgTable('tenant_plans', {
   stripeSubscriptionId: text('stripe_subscription_id'),
   currentPeriodStart: timestamp('current_period_start', { withTimezone: true }),
   currentPeriodEnd: timestamp('current_period_end', { withTimezone: true }),
+  // Paid plans only: past the allowance, sends and discovery continue and the
+  // excess is metered to Stripe instead of refused. Ignored on free.
+  overageEnabled: boolean('overage_enabled').notNull().default(false),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 })
@@ -708,6 +719,8 @@ export const prospects = pgTable('prospects', {
   // definitions live in the sales_strategy document). NULL = provenance not
   // recorded (manual/CSV import, referral-derived, pre-provenance rows).
   discoveryStrategy: text('discovery_strategy'),
+  // Rows from before metering are 'brought_in': nothing was charged for them.
+  origin: prospectOriginEnum('origin').notNull().default('brought_in'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
@@ -735,6 +748,21 @@ export const prospects = pgTable('prospects', {
   }),
   index('idx_prospect_tenant').on(table.tenantId),
   index('idx_prospect_org').on(table.organizationId),
+])
+
+// One row per prospect the hosted discovery registered. Kept when the prospect
+// is deleted: the found allowance is spent at registration (search + site
+// reads already happened) and never refunded. prospect_id is deliberately
+// FK-less for that reason.
+export const discoveryCharges = pgTable('discovery_charges', {
+  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  prospectId: integer('prospect_id').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_discovery_charges_tenant').on(table.tenantId, table.createdAt),
 ])
 
 export const projectProspects = pgTable('project_prospects', {

@@ -3,7 +3,7 @@
   import { invalidate } from '$app/navigation';
   import { page } from '$app/state';
   import { createCheckoutSession, createPortalSession } from '$lib/api/billing';
-  import { formatQuota } from '$lib/format';
+  import { formatQuota, QUOTA_WINDOW_LABEL } from '$lib/format';
   import { EDITION, STRIPE_PRICES } from '$lib/config';
   import type { PlanTier } from '$lib/types/plan';
   import type { PageProps } from './$types';
@@ -15,45 +15,40 @@
   let checkoutLoading = $state<string | null>(null);
   let portalLoading = $state(false);
   let message = $state('');
-  let billingPeriod = $state<'monthly' | 'yearly'>('monthly');
 
   interface PaidTier {
     tier: Exclude<PlanTier, 'free'>;
     name: string;
     monthlyPrice: number;
-    yearlyPrice: number;
     projects: string;
     outreach: string;
-    priceIds: { monthly: string | undefined; yearly: string | undefined };
+    priceId: string | undefined;
   }
 
   const TIERS: PaidTier[] = [
     {
       tier: 'starter',
       name: 'Starter',
-      monthlyPrice: 29,
-      yearlyPrice: 290,
-      projects: '1 project',
-      outreach: '1,500 outreach / month',
-      priceIds: STRIPE_PRICES.starter,
+      monthlyPrice: 49,
+      projects: '1 project · 1 mailbox',
+      outreach: '100 prospects / month',
+      priceId: STRIPE_PRICES.starter,
     },
     {
       tier: 'pro',
       name: 'Pro',
-      monthlyPrice: 79,
-      yearlyPrice: 790,
-      projects: '5 projects',
-      outreach: '4,000 outreach / month',
-      priceIds: STRIPE_PRICES.pro,
+      monthlyPrice: 99,
+      projects: '5 projects · 3 mailboxes',
+      outreach: '300 prospects / month',
+      priceId: STRIPE_PRICES.pro,
     },
     {
       tier: 'scale',
       name: 'Scale',
       monthlyPrice: 199,
-      yearlyPrice: 1990,
-      projects: 'Unlimited projects',
-      outreach: 'Unlimited outreach',
-      priceIds: STRIPE_PRICES.scale,
+      projects: 'Unlimited projects · 10 mailboxes',
+      outreach: '800 prospects / month',
+      priceId: STRIPE_PRICES.scale,
     },
   ];
 
@@ -95,9 +90,9 @@
   });
 
   async function handleUpgrade(tier: PaidTier) {
-    const priceId = tier.priceIds[billingPeriod];
+    const priceId = tier.priceId;
     if (!priceId) {
-      message = `Price ID for ${tier.name} (${billingPeriod}) is not configured.`;
+      message = `Price ID for ${tier.name} is not configured.`;
       return;
     }
     checkoutLoading = tier.tier;
@@ -185,40 +180,43 @@
 
     <div class="grid grid-cols-2 gap-6">
       <div class="space-y-3">
-        {#if plan.outreach.kind === 'unlimited'}
+        {#if plan.quota.kind === 'unlimited'}
           <div>
-            <p class="text-xs text-text-muted mb-1">Outreach (unlimited)</p>
-            <p class="font-mono text-lg text-text">
-              {plan.outreach.used.toLocaleString()} used
-            </p>
+            <p class="text-xs text-text-muted mb-1">Prospects</p>
+            <p class="font-mono text-lg text-text">unlimited</p>
           </div>
         {:else}
-          {@const windows = [
-            { label: 'today', window: plan.outreach.daily },
-            { label: 'lifetime', window: plan.outreach.lifetime },
-            { label: 'this month', window: plan.outreach.monthly },
+          {@const label = QUOTA_WINDOW_LABEL[plan.quota.window]}
+          {@const allowances = [
+            { label: `New prospects contacted (${label})`, usage: plan.quota.contacted },
+            { label: `Found by LeadAce (${label})`, usage: plan.quota.found },
           ]}
-          {#each windows as { label, window } (label)}
-            {#if window}
-              <div>
-                <p class="text-xs text-text-muted mb-1">Outreach ({label})</p>
-                <p class="font-mono text-lg text-text">
-                  {formatQuota(window.used, window.limit)}
-                </p>
-                <div class="mt-1.5 h-1 w-full rounded-full bg-surface">
-                  <div
-                    class="h-1 rounded-full {window.remaining === 0 ? 'bg-accent' : 'bg-text'}"
-                    style="width: {Math.min(100, (window.used / window.limit) * 100)}%"
-                  ></div>
-                </div>
+          {#each allowances as { label, usage } (label)}
+            <div>
+              <p class="text-xs text-text-muted mb-1">{label}</p>
+              <p class="font-mono text-lg text-text">
+                {formatQuota(usage.used, usage.limit)}
+              </p>
+              <div class="mt-1.5 h-1 w-full rounded-full bg-surface">
+                <div
+                  class="h-1 rounded-full {usage.remaining === 0 && !plan.quota.overageEnabled
+                    ? 'bg-accent'
+                    : 'bg-text'}"
+                  style="width: {Math.min(100, (usage.used / usage.limit) * 100)}%"
+                ></div>
               </div>
-            {/if}
+            </div>
           {/each}
+          <p class="text-xs text-text-muted">
+            Follow-ups are free.{plan.quota.overageEnabled
+              ? ' Overage is on: usage past an allowance is billed.'
+              : ''}
+          </p>
         {/if}
       </div>
       {#if plan.prospects}
         <div>
-          <p class="text-xs text-text-muted mb-1">Prospects (lifetime)</p>
+          <p class="text-xs text-text-muted mb-1">Stored prospects</p>
           <p class="font-mono text-lg text-text">
             {formatQuota(plan.prospects.used, plan.prospects.limit)}
           </p>
@@ -236,38 +234,15 @@
   </div>
 
   {#if EDITION === 'cloud' && plan.plan === 'free'}
-    <div class="flex items-center justify-between mb-4">
-      <p class="text-xs font-medium text-text-secondary">Upgrade</p>
-      <div class="inline-flex rounded border border-border text-xs">
-        <button
-          onclick={() => (billingPeriod = 'monthly')}
-          class="px-3 py-1 {billingPeriod === 'monthly'
-            ? 'bg-surface-2 text-text font-medium'
-            : 'text-text-muted hover:text-text'}"
-        >
-          Monthly
-        </button>
-        <button
-          onclick={() => (billingPeriod = 'yearly')}
-          class="px-3 py-1 {billingPeriod === 'yearly'
-            ? 'bg-surface-2 text-text font-medium'
-            : 'text-text-muted hover:text-text'}"
-        >
-          Yearly
-          <span class="ml-1 text-[10px] text-accent">−17%</span>
-        </button>
-      </div>
-    </div>
+    <p class="text-xs font-medium text-text-secondary mb-4">Upgrade</p>
 
     <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
       {#each TIERS as tier}
-        {@const price = billingPeriod === 'monthly' ? tier.monthlyPrice : tier.yearlyPrice}
-        {@const suffix = billingPeriod === 'monthly' ? '/month' : '/year'}
         <div class="rounded-md border border-border p-4 flex flex-col">
           <p class="text-sm font-medium text-text">{tier.name}</p>
           <p class="mt-1">
-            <span class="font-mono text-xl font-semibold text-text">${price}</span>
-            <span class="text-xs text-text-muted">{suffix}</span>
+            <span class="font-mono text-xl font-semibold text-text">${tier.monthlyPrice}</span>
+            <span class="text-xs text-text-muted">/month</span>
           </p>
           <ul class="mt-3 space-y-1 text-xs text-text-secondary flex-1">
             <li>{tier.projects}</li>

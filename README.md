@@ -7,7 +7,7 @@ Builds prospect lists, runs outbound outreach, and iterates on strategy — all 
 
 Website: https://leadace.ai
 
-> **Two ways to run it.** Use the hosted service at [app.leadace.ai](https://app.leadace.ai) (Free tier — 5 outreach/day, paid plans from $29/mo), or [self-host](docs/self-host.md) the backend on your own Cloudflare + Supabase. The plugin is the same in either case — point it at the hosted MCP or your own.
+> **Two ways to run it.** Use the hosted service at [app.leadace.ai](https://app.leadace.ai) (Free tier — 30 prospects, paid plans from $49/mo), or [self-host](docs/self-host.md) the backend on your own Cloudflare + Supabase. The plugin is the same in either case — point it at the hosted MCP or your own.
 
 ## For Users
 
@@ -126,8 +126,10 @@ modified Apache 2.0 with two additional conditions:
 
 ### Hosted service (cloud)
 
-- **Free tier:** 1 project, 500 prospects, 5 outreach actions per day (100 lifetime cap)
-- **Paid plans** start at $29/month. Manage your subscription from the web app.
+- **Free tier:** 30 prospects (lifetime), 1 project, 1 mailbox, 500 stored prospects.
+- **Paid plans** start at $49/month for 100 prospects a month. A prospect
+  counts once, when its first email goes out; follow-ups are free. Manage
+  your subscription from the web app.
 
 ### Self-host
 

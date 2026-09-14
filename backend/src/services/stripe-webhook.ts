@@ -59,6 +59,36 @@ export function planFromMetadata(metadata: Record<string, string> | undefined): 
   return null
 }
 
+export type StripeSubscriptionItems = {
+  data: Array<{
+    price: { metadata: Record<string, string> }
+    current_period_start?: number
+    current_period_end?: number
+  }>
+} | undefined
+
+export type StripePeriod = { start: number | undefined; end: number | undefined }
+
+// API 2025-03-31 (Basil) moved the period off the subscription onto its
+// items; read the root first, then the plan item, so either version works.
+export function periodFromSubscription(sub: Record<string, unknown>, items: StripeSubscriptionItems): StripePeriod {
+  const rootStart = sub['current_period_start'] as number | undefined
+  const rootEnd = sub['current_period_end'] as number | undefined
+  if (rootStart !== undefined && rootEnd !== undefined) return { start: rootStart, end: rootEnd }
+  const planItem = items?.data.find((item) => planFromMetadata(item.price.metadata) !== null)
+  return { start: planItem?.current_period_start, end: planItem?.current_period_end }
+}
+
+// Only the plan price carries metadata.plan, and it is not necessarily the
+// subscription's first item.
+export function planFromSubscriptionItems(items: StripeSubscriptionItems): PaidPlanTier | null {
+  for (const item of items?.data ?? []) {
+    const plan = planFromMetadata(item.price.metadata)
+    if (plan) return plan
+  }
+  return null
+}
+
 // Async payment methods can leave checkout.session.completed in
 // 'processing'/'incomplete', so the paid tier is granted only when the
 // subscription status confirms it.
@@ -199,9 +229,8 @@ async function handleCheckoutSessionCompleted(
     headers: { Authorization: `Bearer ${secretKey}` },
   })
   const sub = (await subRes.json()) as Record<string, unknown>
-  const items = sub['items'] as { data: Array<{ price: { metadata: Record<string, string> } }> } | undefined
-  const priceMetadata = items?.data?.[0]?.price?.metadata
-  const plan = planFromMetadata(priceMetadata)
+  const items = sub['items'] as StripeSubscriptionItems
+  const plan = planFromSubscriptionItems(items)
 
   // Checkout completed against a Price with no valid plan metadata means our
   // Stripe configuration is broken (Dashboard edit, or wrong Price ID). User
@@ -209,7 +238,7 @@ async function handleCheckoutSessionCompleted(
   if (!plan) {
     console.error(
       'CRITICAL checkout.session.completed: missing or invalid plan metadata on price; cancelling subscription and refunding charge',
-      { tenantId, userId, subscriptionId, priceMetadata },
+      { tenantId, userId, subscriptionId, items },
     )
     await cancelAndRefund(subscriptionId, sub, secretKey, 'checkout.session.completed')
     return
@@ -230,8 +259,7 @@ async function handleCheckoutSessionCompleted(
     )
   }
 
-  const periodStart = sub['current_period_start'] as number | undefined
-  const periodEnd = sub['current_period_end'] as number | undefined
+  const { start: periodStart, end: periodEnd } = periodFromSubscription(sub, items)
 
   const now = new Date()
   await db
@@ -290,12 +318,10 @@ async function handleSubscriptionUpdated(
     return
   }
 
-  const items = sub['items'] as { data: Array<{ price: { metadata: Record<string, string> } }> } | undefined
-  const priceMetadata = items?.data?.[0]?.price?.metadata
-  const plan = planFromMetadata(priceMetadata)
+  const items = sub['items'] as StripeSubscriptionItems
+  const plan = planFromSubscriptionItems(items)
   const status = sub['status'] as string
-  const periodStart = sub['current_period_start'] as number | undefined
-  const periodEnd = sub['current_period_end'] as number | undefined
+  const { start: periodStart, end: periodEnd } = periodFromSubscription(sub, items)
 
   // Active subscription with missing plan metadata means our Stripe config
   // drifted (Dashboard edit). Don't auto-cancel a running subscription
@@ -303,7 +329,7 @@ async function handleSubscriptionUpdated(
   if ((status === 'active' || status === 'trialing') && !plan) {
     console.error(
       'CRITICAL subscription.updated: active subscription with missing plan metadata; not modifying DB (operator must fix Price metadata)',
-      { tenantId: row.tenantId, subscriptionId, status, priceMetadata },
+      { tenantId: row.tenantId, subscriptionId, status, items },
     )
     return
   }
@@ -363,9 +389,10 @@ async function handleSubscriptionDeleted(
     return
   }
 
+  // Overage is a choice made for this subscription; the next one starts off.
   await db
     .update(tenantPlans)
-    .set({ plan: 'free', updatedAt: new Date() })
+    .set({ plan: 'free', overageEnabled: false, updatedAt: new Date() })
     .where(eq(tenantPlans.tenantId, row.tenantId))
 
   console.log(`Subscription ${subscriptionId} deleted, tenant ${row.tenantId} downgraded to free`)

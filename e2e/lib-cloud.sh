@@ -104,16 +104,17 @@ cloud_provision_tenant() {
 }
 
 # plan ∈ free|starter|pro|scale|unlimited.
-# starter/pro get a current_period_start — MANDATORY, else the monthly window
+# Paid tiers get a current_period_start — MANDATORY, else the period window
 # never fires and quota is effectively unlimited (manual-plan-setup.local.md
-# pitfall 1, plan-limits.ts:182). Optional sub_id sets stripe_subscription_id
-# so a fixtured customer.subscription.* event can match this row.
+# pitfall 1, getRemainingProspectQuotaForPlan). Optional sub_id sets
+# stripe_subscription_id so a fixtured customer.subscription.* event can
+# match this row.
 cloud_seed_plan() {
   local tenant="$1" plan="$2" sub_id="${3:-}"
   local cols="tenant_id, plan, created_at, updated_at"
   local vals="'$tenant', '$plan', NOW(), NOW()"
   local setp="plan = '$plan', updated_at = NOW()"
-  if [[ "$plan" == "starter" || "$plan" == "pro" ]]; then
+  if [[ "$plan" == "starter" || "$plan" == "pro" || "$plan" == "scale" ]]; then
     cols="$cols, current_period_start, current_period_end"
     vals="$vals, NOW(), NOW() + INTERVAL '1 month'"
     setp="$setp, current_period_start = NOW(), current_period_end = NOW() + INTERVAL '1 month'"

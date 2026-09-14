@@ -54,7 +54,14 @@ describe('confirmation gate', () => {
 const preview = (outboundMode: 'send' | 'draft'): OutboundPreview => ({
   outboundMode,
   reachable: 12,
-  quota: { plan: 'starter', kind: 'capped', used: 13, limit: 100, remaining: 87, bindingConstraint: 'monthly' },
+  quota: {
+    plan: 'starter',
+    kind: 'capped',
+    window: 'monthly',
+    overageEnabled: false,
+    contacted: { used: 13, limit: 100, remaining: 87 },
+    found: { used: 4, limit: 100, remaining: 96 },
+  },
   mailbox: { next: 'me@example.com', remaining: 9 },
   blocked: null,
 })

@@ -38,11 +38,14 @@ The three check commands are the pre-release checklist. Local E2E harness:
   user control, not by enforcing behavior.
 - Plans differentiate on throughput only (identities, outreach volume,
   projects); insights computed from a tenant's own data are never plan-gated.
-  Quota semantics that are easy to get wrong: Free has two caps (5/day AND
-  100 lifetime, whichever runs out first); paid plans use one monthly cap
-  resetting at Stripe `current_period_start`; the daily window is UTC; an
-  outreach action = `record_outreach` with `status: "sent"` (failures don't
-  count). Enforcement: `backend/src/services/plan-limits.ts`.
+  Quota semantics that are easy to get wrong: the unit is a prospect, not a
+  send — a prospect counts once, when its first outbound is `sent` (a fresh
+  `pre_send` reservation counts; failures and follow-ups don't); prospects
+  the hosted discovery registers count separately against the found
+  allowance at registration (`prospects.origin`); Free's window is the
+  tenant lifetime, a paid plan's is the Stripe period from
+  `current_period_start`; `overage_enabled` turns a refusal into metered
+  usage. Enforcement: `backend/src/services/plan-limits.ts`.
 - Self-host: code is open source; the same plan-limits code runs and defaults
   to Free ([docs/self-host.md](docs/self-host.md)).
 - Multi-tenancy: every tenant-scoped table carries `tenant_id`, every query

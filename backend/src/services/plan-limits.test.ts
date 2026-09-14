@@ -2,38 +2,44 @@ import { describe, it, expect } from 'vitest'
 import {
   getPlanLimits,
   canRegisterMailbox,
-  selectOutreachQuota,
-  isOutreachQuotaExhausted,
-  outreachQuotaErrorIfExhausted,
-  formatOutreachQuotaError,
+  buildProspectQuota,
+  isContactQuotaExhausted,
+  isFoundQuotaExhausted,
+  discoveryPausedReason,
+  formatContactQuotaError,
+  formatFoundQuotaError,
   isChatQuotaExhausted,
   formatChatQuotaError,
-  type OutreachQuota,
+  type ProspectQuota,
   type InquiryChatQuota,
 } from './plan-limits'
 
-const cappedOutreach = (over: Partial<Extract<OutreachQuota, { kind: 'capped' }>>): OutreachQuota => ({
-  plan: 'free',
+const capped = (over: Partial<Extract<ProspectQuota, { kind: 'capped' }>>): ProspectQuota => ({
+  plan: 'starter',
   kind: 'capped',
-  used: 0,
-  limit: 5,
-  remaining: 5,
-  bindingConstraint: 'daily',
+  window: 'monthly',
+  overageEnabled: false,
+  contacted: { used: 0, limit: 100, remaining: 100 },
+  found: { used: 0, limit: 100, remaining: 100 },
   ...over,
 })
 
 describe('getPlanLimits', () => {
-  it('encodes the Free dual cap (daily + lifetime) and prospect cap', () => {
+  it('meters free over the tenant lifetime and keeps its storage cap', () => {
     expect(getPlanLimits('free')).toEqual({
-      maxProjects: 1, maxOutreachPerDay: 5, maxOutreachLifetime: 100, maxOutreachPerMonth: null, maxProspects: 500, maxSendingIdentities: 1,
+      maxProjects: 1,
+      prospectCaps: { window: 'lifetime', contacted: 30, found: 30 },
+      maxProspects: 500,
+      maxSendingIdentities: 1,
     })
   })
 
-  it('encodes paid monthly caps and unlimited tiers', () => {
-    expect(getPlanLimits('pro').maxOutreachPerMonth).toBe(4000)
+  it('meters paid plans per billing period and leaves only the internal tier unmetered', () => {
+    expect(getPlanLimits('pro').prospectCaps).toEqual({ window: 'monthly', contacted: 300, found: 300 })
     expect(getPlanLimits('pro').maxProjects).toBe(5)
-    expect(getPlanLimits('scale')).toEqual({
-      maxProjects: null, maxOutreachPerDay: null, maxOutreachLifetime: null, maxOutreachPerMonth: null, maxProspects: null, maxSendingIdentities: null,
+    expect(getPlanLimits('scale').prospectCaps).toEqual({ window: 'monthly', contacted: 800, found: 800 })
+    expect(getPlanLimits('unlimited')).toEqual({
+      maxProjects: null, prospectCaps: null, maxProspects: null, maxSendingIdentities: null,
     })
   })
 })
@@ -44,80 +50,64 @@ describe('canRegisterMailbox', () => {
   })
 
   it('allows a paid plan below its cap (gmail counts toward the total)', () => {
-    // starter cap = 2; with 1 existing (the connected gmail) a first smtp is allowed.
-    expect(canRegisterMailbox('starter', 1)).toBeNull()
+    // pro cap = 3; with 1 existing (the connected gmail) a first smtp is allowed.
+    expect(canRegisterMailbox('pro', 1)).toBeNull()
   })
 
   it('blocks a paid plan at its cap', () => {
-    expect(canRegisterMailbox('starter', 2)?.code).toBe('FORBIDDEN')
-    expect(canRegisterMailbox('pro', 5)?.code).toBe('FORBIDDEN')
+    expect(canRegisterMailbox('starter', 1)?.code).toBe('FORBIDDEN')
+    expect(canRegisterMailbox('pro', 3)?.code).toBe('FORBIDDEN')
+    expect(canRegisterMailbox('scale', 10)?.code).toBe('FORBIDDEN')
   })
 
-  it('never caps unlimited tiers (scale / self-host)', () => {
-    expect(canRegisterMailbox('scale', 99)).toBeNull()
+  it('never caps the internal unlimited tier (self-host)', () => {
     expect(canRegisterMailbox('unlimited', 99)).toBeNull()
   })
 })
 
-describe('isOutreachQuotaExhausted', () => {
-  it('is true only when a capped quota has no remaining', () => {
-    expect(isOutreachQuotaExhausted(cappedOutreach({ remaining: 0 }))).toBe(true)
-    expect(isOutreachQuotaExhausted(cappedOutreach({ remaining: 3 }))).toBe(false)
-    expect(isOutreachQuotaExhausted({ plan: 'scale', kind: 'unlimited', used: 999 })).toBe(false)
-  })
-})
-
-describe('outreachQuotaErrorIfExhausted', () => {
-  it('returns a FORBIDDEN error when exhausted, null otherwise', () => {
-    const err = outreachQuotaErrorIfExhausted(cappedOutreach({ remaining: 0 }))
-    expect(err?.code).toBe('FORBIDDEN')
-    expect(outreachQuotaErrorIfExhausted(cappedOutreach({ remaining: 1 }))).toBeNull()
-  })
-})
-
-describe('formatOutreachQuotaError', () => {
-  it('phrases the message per binding constraint', () => {
-    expect(formatOutreachQuotaError(cappedOutreach({ bindingConstraint: 'daily' }))).toContain('tomorrow')
-    expect(formatOutreachQuotaError(cappedOutreach({ bindingConstraint: 'lifetime' }))).toContain('lifetime')
-    expect(formatOutreachQuotaError(cappedOutreach({ bindingConstraint: 'monthly' }))).toContain('this month')
-  })
-})
-
-describe('selectOutreachQuota', () => {
-  it('returns unlimited when no windows apply', () => {
-    expect(selectOutreachQuota('scale', [])).toEqual({ plan: 'scale', kind: 'unlimited', used: 0 })
-  })
-
+describe('buildProspectQuota', () => {
   it('clamps remaining at 0 when used exceeds the limit', () => {
-    const q = selectOutreachQuota('free', [{ kind: 'daily', limit: 5, used: 7 }])
-    expect(q).toMatchObject({ kind: 'capped', bindingConstraint: 'daily', remaining: 0, used: 7, limit: 5 })
+    const q = buildProspectQuota('free', { window: 'lifetime', contacted: 30, found: 30 }, false, { contacted: 33, found: 2 })
+    expect(q).toMatchObject({
+      kind: 'capped',
+      window: 'lifetime',
+      contacted: { used: 33, limit: 30, remaining: 0 },
+      found: { used: 2, limit: 30, remaining: 28 },
+    })
+  })
+})
+
+describe('exhaustion', () => {
+  it('is per allowance and only when nothing remains', () => {
+    expect(isContactQuotaExhausted(capped({ contacted: { used: 100, limit: 100, remaining: 0 } }))).toBe(true)
+    expect(isFoundQuotaExhausted(capped({ contacted: { used: 100, limit: 100, remaining: 0 } }))).toBe(false)
+    expect(isContactQuotaExhausted(capped({ contacted: { used: 99, limit: 100, remaining: 1 } }))).toBe(false)
+    expect(isContactQuotaExhausted({ plan: 'unlimited', kind: 'unlimited' })).toBe(false)
   })
 
-  it('binds to the window with the least remaining', () => {
-    const q = selectOutreachQuota('free', [
-      { kind: 'daily', limit: 5, used: 3 },      // remaining 2
-      { kind: 'lifetime', limit: 50, used: 5 },  // remaining 45
-    ])
-    expect(q).toMatchObject({ kind: 'capped', bindingConstraint: 'daily', remaining: 2 })
+  it('never exhausts while overage is metered', () => {
+    const q = capped({ overageEnabled: true, contacted: { used: 120, limit: 100, remaining: 0 }, found: { used: 101, limit: 100, remaining: 0 } })
+    expect(isContactQuotaExhausted(q)).toBe(false)
+    expect(isFoundQuotaExhausted(q)).toBe(false)
+    expect(discoveryPausedReason(q)).toBeNull()
   })
+})
 
-  it('breaks remaining ties toward the most terminal window (lifetime > monthly > daily)', () => {
-    const q = selectOutreachQuota('free', [
-      { kind: 'daily', limit: 10, used: 5 },     // remaining 5
-      { kind: 'lifetime', limit: 50, used: 45 }, // remaining 5
-    ])
-    expect(q).toMatchObject({ kind: 'capped', bindingConstraint: 'lifetime', remaining: 5 })
+describe('discoveryPausedReason', () => {
+  it('pauses on a spent found allowance, and on a spent contact allowance', () => {
+    expect(discoveryPausedReason(capped({ found: { used: 100, limit: 100, remaining: 0 } }))).toContain('find 100 prospects')
+    expect(discoveryPausedReason(capped({ contacted: { used: 100, limit: 100, remaining: 0 } }))).toContain('Discovery is paused')
+    expect(discoveryPausedReason(capped({}))).toBeNull()
   })
+})
 
-  it('exposes a per-window breakdown', () => {
-    const q = selectOutreachQuota('free', [
-      { kind: 'daily', limit: 5, used: 1 },
-      { kind: 'lifetime', limit: 50, used: 10 },
-    ])
-    if (q.kind !== 'capped') throw new Error('expected capped')
-    expect(q.daily).toEqual({ used: 1, limit: 5, remaining: 4 })
-    expect(q.lifetime).toEqual({ used: 10, limit: 50, remaining: 40 })
-    expect(q.monthly).toBeUndefined()
+describe('quota messages', () => {
+  it('phrase the window and keep follow-ups explicitly free', () => {
+    const lifetime = capped({ plan: 'free', window: 'lifetime', contacted: { used: 30, limit: 30, remaining: 0 } })
+    expect(formatContactQuotaError(lifetime)).toContain('30 prospects in total')
+    expect(formatContactQuotaError(lifetime)).toContain('Follow-ups still go out')
+    expect(formatContactQuotaError(capped({}))).toContain('per billing period')
+    expect(formatFoundQuotaError(capped({}))).toContain('find 100 prospects per billing period')
   })
 })
 

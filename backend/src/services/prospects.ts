@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { eq, ne, and, sql, desc, or, ilike, inArray, notInArray, isNotNull, isNull, lte, notExists, type SQL } from 'drizzle-orm'
+import { eq, ne, and, sql, desc, or, ilike, inArray, notInArray, isNotNull, isNull, lte, exists, notExists, type SQL } from 'drizzle-orm'
 import {
   organizations,
   prospects,
@@ -26,12 +26,13 @@ import {
 } from '../db/schema'
 import type { Db } from '../db/connection'
 import {
-  getRemainingOutreachQuota,
-  formatOutreachQuotaError,
-  isOutreachQuotaExhausted,
+  getRemainingProspectQuota,
+  formatContactQuotaError,
+  isContactQuotaExhausted,
   isMailboxQuotaExhausted,
   formatMailboxQuotaError,
   type MailboxDailyQuota,
+  type ProspectQuota,
 } from './plan-limits'
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
@@ -325,11 +326,12 @@ export async function listReachable(
   // The part of total the requested channels reach; all of it without them.
   withinChannels: number
   byChannel: { email: number; formOnly: number; snsOnly: number; platformOnly: number }
-  quota: Awaited<ReturnType<typeof getRemainingOutreachQuota>>
+  quota: ProspectQuota
   mailboxQuota: MailboxDailyQuota
   outboundMode: OutboundMode
-  // True when no outbound can run today whatever the list holds (quota
-  // exhausted, no channel enabled); `message` then carries the reason.
+  // True when no outbound can run today whatever the list holds (no channel
+  // enabled); `message` then carries the reason. A spent prospect allowance
+  // does not block: the list narrows to follow-ups and `message` says so.
   outboundBlocked: boolean
   message?: string
 }>> {
@@ -340,7 +342,7 @@ export async function listReachable(
   const { limit, prospectIds: onlyProspectIds, channels, excludeProspectIds } = query
 
   const [quota, mailboxQuota, outboundMode, allowlist, leverConfig, stateRows, activeStrategySlugs] = await Promise.all([
-    getRemainingOutreachQuota(db, tenantId, edition),
+    getRemainingProspectQuota(db, tenantId, edition),
     pickProjectMailbox(db, tenantId, projectId),
     getOutboundMode(db, projectId),
     loadProjectOutboundAllowlist(db, projectId),
@@ -357,19 +359,9 @@ export async function listReachable(
     getActiveStrategySlugs(db, projectId),
   ])
 
-  if (isOutreachQuotaExhausted(quota)) {
-    return ok({
-      prospects: [],
-      total: 0,
-      withinChannels: 0,
-      byChannel: { email: 0, formOnly: 0, snsOnly: 0, platformOnly: 0 },
-      quota,
-      mailboxQuota,
-      outboundMode,
-      outboundBlocked: true,
-      message: formatOutreachQuotaError(quota),
-    })
-  }
+  // Past the allowance only prospects already contacted are drawn (a
+  // follow-up is free); the send path refuses a first touch regardless.
+  const followupsOnly = isContactQuotaExhausted(quota)
 
   const allowedSet = new Set(allowlist.outboundChannels)
   const enabledChannels = OUTBOUND_CHANNELS.filter((ch) => allowedSet.has(ch))
@@ -403,7 +395,9 @@ export async function listReachable(
       ? formatMailboxQuotaError(mailboxQuota)
       : undefined
 
-  const effectiveLimit = quota.kind === 'capped' ? Math.min(limit, quota.remaining) : limit
+  // Follow-ups never spend the allowance, so the draw is not sized by it;
+  // the first touches among the drawn rows are capped after the draw.
+  const firstTouchCap = quota.kind === 'capped' && !quota.overageEnabled ? quota.contacted.remaining : null
 
   const channelFilter: SQL | undefined = or(...enabledChannels.map(channelAvailabilityClause))
   const drawFilter: SQL = or(...drawChannels.map(channelAvailabilityClause)) ?? sql`false`
@@ -471,6 +465,18 @@ export async function listReachable(
     channelFilter,
     countryFilter,
     hardCountryFilter,
+    followupsOnly
+      ? exists(
+          db
+            .select({ one: sql`1` })
+            .from(outreachLogs)
+            .where(and(
+              eq(outreachLogs.tenantId, tenantId),
+              eq(outreachLogs.prospectId, projectProspects.prospectId),
+              eq(outreachLogs.status, 'sent'),
+            )),
+        )
+      : undefined,
     notExists(
       db
         .select({ one: sql`1` })
@@ -503,8 +509,8 @@ export async function listReachable(
   // re-approach (a retry): docs/send_decision_design.local.md §4.
   const recycleArmExpr = sql<number>`(CASE WHEN ${projectProspects.status} = 'contacted' AND ${projectProspects.nextFollowupAfter} IS NULL THEN 1 ELSE 0 END)`
 
-  const exploreCount = Math.floor(effectiveLimit * leverConfig.explorationShare)
-  const topCount = effectiveLimit - exploreCount
+  const exploreCount = Math.floor(limit * leverConfig.explorationShare)
+  const topCount = limit - exploreCount
 
   const reachableSelect = () =>
     db
@@ -531,6 +537,16 @@ export async function listReachable(
         status: projectProspects.status,
         nextFollowupAfter: projectProspects.nextFollowupAfter,
         followupTouches: projectProspects.followupTouches,
+        contactedBefore: sql<boolean>`${exists(
+          db
+            .select({ one: sql`1` })
+            .from(outreachLogs)
+            .where(and(
+              eq(outreachLogs.tenantId, tenantId),
+              eq(outreachLogs.prospectId, projectProspects.prospectId),
+              eq(outreachLogs.status, 'sent'),
+            )),
+        )}`,
         organizationId: prospects.organizationId,
         // SQL-side coalesce so the skill never merges two columns and
         // /outbound's pre-flight country gate works on a single field.
@@ -613,7 +629,8 @@ export async function listReachable(
           .orderBy(sql`random()`)
           .limit(shortfall)
       : []
-  const rows = [...topRows, ...strataRows, ...fallbackRows]
+  const drawnRows = [...topRows, ...strataRows, ...fallbackRows]
+  const rows = firstTouchCap === null ? drawnRows : capFirstTouches(drawnRows, firstTouchCap)
 
   const summary = summaryRows[0] ?? { total: 0, withinChannels: 0, email: 0, formOnly: 0, snsOnly: 0, platformOnly: 0 }
   const channelAffinityByBucket = stateRows[0]?.channelAffinity ?? {}
@@ -622,7 +639,7 @@ export async function listReachable(
   const cycleByProspect = await loadCycleContext(db, projectId, prospectIds)
 
   const enriched: ReachableProspect[] = rows.map(
-    ({ nextFollowupAfter, followupTouches, ...r }) => {
+    ({ nextFollowupAfter, followupTouches, contactedBefore: _contactedBefore, ...r }) => {
       const base = cycleByProspect.get(r.prospectId) ?? EMPTY_CYCLE
       // A set next_followup_after means the day-scale arm picked this row — relabel
       // so the skill writes a short nudge, not a months-scale re-approach.
@@ -649,6 +666,8 @@ export async function listReachable(
     },
   )
 
+  const message = drawOff ?? (followupsOnly ? formatContactQuotaError(quota) : mailboxCappedNote)
+
   return ok({
     prospects: enriched,
     total: summary.total,
@@ -663,8 +682,14 @@ export async function listReachable(
     mailboxQuota,
     outboundMode,
     outboundBlocked: drawOff !== null,
-    ...(drawOff ? { message: drawOff } : mailboxCappedNote ? { message: mailboxCappedNote } : {}),
+    ...(message ? { message } : {}),
   })
+}
+
+// Keeps every follow-up and the first `cap` first touches, in draw order.
+export function capFirstTouches<T extends { contactedBefore: boolean }>(rows: T[], cap: number): T[] {
+  let firstTouches = 0
+  return rows.filter((r) => r.contactedBefore || firstTouches++ < cap)
 }
 
 const EMPTY_CYCLE: ReachableCycle = {

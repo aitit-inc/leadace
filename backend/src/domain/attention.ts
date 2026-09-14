@@ -1,7 +1,7 @@
 import type { SendingIdentityProvider } from '../db/schema'
 import { hasReplyReadScope } from './sending-identity'
 
-export type QuotaConstraint = 'daily' | 'lifetime' | 'monthly'
+export type QuotaConstraint = 'lifetime' | 'monthly'
 
 // The single "does anything need the user?" feed — every surface (bell,
 // banners, dashboard) renders a view of this list, none judges on its own.

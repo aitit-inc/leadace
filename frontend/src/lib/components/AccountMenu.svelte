@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto, invalidate } from '$app/navigation';
   import { setActiveProject } from '$lib/active-project';
-  import { formatQuotaCompact, OUTREACH_WINDOW_LABEL } from '$lib/format';
+  import { formatQuotaCompact, QUOTA_WINDOW_LABEL } from '$lib/format';
   import { EDITION } from '$lib/config';
   import type { PlanInfo } from '$lib/types/plan';
   import type { SupabaseClient, User } from '@supabase/supabase-js';
@@ -103,27 +103,26 @@
           <div class="flex items-center justify-between mb-1">
             <span class="text-xs text-text-muted uppercase tracking-wider">Plan</span>
             <span class="text-[10px] text-text-muted uppercase tracking-wider">
-              {plan.outreach.kind === 'unlimited'
+              {plan.quota.kind === 'unlimited'
                 ? '∞'
-                : OUTREACH_WINDOW_LABEL[plan.outreach.bindingConstraint]}
+                : `prospects ${QUOTA_WINDOW_LABEL[plan.quota.window]}`}
             </span>
           </div>
           <div class="flex items-center justify-between">
             <span class="text-sm font-medium text-text capitalize">{plan.plan}</span>
-            <span class="font-mono text-[11px] text-text-muted">
-              {formatQuotaCompact(
-                plan.outreach.used,
-                plan.outreach.kind === 'capped' ? plan.outreach.limit : null,
-              )}
-            </span>
+            {#if plan.quota.kind === 'capped'}
+              <span class="font-mono text-[11px] text-text-muted">
+                {formatQuotaCompact(plan.quota.contacted.used, plan.quota.contacted.limit)}
+              </span>
+            {/if}
           </div>
-          {#if plan.outreach.kind === 'capped'}
+          {#if plan.quota.kind === 'capped'}
             <div class="mt-1.5 h-0.5 w-full rounded-full bg-surface">
               <div
-                class="h-0.5 rounded-full {plan.outreach.remaining === 0
+                class="h-0.5 rounded-full {plan.quota.contacted.remaining === 0
                   ? 'bg-accent'
                   : 'bg-text-muted'}"
-                style="width: {Math.min(100, (plan.outreach.used / plan.outreach.limit) * 100)}%"
+                style="width: {Math.min(100, (plan.quota.contacted.used / plan.quota.contacted.limit) * 100)}%"
               ></div>
             </div>
           {/if}

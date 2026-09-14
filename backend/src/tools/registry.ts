@@ -11,7 +11,7 @@ import { discoveryStrategySchema, suggestionKindSchema, variantIdSchema } from '
 import { localeSchema } from '../domain/locale'
 import type { ReplyCollectionStatus } from '../domain/attention'
 import { isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG } from '../domain/url'
-import type { OutreachQuota, OutreachQuotaWindow, OutreachWindowKind } from '../services/plan-limits'
+import type { ProspectQuota, QuotaWindowKind } from '../services/plan-limits'
 import { SERVER_VERSION } from '../mcp/version'
 import { JOB_KINDS, JOB_STATUSES, jobParamsSchema, type JobKind, type JobLogLine, type JobParams } from '../domain/jobs'
 import { DAYS_OF_WEEK, daysSchema, hourSchema, promptSchema, timezoneSchema } from '../domain/schedules'
@@ -72,7 +72,7 @@ async function projectLabel(ctx: ToolCtx, projectRef: string): Promise<string> {
 export type OutboundPreview = {
   outboundMode: 'send' | 'draft'
   reachable: number
-  quota: OutreachQuota | undefined
+  quota: ProspectQuota | undefined
   // next = the address the first send uses; null when every listed mailbox is spent.
   mailbox: { next: string | null; remaining: number } | null
   blocked: string | null
@@ -87,7 +87,7 @@ async function outboundPreview(ctx: ToolCtx, projectRef: string): Promise<Outbou
   if (!reachable) return null
   const r = reachable as {
     total: number
-    quota?: OutreachQuota
+    quota?: ProspectQuota
     outboundMode: 'send' | 'draft'
     outboundBlocked: boolean
     message?: string
@@ -102,10 +102,15 @@ async function outboundPreview(ctx: ToolCtx, projectRef: string): Promise<Outbou
   }
 }
 
-const QUOTA_WINDOW: Record<OutreachWindowKind, string> = {
-  daily: 'left today',
-  monthly: 'left this month',
-  lifetime: 'left in total',
+const QUOTA_WINDOW: Record<QuotaWindowKind, string> = {
+  monthly: 'this period',
+  lifetime: 'in total',
+}
+
+function formatQuotaUsage(q: ProspectQuota, which: 'contacted' | 'found'): string {
+  if (q.kind === 'unlimited') return 'unlimited'
+  const u = q[which]
+  return `${u.remaining} of ${u.limit} left ${QUOTA_WINDOW[q.window]}${q.overageEnabled ? ' (overage on)' : ''}`
 }
 
 // The one definition of which job kinds need approval.
@@ -154,12 +159,7 @@ export function startJobConfirmSummary(
       facts.push({ label: 'From', value: mailbox.next ?? 'no mailbox with sends left today' })
       facts.push({ label: 'Mailboxes today', value: `${plural(mailbox.remaining, 'email')} left` })
     }
-    if (quota) {
-      facts.push({
-        label: 'Outreach quota',
-        value: quota.kind === 'unlimited' ? 'unlimited' : `${quota.remaining} of ${quota.limit} ${QUOTA_WINDOW[quota.bindingConstraint]}`,
-      })
-    }
+    if (quota) facts.push({ label: 'New prospects', value: formatQuotaUsage(quota, 'contacted') })
   }
   const warning = [preview?.blocked, mode === 'send' ? 'Sent email cannot be recalled.' : null].filter((w) => w !== null).join(' ')
   return {
@@ -481,7 +481,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_outbound_targets',
-    'Prospects due for outreach (new + follow-up/recycle touches), ordered by the measured targeting score (x priority multiplier; ties put first touches and follow-ups before a silent prospect\'s recycle re-approach; a share of each batch is random exploration slots); server-filters by enabled channels and deliverable country (unknown country passes unless the project sets targetCountries). Reports the reachable total and its email / formOnly / snsOnly / platformOnly split, the outbound mode (send|draft), remaining outreach quota, and the mailbox email cap; then the prospects as JSON, each carrying `country`, `discoveryStrategy`, `siteReadAt` (when its site was last read for dated events; null = never), and `cycle` {kind, touchNumber}.',
+    'Prospects due for outreach (new + follow-up/recycle touches), ordered by the measured targeting score (x priority multiplier; ties put first touches and follow-ups before a silent prospect\'s recycle re-approach; a share of each batch is random exploration slots); server-filters by enabled channels and deliverable country (unknown country passes unless the project sets targetCountries). Reports the reachable total and its email / formOnly / snsOnly / platformOnly split, the outbound mode (send|draft), the plan\'s remaining prospect allowance (new prospects and prospects found by LeadAce; follow-ups are free), and the mailbox email cap; then the prospects as JSON, each carrying `country`, `discoveryStrategy`, `siteReadAt` (when its site was last read for dated events; null = never), and `cycle` {kind, touchNumber}.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       limit: z.number().int().min(1).max(200).default(50).describe('Max number of prospects to return'),
@@ -496,7 +496,7 @@ export function buildToolRegistry(): ToolDef[] {
         prospects: unknown[]
         total: number
         byChannel: { email: number; formOnly: number; snsOnly: number; platformOnly: number }
-        quota?: OutreachQuota
+        quota?: ProspectQuota
         // Wire shape: Date fields arrive as ISO strings through res.json().
         mailboxQuota?:
           | { kind: 'no_mailbox' }
@@ -506,19 +506,9 @@ export function buildToolRegistry(): ToolDef[] {
         message?: string
       }
 
-      const formatWindow = (label: string, w: OutreachQuotaWindow) =>
-        `${label} ${w.remaining}/${w.limit} remaining (used ${w.used})`
-      const quotaLine = (() => {
-        if (!result.quota) return ''
-        const q = result.quota
-        if (q.kind === 'unlimited') return `\nOutreach quota: unlimited (plan: ${q.plan})`
-        const parts: string[] = []
-        if (q.daily) parts.push(formatWindow('daily', q.daily))
-        if (q.lifetime) parts.push(formatWindow('lifetime', q.lifetime))
-        if (q.monthly) parts.push(formatWindow('monthly', q.monthly))
-        const summary = parts.length > 0 ? parts.join(', ') : `${q.remaining}/${q.limit} remaining (used ${q.used})`
-        return `\nOutreach quota: ${summary} (plan: ${q.plan})`
-      })()
+      const quotaLine = result.quota
+        ? `\nProspect allowance (plan: ${result.quota.plan}): new prospects ${formatQuotaUsage(result.quota, 'contacted')}; found by LeadAce ${formatQuotaUsage(result.quota, 'found')}. Follow-ups are free.`
+        : ''
       const mbq = result.mailboxQuota
       const mailboxLine =
         mbq?.kind === 'exhausted' && mbq.resumesAt
@@ -799,10 +789,14 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_tenant_settings',
-    'Returns the workspace identity/compliance fields (legalName, physicalAddress, defaultSenderCountry) plus a readiness status line; all three gate outbound: send tools refuse (412) until each is set.',
+    'Returns the workspace identity/compliance fields (legalName, physicalAddress, defaultSenderCountry) plus a readiness status line; all three gate outbound: send tools refuse (412) until each is set. Ends with the plan and its remaining prospect allowance (new prospects and prospects found by LeadAce; follow-ups are free).',
     {},
     async (_args, ctx) => {
-      const { ok, data } = await ctx.callApi('GET', '/tenant-settings', null)
+      const [settings, plan] = await Promise.all([
+        ctx.callApi('GET', '/tenant-settings', null),
+        readApi(ctx, '/me/plan') as Promise<{ quota: ProspectQuota } | null>,
+      ])
+      const { ok, data } = settings
       if (!ok) {
         const e = data as { error: string; detail?: string }
         const msg = e.detail ? `${e.error}: ${e.detail}` : e.error
@@ -813,6 +807,9 @@ export function buildToolRegistry(): ToolDef[] {
         physicalAddress: string | null
         defaultSenderCountry: string | null
       }
+      const planLine = plan
+        ? `\n\nPlan: ${plan.quota.plan} — new prospects ${formatQuotaUsage(plan.quota, 'contacted')}; found by LeadAce ${formatQuotaUsage(plan.quota, 'found')}. Follow-ups are free.`
+        : ''
       const missing: string[] = []
       if (!r.legalName) missing.push('legalName')
       if (!r.physicalAddress) missing.push('physicalAddress')
@@ -824,7 +821,7 @@ export function buildToolRegistry(): ToolDef[] {
       return {
         content: [{
           type: 'text' as const,
-          text: `${status}\n\nlegalName: ${r.legalName ?? '(not set)'}\nphysicalAddress: ${r.physicalAddress ?? '(not set)'}\ndefaultSenderCountry: ${r.defaultSenderCountry ?? '(not set)'}`,
+          text: `${status}\n\nlegalName: ${r.legalName ?? '(not set)'}\nphysicalAddress: ${r.physicalAddress ?? '(not set)'}\ndefaultSenderCountry: ${r.defaultSenderCountry ?? '(not set)'}${planLine}`,
         }],
       }
     },

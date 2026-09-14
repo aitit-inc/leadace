@@ -377,12 +377,14 @@ then deletes the tenant (`DELETE FROM tenants` cascades all its rows) — so the
 suites are deterministic, don't interfere, and leave no residue in your real
 tenant. Shared helpers live in `e2e/lib-cloud.sh`.
 
-- `regression-cloud-quota.sh` — outreach quota binding end-to-end: free
-  daily-5 (send-and-record → 403 with the daily message and NO `pre_send` row
-  allocated; `POST /api/outreach` (status=sent) → 403; `reachable` → empty list +
-  "try again tomorrow"), free lifetime-100, starter monthly-1500, and the
-  `effectiveLimit = min(limit, remaining)` clamp on `reachable` (incl. an
-  in-flight `pre_send` row counting toward used).
+- `regression-cloud-quota.sh` — prospect quota binding end-to-end: the free
+  lifetime allowance (30 prospects: a first touch → 403 with the lifetime
+  message and NO `pre_send` row allocated, `POST /api/outreach` (status=sent)
+  → 403, a follow-up to a contacted prospect → 200, `reachable` narrows to
+  contacted prospects with the message), a follow-up never counting, an
+  in-flight `pre_send` row counting as a first touch, the starter period
+  allowance (100) anchored at `current_period_start`, and `overage_enabled`
+  lifting the refusal (no `effectiveLimit` clamp).
 - `regression-cloud-limits.sh` — `maxProjects` (free=1, pro=5 → 403 at the cap,
   N+1 allowed after delete) and the `maxProspects` 500 budget (mid-batch
   truncation to remaining budget with `plan_limit` skips; full 403 at budget 0;
@@ -390,11 +392,12 @@ tenant. Shared helpers live in `e2e/lib-cloud.sh`.
 - `regression-cloud-stripe-webhook.sh` — signature verification (missing → 400,
   bad → 401, stale ts → 401, valid-but-unknown-sub → 200 no-op) and the
   data-driven `tenant_plans` mutations: `customer.subscription.updated` grants
-  the tier / mirrors the period / is idempotent / no-ops on missing metadata;
-  `customer.subscription.deleted` downgrades to free; and the `unlimited`-tier
-  protection refuses both. Events are HMAC-signed locally by
-  `sign-stripe-event.sh`. The `checkout.session.completed` + refund paths are
-  out of scope (they call the real `api.stripe.com`).
+  the tier / mirrors the period / finds the plan price when it is not the first
+  item / is idempotent / no-ops on missing metadata;
+  `customer.subscription.deleted` downgrades to free and switches overage off;
+  and the `unlimited`-tier protection refuses both. Events are HMAC-signed
+  locally by `sign-stripe-event.sh`. The `checkout.session.completed` + refund
+  paths are out of scope (they call the real `api.stripe.com`).
 - `regression-cloud-inquiry-quota.sh` — the free-tier inquiry-chat lifetime cap
   (25 turns) returning 403 before the OpenAI call (so no LLM round-trip / cost),
   plus the per-session hard-cap (5) precedence and the revoked-token 404 gate.

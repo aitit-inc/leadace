@@ -40,7 +40,7 @@ LeadAce is an autonomous outbound sales agent for small B2B teams: it finds pros
 ## Features & Strengths
 Every claim in an email is grounded in the prospect's own site; runs unattended on a schedule; built-in compliance (unsubscribe, do-not-contact, no-solicitation detection).
 ## Pricing
-Free (100 lifetime emails), Starter $29/month, Pro $79/month.`
+Free (30 prospects, lifetime), Starter $49/month for 100 prospects, Pro $99/month for 300.`
 
 const salesStrategy = `# Sales Strategy
 ## Target
@@ -139,7 +139,7 @@ async function measure(plan: (typeof strategies)[number]): Promise<void> {
   const channel = (e: (typeof enriched)[number]) => e.email ?? e.contactFormUrl ?? (e.snsAccounts ? 'sns' : null)
 
   log(`\n== ${plan.slug} (${today})`)
-  log(`candidates ${candidates.length} | with a claimed signal ${candidates.filter((c) => c.signals.length > 0).length} | with a contact channel ${enriched.filter((e) => channel(e) !== null).length} | with a channel and a confirmed signal ${enriched.filter((e) => channel(e) !== null && e.signals.length > 0).length} | do-not-contact ${enriched.filter((e) => e.doNotContact).length} | official URL resolves ${resolved.filter(Boolean).length}/${candidates.length}`)
+  log(`candidates ${candidates.length} | with a claimed signal ${candidates.filter((c) => c.signals.length > 0).length} | with a contact channel ${enriched.filter((e) => channel(e) !== null).length} | with a channel and a confirmed signal ${enriched.filter((e) => channel(e) !== null && e.signals.length > 0).length} | no-solicitation ${enriched.filter((e) => e.noSolicitation).length} | official URL resolves ${resolved.filter(Boolean).length}/${candidates.length}`)
   log(`search queries ${queries} | token $ (billed tier) discover ${discoverCost.toFixed(3)} + enrich ${enrichCost.toFixed(3)} | grounding $ once past the free quota ${(queries * 0.014).toFixed(2)} | discover ${discoverMs} ms, total ${Date.now() - t0} ms`)
   for (const [i, c] of candidates.entries()) {
     const e = enriched[i]!

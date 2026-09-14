@@ -32,11 +32,7 @@
   let connectingGmail = $state(false);
   let gmailConnectError = $state<string | null>(null);
 
-  // Daily quota exhaustion self-resolves at UTC midnight — nothing to fix, so
-  // it stays off the bell (the dashboard still shows it).
-  let bellItems = $derived(
-    data.attention.filter((i) => !(i.kind === 'quota_exhausted' && i.constraint === 'daily')),
-  );
+  let bellItems = $derived(data.attention);
   let gmailBannerItem = $derived(
     data.attention.find((i) => i.kind === 'gmail_disconnected' || i.kind === 'gmail_auth_revoked'),
   );

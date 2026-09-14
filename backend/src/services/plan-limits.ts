@@ -6,6 +6,7 @@ import {
   responses,
   sendingIdentities,
   prospects,
+  discoveryCharges,
   inquirySessions,
   PRE_SEND_TTL_MINUTES,
 } from '../db/schema'
@@ -29,27 +30,36 @@ import {
 // staff / complimentary accounts. The Stripe webhook must never overwrite it.
 export type PlanTier = 'free' | 'starter' | 'pro' | 'scale' | 'unlimited'
 
-export type OutreachWindowKind = 'daily' | 'lifetime' | 'monthly'
+export type QuotaWindowKind = 'lifetime' | 'monthly'
 
-// Plans can apply zero or more caps simultaneously. null = cap doesn't apply.
-// Free uses daily + lifetime (whichever runs out first blocks send); paid uses monthly.
+// Plans meter prospects, not sends: a prospect counts once, when its first
+// outbound goes out; follow-ups and re-approaches are free. Discovery is
+// metered separately at registration because that is where its cost lands.
+export interface ProspectCaps {
+  window: QuotaWindowKind
+  // Distinct prospects first contacted within the window.
+  contacted: number
+  // Prospects the hosted discovery may register within the window.
+  found: number
+}
+
 export interface PlanLimits {
   maxProjects: number | null
-  maxOutreachPerDay: number | null
-  maxOutreachLifetime: number | null
-  maxOutreachPerMonth: number | null
+  // null = no prospect metering (the internal unlimited tier).
+  prospectCaps: ProspectCaps | null
+  // Prospects stored, any origin: a storage guard, not what the plan sells.
   maxProspects: number | null
-  // Total identities (gmail + smtp); the connected Gmail occupies 1, so free (1)
-  // cannot add an smtp identity.
+  // Total identities (gmail + smtp); the connected Gmail occupies 1, so a
+  // cap of 1 cannot add another mailbox.
   maxSendingIdentities: number | null
 }
 
 const PLAN_LIMITS: Record<PlanTier, PlanLimits> = {
-  free:      { maxProjects: 1,    maxOutreachPerDay: 5,    maxOutreachLifetime: 100,  maxOutreachPerMonth: null,  maxProspects: 500,  maxSendingIdentities: 1 },
-  starter:   { maxProjects: 1,    maxOutreachPerDay: null, maxOutreachLifetime: null, maxOutreachPerMonth: 1500,  maxProspects: null, maxSendingIdentities: 2 },
-  pro:       { maxProjects: 5,    maxOutreachPerDay: null, maxOutreachLifetime: null, maxOutreachPerMonth: 4000,  maxProspects: null, maxSendingIdentities: 5 },
-  scale:     { maxProjects: null, maxOutreachPerDay: null, maxOutreachLifetime: null, maxOutreachPerMonth: null,  maxProspects: null, maxSendingIdentities: null },
-  unlimited: { maxProjects: null, maxOutreachPerDay: null, maxOutreachLifetime: null, maxOutreachPerMonth: null,  maxProspects: null, maxSendingIdentities: null },
+  free:      { maxProjects: 1,    prospectCaps: { window: 'lifetime', contacted: 30,  found: 30 },  maxProspects: 500,  maxSendingIdentities: 1 },
+  starter:   { maxProjects: 1,    prospectCaps: { window: 'monthly',  contacted: 100, found: 100 }, maxProspects: null, maxSendingIdentities: 1 },
+  pro:       { maxProjects: 5,    prospectCaps: { window: 'monthly',  contacted: 300, found: 300 }, maxProspects: null, maxSendingIdentities: 3 },
+  scale:     { maxProjects: null, prospectCaps: { window: 'monthly',  contacted: 800, found: 800 }, maxProspects: null, maxSendingIdentities: 10 },
+  unlimited: { maxProjects: null, prospectCaps: null,                                                maxProspects: null, maxSendingIdentities: null },
 }
 
 export function getPlanLimits(plan: PlanTier): PlanLimits {
@@ -84,18 +94,21 @@ export function canRegisterMailbox(
 
 type Db = ReturnType<typeof createDb>
 
+export interface TenantPlan {
+  plan: PlanTier
+  currentPeriodStart: Date | null
+  currentPeriodEnd: Date | null
+  overageEnabled: boolean
+}
+
 // Edition gate at this single chokepoint means every downstream cap check inherits the self-host override.
 export async function getTenantPlan(
   db: Db,
   tenantId: TenantId,
   edition: Edition,
-): Promise<{
-  plan: PlanTier
-  currentPeriodStart: Date | null
-  currentPeriodEnd: Date | null
-}> {
+): Promise<TenantPlan> {
   if (edition !== 'cloud') {
-    return { plan: 'unlimited', currentPeriodStart: null, currentPeriodEnd: null }
+    return { plan: 'unlimited', currentPeriodStart: null, currentPeriodEnd: null, overageEnabled: false }
   }
 
   const [row] = await db
@@ -103,19 +116,22 @@ export async function getTenantPlan(
       plan: tenantPlans.plan,
       currentPeriodStart: tenantPlans.currentPeriodStart,
       currentPeriodEnd: tenantPlans.currentPeriodEnd,
+      overageEnabled: tenantPlans.overageEnabled,
     })
     .from(tenantPlans)
     .where(eq(tenantPlans.tenantId, tenantId))
     .limit(1)
 
   if (!row) {
-    return { plan: 'free', currentPeriodStart: null, currentPeriodEnd: null }
+    return { plan: 'free', currentPeriodStart: null, currentPeriodEnd: null, overageEnabled: false }
   }
 
   return {
     plan: row.plan,
     currentPeriodStart: row.currentPeriodStart,
     currentPeriodEnd: row.currentPeriodEnd,
+    // Free has no Stripe subscription to meter to.
+    overageEnabled: row.plan !== 'free' && row.overageEnabled,
   }
 }
 
@@ -136,161 +152,185 @@ export async function countTenantProspects(db: Db, tenantId: TenantId): Promise<
   return result?.total ?? 0
 }
 
-export interface OutreachQuotaWindow {
+export interface QuotaUsage {
   used: number
   limit: number
   remaining: number
 }
 
-export type OutreachQuota =
+export type ProspectQuota =
   | {
       plan: PlanTier
       kind: 'unlimited'
-      used: number
     }
   | {
       plan: PlanTier
       kind: 'capped'
-      used: number
-      limit: number
-      remaining: number
-      bindingConstraint: OutreachWindowKind
-      // Per-window breakdown so the frontend can show all applicable caps.
-      daily?: OutreachQuotaWindow
-      lifetime?: OutreachQuotaWindow
-      monthly?: OutreachQuotaWindow
+      window: QuotaWindowKind
+      // Past an allowance the excess is metered to Stripe instead of refused.
+      overageEnabled: boolean
+      contacted: QuotaUsage
+      found: QuotaUsage
     }
 
-// Tie-break: pick the most "terminal" (lifetime > monthly > daily) so the UX
-// nudges toward the right action ("upgrade" beats "wait until tomorrow").
-const TIE_BREAK_ORDER: Record<OutreachWindowKind, number> = {
-  lifetime: 0,
-  monthly: 1,
-  daily: 2,
-}
-
-export function selectOutreachQuota(
+export function buildProspectQuota(
   plan: PlanTier,
-  windows: { kind: OutreachWindowKind; limit: number; used: number }[],
-): OutreachQuota {
-  if (windows.length === 0) return { plan, kind: 'unlimited', used: 0 }
-
-  const candidates = windows.map((w) => ({
-    kind: w.kind,
-    window: { used: w.used, limit: w.limit, remaining: Math.max(0, w.limit - w.used) },
-  }))
-  candidates.sort((a, b) => {
-    if (a.window.remaining !== b.window.remaining) return a.window.remaining - b.window.remaining
-    return TIE_BREAK_ORDER[a.kind] - TIE_BREAK_ORDER[b.kind]
-  })
-  const binding = candidates[0]!
-
-  const result: OutreachQuota = {
+  caps: ProspectCaps,
+  overageEnabled: boolean,
+  used: { contacted: number; found: number },
+): ProspectQuota {
+  const usage = (limit: number, n: number): QuotaUsage => ({ used: n, limit, remaining: Math.max(0, limit - n) })
+  return {
     plan,
     kind: 'capped',
-    used: binding.window.used,
-    limit: binding.window.limit,
-    remaining: binding.window.remaining,
-    bindingConstraint: binding.kind,
+    window: caps.window,
+    overageEnabled,
+    contacted: usage(caps.contacted, used.contacted),
+    found: usage(caps.found, used.found),
   }
-  for (const c of candidates) {
-    result[c.kind] = c.window
-  }
-  return result
 }
 
-export async function getRemainingOutreachQuota(
+export async function getRemainingProspectQuota(
   db: Db,
   tenantId: TenantId,
   edition: Edition,
-): Promise<OutreachQuota> {
+): Promise<ProspectQuota> {
   const tp = await getTenantPlan(db, tenantId, edition)
-  return getRemainingOutreachQuotaForPlan(db, tenantId, tp)
+  return getRemainingProspectQuotaForPlan(db, tenantId, tp)
+}
+
+// 'pre_send' is an in-flight reservation: counted so concurrent allocations
+// can't race past the cap; auto-refunded when updateOutreachStatus flips to
+// 'failed' (row stops matching). After PRE_SEND_TTL_MINUTES, unresolved
+// pre_send rows age out so a crashed skill doesn't hold quota forever (row
+// stays for audit).
+function spendsQuota(tenantId: TenantId) {
+  return and(
+    eq(outreachLogs.tenantId, tenantId),
+    or(
+      eq(outreachLogs.status, 'sent'),
+      and(
+        eq(outreachLogs.status, 'pre_send'),
+        sql`${outreachLogs.sentAt} > NOW() - (${PRE_SEND_TTL_MINUTES} * INTERVAL '1 minute')`,
+      ),
+    ),
+  )
 }
 
 // Variant for callers that already loaded the tenant plan (e.g. /me/plan).
-export async function getRemainingOutreachQuotaForPlan(
+export async function getRemainingProspectQuotaForPlan(
   db: Db,
   tenantId: TenantId,
-  tp: { plan: PlanTier; currentPeriodStart: Date | null },
-): Promise<OutreachQuota> {
-  const limits = getPlanLimits(tp.plan)
-
-  const dailySince = limits.maxOutreachPerDay !== null ? startOfTodayUtc() : null
-  const monthlySince = limits.maxOutreachPerMonth !== null && tp.currentPeriodStart
-    ? tp.currentPeriodStart
-    : null
-  const includeLifetime = limits.maxOutreachLifetime !== null
-
-  if (!dailySince && !monthlySince && !includeLifetime) {
-    return { plan: tp.plan, kind: 'unlimited', used: 0 }
-  }
-
+  tp: TenantPlan,
+): Promise<ProspectQuota> {
+  const caps = getPlanLimits(tp.plan).prospectCaps
+  if (!caps) return { plan: tp.plan, kind: 'unlimited' }
   // Dates passed as ISO strings + ::timestamptz cast: postgres.js with
   // prepare:false (required for Supabase pooler) can't serialize Date instances
   // through raw sql`` interpolation — it expects string/Buffer/ArrayBuffer.
-  const dailySinceIso = dailySince?.toISOString() ?? null
-  const monthlySinceIso = monthlySince?.toISOString() ?? null
-  const [row] = await db
+  const sinceIso = caps.window === 'monthly' ? tp.currentPeriodStart?.toISOString() ?? null : null
+  // A paid row without a period (manual setup) has no window to count in.
+  if (caps.window === 'monthly' && sinceIso === null) return { plan: tp.plan, kind: 'unlimited' }
+
+  const firstTouches = db
     .select({
-      dailyUsed: dailySinceIso
-        ? sql<number>`COUNT(*) FILTER (WHERE ${outreachLogs.sentAt} >= ${dailySinceIso}::timestamptz)::int`
-        : sql<number>`0::int`,
-      monthlyUsed: monthlySinceIso
-        ? sql<number>`COUNT(*) FILTER (WHERE ${outreachLogs.sentAt} >= ${monthlySinceIso}::timestamptz)::int`
-        : sql<number>`0::int`,
-      lifetimeUsed: includeLifetime
-        ? sql<number>`COUNT(*)::int`
-        : sql<number>`0::int`,
+      prospectId: outreachLogs.prospectId,
+      firstAt: sql<Date>`MIN(${outreachLogs.sentAt})`.as('first_at'),
     })
     .from(outreachLogs)
-    // 'pre_send' is an in-flight reservation: counted toward used so concurrent
-    // allocations can't race past the cap; auto-refunded when
-    // updateOutreachStatus flips to 'failed' (row stops matching). After
-    // PRE_SEND_TTL_MINUTES, unresolved pre_send rows age out so a crashed
-    // skill doesn't hold quota forever (row stays for audit).
+    .where(spendsQuota(tenantId))
+    .groupBy(outreachLogs.prospectId)
+    .as('first_touches')
+
+  const [[contacted], [found]] = await Promise.all([
+    db
+      .select({ used: sql<number>`COUNT(*)::int` })
+      .from(firstTouches)
+      .where(sinceIso ? sql`${firstTouches.firstAt} >= ${sinceIso}::timestamptz` : undefined),
+    db
+      .select({ used: sql<number>`COUNT(*)::int` })
+      .from(discoveryCharges)
+      .where(and(
+        eq(discoveryCharges.tenantId, tenantId),
+        sinceIso ? sql`${discoveryCharges.createdAt} >= ${sinceIso}::timestamptz` : undefined,
+      )),
+  ])
+
+  return buildProspectQuota(tp.plan, caps, tp.overageEnabled, {
+    contacted: contacted?.used ?? 0,
+    found: found?.used ?? 0,
+  })
+}
+
+// Exhausted = nothing new may go out; a metered overage never exhausts.
+export function isContactQuotaExhausted(quota: ProspectQuota): boolean {
+  return quota.kind === 'capped' && !quota.overageEnabled && quota.contacted.remaining <= 0
+}
+
+export function isFoundQuotaExhausted(quota: ProspectQuota): boolean {
+  return quota.kind === 'capped' && !quota.overageEnabled && quota.found.remaining <= 0
+}
+
+const WINDOW_PHRASE: Record<QuotaWindowKind, string> = {
+  lifetime: 'in total',
+  monthly: 'per billing period',
+}
+
+export function formatContactQuotaError(quota: ProspectQuota): string {
+  if (quota.kind === 'unlimited') return 'Prospect limit reached.'
+  const { limit } = quota.contacted
+  const resume = quota.window === 'lifetime'
+    ? 'Upgrade to reach new prospects.'
+    : 'New prospects resume next period; enable overage or upgrade on the plans page to continue now.'
+  return `Your ${quota.plan} plan includes ${limit} prospects ${WINDOW_PHRASE[quota.window]} and all ${limit} have been contacted. Follow-ups still go out. ${resume}`
+}
+
+export function formatFoundQuotaError(quota: ProspectQuota): string {
+  if (quota.kind === 'unlimited') return 'Prospect discovery limit reached.'
+  const { limit } = quota.found
+  const resume = quota.window === 'lifetime'
+    ? 'Bring your own list, or upgrade.'
+    : 'Bring your own list, or enable overage or upgrade on the plans page.'
+  return `Your ${quota.plan} plan lets LeadAce find ${limit} prospects ${WINDOW_PHRASE[quota.window]}, and that allowance is used. ${resume}`
+}
+
+// Discovery spends our money on prospects the plan could not register or
+// contact; either spent allowance pauses it.
+export function discoveryPausedReason(quota: ProspectQuota): string | null {
+  if (isFoundQuotaExhausted(quota)) return formatFoundQuotaError(quota)
+  if (isContactQuotaExhausted(quota)) return `Discovery is paused: ${formatContactQuotaError(quota)}`
+  return null
+}
+
+async function hasPriorSend(db: Db, tenantId: TenantId, prospectId: number): Promise<boolean> {
+  const [row] = await db
+    .select({ one: sql<number>`1` })
+    .from(outreachLogs)
     .where(and(
       eq(outreachLogs.tenantId, tenantId),
-      or(
-        eq(outreachLogs.status, 'sent'),
-        and(
-          eq(outreachLogs.status, 'pre_send'),
-          sql`${outreachLogs.sentAt} > NOW() - (${PRE_SEND_TTL_MINUTES} * INTERVAL '1 minute')`,
-        ),
-      ),
+      eq(outreachLogs.prospectId, prospectId),
+      eq(outreachLogs.status, 'sent'),
     ))
-
-  const windows: { kind: OutreachWindowKind; limit: number; used: number }[] = []
-  if (limits.maxOutreachPerDay !== null) windows.push({ kind: 'daily', limit: limits.maxOutreachPerDay, used: row?.dailyUsed ?? 0 })
-  if (includeLifetime) windows.push({ kind: 'lifetime', limit: limits.maxOutreachLifetime!, used: row?.lifetimeUsed ?? 0 })
-  if (monthlySince) windows.push({ kind: 'monthly', limit: limits.maxOutreachPerMonth!, used: row?.monthlyUsed ?? 0 })
-
-  return selectOutreachQuota(tp.plan, windows)
+    .limit(1)
+  return row !== undefined
 }
 
-export function isOutreachQuotaExhausted(quota: OutreachQuota): boolean {
-  return quota.kind === 'capped' && quota.remaining <= 0
-}
-
-export function outreachQuotaErrorIfExhausted(quota: OutreachQuota): ServiceError | null {
-  if (quota.kind !== 'capped' || quota.remaining > 0) return null
+// The send-path guard: a first touch past the allowance is refused; a
+// follow-up to a prospect already contacted never is.
+export async function assertProspectContactQuota(
+  db: Db,
+  tenantId: TenantId,
+  edition: Edition,
+  prospectId: number,
+): Promise<ServiceError | null> {
+  const quota = await getRemainingProspectQuota(db, tenantId, edition)
+  if (!isContactQuotaExhausted(quota)) return null
+  if (await hasPriorSend(db, tenantId, prospectId)) return null
   return {
     ok: false,
     code: 'FORBIDDEN',
-    error: 'Outreach limit reached',
-    detail: formatOutreachQuotaError(quota),
-  }
-}
-
-export function formatOutreachQuotaError(quota: OutreachQuota): string {
-  if (quota.kind === 'unlimited') return 'Outreach limit reached.'
-  switch (quota.bindingConstraint) {
-    case 'daily':
-      return `Your ${quota.plan} plan allows ${quota.limit} outreach per day. Try again tomorrow or upgrade for higher limits.`
-    case 'lifetime':
-      return `Your ${quota.plan} plan lifetime limit (${quota.limit}) is reached. Upgrade to keep sending.`
-    case 'monthly':
-      return `Your ${quota.plan} plan allows ${quota.limit} outreach this month. Upgrade your plan to continue.`
+    error: 'Prospect limit reached',
+    detail: formatContactQuotaError(quota),
   }
 }
 
