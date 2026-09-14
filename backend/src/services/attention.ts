@@ -66,6 +66,7 @@ export async function loadTenantAttentionInput(
   })
 
   const quota = planRes.value.quota
+  const autoTopUp = quota.kind === 'capped' ? quota.credits?.autoTopUp : undefined
   return ok({
     hasProject: onboardingRes.value.hasProject,
     compliance: { ready: complianceRes.value.ready, missing: complianceRes.value.missing },
@@ -79,7 +80,7 @@ export async function loadTenantAttentionInput(
       exhausted: isContactQuotaExhausted(quota),
       constraint: quota.kind === 'capped' ? quota.window : null,
     },
-    creditTopUpFailedAt: quota.kind === 'capped' ? quota.credits?.autoTopUp.failedAt ?? null : null,
+    creditTopUpFailedAt: autoTopUp && !autoTopUp.enabled ? autoTopUp.failedAt : null,
     now: new Date(),
   })
 }

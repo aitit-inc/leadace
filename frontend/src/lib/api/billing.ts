@@ -1,5 +1,5 @@
 import { request, type RequestFetch } from '../api';
-import type { AutoTopUp, CreditPackCents, PlanInfo } from '$lib/types/plan';
+import type { AutoTopUp, PlanInfo } from '$lib/types/plan';
 
 export function getPlan(
   fetchFn: RequestFetch = fetch,
@@ -52,7 +52,7 @@ export function createPortalSession(
 }
 
 export type CreateCreditCheckoutBody = {
-  packCents: CreditPackCents;
+  packCents: number;
   successUrl: string;
   cancelUrl: string;
 };
@@ -73,7 +73,7 @@ export function createCreditCheckoutSession(
 
 export type AutoTopUpPatch = {
   enabled: boolean;
-  amountCents?: CreditPackCents;
+  amountCents?: number;
   thresholdCents?: number;
 };
 

@@ -1,8 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import {
+  autoTopUpSchema,
+  creditAmountSchema,
   creditMetadata,
   creditsCoverOverage,
   formatCents,
+  invoicePaidAt,
   isCardDecline,
   isStaleTopUpClaim,
   nextFoundRegistration,
@@ -12,6 +15,26 @@ import {
 
 const topUp = (enabled = false): AutoTopUp => ({ enabled, amountCents: 2500, thresholdCents: 500, failedAt: null })
 const state = (balanceCents: number, enabled = false): CreditState => ({ balanceCents, autoTopUp: topUp(enabled) })
+
+describe('creditAmountSchema', () => {
+  it('accepts any whole-dollar amount from $10 to $500', () => {
+    expect(creditAmountSchema.safeParse(1000).success).toBe(true)
+    expect(creditAmountSchema.safeParse(1700).success).toBe(true)
+    expect(creditAmountSchema.safeParse(50_000).success).toBe(true)
+    expect(creditAmountSchema.safeParse(900).success).toBe(false)
+    expect(creditAmountSchema.safeParse(50_100).success).toBe(false)
+    expect(creditAmountSchema.safeParse(1050).success).toBe(false)
+  })
+})
+
+describe('autoTopUpSchema', () => {
+  it('bounds the threshold to $1–$100 and the amount to the purchase range', () => {
+    expect(autoTopUpSchema.safeParse({ enabled: true, amountCents: 1700, thresholdCents: 100 }).success).toBe(true)
+    expect(autoTopUpSchema.safeParse({ enabled: true, thresholdCents: 99 }).success).toBe(false)
+    expect(autoTopUpSchema.safeParse({ enabled: true, thresholdCents: 10_001 }).success).toBe(false)
+    expect(autoTopUpSchema.safeParse({ enabled: true, amountCents: 1050 }).success).toBe(false)
+  })
+})
 
 describe('creditsCoverOverage', () => {
   it('covers a unit only when the balance pays for it in full', () => {
@@ -39,6 +62,15 @@ describe('creditMetadata', () => {
     expect(creditMetadata({ metadata: {} })).toBeNull()
     expect(creditMetadata({ metadata: { leadace_tenant_id: 't1', leadace_credit_cents: '25.5' } })).toBeNull()
     expect(creditMetadata({ metadata: { leadace_tenant_id: 't1', leadace_credit_cents: '0' } })).toBeNull()
+  })
+})
+
+describe('invoicePaidAt', () => {
+  const now = new Date('2026-09-15T00:00:00Z')
+  it('reads the paid_at transition and falls back to now', () => {
+    expect(invoicePaidAt({ status_transitions: { paid_at: 1789400000 } }, now)).toEqual(new Date(1789400000 * 1000))
+    expect(invoicePaidAt({ status_transitions: { paid_at: null } }, now)).toBe(now)
+    expect(invoicePaidAt({}, now)).toBe(now)
   })
 })
 

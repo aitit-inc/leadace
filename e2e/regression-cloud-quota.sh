@@ -200,6 +200,19 @@ psql_local "UPDATE tenant_plans SET stripe_customer_id = 'cus_e2e_$TS' WHERE ten
 CODE="$(api_status PUT /api/me/credits/auto-top-up '{"enabled":true,"amountCents":2500,"thresholdCents":500}')"
 assert_eq "PUT /me/credits/auto-top-up on starter with a customer → 200" "$CODE" "200"
 assert_eq "  echoes the setting" "$(api_body | jq -c '{enabled,amountCents,thresholdCents}')" '{"enabled":true,"amountCents":2500,"thresholdCents":500}'
+assert_eq "PUT amountCents=1700 (any whole dollar in \$10–\$500) → 200" "$(api_status PUT /api/me/credits/auto-top-up '{"enabled":true,"amountCents":1700}')" "200"
+assert_eq "PUT amountCents=1050 (not whole dollars) → 400" "$(api_status PUT /api/me/credits/auto-top-up '{"enabled":true,"amountCents":1050}')" "400"
+assert_eq "PUT amountCents=50100 (over \$500) → 400" "$(api_status PUT /api/me/credits/auto-top-up '{"enabled":true,"amountCents":50100}')" "400"
+assert_eq "PUT thresholdCents=99 (under \$1) → 400" "$(api_status PUT /api/me/credits/auto-top-up '{"enabled":true,"thresholdCents":99}')" "400"
+# A decline stamps failed_at; switching back on cannot verify the card, so
+# the stamp stays until a top-up is paid; switching off clears it.
+psql_local "UPDATE tenant_plans SET auto_top_up_enabled = false, auto_top_up_failed_at = NOW() WHERE tenant_id='$T';" > /dev/null
+assert_eq "declined then switched back on: failedAt stays" "$(api PUT /api/me/credits/auto-top-up '{"enabled":true}' | jq -r '.failedAt != null')" "true"
+assert_eq "  attention drops credit_top_up_failed once auto top-up is on again" \
+  "$(api GET /api/me/attention | jq -r '[.items[] | select(.kind == "credit_top_up_failed")] | length')" "0"
+assert_eq "switched off: failedAt cleared" "$(api PUT /api/me/credits/auto-top-up '{"enabled":false}' | jq -r '.failedAt')" "null"
+CODE="$(api_status PUT /api/me/credits/auto-top-up '{"enabled":true,"amountCents":2500,"thresholdCents":500}')"
+assert_eq "restored the setting → 200" "$CODE" "200"
 assert_eq "with auto top-up on but balance 20 the first touch is still → 403" "$(api_status POST /api/outreach "$(rec_body "$P_Y")")" "403"
 psql_local "INSERT INTO credit_ledger (tenant_id, kind, amount_cents, reference) VALUES ('$T', 'purchase', 20, 'cs_e2e_topup_$TS');" > /dev/null
 assert_eq "balance exactly \$0.40 → 201" "$(api_status POST /api/outreach "$(rec_body "$P_Y")")" "201"
@@ -217,5 +230,7 @@ assert_eq "free: /me/plan reports no credits" "$(api GET /api/me/plan | jq -r '.
 assert_eq "free: PUT /me/credits/auto-top-up → 403" "$(api_status PUT /api/me/credits/auto-top-up '{"enabled":true}')" "403"
 assert_eq "free: POST /me/credits/checkout → 403 (before any Stripe call)" \
   "$(api_status POST /api/me/credits/checkout '{"packCents":2500}')" "403"
+assert_eq "POST /me/credits/checkout packCents=500 (under \$10) → 400" \
+  "$(api_status POST /api/me/credits/checkout '{"packCents":500}')" "400"
 
 cloud_summary

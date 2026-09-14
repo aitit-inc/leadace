@@ -1,11 +1,12 @@
 import { z } from 'zod'
-import { and, eq, isNull } from 'drizzle-orm'
+import { and, eq, isNull, lte } from 'drizzle-orm'
 import { creditLedger, tenantPlans, type CreditEntryKind } from '../db/schema'
 import { withDb, type Db } from '../db/connection'
 import {
+  creditAmountSchema,
   creditMetadata,
-  creditPackSchema,
   formatCents,
+  invoicePaidAt,
   isCardDecline,
   isStaleTopUpClaim,
   TOP_UP_CLAIM_PREFIX,
@@ -21,7 +22,7 @@ import { ok, err, type ServiceResult } from './result'
 import { stripeApiRequest } from './stripe-api'
 
 export const creditCheckoutBodySchema = z.object({
-  packCents: creditPackSchema,
+  packCents: creditAmountSchema,
   successUrl: z.url().optional(),
   cancelUrl: z.url().optional(),
 })
@@ -129,7 +130,7 @@ export async function updateAutoTopUp(
       autoTopUpEnabled: patch.enabled,
       ...(patch.amountCents !== undefined ? { autoTopUpAmountCents: patch.amountCents } : {}),
       ...(patch.thresholdCents !== undefined ? { autoTopUpThresholdCents: patch.thresholdCents } : {}),
-      autoTopUpFailedAt: null,
+      ...(patch.enabled ? {} : { autoTopUpFailedAt: null }),
       updatedAt: new Date(),
     })
     .where(eq(tenantPlans.tenantId, tenantId))
@@ -149,6 +150,17 @@ async function clearPendingTopUp(db: Db, tenantId: string, invoiceId: string): P
     .update(tenantPlans)
     .set({ autoTopUpInvoiceId: null, updatedAt: new Date() })
     .where(and(eq(tenantPlans.tenantId, tenantId), eq(tenantPlans.autoTopUpInvoiceId, invoiceId)))
+}
+
+// A collected top-up proves the card works, whether or not the invoice
+// still holds the slot (a void that failed can be collected later, and
+// Stripe does not order its events). A decline stamped after the payment
+// is newer evidence and stays.
+async function clearDeclineStamp(db: Db, tenantId: string, paidAt: Date): Promise<void> {
+  await db
+    .update(tenantPlans)
+    .set({ autoTopUpFailedAt: null, updatedAt: new Date() })
+    .where(and(eq(tenantPlans.tenantId, tenantId), lte(tenantPlans.autoTopUpFailedAt, paidAt)))
 }
 
 // Scoped to the invoice in flight so a late payment_failed for an invoice
@@ -175,6 +187,7 @@ async function payTopUpInvoice(
   if (paid.ok) {
     await creditLedgerEntry(db, tenantId, 'auto_top_up', amountCents, invoiceId)
     await clearPendingTopUp(db, tenantId, invoiceId)
+    await clearDeclineStamp(db, tenantId, invoicePaidAt(paid.data, new Date()))
     console.log('auto top-up: paid', { tenantId, invoiceId, amountCents })
     return
   }
@@ -259,7 +272,10 @@ async function resumePendingTopUp(
     return
   }
   if (status === 'open') await stripeApiRequest('POST', `/invoices/${invoiceId}/void`, null, secretKey)
-  if (status === 'paid' && topUp) await creditLedgerEntry(db, tenantId, 'auto_top_up', topUp.amountCents, invoiceId)
+  if (status === 'paid' && topUp) {
+    await creditLedgerEntry(db, tenantId, 'auto_top_up', topUp.amountCents, invoiceId)
+    await clearDeclineStamp(db, tenantId, invoicePaidAt(inv.data, new Date()))
+  }
   await clearPendingTopUp(db, tenantId, invoiceId)
 }
 
@@ -358,6 +374,7 @@ export async function settleTopUpPaidEvent(db: Db, invoice: Record<string, unkno
   const invoiceId = invoice['id'] as string
   await creditLedgerEntry(db, topUp.tenantId, 'auto_top_up', topUp.amountCents, invoiceId)
   await clearPendingTopUp(db, topUp.tenantId, invoiceId)
+  await clearDeclineStamp(db, topUp.tenantId, invoicePaidAt(invoice, new Date()))
   return true
 }
 
