@@ -161,7 +161,9 @@ async function ensureMonthlyPrice(productId: string, plan: PlanDef): Promise<str
   return p['id'] as string
 }
 
-async function ensurePortalConfig(products: Array<{ productId: string; priceIds: string[] }>): Promise<string> {
+// Plan changes are left off: the app runs them itself, and the portal can only
+// switch between prices of one product (services/plan-change.ts).
+async function ensurePortalConfig(): Promise<string> {
   // List existing configs tagged with our app marker
   const list = await stripeApi('GET', '/billing_portal/configurations', { limit: '100' })
   const configs = (list['data'] as Array<{ id: string; metadata?: Record<string, string>; is_default?: boolean }>) ?? []
@@ -170,22 +172,13 @@ async function ensurePortalConfig(products: Array<{ productId: string; priceIds:
   const params: Record<string, string> = {
     'business_profile[headline]': BUSINESS_HEADLINE,
     default_return_url: PORTAL_RETURN_URL,
-    'features[subscription_update][enabled]': 'true',
-    'features[subscription_update][default_allowed_updates][0]': 'price',
-    'features[subscription_update][proration_behavior]': 'create_prorations',
+    'features[subscription_update][enabled]': 'false',
     'features[subscription_cancel][enabled]': 'true',
     'features[subscription_cancel][mode]': 'at_period_end',
     'features[payment_method_update][enabled]': 'true',
     'features[invoice_history][enabled]': 'true',
     'metadata[app]': 'lead-ace',
   }
-  products.forEach((p, i) => {
-    params[`features[subscription_update][products][${i}][product]`] = p.productId
-    p.priceIds.forEach((priceId, j) => {
-      params[`features[subscription_update][products][${i}][prices][${j}]`] = priceId
-    })
-  })
-
   if (existing) {
     const updated = await stripeApi('POST', `/billing_portal/configurations/${existing.id}`, params)
     console.log(`  [ok] Portal config: ${updated['id']} (updated)`)
@@ -229,17 +222,15 @@ async function main() {
   console.log(`\n=== Stripe setup (${MODE} mode) ===\n`)
 
   console.log('Products & Prices:')
-  const results: Array<{ plan: PlanDef; productId: string; monthly: string }> = []
+  const results: Array<{ plan: PlanDef; monthly: string }> = []
   for (const plan of PLANS) {
     const productId = await ensureProduct(plan)
     const monthly = await ensureMonthlyPrice(productId, plan)
-    results.push({ plan, productId, monthly })
+    results.push({ plan, monthly })
   }
 
   console.log('\nCustomer Portal:')
-  await ensurePortalConfig(
-    results.map((r) => ({ productId: r.productId, priceIds: [r.monthly] })),
-  )
+  await ensurePortalConfig()
 
   let webhookSecret: string | null = null
   if (WEBHOOK_URL) {

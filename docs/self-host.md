@@ -563,11 +563,12 @@ npx tsx scripts/setup-stripe.ts
 ```
 
 The script creates idempotent Products / Prices / Customer-Portal
-configuration (keyed by `metadata.app=lead-ace`) and prints six
-`PUBLIC_STRIPE_PRICE_*=price_...` IDs you should set as GitHub
-Variables. After your API Worker is deployed, re-run the script with
-`WEBHOOK_URL=https://api.<your-domain>/api/stripe/webhook` to register
-the webhook endpoint and capture the signing secret.
+configuration (keyed by `metadata.app=lead-ace`; the portal covers payment
+method, invoices and cancellation, while `/plans` changes the plan through
+the Stripe API) and prints three `PUBLIC_STRIPE_PRICE_*=price_...` IDs you
+should set as GitHub Variables. After your API Worker is deployed, re-run
+the script with `WEBHOOK_URL=https://api.<your-domain>/api/stripe/webhook`
+to register the webhook endpoint and capture the signing secret.
 
 ```bash
 npx wrangler secret put STRIPE_SECRET_KEY     --config wrangler.api.jsonc

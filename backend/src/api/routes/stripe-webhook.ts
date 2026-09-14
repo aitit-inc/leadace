@@ -42,7 +42,8 @@ stripeWebhookRouter.post('/stripe/webhook', async (c) => {
 
   await handleStripeEvent(db, stripe.value.secretKey, event)
 
-  // Always 200: Stripe retries non-2xx for up to 3 days, and any failure to
-  // process is already logged inside the handler.
+  // 200 unless the handler throws: Stripe retries non-2xx for up to 3 days,
+  // which the handler relies on only for the schedule release after a
+  // scheduled plan switch; every other failure is logged and absorbed.
   return c.json({ received: true })
 })

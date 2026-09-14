@@ -1,4 +1,6 @@
 export type PlanTier = 'free' | 'starter' | 'pro' | 'scale' | 'unlimited';
+// The tiers a subscription can be on; mirrors PAID_PLAN_TIERS in the backend.
+export type PaidPlanTier = Exclude<PlanTier, 'free' | 'unlimited'>;
 
 // Mirrors backend/src/services/plan-limits.ts `ProspectQuota`.
 export type QuotaWindowKind = 'lifetime' | 'monthly';
@@ -60,4 +62,12 @@ export interface PlanInfo {
   quota: ProspectQuota;
   // Stored prospects against the storage cap; absent when uncapped.
   prospects?: QuotaUsage;
+}
+
+// Mirrors backend/src/services/plan-change.ts `SubscriptionInfo`.
+export interface SubscriptionInfo {
+  periodEnd: string;
+  cancelAtPeriodEnd: boolean;
+  // The plan a scheduled change switches to at the period end; null = none pending.
+  scheduledPlan: PaidPlanTier | null;
 }

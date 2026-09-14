@@ -124,23 +124,31 @@ async function cancelAndRefund(
     return
   }
 
-  const inv = await stripeApiRequest('GET', `/invoices/${invoiceId}`, null, secretKey)
+  const inv = await stripeApiRequest('GET', `/invoices/${invoiceId}?expand[]=payments`, null, secretKey)
   if (!inv.ok) {
     console.error(`CRITICAL ${context}: failed to fetch invoice`, { invoiceId, error: inv.data })
     return
   }
-  const chargeId = inv.data['charge'] as string | null
-  if (!chargeId) {
-    console.error(`CRITICAL ${context}: no charge on invoice (likely $0 trial); skipping refund`, { invoiceId })
+  const paymentIntentId = paymentIntentOfInvoice(inv.data)
+  if (!paymentIntentId) {
+    console.error(`CRITICAL ${context}: no payment on invoice (likely $0 trial); skipping refund`, { invoiceId })
     return
   }
 
-  const refund = await stripeApiRequest('POST', '/refunds', { charge: chargeId }, secretKey)
+  const refund = await stripeApiRequest('POST', '/refunds', { payment_intent: paymentIntentId }, secretKey)
   if (!refund.ok) {
-    console.error(`CRITICAL ${context}: refund failed`, { chargeId, error: refund.data })
+    console.error(`CRITICAL ${context}: refund failed`, { paymentIntentId, error: refund.data })
   } else {
-    console.error(`CRITICAL ${context}: refund issued`, { chargeId, refundId: refund.data['id'] })
+    console.error(`CRITICAL ${context}: refund issued`, { paymentIntentId, refundId: refund.data['id'] })
   }
+}
+
+// API 2025-03-31 (Basil) replaced the invoice's `charge` with the `payments`
+// list, which the read must expand; the plan invoice is paid in one.
+export function paymentIntentOfInvoice(invoice: Record<string, unknown>): string | null {
+  const payments = invoice['payments'] as { data?: Array<{ payment?: { type?: string; payment_intent?: string | null } }> } | undefined
+  const payment = payments?.data?.[0]?.payment
+  return payment?.type === 'payment_intent' && typeof payment.payment_intent === 'string' ? payment.payment_intent : null
 }
 
 // Webhook always responds 200 (Stripe retries non-2xx for up to 3 days);
@@ -357,7 +365,36 @@ async function handleSubscriptionUpdated(
     .where(eq(tenantPlans.tenantId, row.tenantId))
   if (activePlan === 'free') await abandonPendingTopUp(db, row.tenantId, secretKey)
 
+  const scheduleId = sub['schedule']
+  if (typeof scheduleId === 'string') await releaseScheduleAfterSwitch(scheduleId, secretKey)
+
   console.log(`Tenant ${row.tenantId} plan updated to ${activePlan}`)
+}
+
+export type StripeSchedulePhases = {
+  current_phase: { start_date: number } | null
+  phases: Array<{ start_date: number }>
+}
+
+// A schedule created from a subscription has its single, current phase as
+// the last one until the downgrade phase is added; releasing at that moment
+// would race that update.
+export function isInFinalPhase(schedule: StripeSchedulePhases): boolean {
+  return schedule.phases.length > 1 && schedule.current_phase?.start_date === schedule.phases.at(-1)?.start_date
+}
+
+// A scheduled downgrade (services/plan-change.ts) stays attached to the
+// subscription for the whole phase it switched to, and the Customer Portal
+// refuses to update or cancel a subscription with a schedule. Release it as
+// soon as the switch has happened. A Stripe failure here throws so the
+// webhook answers non-2xx and Stripe redelivers the event (the plan mirror
+// above is idempotent); end_behavior=release is the last resort.
+async function releaseScheduleAfterSwitch(scheduleId: string, secretKey: string): Promise<void> {
+  const schedule = await stripeApiRequest('GET', `/subscription_schedules/${scheduleId}`, null, secretKey)
+  if (!schedule.ok) throw new Error(`subscription.updated: failed to load schedule ${scheduleId}: ${JSON.stringify(schedule.data)}`)
+  if (schedule.data['status'] !== 'active' || !isInFinalPhase(schedule.data as StripeSchedulePhases)) return
+  const released = await stripeApiRequest('POST', `/subscription_schedules/${scheduleId}/release`, null, secretKey)
+  if (!released.ok) throw new Error(`subscription.updated: failed to release schedule ${scheduleId}: ${JSON.stringify(released.data)}`)
 }
 
 function logInvoicePaid(invoice: Record<string, unknown>): void {

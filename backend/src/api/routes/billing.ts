@@ -13,6 +13,12 @@ import {
   updateAutoTopUp,
 } from '../../services/credits'
 import { autoTopUpSchema } from '../../domain/credits'
+import {
+  planChangeBodySchema,
+  getSubscriptionInfo,
+  changePlan,
+  cancelPlanChange,
+} from '../../services/plan-change'
 import { requireCloudEdition, requireStripeEnv } from '../../services/runtime-guards'
 import { respondWithError } from '../respond'
 import type { Env, Variables } from '../types'
@@ -59,6 +65,52 @@ billingRouter.post('/me/portal', zValidator('json', portalBodySchema), async (c)
       origin: c.req.header('origin') ?? '',
     },
     c.req.valid('json'),
+  )
+  if (!result.ok) return respondWithError(c, result)
+  return c.json(result.value)
+})
+
+billingRouter.get('/me/subscription', async (c) => {
+  const cloud = requireCloudEdition(c.get('edition'))
+  if (!cloud.ok) return respondWithError(c, cloud)
+  const stripe = requireStripeEnv(c.env)
+  if (!stripe.ok) return respondWithError(c, stripe)
+  const result = await getSubscriptionInfo(
+    cloud.value,
+    c.get('db'),
+    c.get('tenantId'),
+    { secretKey: stripe.value.secretKey },
+  )
+  if (!result.ok) return respondWithError(c, result)
+  return c.json(result.value)
+})
+
+billingRouter.post('/me/plan-change', zValidator('json', planChangeBodySchema), async (c) => {
+  const cloud = requireCloudEdition(c.get('edition'))
+  if (!cloud.ok) return respondWithError(c, cloud)
+  const stripe = requireStripeEnv(c.env)
+  if (!stripe.ok) return respondWithError(c, stripe)
+  const result = await changePlan(
+    cloud.value,
+    c.get('db'),
+    c.get('tenantId'),
+    { secretKey: stripe.value.secretKey },
+    c.req.valid('json'),
+  )
+  if (!result.ok) return respondWithError(c, result)
+  return c.json(result.value)
+})
+
+billingRouter.delete('/me/plan-change', async (c) => {
+  const cloud = requireCloudEdition(c.get('edition'))
+  if (!cloud.ok) return respondWithError(c, cloud)
+  const stripe = requireStripeEnv(c.env)
+  if (!stripe.ok) return respondWithError(c, stripe)
+  const result = await cancelPlanChange(
+    cloud.value,
+    c.get('db'),
+    c.get('tenantId'),
+    { secretKey: stripe.value.secretKey },
   )
   if (!result.ok) return respondWithError(c, result)
   return c.json(result.value)

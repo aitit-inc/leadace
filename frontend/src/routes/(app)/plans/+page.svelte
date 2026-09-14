@@ -7,8 +7,9 @@
   import { creditsCoverOverage } from '$lib/credits';
   import { USAGE_PRICE_CENTS } from '$lib/types/plan';
   import CreditsPanel from '$lib/components/plans/CreditsPanel.svelte';
-  import { EDITION, STRIPE_PRICES } from '$lib/config';
-  import type { PlanTier } from '$lib/types/plan';
+  import PlanChange from '$lib/components/plans/PlanChange.svelte';
+  import { EDITION } from '$lib/config';
+  import { PAID_TIERS, isPaidPlan, type PaidTier } from '$lib/plans';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
@@ -18,42 +19,6 @@
   let checkoutLoading = $state<string | null>(null);
   let portalLoading = $state(false);
   let message = $state('');
-
-  interface PaidTier {
-    tier: Exclude<PlanTier, 'free'>;
-    name: string;
-    monthlyPrice: number;
-    projects: string;
-    outreach: string;
-    priceId: string | undefined;
-  }
-
-  const TIERS: PaidTier[] = [
-    {
-      tier: 'starter',
-      name: 'Starter',
-      monthlyPrice: 49,
-      projects: '1 project · 1 mailbox',
-      outreach: '100 prospects / month',
-      priceId: STRIPE_PRICES.starter,
-    },
-    {
-      tier: 'pro',
-      name: 'Pro',
-      monthlyPrice: 99,
-      projects: '5 projects · 3 mailboxes',
-      outreach: '300 prospects / month',
-      priceId: STRIPE_PRICES.pro,
-    },
-    {
-      tier: 'scale',
-      name: 'Scale',
-      monthlyPrice: 199,
-      projects: 'Unlimited projects · 10 mailboxes',
-      outreach: '800 prospects / month',
-      priceId: STRIPE_PRICES.scale,
-    },
-  ];
 
   function resetLoadingState() {
     portalLoading = false;
@@ -78,14 +43,27 @@
   const creditBalance = () =>
     data.plan?.quota.kind === 'capped' ? (data.plan.quota.credits?.balanceCents ?? null) : null;
 
+  // An upgrade is mirrored by the webhook like a Checkout; a scheduled change
+  // lives in Stripe and is re-read with the page data.
+  async function handlePlanChanged(appliesNow: boolean) {
+    if (appliesNow) {
+      message = 'Plan upgraded. Waiting for confirmation…';
+      await pollPlanUntilChanged(() => data.plan?.plan ?? null);
+      message = 'Plan upgraded.';
+    }
+    await invalidate('app:subscription');
+  }
+
   onMount(() => {
     if (EDITION === 'cloud') {
       const status = page.url.searchParams.get('checkout');
       if (status === 'success') {
         message = 'Subscription activated. Waiting for confirmation…';
-        pollPlanUntilChanged(() => data.plan?.plan ?? null).then(() => {
-          message = 'Subscription activated.';
-        });
+        pollPlanUntilChanged(() => data.plan?.plan ?? null)
+          .then(() => invalidate('app:subscription'))
+          .then(() => {
+            message = 'Subscription activated.';
+          });
       } else if (status === 'cancel') {
         message = 'Checkout cancelled.';
       }
@@ -169,7 +147,7 @@
           {/if}
         </p>
       </div>
-      {#if EDITION === 'cloud' && (plan.plan === 'starter' || plan.plan === 'pro' || plan.plan === 'scale')}
+      {#if EDITION === 'cloud' && isPaidPlan(plan.plan)}
         <button
           onclick={handlePortal}
           disabled={portalLoading}
@@ -180,10 +158,9 @@
       {/if}
     </div>
 
-    {#if EDITION === 'cloud' && (plan.plan === 'starter' || plan.plan === 'pro' || plan.plan === 'scale')}
+    {#if EDITION === 'cloud' && isPaidPlan(plan.plan)}
       <p class="text-xs text-text-muted mb-5 -mt-2">
-        Change plan, update payment method, view invoices, or cancel via the Stripe Customer
-        Portal.
+        Update payment method, view invoices, or cancel via the Stripe Customer Portal.
       </p>
     {/if}
     {#if EDITION !== 'cloud'}
@@ -255,11 +232,27 @@
     />
   {/if}
 
+  {#if EDITION === 'cloud' && isPaidPlan(plan.plan) && (data.subscription || data.subscriptionError)}
+    <p class="text-xs font-medium text-text-secondary mb-4">Change plan</p>
+    {#if data.subscription}
+      <PlanChange
+        current={plan.plan}
+        subscription={data.subscription}
+        {token}
+        onChanged={handlePlanChanged}
+      />
+    {:else}
+      <p class="text-sm text-danger">
+        Couldn't load subscription details: {data.subscriptionError}. Reload the page to try again.
+      </p>
+    {/if}
+  {/if}
+
   {#if EDITION === 'cloud' && plan.plan === 'free'}
     <p class="text-xs font-medium text-text-secondary mb-4">Upgrade</p>
 
     <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-      {#each TIERS as tier}
+      {#each PAID_TIERS as tier (tier.tier)}
         <div class="rounded-md border border-border p-4 flex flex-col">
           <p class="text-sm font-medium text-text">{tier.name}</p>
           <p class="mt-1">

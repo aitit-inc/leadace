@@ -4,6 +4,8 @@ import {
   planFromSubscriptionItems,
   periodFromSubscription,
   effectivePlanFromStatus,
+  isInFinalPhase,
+  paymentIntentOfInvoice,
   verifyStripeSignature,
   type StripeSubscriptionItems,
 } from './stripe-webhook'
@@ -138,5 +140,30 @@ describe('effectivePlanFromStatus', () => {
 
   it('falls back to free when no plan is resolved, even if active', () => {
     expect(effectivePlanFromStatus('active', null)).toBe('free')
+  })
+})
+
+describe('isInFinalPhase', () => {
+  const phases = [{ start_date: 100 }, { start_date: 200 }]
+  it('is true once the last phase is the current one', () => {
+    expect(isInFinalPhase({ current_phase: { start_date: 200 }, phases })).toBe(true)
+  })
+  it('is false while an earlier phase runs', () => {
+    expect(isInFinalPhase({ current_phase: { start_date: 100 }, phases })).toBe(false)
+  })
+  it('is false for a single-phase schedule and without a current phase', () => {
+    expect(isInFinalPhase({ current_phase: { start_date: 100 }, phases: [{ start_date: 100 }] })).toBe(false)
+    expect(isInFinalPhase({ current_phase: null, phases })).toBe(false)
+  })
+})
+
+describe('paymentIntentOfInvoice', () => {
+  it('reads the payment intent of the first invoice payment', () => {
+    expect(paymentIntentOfInvoice({ payments: { data: [{ payment: { type: 'payment_intent', payment_intent: 'pi_1' } }] } })).toBe('pi_1')
+  })
+  it('is null for an unpaid invoice or a non-intent payment', () => {
+    expect(paymentIntentOfInvoice({ payments: { data: [] } })).toBeNull()
+    expect(paymentIntentOfInvoice({})).toBeNull()
+    expect(paymentIntentOfInvoice({ payments: { data: [{ payment: { type: 'charge', payment_intent: null } }] } })).toBeNull()
   })
 })

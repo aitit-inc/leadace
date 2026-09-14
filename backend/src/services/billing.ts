@@ -122,6 +122,16 @@ export async function requireStripeCustomer(db: Db, tenantId: TenantId): Promise
   return ok(row.stripeCustomerId)
 }
 
+export async function requireStripeSubscription(db: Db, tenantId: TenantId): Promise<ServiceResult<string>> {
+  const [row] = await db
+    .select({ stripeSubscriptionId: tenantPlans.stripeSubscriptionId })
+    .from(tenantPlans)
+    .where(eq(tenantPlans.tenantId, tenantId))
+    .limit(1)
+  if (!row?.stripeSubscriptionId) return err('NOT_FOUND', 'No active subscription found')
+  return ok(row.stripeSubscriptionId)
+}
+
 // See createCheckoutSession for the role of `_cloud`.
 export async function createPortalSession(
   _cloud: CloudEdition,
