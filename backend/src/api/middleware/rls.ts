@@ -1,3 +1,4 @@
+import { TransactionRollbackError } from 'drizzle-orm'
 import { createMiddleware } from 'hono/factory'
 import { runWithRls } from '../../db/rls'
 import type { Env, Variables } from '../types'
@@ -16,10 +17,17 @@ export const rlsMiddleware = createMiddleware<{ Bindings: Env; Variables: Variab
     const tenantId = c.get('tenantId')
     const db = c.get('db')
 
-    await runWithRls(db, tenantId, async (tx) => {
-      // Overwrite context with the transaction (same query API as Db)
-      c.set('db', tx)
-      await next()
-    })
+    try {
+      await runWithRls(db, tenantId, async (tx) => {
+        // Overwrite context with the transaction (same query API as Db)
+        c.set('db', tx)
+        await next()
+        // Hono's onError already handled a handler throw and next() resolved, so
+        // roll back here; rethrowing c.error would run onError twice.
+        if (c.error) throw new TransactionRollbackError()
+      })
+    } catch (e) {
+      if (!(e instanceof TransactionRollbackError)) throw e
+    }
   },
 )

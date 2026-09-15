@@ -5,7 +5,7 @@ import type { WorkflowStep } from 'cloudflare:workers'
 import { NonRetryableError } from 'cloudflare:workflows'
 import type { Env } from '../api/types'
 import { createDb, type Db } from '../db/connection'
-import { runWithRls, withTenantConnection } from '../db/rls'
+import { withTenantConnection } from '../db/rls'
 import type { ProjectId, TenantId } from '../domain/ids'
 import type { DiscoverCandidate, JobLogEntry, JobParamsOf, JobResult } from '../domain/jobs'
 import type { ServiceResult } from '../services/result'
@@ -200,7 +200,7 @@ export async function sendStage(ctx: StageCtx, params: JobParamsOf<'send'>): Pro
       const db = createDb(ctx.env.DATABASE_URL)
       if (await isCancelled(ctx, db)) return { ok: false as const, cancelled: true as const, error: 'job cancelled' }
       await progressWriter(ctx, db, 'send')(`draft ${id}`, i, params.draftIds.length)
-      const r = await runWithRls(db, tenantId, (tx) => sendDraft(tx, tenantId, editionOf(ctx.env), sendContextOf(ctx.env), id))
+      const r = await sendDraft((fn) => tenantTx(ctx, fn), tenantId, editionOf(ctx.env), sendContextOf(ctx.env), id)
       if (r.ok) await kickAutoTopUp(ctx.env, tenantId)
       return r.ok ? { ok: true as const } : { ok: false as const, cancelled: false as const, error: r.error }
     })

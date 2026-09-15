@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import { and, eq, isNull, lte } from 'drizzle-orm'
-import { creditLedger, tenantPlans, type CreditEntryKind } from '../db/schema'
+import { and, eq, isNull, lte, notExists, or, sql } from 'drizzle-orm'
+import { creditLedger, outreachLogs, tenantPlans, type CreditEntryKind } from '../db/schema'
 import { withDb, type Db } from '../db/connection'
 import {
   creditAmountSchema,
@@ -17,7 +17,7 @@ import {
 import { parseEdition, type CloudEdition, type Edition } from '../domain/edition'
 import type { TenantId } from '../domain/ids'
 import { requireStripeCustomer } from './billing'
-import { getTenantPlan, holdsCredits, sumCreditBalance } from './plan-limits'
+import { getTenantPlan, holdsCredits, livePreSend, sumCreditBalance } from './plan-limits'
 import { ok, err, type ServiceResult } from './result'
 import { stripeApiRequest } from './stripe-api'
 
@@ -48,14 +48,28 @@ export function debitContacted(db: Db, tenantId: TenantId, prospectId: number): 
   return creditLedgerEntry(db, tenantId, 'usage_contacted', -USAGE_PRICE_CENTS.contacted, `prospect:${prospectId}`)
 }
 
-// A pre_send reservation that failed gives its debit back.
+// A pre_send reservation that failed gives its debit back. Call it after the row
+// has left pre_send: the debit is one ledger row per prospect, so it stays while
+// another send to the prospect still owns it. The quota guard's lock makes that
+// read wait for any reservation or refund of the tenant still in flight.
 export async function refundContacted(db: Db, tenantId: TenantId, prospectId: number): Promise<void> {
+  await db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${tenantId}))`)
   await db
     .delete(creditLedger)
     .where(and(
       eq(creditLedger.tenantId, tenantId),
       eq(creditLedger.kind, 'usage_contacted'),
       eq(creditLedger.reference, `prospect:${prospectId}`),
+      notExists(
+        db
+          .select({ one: sql`1` })
+          .from(outreachLogs)
+          .where(and(
+            eq(outreachLogs.tenantId, tenantId),
+            eq(outreachLogs.prospectId, prospectId),
+            or(eq(outreachLogs.status, 'sent'), and(livePreSend(), eq(outreachLogs.chargesCredits, true))),
+          )),
+      ),
     ))
 }
 

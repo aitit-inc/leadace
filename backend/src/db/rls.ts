@@ -13,6 +13,10 @@ export async function runWithRls<T>(db: Db, tenantId: string, fn: (tx: Db) => Pr
   })
 }
 
+// A service that must commit between steps takes one of these instead of a
+// `db`: each call is its own tenant transaction.
+export type TenantRun = <T>(fn: (db: Db) => Promise<T>) => Promise<T>
+
 // Holding one connection across a chat turn or a job step fails on the deployed
 // runtime: the first write after a tool call raised CONNECTION_CLOSED every
 // time, never once against a direct database.

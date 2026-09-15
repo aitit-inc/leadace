@@ -14,7 +14,7 @@ import { leversRouter } from './routes/levers'
 import { dashboardRouter } from './routes/dashboard'
 import { prospectsRouter } from './routes/prospects'
 import { organizationsRouter } from './routes/organizations'
-import { outreachRouter } from './routes/outreach'
+import { outreachRouter, outreachSendRouter } from './routes/outreach'
 import { responsesRouter } from './routes/responses'
 import { evaluationsRouter } from './routes/evaluations'
 import { suggestionsRouter } from './routes/suggestions'
@@ -84,6 +84,12 @@ const dispatch: InternalDispatch = (request, env, ctx) => Promise.resolve(app.fe
 app.use('/api/chat/threads/:id/messages', authMiddleware)
 app.use('/api/chat/threads/:id/confirm', authMiddleware)
 app.route('/api', createChatStreamRouter(dispatch))
+
+// Email sends: auth, then a tenant transaction per step so the reservation
+// commits before the provider call.
+app.use('/api/outreach/send-and-record', authMiddleware)
+app.use('/api/outreach/drafts/:id/send', authMiddleware)
+app.route('/api', outreachSendRouter)
 
 // All routes below require authentication + tenant-scoped RLS
 app.use('/api/*', authMiddleware)

@@ -229,20 +229,25 @@ export async function getRemainingProspectQuota(
 }
 
 // 'pre_send' is an in-flight reservation: counted so concurrent allocations
-// can't race past the cap; auto-refunded when updateOutreachStatus flips to
-// 'failed' (row stops matching). After PRE_SEND_TTL_MINUTES, unresolved
-// pre_send rows age out so a crashed skill doesn't hold quota forever (row
-// stays for audit).
+// can't race past the cap, and it blocks a re-send. A form/SNS reservation
+// ages out after PRE_SEND_TTL_MINUTES so a crashed skill doesn't hold quota
+// forever (row stays for audit). An email one never does: the provider may have
+// taken the message before the result was recorded, so it counts as sent until
+// someone resolves it.
+export function livePreSend() {
+  return and(
+    eq(outreachLogs.status, 'pre_send'),
+    or(
+      eq(outreachLogs.channel, 'email'),
+      sql`${outreachLogs.sentAt} > NOW() - (${PRE_SEND_TTL_MINUTES} * INTERVAL '1 minute')`,
+    ),
+  )
+}
+
 function spendsQuota(tenantId: TenantId) {
   return and(
     eq(outreachLogs.tenantId, tenantId),
-    or(
-      eq(outreachLogs.status, 'sent'),
-      and(
-        eq(outreachLogs.status, 'pre_send'),
-        sql`${outreachLogs.sentAt} > NOW() - (${PRE_SEND_TTL_MINUTES} * INTERVAL '1 minute')`,
-      ),
-    ),
+    or(eq(outreachLogs.status, 'sent'), livePreSend()),
   )
 }
 
@@ -347,9 +352,10 @@ async function hasPriorSend(db: Db, tenantId: TenantId, prospectId: number): Pro
 }
 
 // The send-path guard, run before the outbound row is written: a first touch
-// past the allowance is refused unless credits cover it — then the send
-// debits them once it is 'sent' (markProspectContacted). A follow-up to a
-// prospect already contacted is never refused and never debited.
+// past the allowance is refused unless credits cover it — then the caller
+// debits them in the same transaction as that row (a pre_send reservation,
+// refunded if it fails, or a row recorded 'sent'). A follow-up to a prospect
+// already contacted is never refused and never debited.
 //
 // A send on credits holds the tenant lock from here to commit (the same lock
 // discovery takes for a found batch), so two debits cannot both read a
@@ -395,13 +401,7 @@ async function countMailboxEmailSendsToday(
       eq(outreachLogs.sendingIdentityId, identityId),
       eq(outreachLogs.channel, 'email'),
       sql`${outreachLogs.sentAt} >= ${sinceIso}::timestamptz`,
-      or(
-        eq(outreachLogs.status, 'sent'),
-        and(
-          eq(outreachLogs.status, 'pre_send'),
-          sql`${outreachLogs.sentAt} > NOW() - (${PRE_SEND_TTL_MINUTES} * INTERVAL '1 minute')`,
-        ),
-      ),
+      or(eq(outreachLogs.status, 'sent'), livePreSend()),
     ))
   return row?.used ?? 0
 }
@@ -425,13 +425,7 @@ export async function countMailboxEmailSendsTodayByIdentity(
       eq(outreachLogs.tenantId, tenantId),
       eq(outreachLogs.channel, 'email'),
       sql`${outreachLogs.sentAt} >= ${sinceIso}::timestamptz`,
-      or(
-        eq(outreachLogs.status, 'sent'),
-        and(
-          eq(outreachLogs.status, 'pre_send'),
-          sql`${outreachLogs.sentAt} > NOW() - (${PRE_SEND_TTL_MINUTES} * INTERVAL '1 minute')`,
-        ),
-      ),
+      or(eq(outreachLogs.status, 'sent'), livePreSend()),
     ))
     .groupBy(outreachLogs.sendingIdentityId)
   const byIdentity = new Map<string, number>()

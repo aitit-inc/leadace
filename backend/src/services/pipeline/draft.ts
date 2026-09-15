@@ -332,15 +332,13 @@ export async function draftOne(
   }
   const variantId = variant?.variantId ?? null
   if (channel === 'email') {
-    const sent = await runWithRls(db, tenantId, (tx) =>
-      sendAndRecord(tx, tenantId, editionOf(env), sendContextOf(env), {
-        projectId,
-        prospectId: p.prospectId,
-        subject: composed.subject,
-        body: composed.body,
-        ...(variantId ? { variantId } : {}),
-      }),
-    )
+    const sent = await sendAndRecord((fn) => runWithRls(db, tenantId, fn), tenantId, editionOf(env), sendContextOf(env), {
+      projectId,
+      prospectId: p.prospectId,
+      subject: composed.subject,
+      body: composed.body,
+      ...(variantId ? { variantId } : {}),
+    })
     if (!sent.ok) return { kind: 'failed', error: `${sent.error}${sent.detail ? ` — ${typeof sent.detail === 'string' ? sent.detail : JSON.stringify(sent.detail)}` : ''}`, at: 'send' }
     await kickAutoTopUp(env, tenantId)
     return { kind: sent.value.mode, outreachId: sent.value.outreachId, channel, variantId, subject: composed.subject }

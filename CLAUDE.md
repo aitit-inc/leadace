@@ -39,9 +39,10 @@ The three check commands are the pre-release checklist. Local E2E harness:
 - Plans differentiate on throughput only (identities, outreach volume,
   projects); insights computed from a tenant's own data are never plan-gated.
   Quota semantics that are easy to get wrong: the unit is a prospect, not a
-  send — a prospect counts once, when its first outbound is `sent` (a fresh
-  `pre_send` reservation counts; failures and follow-ups don't); prospects
-  the hosted discovery registers count separately against the found
+  send — a prospect counts once, when its first outbound is `sent` (a
+  `pre_send` reservation counts: email until resolved, form/SNS while fresh;
+  failures and follow-ups don't); prospects the hosted discovery registers
+  count separately against the found
   allowance at registration (`prospects.origin`); Free's window is the
   tenant lifetime, a paid plan's is the Stripe period from
   `current_period_start`; past an allowance a paid plan debits prepaid credits

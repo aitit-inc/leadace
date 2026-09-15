@@ -5,9 +5,10 @@
 # listReachable (GET /projects/:id/prospects/reachable) must drop a prospect
 # that has in-flight outreach, so the same prospect is never handed to two
 # callers. The NOT EXISTS subquery (services/prospects.ts) excludes it while
-# an open pending_review draft exists, or a pre_send row younger than
-# PRE_SEND_TTL_MINUTES (30, schema.ts); an older pre_send is treated as
-# abandoned and the prospect becomes re-pickable. The daily-cycle "run
+# an open pending_review draft exists, or a live pre_send (livePreSend): an
+# email one until it resolves, a form/SNS one while younger than
+# PRE_SEND_TTL_MINUTES (30, schema.ts). An older form/SNS pre_send is treated
+# as abandoned and the prospect becomes re-pickable. The daily-cycle "run
 # outbound in series" rule papers over a regression here; this server guard
 # is the real backstop.
 #
@@ -73,10 +74,10 @@ mkseed() {
       name:$n, overview:"seed", websiteUrl:("https://"+$d+"/about"), email:$e, matchReason:"seed"}'
 }
 
-# Hand-INSERT a pre_send row. $1=prospectId, $2=sent_at SQL expr.
+# Hand-INSERT a pre_send row. $1=prospectId, $2=sent_at SQL expr, $3=channel.
 insert_presend() {
   psql_local "INSERT INTO outreach_logs (tenant_id, project_id, prospect_id, channel, body, status, sent_at)
-    VALUES ('$TENANT_ID','$PROJECT_ID',$1,'email','pre_send body','pre_send', $2);" > /dev/null
+    VALUES ('$TENANT_ID','$PROJECT_ID',$1,'$3','pre_send body','pre_send', $2);" > /dev/null
 }
 
 require_jq
@@ -111,7 +112,7 @@ restore_and_exit() {
 }
 trap restore_and_exit EXIT
 
-step "create project + seed 3 US prospects (all eligible)"
+step "create project + seed 4 US prospects (all eligible)"
 CREATE_RESP="$(api POST /api/projects "$(jq -nc --arg n "$PROJECT_NAME" '{name:$n}')")"
 PROJECT_ID="$(echo "$CREATE_RESP" | jq -r '.id // ""')"
 [[ -n "$PROJECT_ID" ]] || { echo "create-project failed: $CREATE_RESP" >&2; exit 1; }
@@ -119,47 +120,51 @@ say "project_id=$PROJECT_ID"
 
 SEED_BODY="$(jq -nc --arg pid "$PROJECT_ID" \
   --argjson draft "$(mkseed draft)" --argjson presend "$(mkseed presend)" --argjson aged "$(mkseed aged)" \
-  '{projectId:$pid, prospects:[$draft,$presend,$aged]}')"
+  --argjson agedmail "$(mkseed agedmail)" \
+  '{projectId:$pid, prospects:[$draft,$presend,$aged,$agedmail]}')"
 SEED_RESP="$(api POST /api/prospects/batch "$SEED_BODY")"
-assert_eq "seed inserted=3" "$(echo "$SEED_RESP" | jq -r '.inserted // 0')" "3"
+assert_eq "seed inserted=4" "$(echo "$SEED_RESP" | jq -r '.inserted // 0')" "4"
 
 LIST_RESP="$(api GET "/api/projects/$PROJECT_ID/prospects?limit=200")"
 pid_of() { echo "$LIST_RESP" | jq -r --arg e "contact@$RUN_TAG-$1.example" '.prospects[]? | select(.email == $e) | .prospectId' | head -1; }
-P_DRAFT="$(pid_of draft)"; P_PRESEND="$(pid_of presend)"; P_AGED="$(pid_of aged)"
-[[ -n "$P_DRAFT" && -n "$P_PRESEND" && -n "$P_AGED" ]] || { echo "could not resolve prospect ids" >&2; echo "$LIST_RESP" >&2; exit 1; }
-say "ids: draft=$P_DRAFT presend=$P_PRESEND aged=$P_AGED"
+P_DRAFT="$(pid_of draft)"; P_PRESEND="$(pid_of presend)"; P_AGED="$(pid_of aged)"; P_AGEDMAIL="$(pid_of agedmail)"
+[[ -n "$P_DRAFT" && -n "$P_PRESEND" && -n "$P_AGED" && -n "$P_AGEDMAIL" ]] || { echo "could not resolve prospect ids" >&2; echo "$LIST_RESP" >&2; exit 1; }
+say "ids: draft=$P_DRAFT presend=$P_PRESEND aged=$P_AGED agedmail=$P_AGEDMAIL"
 
-step "baseline: all 3 reachable before any in-flight row"
+step "baseline: all 4 reachable before any in-flight row"
 R0="$(api GET "/api/projects/$PROJECT_ID/prospects/reachable?limit=200")"
-assert_eq "baseline draft reachable"   "$(reachable_has "$R0" "$P_DRAFT")"   "y"
-assert_eq "baseline presend reachable" "$(reachable_has "$R0" "$P_PRESEND")" "y"
-assert_eq "baseline aged reachable"    "$(reachable_has "$R0" "$P_AGED")"    "y"
-assert_eq "baseline total=3"           "$(echo "$R0" | jq -r '.total')"      "3"
+assert_eq "baseline draft reachable"    "$(reachable_has "$R0" "$P_DRAFT")"    "y"
+assert_eq "baseline presend reachable"  "$(reachable_has "$R0" "$P_PRESEND")"  "y"
+assert_eq "baseline aged reachable"     "$(reachable_has "$R0" "$P_AGED")"     "y"
+assert_eq "baseline agedmail reachable" "$(reachable_has "$R0" "$P_AGEDMAIL")" "y"
+assert_eq "baseline total=4"            "$(echo "$R0" | jq -r '.total')"       "4"
 
-step "create in-flight rows (open pending_review draft + in-TTL pre_send + aged-out pre_send)"
+step "create in-flight rows (open draft + in-TTL pre_send + aged form pre_send + aged email pre_send)"
 # Open draft for P_DRAFT via the API — leaves project_prospects.status='new'.
 DRAFT_BODY="$(jq -nc --arg pid "$PROJECT_ID" --argjson prid "$P_DRAFT" \
   '{projectId:$pid, prospectId:$prid, channel:"email", subject:"e2e", body:"draft body", status:"pending_review"}')"
 DRAFT_RESP="$(api POST /api/outreach "$DRAFT_BODY")"
 assert_eq "pending_review draft created" "$(echo "$DRAFT_RESP" | jq -r 'if .id then "yes" else "no" end')" "yes"
-# In-TTL pre_send (sent_at NOW) and aged-out pre_send (sent_at 31m ago > 30m TTL).
-insert_presend "$P_PRESEND" "NOW()"
-insert_presend "$P_AGED" "NOW() - INTERVAL '31 minutes'"
+# In-TTL pre_send (sent_at NOW) and two 31m-old ones (> 30m TTL): form ages out, email never does.
+insert_presend "$P_PRESEND" "NOW()" email
+insert_presend "$P_AGED" "NOW() - INTERVAL '31 minutes'" form
+insert_presend "$P_AGEDMAIL" "NOW() - INTERVAL '31 minutes'" email
 say "inserted pre_send rows"
 
-step "Test: in-flight exclusion (draft + in-TTL pre_send dropped; aged re-included)"
+step "Test: in-flight exclusion (draft + in-TTL + aged email pre_send dropped; aged form re-included)"
 R1_CODE="$(curl -sS -o /tmp/inflight-r1.$$ -w '%{http_code}' -H "Authorization: Bearer $TOKEN" "$API_URL/api/projects/$PROJECT_ID/prospects/reachable?limit=200")"
 R1="$(cat /tmp/inflight-r1.$$)"; rm -f /tmp/inflight-r1.$$
-assert_eq "reachable endpoint 200"          "$R1_CODE" "200"
-assert_eq "open draft excludes prospect"    "$(reachable_has "$R1" "$P_DRAFT")"   "n"
-assert_eq "in-TTL pre_send excludes prospect" "$(reachable_has "$R1" "$P_PRESEND")" "n"
-assert_eq "aged-out pre_send re-includes"   "$(reachable_has "$R1" "$P_AGED")"    "y"
-assert_eq "total = 1 survivor (aged)"       "$(echo "$R1" | jq -r '.total')"      "1"
+assert_eq "reachable endpoint 200"            "$R1_CODE" "200"
+assert_eq "open draft excludes prospect"      "$(reachable_has "$R1" "$P_DRAFT")"    "n"
+assert_eq "in-TTL pre_send excludes prospect" "$(reachable_has "$R1" "$P_PRESEND")"  "n"
+assert_eq "aged form pre_send re-includes"    "$(reachable_has "$R1" "$P_AGED")"     "y"
+assert_eq "aged email pre_send still excludes" "$(reachable_has "$R1" "$P_AGEDMAIL")" "n"
+assert_eq "total = 1 survivor (aged form)"    "$(echo "$R1" | jq -r '.total')"       "1"
 
 step "DB-state guards (exclusion driven by in-flight subquery, not a status flip)"
-assert_eq "rows = 1 pending_review + 2 pre_send" \
+assert_eq "rows = 1 pending_review + 3 pre_send" \
   "$(psql_local "SELECT string_agg(status::text, ',' ORDER BY status) FROM outreach_logs WHERE project_id='$PROJECT_ID';")" \
-  "pending_review,pre_send,pre_send"
+  "pending_review,pre_send,pre_send,pre_send"
 assert_eq "no prospect flipped to contacted" \
   "$(psql_local "SELECT count(*)::int FROM project_prospects WHERE project_id='$PROJECT_ID' AND status<>'new';")" "0"
 

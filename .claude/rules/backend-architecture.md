@@ -80,7 +80,10 @@ Enforced by review (no lint rule yet).
   sanctioned form is `runWithRls` (`db/rls.ts`) on a raw connection; a caller
   that outlives its request — the chat stream, the job path — takes that
   connection per call and closes it (`withTenantConnection`), never holding
-  the request's across a model or tool call.
+  the request's across a model or tool call. An email send commits its
+  `pre_send` reservation before the provider call, so `sendAndRecord` /
+  `sendDraft` take a `TenantRun` (one such transaction per call) and their
+  routes sit outside `rlsMiddleware`.
 - Prospect registration requires ≥1 contact channel (email, contactFormUrl,
   or snsAccounts) — enforced in the service layer.
 

@@ -11,7 +11,6 @@ import {
   prospectStatusEnum,
   responseTypeEnum,
   REACHABLE_STATUSES,
-  PRE_SEND_TTL_MINUTES,
   OUTBOUND_CHANNELS,
   prioritySchema,
   priorityCoerceSchema,
@@ -33,6 +32,7 @@ import {
   formatMailboxQuotaError,
   type MailboxDailyQuota,
   type ProspectQuota,
+  livePreSend,
 } from './plan-limits'
 import { creditsCoverOverage, USAGE_PRICE_CENTS } from '../domain/credits'
 import { ok, err, type ServiceResult } from './result'
@@ -427,10 +427,8 @@ export async function listReachable(
     ),
   )
 
-  // Excludes prospects with in-flight outreach ('pending_review' or
-  // unresolved 'pre_send' within PRE_SEND_TTL_MINUTES). After TTL, pre_send
-  // rows are treated as abandoned so the prospect becomes re-pickable —
-  // same self-cleanup rule as the quota query in plan-limits.ts. Index
+  // Excludes prospects with in-flight outreach ('pending_review' or a live
+  // 'pre_send' — same rule as the quota query, see livePreSend). Index
   // `idx_outreach_dedup` (project_id, prospect_id, status) covers the lookup.
   //
   // Status branch:
@@ -485,13 +483,7 @@ export async function listReachable(
         .where(and(
           eq(outreachLogs.projectId, projectProspects.projectId),
           eq(outreachLogs.prospectId, projectProspects.prospectId),
-          or(
-            eq(outreachLogs.status, 'pending_review'),
-            and(
-              eq(outreachLogs.status, 'pre_send'),
-              sql`${outreachLogs.sentAt} > NOW() - (${PRE_SEND_TTL_MINUTES} * INTERVAL '1 minute')`,
-            ),
-          ),
+          or(eq(outreachLogs.status, 'pending_review'), livePreSend()),
         )),
     ),
   )

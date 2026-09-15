@@ -18,6 +18,7 @@ import {
   type SnsAccounts,
 } from '../db/schema'
 import type { Db } from '../db/connection'
+import type { TenantRun } from '../db/rls'
 import {
   outreachLogIdSchema,
   projectRefSchema,
@@ -40,6 +41,7 @@ import {
   sendForIdentity,
   buildComplianceAttachments,
   stampMailboxFirstSendIfNeeded,
+  type MailSendResult,
 } from '../auth/google'
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
@@ -715,9 +717,9 @@ export async function updateOutreachStatus(
   }
 
   if (input.status === 'sent') {
-    // Only form/SNS pre_send rows reach here; email sends complete inline in
-    // sendAndRecord / sendDraft (where the warmup clock is stamped). The
-    // reservation already holds its debit, so none is taken here.
+    // A form/SNS confirm, or an email send whose result was never recorded
+    // (deliverEmail). The reservation already holds its debit, so none is
+    // taken here.
     await markProspectContacted(db, tenantId, updated.projectId as ProjectId, updated.prospectId, updated.sentAt, updated.id, false)
   } else if (input.status === 'failed') {
     if (updated.chargesCredits) await refundContacted(db, tenantId, updated.prospectId)
@@ -734,13 +736,124 @@ export type SendOutcome =
   | { mode: 'sent'; outreachId: number; messageId: string; threadId: string; from: string }
   | { mode: 'drafted'; outreachId: number }
 
+// A committed pre_send that the provider call resolves.
+type EmailReservation = {
+  mode: 'reserved'
+  outreachId: number
+  projectId: ProjectId
+  prospectId: number
+  sendingIdentityId: SendingIdentityId | null
+  sentAt: Date
+  chargesCredits: boolean
+  origin: { kind: 'direct' } | { kind: 'draft'; draftedAt: Date }
+  message: { to: string; subject: string; body: string; headers: Record<string, string>; senderDisplayName: string | null }
+}
+
 export async function sendAndRecord(
-  db: Db,
+  run: TenantRun,
   tenantId: TenantId,
   edition: Edition,
   ctx: SendContext,
   input: SendAndRecordInput,
 ): Promise<ServiceResult<SendOutcome>> {
+  const reserved = await run((db) => reserveEmailSend(db, tenantId, edition, ctx, input))
+  if (!reserved.ok) return reserved
+  if (reserved.value.mode === 'drafted') return ok(reserved.value)
+  return deliverEmail(run, tenantId, ctx, reserved.value)
+}
+
+// Separate transactions around the provider call: the reservation commits before
+// it, so a result that cannot be recorded still leaves the email pre_send, which
+// never ages out (livePreSend) — the attempt is never lost or repeated.
+async function deliverEmail(
+  run: TenantRun,
+  tenantId: TenantId,
+  ctx: SendContext,
+  r: EmailReservation,
+): Promise<ServiceResult<SendOutcome>> {
+  const result = await run((db) => sendForIdentity(db, {
+    tenantId,
+    identityId: r.sendingIdentityId,
+    encryptionKey: ctx.encryptionKey,
+    clientId: ctx.clientId,
+    clientSecret: ctx.clientSecret,
+    to: [r.message.to],
+    subject: r.message.subject,
+    body: r.message.body,
+    extraHeaders: r.message.headers,
+    senderDisplayName: r.message.senderDisplayName,
+    e2eRecipientOverride: ctx.e2eRecipientOverride,
+  }))
+  return run((db) => settleEmailSend(db, tenantId, r, result))
+}
+
+async function settleEmailSend(
+  db: Db,
+  tenantId: TenantId,
+  r: EmailReservation,
+  result: MailSendResult,
+): Promise<ServiceResult<SendOutcome>> {
+  // Guarded on pre_send: updateOutreachStatus can resolve the same row, and only
+  // the resolution that wins may run the bookkeeping.
+  const stillReserved = and(eq(outreachLogs.id, r.outreachId), eq(outreachLogs.status, 'pre_send'))
+  const resolvedElsewhere = err('CONFLICT', 'Outreach was resolved while it was being sent', undefined, { outreachId: r.outreachId })
+
+  if (!result.ok && result.httpStatus === 412) {
+    // A mailbox problem the user can fix and retry: release the reservation so
+    // it doesn't burn their quota.
+    const [released] = r.origin.kind === 'draft'
+      ? await db
+          .update(outreachLogs)
+          .set({ status: 'pending_review', sentAt: r.origin.draftedAt, chargesCredits: false })
+          .where(stillReserved)
+          .returning({ id: outreachLogs.id })
+      : await db.delete(outreachLogs).where(stillReserved).returning({ id: outreachLogs.id })
+    if (!released) return resolvedElsewhere
+    if (r.chargesCredits) await refundContacted(db, tenantId, r.prospectId)
+    return err('PRECONDITION_FAILED', result.error, result.detail)
+  }
+
+  if (!result.ok) {
+    const [failed] = await db
+      .update(outreachLogs)
+      .set({ status: 'failed', errorMessage: result.detail })
+      .where(stillReserved)
+      .returning({ id: outreachLogs.id })
+    if (!failed) return resolvedElsewhere
+    if (r.chargesCredits) await refundContacted(db, tenantId, r.prospectId)
+    // A refusal of our mailbox says nothing about the prospect — keep it eligible.
+    if (result.mailboxRefused) await recordMailboxRefusal(db, tenantId, r.sendingIdentityId, result.detail)
+    else await deferProspectReeligibility(db, r.projectId, r.prospectId, r.sentAt)
+    return err('BAD_GATEWAY', result.error, result.detail, { outreachId: r.outreachId })
+  }
+
+  // sentAt stays at reservation time — see updateOutreachStatus.
+  const [sent] = await db
+    .update(outreachLogs)
+    .set({ status: 'sent', fromEmail: result.from, sendingIdentityId: result.identityId, messageId: result.rfc822MessageId })
+    .where(stillReserved)
+    .returning({ id: outreachLogs.id })
+  if (!sent) return resolvedElsewhere
+  await markProspectContacted(db, tenantId, r.projectId, r.prospectId, r.sentAt, r.outreachId, false)
+  await stampMailboxFirstSendIfNeeded(db, tenantId, r.sendingIdentityId, r.sentAt)
+  await clearMailboxSendRefusal(db, tenantId, r.sendingIdentityId, r.sentAt)
+
+  return ok({
+    mode: 'sent',
+    outreachId: r.outreachId,
+    messageId: result.messageId,
+    threadId: result.threadId,
+    from: result.from,
+  })
+}
+
+async function reserveEmailSend(
+  db: Db,
+  tenantId: TenantId,
+  edition: Edition,
+  ctx: SendContext,
+  input: SendAndRecordInput,
+): Promise<ServiceResult<Extract<SendOutcome, { mode: 'drafted' }> | EmailReservation>> {
   // Gate project existence before loadProjectSendSettings, which asserts the
   // settings row exists — loading it for a missing project would 500 not 404.
   const resolved = await resolveProject(db, tenantId, input.projectId)
@@ -827,9 +940,9 @@ export async function sendAndRecord(
 
   // INSERT as 'pre_send' so the row counts toward quota (preventing concurrent
   // allocations from racing past the cap) and gives createInquiryToken's FK a
-  // target. The whole flow runs inside the rlsMiddleware transaction, so an
-  // exception before the response rolls everything back.
+  // target. The debit lands with it, under the quota guard's lock.
   const sentAt = new Date()
+  const { chargeCredits } = quota.value
   const [log] = await db
     .insert(outreachLogs)
     .values({
@@ -844,12 +957,14 @@ export async function sendAndRecord(
       variantId: input.variantId ?? null,
       // Stamped at allocation so the in-flight reservation counts toward the cap.
       sendingIdentityId,
+      chargesCredits: chargeCredits,
     })
     .returning({ id: outreachLogs.id })
 
   if (!log) {
     return err('INTERNAL_ERROR', 'Failed to allocate outreach log row')
   }
+  if (chargeCredits) await debitContacted(db, tenantId, input.prospectId)
 
   const attachments = await buildOutreachFooter(db, tenantId, ctx, {
     prospectId: input.prospectId,
@@ -860,55 +975,23 @@ export async function sendAndRecord(
     footerOverride: sendSettings.footerOverride,
     targetLanguage: sendSettings.targetLanguage,
   })
-  const sendBody = `${input.body}${attachments.footer}`
-
-  const result = await sendForIdentity(db, {
-    tenantId,
-    identityId: sendingIdentityId,
-    encryptionKey: ctx.encryptionKey,
-    clientId: ctx.clientId,
-    clientSecret: ctx.clientSecret,
-    to: [recipient.value],
-    subject: input.subject,
-    body: sendBody,
-    extraHeaders: attachments.headers,
-    senderDisplayName: sendSettings.senderDisplayName,
-    e2eRecipientOverride: ctx.e2eRecipientOverride,
-  })
-
-  if (!result.ok && result.httpStatus === 412) {
-    // A mailbox problem the user can fix and retry: drop the pre_send
-    // reservation so it doesn't burn their quota.
-    await db.delete(outreachLogs).where(eq(outreachLogs.id, log.id))
-    return err('PRECONDITION_FAILED', result.error, result.detail)
-  }
-
-  if (!result.ok) {
-    await db
-      .update(outreachLogs)
-      .set({ status: 'failed', errorMessage: result.detail })
-      .where(eq(outreachLogs.id, log.id))
-    // A refusal of our mailbox says nothing about the prospect — keep it eligible.
-    if (result.mailboxRefused) await recordMailboxRefusal(db, tenantId, sendingIdentityId, result.detail)
-    else await deferProspectReeligibility(db, projectId, input.prospectId, sentAt)
-    return err('BAD_GATEWAY', result.error, result.detail, { outreachId: log.id })
-  }
-
-  // sentAt stays at pre_send allocation time — see updateOutreachStatus.
-  await db
-    .update(outreachLogs)
-    .set({ status: 'sent', fromEmail: result.from, messageId: result.rfc822MessageId })
-    .where(eq(outreachLogs.id, log.id))
-  await markProspectContacted(db, tenantId, projectId, input.prospectId, sentAt, log.id, quota.value.chargeCredits)
-  await stampMailboxFirstSendIfNeeded(db, tenantId, sendingIdentityId, sentAt)
-  await clearMailboxSendRefusal(db, tenantId, sendingIdentityId, sentAt)
 
   return ok({
-    mode: 'sent',
+    mode: 'reserved',
     outreachId: log.id,
-    messageId: result.messageId,
-    threadId: result.threadId,
-    from: result.from,
+    projectId,
+    prospectId: input.prospectId,
+    sendingIdentityId,
+    sentAt,
+    chargesCredits: chargeCredits,
+    origin: { kind: 'direct' },
+    message: {
+      to: recipient.value,
+      subject: input.subject,
+      body: `${input.body}${attachments.footer}`,
+      headers: attachments.headers,
+      senderDisplayName: sendSettings.senderDisplayName,
+    },
   })
 }
 
@@ -1253,12 +1336,24 @@ export async function editDraft(
 }
 
 export async function sendDraft(
-  db: Db,
+  run: TenantRun,
   tenantId: TenantId,
   edition: Edition,
   ctx: SendContext,
   id: number,
 ): Promise<ServiceResult<SendOutcome>> {
+  const reserved = await run((db) => reserveDraftSend(db, tenantId, edition, ctx, id))
+  if (!reserved.ok) return reserved
+  return deliverEmail(run, tenantId, ctx, reserved.value)
+}
+
+async function reserveDraftSend(
+  db: Db,
+  tenantId: TenantId,
+  edition: Edition,
+  ctx: SendContext,
+  id: number,
+): Promise<ServiceResult<EmailReservation>> {
   const draft = await db
     .select({
       id: outreachLogs.id,
@@ -1268,6 +1363,7 @@ export async function sendDraft(
       subject: outreachLogs.subject,
       body: outreachLogs.body,
       status: outreachLogs.status,
+      sentAt: outreachLogs.sentAt,
       doNotContact: sql<boolean>`${prospects.doNotContact} OR ${organizations.doNotContact}`,
     })
     .from(outreachLogs)
@@ -1325,6 +1421,18 @@ export async function sendDraft(
   )
   if (!recipient.ok) return recipient
 
+  // Guarded on the status so a second click on the same draft gets a 409, not a
+  // second send.
+  const sentAt = new Date()
+  const { chargeCredits } = quota.value
+  const [reserved] = await db
+    .update(outreachLogs)
+    .set({ status: 'pre_send', sentAt, sendingIdentityId, chargesCredits: chargeCredits })
+    .where(and(eq(outreachLogs.id, draft.id), eq(outreachLogs.status, 'pending_review')))
+    .returning({ id: outreachLogs.id })
+  if (!reserved) return err('CONFLICT', 'Draft already sent or not in review')
+  if (chargeCredits) await debitContacted(db, tenantId, draft.prospectId)
+
   const attachments = await buildOutreachFooter(db, tenantId, ctx, {
     prospectId: draft.prospectId,
     outreachLogId: draft.id,
@@ -1334,54 +1442,23 @@ export async function sendDraft(
     footerOverride: sendSettings.footerOverride,
     targetLanguage: sendSettings.targetLanguage,
   })
-  const sendBody = `${draft.body}${attachments.footer}`
-
-  const attemptedAt = new Date()
-  const result = await sendForIdentity(db, {
-    tenantId,
-    identityId: sendingIdentityId,
-    encryptionKey: ctx.encryptionKey,
-    clientId: ctx.clientId,
-    clientSecret: ctx.clientSecret,
-    to: [recipient.value],
-    subject: draft.subject ?? '',
-    body: sendBody,
-    extraHeaders: attachments.headers,
-    senderDisplayName: sendSettings.senderDisplayName,
-    e2eRecipientOverride: ctx.e2eRecipientOverride,
-  })
-
-  if (!result.ok && result.httpStatus === 412) {
-    return err('PRECONDITION_FAILED', result.error, result.detail)
-  }
-
-  const sentAt = new Date()
-  await db
-    .update(outreachLogs)
-    .set({
-      status: result.ok ? 'sent' : 'failed',
-      sentAt,
-      errorMessage: result.ok ? null : result.detail,
-      ...(result.ok ? { fromEmail: result.from, sendingIdentityId: result.identityId, messageId: result.rfc822MessageId } : {}),
-    })
-    .where(eq(outreachLogs.id, draft.id))
-
-  if (!result.ok) {
-    if (result.mailboxRefused) await recordMailboxRefusal(db, tenantId, sendingIdentityId, result.detail)
-    else await deferProspectReeligibility(db, draft.projectId as ProjectId, draft.prospectId, sentAt)
-    return err('BAD_GATEWAY', result.error, result.detail, { outreachId: draft.id })
-  }
-
-  await markProspectContacted(db, tenantId, draft.projectId as ProjectId, draft.prospectId, sentAt, draft.id, quota.value.chargeCredits)
-  await stampMailboxFirstSendIfNeeded(db, tenantId, sendingIdentityId, sentAt)
-  await clearMailboxSendRefusal(db, tenantId, sendingIdentityId, attemptedAt)
 
   return ok({
-    mode: 'sent',
+    mode: 'reserved',
     outreachId: draft.id,
-    messageId: result.messageId,
-    threadId: result.threadId,
-    from: result.from,
+    projectId: draft.projectId as ProjectId,
+    prospectId: draft.prospectId,
+    sendingIdentityId,
+    sentAt,
+    chargesCredits: chargeCredits,
+    origin: { kind: 'draft', draftedAt: draft.sentAt },
+    message: {
+      to: recipient.value,
+      subject: draft.subject ?? '',
+      body: `${draft.body}${attachments.footer}`,
+      headers: attachments.headers,
+      senderDisplayName: sendSettings.senderDisplayName,
+    },
   })
 }
 
@@ -1599,7 +1676,7 @@ async function markProspectContacted(
   if (chargeCredits) await debitContacted(db, tenantId, prospectId)
   // FOR UPDATE serializes concurrent send finalizations for the same prospect on
   // the touch advance below (a read-then-write of followupTouches). Already inside
-  // the per-request RLS transaction, so no nested db.transaction() is needed.
+  // the caller's RLS transaction, so no nested db.transaction() is needed.
   const [pp] = await db
     .select({
       id: projectProspects.id,

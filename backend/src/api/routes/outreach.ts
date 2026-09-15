@@ -30,6 +30,7 @@ import {
 import { projectRefParamSchema } from '../../services/projects'
 import { respondWithError } from '../respond'
 import { scheduleAutoTopUp } from '../auto-top-up'
+import { withTenantConnection, type TenantRun } from '../../db/rls'
 import type { Env, Variables } from '../types'
 import type { Context } from 'hono'
 
@@ -52,23 +53,6 @@ outreachRouter.post('/outreach/skip', zValidator('json', skipProspectSchema), as
   if (!result.ok) return respondWithError(c, result)
   return c.json(result.value, 201)
 })
-
-outreachRouter.post(
-  '/outreach/send-and-record',
-  zValidator('json', sendAndRecordSchema),
-  async (c) => {
-    const result = await sendAndRecord(
-      c.get('db'),
-      c.get('tenantId'),
-      c.get('edition'),
-      sendContext(c),
-      c.req.valid('json'),
-    )
-    if (!result.ok) return respondWithError(c, result)
-    scheduleAutoTopUp(c)
-    return c.json(result.value, 201)
-  },
-)
 
 outreachRouter.post(
   '/outreach/record-with-inquiry',
@@ -162,23 +146,6 @@ outreachRouter.put(
   },
 )
 
-outreachRouter.post(
-  '/outreach/drafts/:id/send',
-  zValidator('param', outreachLogIdParamSchema),
-  async (c) => {
-    const result = await sendDraft(
-      c.get('db'),
-      c.get('tenantId'),
-      c.get('edition'),
-      sendContext(c),
-      c.req.valid('param').id,
-    )
-    if (!result.ok) return respondWithError(c, result)
-    scheduleAutoTopUp(c)
-    return c.json(result.value, 200)
-  },
-)
-
 // POST, not GET: building the footer allocates the draft's inquiry token.
 outreachRouter.post(
   '/outreach/drafts/:id/preview',
@@ -230,6 +197,47 @@ outreachRouter.post(
     return c.json(result.value)
   },
 )
+
+// Mounted outside rlsMiddleware (api/index.ts): no c.get('db') here.
+export const outreachSendRouter = new Hono<{ Bindings: Env; Variables: Variables }>()
+
+outreachSendRouter.post(
+  '/outreach/send-and-record',
+  zValidator('json', sendAndRecordSchema),
+  async (c) => {
+    const result = await sendAndRecord(
+      tenantRun(c),
+      c.get('tenantId'),
+      c.get('edition'),
+      sendContext(c),
+      c.req.valid('json'),
+    )
+    if (!result.ok) return respondWithError(c, result)
+    scheduleAutoTopUp(c)
+    return c.json(result.value, 201)
+  },
+)
+
+outreachSendRouter.post(
+  '/outreach/drafts/:id/send',
+  zValidator('param', outreachLogIdParamSchema),
+  async (c) => {
+    const result = await sendDraft(
+      tenantRun(c),
+      c.get('tenantId'),
+      c.get('edition'),
+      sendContext(c),
+      c.req.valid('param').id,
+    )
+    if (!result.ok) return respondWithError(c, result)
+    scheduleAutoTopUp(c)
+    return c.json(result.value, 200)
+  },
+)
+
+function tenantRun(c: Context<{ Bindings: Env; Variables: Variables }>): TenantRun {
+  return (fn) => withTenantConnection(c.env.DATABASE_URL, c.get('tenantId'), fn)
+}
 
 function sendContext(c: Context<{ Bindings: Env; Variables: Variables }>): SendContext {
   return {
