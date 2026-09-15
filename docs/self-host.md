@@ -592,6 +592,7 @@ Most self-hosters will leave Stripe off entirely.
 | `APP_URL` | API | yes | URL of the frontend. Used in outbound-email links. |
 | `API_URL` | API | yes | Public URL of the API Worker itself (e.g. `https://api.<your-domain>`). Hosted-agent jobs build unsubscribe / inquiry link hosts from it. |
 | `JOBS` | API | yes | Cloudflare Workflows binding (`wrangler.api.jsonc` → `workflows`, class `LeadAceJobWorkflow`). Runs the hosted agent's jobs (daily cycle, prospect discovery, drafting, sending, evaluation). Created on first `wrangler deploy`; available on the Workers Free plan. |
+| `THREADS` | API | yes | Durable Objects binding (`wrangler.api.jsonc` → `durable_objects`, class `ThreadRunner`, SQLite-backed). One object per chat thread runs the hosted agent's turns, answers finished jobs, and streams to open chat tabs over a WebSocket. Created on first `wrangler deploy` from `migrations`; available on the Workers Free plan. |
 | `FRONTEND_URL` | MCP | yes | URL of the frontend. Used by the OAuth handshake. |
 | `ENVIRONMENT` | API + MCP | yes | `development` or `production`. |
 | `LEADACE_EDITION` | API | no | `self-hosted` (default) or `cloud`. Anything other than `cloud` disables Stripe routes and runs every tenant on the unlimited tier. |

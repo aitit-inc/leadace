@@ -1412,6 +1412,11 @@ export const chatMessages = pgTable('chat_messages', {
     .references(() => chatThreads.id, { onDelete: 'cascade' }),
   role: chatRoleEnum('role').notNull(),
   content: jsonb('content').$type<ChatContent>().notNull(),
+  // Where the agent read this row: the last message it had read by then
+  // (services/chat/agent.ts inReadingOrder). NULL while a person's message, or
+  // the notice of a job the conversation started, waits to be read
+  // (services/chat/threads.ts hasUnanswered); 0 for rows read where they land.
+  readAfter: integer('read_after').default(0),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   index('idx_chat_messages_thread').on(table.threadId, table.id),

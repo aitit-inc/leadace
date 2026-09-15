@@ -1,13 +1,12 @@
 // The agent's tool surface, bound to one caller. Tools reach the API the only
-// way they may — a request back into this app — so building one needs the
-// identity that request carries: the chat passes the signed-in person's
-// Authorization through, a scheduled run mints one for the person who
-// registered the schedule.
+// way they may — a request back into this app — each carrying a token minted
+// for the person the turn acts as (api/run-token.ts).
 import type { ExecutionContext } from 'hono'
 import type { ToolExecutor } from '../services/chat/agent'
 import { buildToolRegistry, type ToolDef } from '../tools/registry'
 import { buildFunctionDeclarations, parseToolArgs } from '../tools/declarations'
 import { INTERNAL_DISPATCH_HEADER, INTERNAL_ORIGIN_HEADER, internalDispatchToken } from './internal-dispatch'
+import { mintRunToken } from './run-token'
 import type { Env } from './types'
 
 export type InternalDispatch = (request: Request, env: Env, ctx: ExecutionContext) => Promise<Response>
@@ -25,9 +24,7 @@ function loadTools(): Tools {
 
 export type ToolCallerIdentity = {
   origin: string
-  authorization: string
-  // Where the tool's request goes; the chat reuses its own request's origin.
-  apiOrigin: string
+  userId: string
 }
 
 export function buildToolExecutor(
@@ -40,11 +37,12 @@ export function buildToolExecutor(
   const ctx = {
     callApi: async (method: string, path: string, body: unknown) => {
       const res = await dispatch(
-        new Request(`${identity.apiOrigin}/api${path}`, {
+        new Request(`${env.API_URL}/api${path}`, {
           method,
           headers: {
             'Content-Type': 'application/json',
-            Authorization: identity.authorization,
+            // Minted per call: a turn can outlast any one token.
+            Authorization: `Bearer ${await mintRunToken(identity.userId, env.SUPABASE_JWT_SECRET)}`,
             [INTERNAL_DISPATCH_HEADER]: internalDispatchToken(),
             [INTERNAL_ORIGIN_HEADER]: identity.origin,
           },

@@ -1,5 +1,6 @@
-// The chat agent turn: one person message (or one confirmation) → a streamed
-// model answer with tool calls executed in between. Every exchange is
+// The chat agent turn: what arrived since the agent last read the thread (or
+// one confirmation, or a schedule's instruction) → a streamed model answer
+// with tool calls executed in between. Every exchange is
 // persisted to the thread as it happens in its own short RLS transaction, so a
 // dropped connection loses nothing, no connection is held across a model call,
 // and a replay sees exactly what the model saw.
@@ -17,13 +18,11 @@ import { getTenantComplianceStatus } from '../tenants'
 import {
   appendMessage,
   claimPendingCall,
-  DEFAULT_THREAD_TITLE,
   getThread,
   listMessages,
-  renameThread,
+  markRead,
   setPendingCall,
   setThreadProject,
-  titleFromMessage,
   type MessageView,
 } from './threads'
 import { buildSystemInstruction } from './system-prompt'
@@ -40,8 +39,15 @@ export type ToolExecutor = {
 }
 
 export type ChatTurnInput =
-  | { kind: 'message'; text: string }
+  // Everything that arrived since the agent last read the thread: the person's
+  // messages, job notices (api/thread-runner.ts decides when there is any).
+  | { kind: 'unread' }
   | { kind: 'confirm'; callId: string; approve: boolean }
+  // A scheduled run's instruction, already in the thread: no one can answer an
+  // approval card, and the turn sees the instruction and nothing else. The
+  // thread is that run's log, not its memory — day 300 must behave like day 1,
+  // and what earlier runs left behind is in the database, where the tools read it.
+  | { kind: 'instruction'; message: MessageView }
 
 export type ChatEvent =
   | { type: 'message'; message: MessageView }
@@ -63,11 +69,6 @@ export type ChatTurnDeps = {
   userId: string
   env: GeminiEnv & { APP_URL: string }
   tools: ToolExecutor
-  // A scheduled run: no one can answer an approval card, and the turn sees its
-  // instruction and nothing else. The thread is that run's log, not its memory
-  // — day 300 must behave like day 1, and what earlier runs left behind is in
-  // the database, where the tools read it.
-  unattended?: boolean
 }
 
 const MAX_TOOL_ROUNDS = 12
@@ -88,7 +89,6 @@ export function termsChanged(shown: ConfirmSummary, now: ConfirmSummary): boolea
 }
 
 const DECLINED: ToolResult = { ok: false, text: 'The person declined this call.' }
-const SUPERSEDED: ToolResult = { ok: false, text: 'The person did not approve this call and continued the conversation.' }
 
 const INTERRUPTED: ToolResult = { ok: false, text: 'This call was interrupted before it produced a result.' }
 
@@ -139,7 +139,17 @@ export function toContents(messages: MessageView[]): Content[] {
   return contents
 }
 
-async function buildContext(deps: ChatTurnDeps, threadProjectId: string | null): Promise<string> {
+// The order the model reads the thread in. Rows are stored as they land, so a
+// message that arrived while a turn ran sits before that turn's answer. Each
+// goes where the agent read it (after `readAfter`), and what it has not read
+// yet goes last, where the model answers it.
+export function inReadingOrder(messages: MessageView[]): MessageView[] {
+  const at = (m: MessageView) => (m.readAfter === null ? Infinity : Math.max(m.readAfter, m.id))
+  const isInput = (m: MessageView) => m.role === 'user' || m.role === 'job'
+  return [...messages].sort((a, b) => at(a) - at(b) || Number(isInput(a)) - Number(isInput(b)) || a.id - b.id)
+}
+
+async function buildContext(deps: ChatTurnDeps, threadProjectId: string | null, unattended: boolean): Promise<string> {
   const [projects, gmail, compliance] = await deps.run((db) =>
     Promise.all([
       listProjects(db, deps.tenantId),
@@ -154,7 +164,7 @@ async function buildContext(deps: ChatTurnDeps, threadProjectId: string | null):
     gmail: gmail.ok ? (gmail.value.connected ? `connected as ${gmail.value.email}` : 'not connected — connect it at the Web UI top banner') : 'unknown',
     compliance: compliance.ok ? (compliance.value.ready ? 'ready' : `missing ${compliance.value.missing.join(', ')} — set on /workspace-settings`) : 'unknown',
     appUrl: deps.env.APP_URL,
-    unattended: deps.unattended === true,
+    unattended,
   })
 }
 
@@ -269,37 +279,7 @@ export async function* runChatTurn(deps: ChatTurnDeps, threadId: string, input: 
     return
   }
 
-  // Kept so an unattended run reads its own instruction and not whatever
-  // landed in the thread beside it.
-  let instruction: MessageView | null = null
-
-  if (input.kind === 'message') {
-    const slot = await deps.run((db) => takeChatRateSlot(db, deps.tenantId, 'main_chat', deps.tenantId))
-    if (!slot) {
-      yield { type: 'error', message: `Daily chat limit reached (${MAIN_CHAT_TURNS_PER_TENANT_PER_DAY} turns) — resets at midnight UTC.` }
-      return
-    }
-    // A new message while calls await approval is the answer "no" to all of them.
-    const p = thread.value.pendingCall
-    if (p) {
-      const claimed = await deps.run((db) => claimPendingCall(db, deps.tenantId, threadId, p.callId))
-      if (claimed) {
-        const declined: ToolPart[] = [
-          ...claimed.otherResponses.map((r) => ({ functionResponse: r })),
-          { functionResponse: toolResponse({ id: claimed.callId, name: claimed.name, args: claimed.args }, SUPERSEDED) },
-          ...claimed.remaining.map((c) => ({ functionResponse: toolResponse({ id: c.callId, name: c.name, args: c.args }, SUPERSEDED) })),
-        ]
-        yield* persistTool(deps, threadId, declined)
-      }
-    }
-    const title = thread.value.title === DEFAULT_THREAD_TITLE ? titleFromMessage(input.text) : ''
-    const userMsg = await deps.run(async (db) => {
-      if (title) await renameThread(db, deps.tenantId, threadId, title)
-      return appendMessage(db, deps.tenantId, threadId, { role: 'user', parts: [{ text: input.text }] })
-    })
-    instruction = userMsg
-    yield { type: 'message', message: userMsg }
-  } else {
+  if (input.kind === 'confirm') {
     // The claim is the only path to execution: a concurrent or repeated
     // confirmation finds nothing to run.
     const claimed = await deps.run((db) => claimPendingCall(db, deps.tenantId, threadId, input.callId))
@@ -337,18 +317,30 @@ export async function* runChatTurn(deps: ChatTurnDeps, threadId: string, input: 
   }
 
   if (deps.signal.aborted) return
-  const systemInstruction = await buildContext(deps, thread.value.projectId)
   let contents: Content[]
-  if (deps.unattended && instruction) {
-    contents = toContents([instruction])
+  if (input.kind === 'instruction') {
+    contents = toContents([input.message])
   } else {
     const history = await deps.run((db) => listMessages(db, deps.tenantId, threadId))
     if (!history.ok) {
       yield { type: 'error', message: history.error }
       return
     }
-    contents = toContents(history.value.messages)
+    // A message sent after Stop is not the stopped turn's to read.
+    if (deps.signal.aborted) return
+    const { messages } = history.value
+    // Read once: a turn that fails from here on is not retried until something new arrives.
+    await deps.run((db) => markRead(db, deps.tenantId, threadId, messages))
+    contents = toContents(inReadingOrder(messages))
   }
+  if (input.kind !== 'confirm') {
+    const slot = await deps.run((db) => takeChatRateSlot(db, deps.tenantId, 'main_chat', deps.tenantId))
+    if (!slot) {
+      yield { type: 'error', message: `Daily chat limit reached (${MAIN_CHAT_TURNS_PER_TENANT_PER_DAY} turns) — resets at midnight UTC.` }
+      return
+    }
+  }
+  const systemInstruction = await buildContext(deps, thread.value.projectId, input.kind === 'instruction')
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     let text = ''

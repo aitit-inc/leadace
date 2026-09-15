@@ -2,7 +2,7 @@ import { sql } from 'drizzle-orm'
 import { withDb, type Db } from './connection'
 
 // One RLS-pinned transaction around `fn`: the request middleware wraps a
-// request in it; the chat stream and the job path (raw connections, no
+// request in it; the thread runner and the job path (raw connections, no
 // request) open one per self-contained mutation so a service's writes land
 // together or not at all, under the same RLS backstop the API path has.
 export async function runWithRls<T>(db: Db, tenantId: string, fn: (tx: Db) => Promise<T>): Promise<T> {

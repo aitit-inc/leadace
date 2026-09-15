@@ -47,7 +47,9 @@ export type ChatThread = {
   updatedAt: string;
 };
 
+// Mirrors backend api/thread-runner.ts RunnerEvent.
 export type ChatEvent =
+  | { type: 'state'; running: boolean; text: string }
   | { type: 'message'; message: ChatMessage }
   | { type: 'text_delta'; text: string }
   | { type: 'tool_call'; callId: string; name: string; args: Record<string, unknown> }

@@ -31,7 +31,7 @@ import { accountRouter } from './routes/account'
 import { bugReportsRouter } from './routes/bug-reports'
 import { jobsRouter, jobRunner } from './routes/jobs'
 import { strategyDraftRouter } from './routes/strategy-draft'
-import { chatRouter, createChatStreamRouter } from './routes/chat'
+import { chatRouter, chatRunnerRouter } from './routes/chat'
 import { schedulesRouter } from './routes/schedules'
 import { stripeWebhookRouter } from './routes/stripe-webhook'
 import { unsubscribeRouter } from './routes/unsubscribe'
@@ -43,6 +43,7 @@ import { runDailyBetaStats } from '../services/beta-stats'
 import { runReplyIngest } from '../services/reply-ingest'
 import { watchVerifierBalance } from '../services/email-verify'
 import { runDueSchedules } from './schedule-runner'
+import { threadRunner } from './thread-runner'
 import type { InternalDispatch } from './tool-executor'
 import type { Env, Variables } from './types'
 
@@ -74,16 +75,17 @@ app.route('/api', inquiryRouter)
 // only while that project opted in (publicScoreboardEnabled).
 app.route('/api', liveRouter)
 
-// Every agent tool call re-enters this app in-process: the chat's streamed
+// Every agent tool call re-enters this app in-process: the thread runner's
 // turns and the cron's scheduled runs both go through here.
 const dispatch: InternalDispatch = (request, env, ctx) => Promise.resolve(app.fetch(request, env, ctx))
 
-// Streaming chat turns: auth, then their own RLS transaction per stream —
-// the request-scoped one below would close before the stream ends. The
-// agent's tool calls re-enter this same app through `dispatch`.
+// The chat's thread runner: auth, then a tenant transaction per call — a
+// message commits before the runner is woken to read it.
 app.use('/api/chat/threads/:id/messages', authMiddleware)
 app.use('/api/chat/threads/:id/confirm', authMiddleware)
-app.route('/api', createChatStreamRouter(dispatch))
+app.use('/api/chat/threads/:id/stop', authMiddleware)
+app.use('/api/chat/threads/:id/live', authMiddleware)
+app.route('/api', chatRunnerRouter)
 
 // Email sends: auth, then a tenant transaction per step so the reservation
 // commits before the provider call.
@@ -221,3 +223,6 @@ export default Sentry.withSentry(
 
 // Workflow class the `JOBS` binding in wrangler.api.jsonc points at.
 export { LeadAceJobWorkflow } from '../jobs/workflow'
+
+// Durable Object class the `THREADS` binding in wrangler.api.jsonc points at.
+export const ThreadRunner = threadRunner(dispatch)

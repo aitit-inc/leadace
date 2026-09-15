@@ -1,9 +1,8 @@
 <script lang="ts">
   import { goto, invalidate } from '$app/navigation';
   import { ApiError } from '$lib/api';
-  import { confirmChatCall, createThread, deleteThread, sendChatMessage } from '$lib/api/chat';
+  import { confirmChatCall, createThread, deleteThread, sendChatMessage, stopChat, watchThread } from '$lib/api/chat';
   import { cancelJob, getJob } from '$lib/api/jobs';
-  import { answerSaved, stillFinishing } from '$lib/chat-stop';
   import ThreadList from '$lib/components/chat/ThreadList.svelte';
   import MessageItem from '$lib/components/chat/MessageItem.svelte';
   import JobCard from '$lib/components/chat/JobCard.svelte';
@@ -16,30 +15,23 @@
 
   let { data }: PageProps = $props();
   let token = $derived(data.session?.access_token ?? '');
+  let threadId = $derived(data.thread?.id ?? null);
 
-  // The persisted transcript comes from the loader; the pieces below exist
-  // only while a turn streams and are folded back in by the next invalidate.
+  // The persisted transcript comes from the loader; the pieces below come from
+  // the thread's live feed and are folded back in by the next invalidate.
   let liveMessages = $state<ChatMessage[]>([]);
   let streamingText = $state('');
   let liveSteps = $state(0);
-  let stoppedText = $state('');
+  // The server's word, so every tab shows the same whoever set the turn off.
+  let running = $state(false);
+  let sending = $state(false);
   let stopping = $state(false);
-  // Stop waits for the server's first event: before it, the turn's own writes
-  // (the message, a claimed approval) could still land after the stop settled.
-  let accepted = $state(false);
   let pending = $state<PendingCall | null>(null);
   let jobs = $state<Record<string, Job | JobDetail>>({});
-  let busy = $state(false);
   let error = $state('');
   let input = $state('');
   let deleting = $state<string | null>(null);
   let bottom = $state<HTMLDivElement | null>(null);
-  // The stream in flight, and which thread it belongs to: switching threads
-  // aborts it and drops anything it still emits.
-  let controller: AbortController | null = null;
-  let streamThreadId: string | null = null;
-  // A thread switch or a later stop takes over from the stop in progress.
-  let stopper: object | null = null;
   // A thread, or one project's home. A request started for an earlier view,
   // even one left and come back to, finds the generation moved on.
   let shownView: string | undefined;
@@ -47,27 +39,26 @@
 
   $effect(() => {
     // Reset per-view state on a view switch only. Every invalidate hands
-    // over a new `data`; the same view keeps its error, job cards and the
-    // turn in flight.
-    const id = data.thread?.id ?? null;
-    const view = id ?? `home:${data.activeProjectId}`;
+    // over a new `data`; the same view keeps its error and job cards.
+    const view = threadId ?? `home:${data.activeProjectId}`;
     if (shownView === view) return;
     shownView = view;
     viewGen++;
-    if (streamThreadId !== id) {
-      controller?.abort();
-      busy = false;
-    }
     liveMessages = [];
     streamingText = '';
     liveSteps = 0;
-    stoppedText = '';
+    running = false;
     stopping = false;
-    stopper = null;
     jobs = Object.fromEntries(data.jobs.map((j) => [j.id, j]));
     error = '';
     pending = data.thread?.pendingCall ?? null;
     for (const j of data.jobs) if (!TERMINAL_JOB_STATUSES.includes(j.status)) void watchJob(j.id);
+  });
+
+  $effect(() => {
+    const id = threadId;
+    if (!id) return;
+    return watchThread(id, () => token, (e) => handleEvent(id, e), () => void catchUp(id));
   });
 
   let messages = $derived.by(() => {
@@ -100,7 +91,7 @@
 
   async function identitySaved() {
     await Promise.all([invalidate('app:chat'), invalidate('app:attention')]);
-    send('Sender identity saved.');
+    void send('Sender identity saved.');
   }
 
   // Tools after which the layout's project list (and the active project a
@@ -115,10 +106,17 @@
     { label: 'Results?', text: 'How are the results so far? Give me the key numbers and what to do next.' },
   ];
 
-  function handleEvent(threadId: string, e: ChatEvent) {
-    if (threadId !== (data.thread?.id ?? streamThreadId)) return;
-    accepted = true;
+  function handleEvent(id: string, e: ChatEvent) {
+    if (id !== threadId) return;
     switch (e.type) {
+      case 'state':
+        if (running && !e.running) void catchUp(id);
+        // A turn runs past a card only once someone has answered it.
+        if (e.running) pending = null;
+        running = e.running;
+        streamingText = e.text;
+        liveSteps = 0;
+        break;
       case 'message':
         liveMessages = [...liveMessages, e.message];
         if (e.message.role === 'model') {
@@ -157,7 +155,6 @@
   let mounted = true;
   $effect(() => () => {
     mounted = false;
-    controller?.abort();
   });
 
   async function watchJob(id: string) {
@@ -194,40 +191,8 @@
   async function ensureThread(): Promise<string> {
     if (data.thread) return data.thread.id;
     const t = await createThread(data.activeProjectId ? { projectId: data.activeProjectId } : {}, fetch, token);
-    // Claimed before the navigation: the load it triggers must see this turn
-    // as belonging to the new thread, not abort it as a switch.
-    streamThreadId = t.id;
     await goto(`/chat?t=${t.id}`, { replaceState: true, keepFocus: true, noScroll: true });
     return t.id;
-  }
-
-  async function runTurn(
-    run: (threadId: string, onEvent: (e: ChatEvent) => void, signal: AbortSignal) => Promise<void>,
-    onFail?: () => void,
-  ) {
-    if (busy || stopping) return;
-    busy = true;
-    accepted = false;
-    error = '';
-    const ac = new AbortController();
-    controller = ac;
-    try {
-      const threadId = await ensureThread();
-      streamThreadId = threadId;
-      await run(threadId, (e) => handleEvent(threadId, e), ac.signal);
-      if (!ac.signal.aborted) await reload();
-    } catch (e) {
-      if (ac.signal.aborted) return;
-      error = e instanceof ApiError ? e.message : 'Something went wrong. Please try again.';
-      onFail?.();
-    } finally {
-      if (controller === ac) {
-        controller = null;
-        busy = false;
-        streamingText = '';
-        liveSteps = 0;
-      }
-    }
   }
 
   async function reload() {
@@ -238,52 +203,63 @@
     await invalidate('app:chat');
   }
 
-  // A stopped turn goes on until it has recorded a call it had started (the
-  // server allows it 30 s). A message sent before that lands would read the
-  // call as interrupted, so Send waits until the stop is on record.
-  const SETTLE_POLL_MS = 500;
-  const SETTLE_FOR_MS = 30000;
+  // What this tab may have missed: a turn that ended before the feed opened, a
+  // message from another tab, an approval card someone answered.
+  async function catchUp(id: string) {
+    await reload();
+    if (id === threadId) pending = data.thread?.pendingCall ?? null;
+  }
 
-  async function stop() {
-    const me = {};
-    stopper = me;
-    stoppedText = streamingText;
-    stopping = true;
-    controller?.abort();
-    const until = Date.now() + SETTLE_FOR_MS;
+  // A message sent while a turn runs is answered right after it.
+  async function send(text: string) {
+    const trimmed = text.trim();
+    if (!trimmed || sending || stopping) return;
+    input = '';
+    pending = null;
+    error = '';
+    sending = true;
+    let id = threadId;
     try {
-      for (;;) {
-        await reload();
-        if (!mounted || stopper !== me) return;
-        if (!stillFinishing(data.messages, stoppedText, data.thread?.pendingCall != null) || Date.now() > until) break;
-        await new Promise((r) => setTimeout(r, SETTLE_POLL_MS));
-      }
+      id = await ensureThread();
+      const message = await sendChatMessage(id, trimmed, fetch, token);
+      if (id === threadId) liveMessages = [...liveMessages, message];
+    } catch (e) {
+      if (id !== threadId) return;
       pending = data.thread?.pendingCall ?? null;
+      error = e instanceof ApiError ? e.message : 'Something went wrong. Please try again.';
     } finally {
-      if (stopper === me) {
-        stopper = null;
-        stopping = false;
-        stoppedText = '';
-      }
+      sending = false;
     }
   }
 
-  function send(text: string) {
-    const trimmed = text.trim();
-    if (!trimmed) return;
-    input = '';
+  async function respond(approve: boolean) {
+    const p = pending;
+    const id = threadId;
+    if (!p || !id) return;
     pending = null;
-    void runTurn((threadId, onEvent, signal) => sendChatMessage(threadId, trimmed, token, onEvent, signal));
+    error = '';
+    try {
+      await confirmChatCall(id, p.callId, approve, fetch, token);
+    } catch (e) {
+      if (id !== threadId) return;
+      pending = p;
+      error = e instanceof ApiError ? e.message : 'Something went wrong. Please try again.';
+    }
   }
 
-  function respond(approve: boolean) {
-    const p = pending;
-    if (!p) return;
-    pending = null;
-    void runTurn(
-      (threadId, onEvent, signal) => confirmChatCall(threadId, p.callId, approve, token, onEvent, signal),
-      () => (pending = p),
-    );
+  // Resolves once the stopped turn has recorded what ran, so Send is never
+  // ahead of it.
+  async function stop() {
+    const id = threadId;
+    if (!id || stopping) return;
+    stopping = true;
+    try {
+      await stopChat(id, fetch, token);
+    } catch (e) {
+      if (id === threadId) error = e instanceof ApiError ? e.message : 'Could not stop. Please try again.';
+    } finally {
+      if (id === threadId) stopping = false;
+    }
   }
 
   async function removeThread(id: string) {
@@ -350,18 +326,18 @@
           <JobCard {job} oncancel={cancel} ondetails={loadDetails} />
         {/each}
       {/if}
-      {#if streamingText || !answerSaved(messages, stoppedText)}
-        <p class="max-w-[85%] whitespace-pre-wrap text-base text-text">{streamingText || stoppedText}</p>
+      {#if streamingText}
+        <p class="max-w-[85%] whitespace-pre-wrap text-base text-text">{streamingText}</p>
       {/if}
-      {#if busy}
+      {#if stopping}
+        <p class="text-xs text-text-muted">Stopping…</p>
+      {:else if running}
         <p class="text-xs text-text-muted">
           {liveSteps === 0 ? 'Thinking…' : `Working… (${liveSteps} step${liveSteps === 1 ? '' : 's'})`}
         </p>
-      {:else if stopping}
-        <p class="text-xs text-text-muted">Stopping…</p>
       {/if}
       {#if pending}
-        <ConfirmCard {pending} busy={busy || stopping} onrespond={respond} />
+        <ConfirmCard {pending} busy={running || stopping} onrespond={respond} />
       {/if}
       {#if showIdentityCard}
         {#key proposal.callId}
@@ -380,7 +356,7 @@
           {#each quickActions as a (a.label)}
             <button
               type="button"
-              disabled={busy || stopping}
+              disabled={sending || stopping}
               onclick={() => send(a.text)}
               class="rounded-full border border-border px-2.5 py-1 text-xs text-text-secondary hover:bg-surface hover:text-text disabled:opacity-50"
             >
@@ -393,27 +369,26 @@
         class="flex gap-2"
         onsubmit={(e) => {
           e.preventDefault();
-          send(input);
+          void send(input);
         }}
       >
         <textarea
           bind:value={input}
           rows={2}
           placeholder={data.activeProjectId ? 'Tell Ace what to do…' : 'https://your-company.com'}
-          disabled={busy || stopping}
           onkeydown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
-              send(input);
+              void send(input);
             }
           }}
-          class="min-w-0 flex-1 resize-none rounded border border-border bg-page px-3 py-2 text-base text-text focus:border-accent focus:outline-none disabled:opacity-60"
+          class="min-w-0 flex-1 resize-none rounded border border-border bg-page px-3 py-2 text-base text-text focus:border-accent focus:outline-none"
         ></textarea>
-        {#if busy}
+        {#if running}
           <button
             type="button"
             onclick={stop}
-            disabled={!accepted}
+            disabled={stopping}
             aria-label="Stop"
             title="Stop"
             class="inline-flex h-10 min-w-[4.5rem] items-center justify-center self-end rounded bg-accent px-4 text-page hover:bg-accent-strong disabled:opacity-50"
@@ -425,7 +400,7 @@
         {:else}
           <button
             type="submit"
-            disabled={stopping || !input.trim()}
+            disabled={sending || stopping || !input.trim()}
             class="inline-flex h-10 min-w-[4.5rem] items-center justify-center self-end rounded bg-accent px-4 text-base font-medium text-page hover:bg-accent-strong disabled:opacity-50"
           >
             Send

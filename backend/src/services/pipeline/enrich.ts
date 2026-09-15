@@ -4,7 +4,7 @@
 import { z } from 'zod'
 import type { Db } from '../../db/connection'
 import type { ProjectId, TenantId } from '../../domain/ids'
-import { isRecentSignal, signalWindowStart, type DiscoverCandidate, type JobResult } from '../../domain/jobs'
+import { isRecentSignal, signalWindowStart, type DiscoverCandidate, type JobLogEntry } from '../../domain/jobs'
 import { withRecentSignals } from '../../domain/site-read'
 import { utcDateKey } from '../../domain/time'
 import { ok, err, type ServiceResult } from '../result'
@@ -389,9 +389,13 @@ function toProspectInput(e: Enriched): BatchInput['prospects'][number] | null {
   }
 }
 
-export type EnrichResult = Extract<JobResult, { kind: 'enrich' }>
+export type EnrichOutput = { log: JobLogEntry[]; withEmail: number }
 
 const CONCURRENCY = 4
+
+function skippedLine(name: string, reason: string): JobLogEntry {
+  return { kind: 'prospect', name, outcome: 'skipped', reason }
+}
 
 export async function runEnrich(
   db: Db,
@@ -400,7 +404,7 @@ export async function runEnrich(
   projectId: ProjectId,
   candidates: DiscoverCandidate[],
   progress: ProgressFn = noProgress,
-): Promise<ServiceResult<EnrichResult>> {
+): Promise<ServiceResult<EnrichOutput>> {
   const [procedure, business, strategies, activeSlugs, quota] = await Promise.all([
     loadMasterDoc(db, 'tpl_enrich_contacts'),
     loadDoc(db, tenantId, projectId, 'business'),
@@ -411,16 +415,7 @@ export async function runEnrich(
   // Site reads are the cost; a chunk that starts after the allowance is spent
   // (mid-run, or a standalone enrich job) reads nothing.
   const paused = discoveryPausedReason(quota)
-  if (paused) {
-    return ok({
-      kind: 'enrich',
-      summary: `Skipped ${candidates.length} candidates: ${paused}`,
-      registered: 0,
-      skipped: candidates.length,
-      withEmail: 0,
-      skippedDetails: candidates.map((c) => ({ name: c.name, reason: 'plan_limit' })),
-    })
-  }
+  if (paused) return ok({ log: candidates.map((c) => skippedLine(c.name, 'plan_limit')), withEmail: 0 })
   const approaches = strategies.filter((s) => activeSlugs.includes(s.slug)).map((s) => s.approach)
   const offer = business ? business.split('\n').slice(0, 20).join('\n') : '(business document missing)'
 
@@ -438,26 +433,19 @@ export async function runEnrich(
   const reasons = { site_unreadable: 0, read_failed: 0, no_contact_found: 0 }
   for (const s of noChannel) reasons[s.reason]++
   console.log({ message: '[enrich] read', candidates: enriched.length, ...reasons, no_solicitation: enriched.filter((e) => e.noSolicitation).length })
-  let registered = 0
-  const skippedDetails: Array<{ name: string; reason: string }> = [...noChannel]
+  const log = noChannel.map((s) => skippedLine(s.name, s.reason))
   const emailsToVerify: string[] = []
   for (let i = 0; i < registrable.length; i += 100) {
     const result = await runWithRls(db, tenantId, (tx) => batchRegister(tx, tenantId, editionOf(env), { projectId, prospects: registrable.slice(i, i + 100) }, 'found'))
     if (!result.ok) return result
-    registered += result.value.inserted
-    skippedDetails.push(...result.value.skippedDetails.map((s) => ({ name: s.name, reason: s.reason })))
+    log.push(
+      ...result.value.registered.map((p): JobLogEntry => ({ kind: 'prospect', name: p.name, outcome: 'registered', prospectId: p.id })),
+      ...result.value.skippedDetails.map((s) => skippedLine(s.name, s.reason)),
+    )
     emailsToVerify.push(...result.value.emailsToVerify)
   }
   await kickAutoTopUp(env, tenantId)
   if (emailsToVerify.length > 0) await stampEmailDeliverability(env.DATABASE_URL, tenantId, emailsToVerify)
 
-  const withEmail = enriched.filter((e) => e.email !== null && !e.emailNoSolicitation).length
-  return ok({
-    kind: 'enrich',
-    summary: `Registered ${registered} of ${candidates.length} candidates (${withEmail} with an email address); ${skippedDetails.length} skipped.`,
-    registered,
-    skipped: skippedDetails.length,
-    withEmail,
-    skippedDetails,
-  })
+  return ok({ log, withEmail: enriched.filter((e) => e.email !== null && !e.emailNoSolicitation).length })
 }

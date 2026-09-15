@@ -47,9 +47,9 @@ prospectsRouter.post('/prospects/batch', zValidator('json', batchSchema), async 
     'brought_in',
   )
   if (!result.ok) return respondWithError(c, result)
-  const { emailsToVerify, ...body } = result.value
+  const { registered, skippedDetails, emailsToVerify } = result.value
   scheduleDeliverabilityStamp(c, emailsToVerify)
-  return c.json(body)
+  return c.json({ inserted: registered.length, skipped: skippedDetails.length, insertedIds: registered.map((p) => p.id), skippedDetails })
 })
 
 prospectsRouter.post('/prospects/import', zValidator('json', importSchema), async (c) => {

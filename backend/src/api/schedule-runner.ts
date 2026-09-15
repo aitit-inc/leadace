@@ -6,7 +6,6 @@
 // lives inside the cron invocation instead of needing durability of its own.
 // That holds while the schedules due in one hour stay in the dozens; past
 // that the turn moves onto the Workflow the jobs already use.
-import { SignJWT } from 'jose'
 import * as Sentry from '@sentry/cloudflare'
 import type { Db } from '../db/connection'
 import { withTenantConnection } from '../db/rls'
@@ -14,7 +13,7 @@ import { runKey } from '../domain/schedules'
 import { runChatTurn } from '../services/chat/agent'
 import { withLlmScope } from '../services/gemini'
 import { unattendedTools } from '../services/chat/unattended'
-import { createThread, titleFromMessage } from '../services/chat/threads'
+import { appendMessage, createThread, titleFromMessage } from '../services/chat/threads'
 import { notifyUser } from '../services/notifications'
 import { googleCtxOf } from '../services/pipeline/context'
 import {
@@ -27,26 +26,11 @@ import {
 import { buildToolExecutor, type InternalDispatch } from './tool-executor'
 import type { Env } from './types'
 
-// Long enough for one turn's tool calls, short enough to be worthless if it
-// ever escaped the isolate.
-const RUN_TOKEN_TTL_SECONDS = 900
 // Turns are network-bound and the cron invocation is not unlimited; a few at a
 // time keeps a slow model call from starving the rest of the hour's schedules.
 const CONCURRENCY = 5
 
 type ScheduleRunSummary = { due: number; ran: number; failed: number; skipped: number }
-
-// The run acts as the person who registered the schedule. Signed with the same
-// secret the API already accepts (auth/verify-jwt HS256 path), never leaves
-// this Worker, and carries no audience — it is not an MCP token.
-async function mintRunToken(userId: string, jwtSecret: string): Promise<string> {
-  const now = Math.floor(Date.now() / 1000)
-  return new SignJWT({ sub: userId })
-    .setProtectedHeader({ alg: 'HS256' })
-    .setIssuedAt(now)
-    .setExpirationTime(now + RUN_TOKEN_TTL_SECONDS)
-    .sign(new TextEncoder().encode(jwtSecret))
-}
 
 async function runOne(env: Env, ctx: ExecutionContext, dispatch: InternalDispatch, schedule: DueSchedule): Promise<void> {
   const run = <T>(fn: (db: Db) => Promise<T>) => withTenantConnection(env.DATABASE_URL, schedule.tenantId, fn)
@@ -64,20 +48,21 @@ async function runOne(env: Env, ctx: ExecutionContext, dispatch: InternalDispatc
       return created.value.id
     }))
 
-  const authorization = `Bearer ${await mintRunToken(schedule.userId, env.SUPABASE_JWT_SECRET)}`
+  // Read where it lands: this run answers it, the thread runner does not.
+  const instruction = await run((db) => appendMessage(db, schedule.tenantId, threadId, { role: 'user', parts: [{ text: schedule.prompt }] }))
   const deps = {
     run,
     signal: new AbortController().signal,
     tenantId: schedule.tenantId,
+    // The run acts as the person who registered the schedule.
     userId: schedule.userId,
     env,
-    tools: unattendedTools(buildToolExecutor(env, ctx, dispatch, { origin: 'cron', authorization, apiOrigin: env.API_URL })),
-    unattended: true,
+    tools: unattendedTools(buildToolExecutor(env, ctx, dispatch, { origin: 'cron', userId: schedule.userId })),
   }
 
   let failure: string | null = null
   await withLlmScope({ tenantId: schedule.tenantId, threadId }, async () => {
-    for await (const event of runChatTurn(deps, threadId, { kind: 'message', text: schedule.prompt })) {
+    for await (const event of runChatTurn(deps, threadId, { kind: 'instruction', message: instruction })) {
       if (event.type === 'error') failure = event.message
     }
   })

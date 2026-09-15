@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import { eq } from 'drizzle-orm'
-import { projects, tenants } from '../db/schema'
+import { and, eq } from 'drizzle-orm'
+import { projects, tenantMembers, tenants } from '../db/schema'
 import type { Db } from '../db/connection'
 import type { TenantId } from '../domain/ids'
 import type { Locale } from '../domain/locale'
@@ -195,6 +195,16 @@ export async function getTenantComplianceStatus(
   const missing = computeComplianceMissing(result.value)
 
   return ok({ ready: missing.length === 0, missing })
+}
+
+// Who the workspace's work acts as when no person's request carries it.
+export async function getTenantOwnerUserId(db: Db, tenantId: TenantId): Promise<string | null> {
+  const [row] = await db
+    .select({ userId: tenantMembers.userId })
+    .from(tenantMembers)
+    .where(and(eq(tenantMembers.tenantId, tenantId), eq(tenantMembers.role, 'owner')))
+    .limit(1)
+  return row?.userId ?? null
 }
 
 // Setup is done once the tenant has a project — the chat creates it from a

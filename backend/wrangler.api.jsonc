@@ -2,8 +2,7 @@
   "name": "lead-ace-api",
   "main": "src/api/index.ts",
   "compatibility_date": "2026-04-01",
-  // enable_request_signal: request.signal fires on client disconnect (the chat's Stop).
-  "compatibility_flags": ["nodejs_compat", "enable_request_signal"],
+  "compatibility_flags": ["nodejs_compat"],
   "vars": {
     "ENVIRONMENT": "development",
     "APP_URL": "http://localhost:5273",
@@ -60,6 +59,22 @@
       "name": "lead-ace-jobs",
       "binding": "JOBS",
       "class_name": "LeadAceJobWorkflow"
+    }
+  ],
+  // The chat's thread runner: one Durable Object per thread (src/api/thread-runner.ts);
+  // the class is exported from src/api/index.ts.
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "THREADS",
+        "class_name": "ThreadRunner"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ThreadRunner"]
     }
   ],
   // The handler is `scheduled` in src/api/index.ts.

@@ -37,7 +37,7 @@ Hosted-agent specifics:
 - A stage in `services/pipeline/` is a service: `(db, tenantId, env, projectId, …)` → `ServiceResult`. It never knows whether a Workflow step or a chat turn invoked it. Every LLM call goes through `services/gemini.ts` with a zod schema as the response constraint (`callGeminiJson` / `callGeminiUrlContextJson`); a stage that reads pages treats an empty `retrievedUrls` as "nothing was read". The one exception is search grounding, which the API will not let carry a schema: `callGeminiGroundedText` answers text, and the extraction call after it carries the schema.
 - `jobs/` wraps stages in `step.do` — all side effects inside a step, step results serializable, one step per prospect where sends happen (`step.sleep` spaces them). The job path has no request transaction: a DB-only step body runs inside `tenantTx` (= `withTenantConnection`), and a pipeline stage that interleaves model calls with writes wraps each mutating service call in `runWithRls` on its own — one call, one transaction, RLS on — never the model call. `strategy-draft.ts` is request-served and must not (its caller's transaction is already open).
 - `Variables.caller` is `'browser' | 'agent'`: an MCP token or the chat's in-process dispatch (marked with the per-isolate token in `api/internal-dispatch.ts`, which no outside client can present) is an agent and only ever loses privileges (approved playbooks only, UI-only settings and workspace identity refused). `Variables.origin` (`ui | mcp | chat`) is the jobs ledger's `started_by`.
-- The chat's streaming routes run outside `rlsMiddleware` (the request transaction would close before the stream ends); the agent's tool calls re-enter the app via the injected dispatch and go through the normal auth + RLS stack.
+- Chat turns run in `api/thread-runner.ts`, one Durable Object per thread: it takes a turn whenever the thread holds something unanswered (`hasUnanswered`) or an approval comes in, one at a time, and streams it to the thread's viewers over a WebSocket. Its routes (message / confirm / stop / live) run outside `rlsMiddleware` so a message commits before the runner is woken; the agent's tool calls re-enter the app via the injected dispatch and go through the normal auth + RLS stack.
 
 Enforced by review (no lint rule yet).
 
@@ -78,7 +78,7 @@ Enforced by review (no lint rule yet).
   request is already one transaction, and postgres-js turns nested
   transactions into SAVEPOINTs, breaking outer-rollback semantics. The one
   sanctioned form is `runWithRls` (`db/rls.ts`) on a raw connection; a caller
-  that outlives its request — the chat stream, the job path — takes that
+  that outlives its request — the thread runner, the job path — takes that
   connection per call and closes it (`withTenantConnection`), never holding
   the request's across a model or tool call. An email send commits its
   `pre_send` reservation before the provider call, so `sendAndRecord` /

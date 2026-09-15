@@ -58,7 +58,7 @@ function formatDetail(detail: unknown): string | undefined {
 // The one non-2xx path: 401 on an authenticated call routes to /login (the
 // route group already gates on session, so the backend rejected an otherwise
 // valid one); everything else becomes a displayable ApiError.
-export async function throwApiError(res: Response, auth: 'required' | 'none'): Promise<never> {
+async function throwApiError(res: Response, auth: 'required' | 'none'): Promise<never> {
   const err = (await res.json().catch(() => ({}))) as { error?: string; detail?: unknown };
   if (res.status === 401 && auth === 'required') {
     if (browser) {

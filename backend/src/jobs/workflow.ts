@@ -71,7 +71,7 @@ export class LeadAceJobWorkflow extends WorkflowEntrypoint<Env, JobWorkflowParam
             kind: job.kind,
             status: outcome.ok ? 'succeeded' : 'failed',
             summary: outcome.ok ? outcome.result.summary : outcome.error,
-          }),
+          }, job.startedBy),
         )
         return true
       })
@@ -80,5 +80,14 @@ export class LeadAceJobWorkflow extends WorkflowEntrypoint<Env, JobWorkflowParam
       await finishJob(createDb(this.env.DATABASE_URL), job.tenantId, job.id, outcome)
       return true
     })
+    // Whether the thread owes an answer is the runner's call. It wakes after
+    // the status flips, so the answer reads the job as finished.
+    if (job.threadId) {
+      const threadId = job.threadId
+      await step.do('wake-thread', async () => {
+        await this.env.THREADS.getByName(threadId).wake({ tenantId: job.tenantId, threadId })
+        return true
+      })
+    }
   }
 }

@@ -1,5 +1,4 @@
 import { Hono, type Context } from 'hono'
-import { streamSSE } from 'hono/streaming'
 import { zValidator } from '../zvalidator'
 import {
   createThread,
@@ -7,15 +6,13 @@ import {
   getThread,
   deleteThread,
   listMessages,
+  postMessage,
   createThreadBodySchema,
   listThreadsQuerySchema,
   threadIdParamSchema,
   messageBodySchema,
   confirmBodySchema,
 } from '../../services/chat/threads'
-import { runChatTurn, type ChatTurnInput, type ChatTurnDeps } from '../../services/chat/agent'
-import { withLlmScope } from '../../services/gemini'
-import { buildToolExecutor, type InternalDispatch } from '../tool-executor'
 import { respondWithError } from '../respond'
 import { withTenantConnection } from '../../db/rls'
 import type { Env, Variables } from '../types'
@@ -50,71 +47,62 @@ chatRouter.delete('/chat/threads/:id', zValidator('param', threadIdParamSchema),
   return c.json(result.value)
 })
 
-// --- Streaming turns. These run outside rlsMiddleware: the request's RLS
-// transaction would close when the handler returns the Response, while the
-// stream keeps working. Persistence takes its own connection per call.
+// --- The thread runner's routes (api/thread-runner.ts). They run outside
+// rlsMiddleware, each on a connection of its own: a message has to be
+// committed before the runner is woken to read it.
 
-// Tool calls re-enter the API in-process as the same person, marked as the
-// chat so services apply agent privileges (approved playbooks only, no
-// UI-only settings).
 type ChatCtx = Context<{ Bindings: Env; Variables: Variables }, string>
 
-function streamTurn(c: ChatCtx, dispatch: InternalDispatch, threadId: string, input: ChatTurnInput) {
+function ownThread(c: ChatCtx, id: string) {
   const tenantId = c.get('tenantId')
-  const userId = c.get('userId')
-  const tools = buildToolExecutor(c.env, c.executionCtx, dispatch, {
-    origin: 'chat',
-    authorization: c.req.header('Authorization') ?? '',
-    apiOrigin: new URL(c.req.url).origin,
-  })
-  const run: ChatTurnDeps['run'] = (fn) => withTenantConnection(c.env.DATABASE_URL, tenantId, fn)
-  return streamSSE(c, async (stream) => {
-    // Stop closes the connection. The runtime reports that on the request or by
-    // cancelling the response; both abort the stream, which also releases a
-    // write stuck on the closed connection.
-    c.req.raw.signal.addEventListener('abort', () => stream.abort())
-    const stop = new AbortController()
-    stream.onAbort(() => stop.abort())
-    // A closed connection is noticed only on a write, and nothing is written
-    // while the model thinks or a tool runs.
-    const ping = setInterval(() => void stream.write(': ping\n\n'), 1000)
-    const deps = { run, signal: stop.signal, tenantId, userId, env: c.env, tools }
-    const turn = (async () => {
-      // A throw here would close the stream mid-way and read as a finished
-      // turn; the client requires a terminal event, so failures become one.
-      try {
-        await withLlmScope({ tenantId, threadId }, async () => {
-          for await (const event of runChatTurn(deps, threadId, input)) {
-            await stream.writeSSE({ event: event.type, data: JSON.stringify(event) })
-          }
-        })
-      } catch (e) {
-        console.error('[chat] stream failed', e)
-        await stream.writeSSE({ event: 'error', data: JSON.stringify({ type: 'error', message: 'The turn failed part-way. Reload the thread to see what was saved.' }) })
-      }
-    })()
-    // A closed connection ends the invocation, cutting a tool call mid-flight
-    // (an email sent, never recorded); waitUntil gives the turn the platform's
-    // 30 s to finish it and record where it stopped.
-    c.executionCtx.waitUntil(turn)
-    await turn
-    clearInterval(ping)
-  })
+  return withTenantConnection(c.env.DATABASE_URL, tenantId, (db) => getThread(db, tenantId, id))
 }
 
-export function createChatStreamRouter(dispatch: InternalDispatch) {
-  const router = new Hono<{ Bindings: Env; Variables: Variables }>()
-  router.post(
-    '/chat/threads/:id/messages',
-    zValidator('param', threadIdParamSchema),
-    zValidator('json', messageBodySchema),
-    (c) => streamTurn(c, dispatch, c.req.valid('param').id, { kind: 'message', text: c.req.valid('json').text }),
-  )
-  router.post(
-    '/chat/threads/:id/confirm',
-    zValidator('param', threadIdParamSchema),
-    zValidator('json', confirmBodySchema),
-    (c) => streamTurn(c, dispatch, c.req.valid('param').id, { kind: 'confirm', ...c.req.valid('json') }),
-  )
-  return router
-}
+export const chatRunnerRouter = new Hono<{ Bindings: Env; Variables: Variables }>()
+
+chatRunnerRouter.post(
+  '/chat/threads/:id/messages',
+  zValidator('param', threadIdParamSchema),
+  zValidator('json', messageBodySchema),
+  async (c) => {
+    const { id } = c.req.valid('param')
+    const tenantId = c.get('tenantId')
+    const message = await withTenantConnection(c.env.DATABASE_URL, tenantId, (db) => postMessage(db, tenantId, id, c.req.valid('json').text))
+    if (!message.ok) return respondWithError(c, message)
+    await c.env.THREADS.getByName(id).wake({ tenantId, threadId: id })
+    return c.json(message.value, 201)
+  },
+)
+
+chatRunnerRouter.post(
+  '/chat/threads/:id/confirm',
+  zValidator('param', threadIdParamSchema),
+  zValidator('json', confirmBodySchema),
+  async (c) => {
+    const { id } = c.req.valid('param')
+    const thread = await ownThread(c, id)
+    if (!thread.ok) return respondWithError(c, thread)
+    const { callId, approve } = c.req.valid('json')
+    await c.env.THREADS.getByName(id).confirm({ tenantId: c.get('tenantId'), threadId: id }, callId, approve)
+    return c.body(null, 204)
+  },
+)
+
+chatRunnerRouter.post('/chat/threads/:id/stop', zValidator('param', threadIdParamSchema), async (c) => {
+  const { id } = c.req.valid('param')
+  const thread = await ownThread(c, id)
+  if (!thread.ok) return respondWithError(c, thread)
+  await c.env.THREADS.getByName(id).halt({ tenantId: c.get('tenantId'), threadId: id })
+  return c.body(null, 204)
+})
+
+// The thread's live feed: a WebSocket the runner holds while the thread is open.
+chatRunnerRouter.get('/chat/threads/:id/live', zValidator('param', threadIdParamSchema), async (c) => {
+  if (c.req.header('Upgrade') !== 'websocket') return c.json({ error: 'Expected a WebSocket upgrade' }, 426)
+  const { id } = c.req.valid('param')
+  const thread = await ownThread(c, id)
+  if (!thread.ok) return respondWithError(c, thread)
+  const res = await c.env.THREADS.getByName(id).fetch(c.req.raw)
+  // A fetched response's headers are immutable, and CORS adds to them.
+  return new Response(null, { status: res.status, headers: res.headers, webSocket: res.webSocket })
+})

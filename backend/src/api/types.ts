@@ -2,6 +2,7 @@ import type { Db } from '../db/connection'
 import type { Edition } from '../domain/edition'
 import type { TenantId } from '../domain/ids'
 import type { JobOrigin } from '../domain/jobs'
+import type { ThreadRunner } from './thread-runner'
 
 export type Env = {
   DATABASE_URL: string
@@ -47,6 +48,8 @@ export type Env = {
   SHOWCASE_PROJECT_ID?: string
   // Hosted-agent jobs (jobs/workflow.ts). One instance per jobs row.
   JOBS: Workflow<{ jobId: string; tenantId: string }>
+  // One Durable Object per chat thread, running its turns (api/thread-runner.ts).
+  THREADS: DurableObjectNamespace<ThreadRunner>
 }
 
 export type Variables = {

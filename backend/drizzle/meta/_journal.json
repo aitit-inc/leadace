@@ -694,6 +694,20 @@
       "when": 1789431501723,
       "tag": "0098_delete_tenant_with_account",
       "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1789488215939,
+      "tag": "0099_groovy_kid_colt",
+      "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1789491099540,
+      "tag": "0100_cold_arclight",
+      "breakpoints": true
     }
   ]
 }

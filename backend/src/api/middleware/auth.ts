@@ -8,14 +8,24 @@ import { logFunnel } from '../../services/funnel'
 import type { Env, Variables } from '../types'
 import { INTERNAL_DISPATCH_HEADER, INTERNAL_ORIGIN_HEADER, internalDispatchToken } from '../internal-dispatch'
 
+function bearerToken(header: string | undefined): string | null {
+  return header?.startsWith('Bearer ') ? header.slice(7) : null
+}
+
+// A browser cannot put a header on a WebSocket, so the chat's live feed offers
+// the token as a subprotocol, after `leadace`.
+function socketToken(header: string | undefined): string | null {
+  const [name, token] = (header ?? '').split(',').map((p) => p.trim())
+  return name === 'leadace' && token ? token : null
+}
+
 export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: Variables }>(
   async (c, next) => {
-    const authHeader = c.req.header('Authorization')
-    if (!authHeader?.startsWith('Bearer ')) {
+    const token = bearerToken(c.req.header('Authorization')) ?? socketToken(c.req.header('Sec-WebSocket-Protocol'))
+    if (!token) {
       return c.json({ error: 'Unauthorized' }, 401)
     }
 
-    const token = authHeader.slice(7)
     const verified = await verifyJwt(token, c.env.SUPABASE_JWT_SECRET, c.env.SUPABASE_URL)
 
     if (!verified) {

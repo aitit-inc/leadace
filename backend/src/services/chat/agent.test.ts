@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { termsChanged, toContents } from './agent'
+import { inReadingOrder, termsChanged, toContents } from './agent'
 import type { MessageView } from './threads'
 
 let nextId = 1
-const msg = (content: MessageView['content']): MessageView => ({ id: nextId++, role: content.role, content, createdAt: new Date(0) })
+const msg = (content: MessageView['content'], readAfter: number | null = 0): MessageView => ({ id: nextId++, role: content.role, content, readAfter, createdAt: new Date(0) })
 const call = (id: string) => ({ functionCall: { id, name: 'list_projects', args: {} } })
 const answer = (id: string) => ({ functionResponse: { id, name: 'list_projects', response: { result: 'ok' } } })
 
@@ -48,6 +48,37 @@ describe('toContents', () => {
     const contents = toContents([msg({ role: 'model', parts: [call('c1')] })])
     expect(contents).toHaveLength(2)
     expect(contents[1]?.parts?.[0]?.functionResponse?.id).toBe('c1')
+  })
+})
+
+describe('inReadingOrder', () => {
+  const person = (text: string, readAfter: number | null = 0) => msg({ role: 'user', parts: [{ text }] }, readAfter)
+  const reply = (text: string) => msg({ role: 'model', parts: [{ text }] })
+
+  it('puts a message the agent has not read after the answer it arrived during, so the model answers it', () => {
+    const first = person('list the documents')
+    const second = person('and the drafts?', null)
+    const firstReply = reply('Here they are.')
+    const ordered = inReadingOrder([first, second, firstReply])
+    expect(ordered).toEqual([first, firstReply, second])
+    expect(toContents(ordered).at(-1)?.parts).toEqual([{ text: 'and the drafts?' }])
+  })
+
+  it('keeps that message where it was read in every later turn', () => {
+    const first = person('list the documents')
+    const second = person('and the drafts?')
+    const firstReply = reply('Here they are.')
+    const asked = msg({ role: 'model', parts: [call('c2')] })
+    const answered = msg({ role: 'tool', parts: [answer('c2')] })
+    const secondReply = reply('Two drafts are waiting.')
+    second.readAfter = firstReply.id
+    const contents = toContents(inReadingOrder([first, second, firstReply, asked, answered, secondReply]))
+    expect(contents.map((c) => c.role)).toEqual(['user', 'model', 'user', 'model', 'user', 'model'])
+  })
+
+  it('leaves rows read where they landed in place', () => {
+    const messages = [person('go'), msg({ role: 'job', jobId: 'j1', kind: 'draft', status: 'succeeded', summary: 'done' }), reply('ok')]
+    expect(inReadingOrder(messages)).toEqual(messages)
   })
 })
 

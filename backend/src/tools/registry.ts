@@ -2111,7 +2111,7 @@ export function buildToolRegistry(): ToolDef[] {
       case 'decision':
         return `${at} decided: ${l.text}`
       case 'prospect':
-        return `${at} ${l.name} — ${l.outcome}${'subject' in l ? `: "${l.subject}"` : 'reason' in l ? `: ${l.reason}` : ''}`
+        return `${at} ${l.name} — ${l.outcome}${'subject' in l ? `: "${l.subject}"` : 'reason' in l ? `: ${l.reason}` : 'prospectId' in l ? ` (prospect ${l.prospectId})` : ''}`
     }
   }
 
@@ -2146,7 +2146,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_job',
-    'Status of one job: kind, status (queued / running / succeeded / failed / cancelled), current step and progress while running, the result summary when succeeded, the error when failed — then its log, one UTC-timed line per stage finished, decision taken, and prospect sent, drafted, skipped, or failed on (with the subject or the reason).',
+    'Status of one job: kind, status (queued / running / succeeded / failed / cancelled), current step and progress while running, the result summary when succeeded, the error when failed — then its log, one UTC-timed line per stage finished, decision taken, and prospect registered, sent, drafted, skipped, or failed on (with the prospect id, the subject, or the reason).',
     { id: z.string().min(1).describe('Job id from start_job or list_jobs.') },
     async ({ id }, ctx) => {
       const { ok, data } = await ctx.callApi('GET', `/jobs/${encodeURIComponent(id)}`, null)

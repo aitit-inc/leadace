@@ -113,18 +113,21 @@ export async function enrichStage(
   namePrefix = 'enrich',
 ): Promise<Extract<JobResult, { kind: 'enrich' }>> {
   const { tenantId, projectId }: Ids = ctx.job
-  const totals = { registered: 0, skipped: 0, withEmail: 0, skippedDetails: [] as Array<{ name: string; reason: string }> }
+  const totals = { registered: 0, skipped: 0, withEmail: 0 }
   for (let i = 0; i < candidates.length; i += ENRICH_CHUNK) {
     const chunk = candidates.slice(i, i + ENRICH_CHUNK)
-    const r = await ctx.step.do(`${namePrefix}:${i}`, STEP_RETRY, () => llmScoped(ctx, async () => {
+    const stepName = `${namePrefix}:${i}`
+    const { log, withEmail } = await ctx.step.do(stepName, STEP_RETRY, () => llmScoped(ctx, async () => {
       const db = createDb(ctx.env.DATABASE_URL)
       const progress: ProgressFn = (step, done) => progressWriter(ctx, db, 'enrich')(step, i + done, candidates.length)
-      return unwrap(await runEnrich(db, tenantId, ctx.env, projectId, chunk, progress))
+      const enriched = unwrap(await runEnrich(db, tenantId, ctx.env, projectId, chunk, progress))
+      await writeLog(ctx, db, stepName, enriched.log)
+      return enriched
     }))
-    totals.registered += r.registered
-    totals.skipped += r.skipped
-    totals.withEmail += r.withEmail
-    totals.skippedDetails.push(...r.skippedDetails)
+    const registered = log.filter((l) => l.kind === 'prospect' && l.outcome === 'registered').length
+    totals.registered += registered
+    totals.skipped += log.length - registered
+    totals.withEmail += withEmail
   }
   return {
     kind: 'enrich',

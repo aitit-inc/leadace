@@ -22,6 +22,7 @@ export type Job = {
 };
 
 type ProspectOutcome =
+  | { outcome: 'registered'; prospectId: number }
   | { outcome: 'sent' | 'drafted'; subject: string }
   | { outcome: 'skipped' | 'failed'; reason: string }
   | { outcome: 'needs_hands' };
@@ -44,6 +45,7 @@ export const JOB_ORIGIN_LABELS: Record<JobOrigin, string> = {
 };
 
 export const PROSPECT_OUTCOME_LABELS: Record<ProspectOutcome['outcome'], string> = {
+  registered: 'registered',
   sent: 'sent',
   drafted: 'drafted for review',
   skipped: 'skipped',

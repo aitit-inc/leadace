@@ -3,14 +3,12 @@
 // Each stage is the same code a standalone job runs; this file only decides
 // the order and the counts.
 import { NonRetryableError } from 'cloudflare:workflows'
-import { and, eq } from 'drizzle-orm'
-import { tenantMembers } from '../db/schema'
 import type { JobKind, JobParamsOf, JobResult } from '../domain/jobs'
 import { shouldBuildFirst, type ReachableSnapshot } from '../domain/cycle-plan'
 import { runLeverTick } from '../services/levers'
 import { getActiveStrategySlugs } from '../services/discovery-strategies'
 import { discoveryPausedReason, getRemainingProspectQuota } from '../services/plan-limits'
-import { assertTenantComplianceReady } from '../services/tenants'
+import { assertTenantComplianceReady, getTenantOwnerUserId } from '../services/tenants'
 import { notifyUser } from '../services/notifications'
 import { editionOf, googleCtxOf } from '../services/pipeline/context'
 import { CYCLE_MIN_CANDIDATES_PER_SEARCH } from '../services/pipeline/discover'
@@ -111,11 +109,7 @@ export async function runDailyCycle(ctx: StageCtx, params: JobParamsOf<'daily_cy
   await stage('journal', journal.summary)
 
   const notified = await ctx.step.do('notify', { retries: { limit: 1, delay: '10 seconds' } }, () => tenantTx(ctx, async (db) => {
-    const [owner] = await db
-      .select({ userId: tenantMembers.userId })
-      .from(tenantMembers)
-      .where(and(eq(tenantMembers.tenantId, tenantId), eq(tenantMembers.role, 'owner')))
-      .limit(1)
+    const owner = await getTenantOwnerUserId(db, tenantId)
     if (!owner) return 'no owner to notify'
     const body = [
       `Daily Cycle Report — ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`,
@@ -125,7 +119,7 @@ export async function runDailyCycle(ctx: StageCtx, params: JobParamsOf<'daily_cy
       '',
       `Decisions: ${decisions.length > 0 ? decisions.join('; ') : 'none'}`,
     ].join('\n')
-    const r = await notifyUser(db, tenantId, owner.userId, googleCtxOf(ctx.env), { subject: `daily-cycle completed: ${projectId}`, body })
+    const r = await notifyUser(db, tenantId, owner, googleCtxOf(ctx.env), { subject: `daily-cycle completed: ${projectId}`, body })
     return r.ok ? `notified ${r.value.to}` : `notification failed: ${r.error}`
   }))
   await decide(notified)

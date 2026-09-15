@@ -103,7 +103,7 @@ export type JobProgress = {
 // reads; the structured fields let the UI and the daily cycle branch.
 export type JobResult =
   | { kind: 'discover'; summary: string; found: number; fresh: number; registered: number; skipped: number; planCompliance: Array<{ slug: string; planned: number; found: number }> }
-  | { kind: 'enrich'; summary: string; registered: number; skipped: number; withEmail: number; skippedDetails: Array<{ name: string; reason: string }> }
+  | { kind: 'enrich'; summary: string; registered: number; skipped: number; withEmail: number }
   | { kind: 'draft'; summary: string; drafted: number; sent: number; skipped: number; failed: number; needsHands: number; variantIds: string[] }
   | { kind: 'send'; summary: string; sent: number; failed: number }
   | { kind: 'evaluate'; summary: string; report: string; wrote: string[] }
@@ -111,6 +111,7 @@ export type JobResult =
   | { kind: 'daily_cycle'; summary: string }
 
 type ProspectOutcome =
+  | { outcome: 'registered'; prospectId: number }
   | { outcome: 'sent' | 'drafted'; subject: string }
   | { outcome: 'skipped' | 'failed'; reason: string }
   | { outcome: 'needs_hands' }

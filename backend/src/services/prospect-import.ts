@@ -450,9 +450,7 @@ function unknownIndustryDetail(industry: string | undefined): string | null {
 }
 
 export type BatchRegisterResult = {
-  inserted: number
-  skipped: number
-  insertedIds: number[]
+  registered: Array<{ id: number; name: string }>
   skippedDetails: BatchSkipped[]
   // Emails for the caller to resolve via the background deliverability stamp.
   emailsToVerify: string[]
@@ -543,12 +541,12 @@ export async function batchRegister(
 
   const dedup = await buildDedupIndex(db, tenantId, projectId, inputs)
 
-  const inserted: number[] = []
+  const registered: BatchRegisterResult['registered'] = []
   const skipped: BatchSkipped[] = []
   const emailsToVerify: string[] = []
 
   for (const input of inputs) {
-    if (prospectBudget !== null && inserted.length >= prospectBudget) {
+    if (prospectBudget !== null && registered.length >= prospectBudget) {
       skipped.push({ name: input.name, reason: 'plan_limit' })
       continue
     }
@@ -620,17 +618,11 @@ export async function batchRegister(
     }
 
     claimRow(dedup, projectId, input)
-    inserted.push(newProspect.id)
+    registered.push({ id: newProspect.id, name: input.name })
     if (input.email && !input.emailNoSolicitation) emailsToVerify.push(input.email)
   }
 
-  return ok({
-    inserted: inserted.length,
-    skipped: skipped.length,
-    insertedIds: inserted,
-    skippedDetails: skipped,
-    emailsToVerify,
-  })
+  return ok({ registered, skippedDetails: skipped, emailsToVerify })
 }
 
 export type DedupDecisionKind = 'fresh' | 'skip'
