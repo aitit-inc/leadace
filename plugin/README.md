@@ -3,11 +3,14 @@
 Autonomous lead generation plugin for Claude Cowork and Claude Code. Builds prospect lists, runs
 outbound outreach, and iterates on strategy — all hands-free.
 
-> **Two ways to run it.** Use the hosted service at [app.leadace.ai](https://app.leadace.ai)
-> (Free tier — 30 prospects, paid plans from $49/mo), or self-host the
-> backend on your own Cloudflare + Supabase — see
-> [docs/self-host.md](../docs/self-host.md). The plugin is the same in either
-> case; self-hosters point `.mcp.json` at their own MCP server.
+> **The plugin is optional.** Email runs entirely in the web app at
+> [app.leadace.ai](https://app.leadace.ai) (Free tier — 30 prospects, paid
+> plans from $49/mo): sign in with Google and paste your website. The plugin
+> runs the same work from a Claude session and adds a browser, so it sends the
+> contact-form messages and SNS DMs that the web app leaves for you to send by
+> hand. Both work on the same projects. To self-host the backend on your own
+> Cloudflare + Supabase, see [docs/self-host.md](../docs/self-host.md) and
+> point `.mcp.json` at your own MCP server.
 
 ## Prerequisites
 
@@ -106,15 +109,15 @@ https://app.leadace.ai.
 ## License
 
 Modified Apache 2.0 (no multi-tenant SaaS, frontend logo preserved), by
-SurpassOne Inc. See [LICENSE](../../LICENSE).
+SurpassOne Inc. See [LICENSE](../LICENSE).
 
 - **Hosted (cloud) free tier:** 30 prospects (lifetime), 1 project,
   1 mailbox, 500 stored prospects.
 - **Paid plans** start at $49/month for 100 prospects a month. A prospect
-  counts once, when its first email goes out; follow-ups are free. Manage
+  counts once, when the first message to it goes out; follow-ups are free. Manage
   your subscription from the web app.
 - **Self-host:** unlimited tier by default. See
-  [docs/self-host.md](../../docs/self-host.md).
+  [docs/self-host.md](../docs/self-host.md).
 
 ## Development
 

@@ -58,6 +58,8 @@ default.
 
 For backend changes that break the running plugin (drop / rename DB column, remove an MCP tool, change a required argument), push order does not save users still on the old plugin who haven't run `/plugin update`. The fix is backend backwards-compatibility for one release cycle, then removing the old shape in a later release.
 
+The running Worker needs the same care: `deploy.yml` applies migrations before it deploys the Workers, so the old Worker runs against the new schema for about 30 seconds. Dropping or renaming a column it still reads makes it return 500 in that window (0095 did). Split it across two releases: first the code that stops using the column, then the migration that drops it.
+
 ## OSS public mirror
 
 A `main` push also triggers `sync-public.yml`, which mirrors the OSS-publishable tree to the public repo (`aitit-inc/leadace`) — fully automatic, nothing to do. Two things to keep in mind: it's a **one-way** mirror (the sync overwrites public `main` wholesale, so never edit public directly — external PRs get incorporated into this private repo first, then re-synced), and what gets published is the allowlist in `.github/sync/build-public-tree.sh` (a new file is public only if added there). When the user says they're about to release, remind them of this in one line.

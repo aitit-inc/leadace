@@ -1,9 +1,9 @@
 # Self-Host LeadAce
 
 LeadAce's backend is open source under a [modified Apache 2.0
-license](../LICENSE) and runs on free tiers of Cloudflare and Supabase.
-Self-hosted installs run on the **unlimited** edition by default — no
-Stripe, no plan caps. Two paths:
+license](../LICENSE) and runs on Cloudflare Workers and Supabase. Production
+needs the Workers Paid plan. Self-hosted installs run on the **unlimited**
+edition by default — no Stripe, no plan caps. Two paths:
 
 | Goal | Section |
 |---|---|
@@ -36,7 +36,8 @@ leave both `LEADACE_EDITION` (backend) and `PUBLIC_LEADACE_EDITION`
 Prerequisites: Docker Desktop (or Podman), Node.js 22+, Supabase CLI
 (`brew install supabase/tap/supabase` on macOS, see
 [Supabase CLI install docs](https://supabase.com/docs/guides/local-development/cli/getting-started)
-for other platforms), Claude Code.
+for other platforms). Claude Code only if you run the plugin against the
+local stack.
 
 The frontend `/login` page is Google-only — there is no
 email/password fallback — so signing in to your local stack requires

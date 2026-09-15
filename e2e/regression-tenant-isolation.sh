@@ -13,7 +13,8 @@
 # can't SELECT the RLS-hidden row); (3) the raw WITH CHECK backstop rejects an
 # INSERT with a foreign tenant_id at the DB layer; (4) pooled-connection reset —
 # sequential A-then-B on the same worker each see only their own tenant; (5)
-# account deletion of B removes ONLY B's tenant, leaving A fully intact.
+# account deletion of B removes B's auth.users row and ONLY B's tenant, leaving
+# A fully intact; (6) the same email then signs up again with exactly one tenant.
 #
 # Provisions tenant B by minting a real auth user via the GoTrue Admin API
 # (service-role key from backend/.dev.vars). Curl-only, cleans up (incl. user B).
@@ -106,6 +107,7 @@ TENANT_A="$(psql_local "SELECT tenant_id FROM tenant_members WHERE user_id = '$U
 say "tenant_a=$TENANT_A"
 
 USER_B_ID=""
+USER_B_AGAIN_ID=""
 restore_and_exit() {
   local rc=$?
   rm -f "${API_OUT:-}" 2>/dev/null || true
@@ -118,21 +120,19 @@ restore_and_exit() {
   [[ -n "${TOKEN_B:-}" && -n "${PROJECT_B_ID:-}" ]] && api "$TOKEN_B" DELETE "/api/projects/$PROJECT_B_ID" > /dev/null 2>&1 || true
   psql_local "DELETE FROM prospects WHERE email LIKE '%$RUN_TAG%';" > /dev/null 2>&1 || true
   psql_local "DELETE FROM organizations WHERE domain LIKE '$RUN_TAG-%';" > /dev/null 2>&1 || true
-  # Drop B's tenant before the GoTrue user: tenant_members.user_id has no FK to
-  # auth.users, so deleting the auth user alone leaves an orphan tenant behind.
-  # Both are no-ops when the account-deletion leg already ran (the auth.users
-  # row survives it on self-host, so the Admin delete is still required).
-  if [[ -n "$USER_B_ID" ]]; then
-    psql_local "DELETE FROM tenants WHERE id IN (SELECT tenant_id FROM tenant_members WHERE user_id = '$USER_B_ID');" > /dev/null 2>&1 || true
-    curl -sS -X DELETE "$SUPA_URL/auth/v1/admin/users/$USER_B_ID" -H "Authorization: Bearer $SVC" -H "apikey: $SVC" > /dev/null 2>&1 || true
-    say "deleted tenant + GoTrue user B"
-  fi
+  # Deleting a GoTrue user deletes its tenant too (the auth.users AFTER DELETE
+  # trigger); a no-op for the first user B once the account-deletion leg ran.
+  for uid in "$USER_B_ID" "$USER_B_AGAIN_ID"; do
+    [[ -n "$uid" ]] || continue
+    curl -sS -X DELETE "$SUPA_URL/auth/v1/admin/users/$uid" -H "Authorization: Bearer $SVC" -H "apikey: $SVC" > /dev/null 2>&1 || true
+    say "deleted GoTrue user $uid (+ its tenant)"
+  done
   say "dropped run-tagged rows ($RUN_TAG)"
   exit "$rc"
 }
 trap restore_and_exit EXIT
 
-step "provision tenant B (GoTrue admin user + mint JWT + auto-provision)"
+step "provision tenant B (GoTrue admin user + mint JWT)"
 CREATE_USER="$(curl -sS -X POST "$SUPA_URL/auth/v1/admin/users" \
   -H "Authorization: Bearer $SVC" -H "apikey: $SVC" -H 'Content-Type: application/json' \
   -d "$(jq -nc --arg e "$EMAIL_B" --arg p "e2e-pw-$TS" '{email:$e, email_confirm:true, password:$p}')")"
@@ -140,14 +140,15 @@ USER_B_ID="$(echo "$CREATE_USER" | jq -r '.id // ""')"
 [[ -n "$USER_B_ID" && "$USER_B_ID" != "null" ]] || { echo "failed to create user B: $CREATE_USER" >&2; exit 1; }
 say "user_b_id=$USER_B_ID ($EMAIL_B)"
 
-TOKEN_B="$("$REPO_ROOT/e2e/mint-jwt.sh" --email "$EMAIL_B")"
-[[ -n "$TOKEN_B" ]] || { echo "failed to mint JWT for tenant B" >&2; exit 1; }
-# First authenticated hit auto-provisions B's tenant/tenant_members rows.
-api "$TOKEN_B" GET /api/projects > /dev/null
+assert_eq "B has exactly one tenant_members row before any API call" \
+  "$(psql_local "SELECT count(*)::int FROM tenant_members WHERE user_id = '$USER_B_ID';")" "1"
 TENANT_B="$(psql_local "SELECT tenant_id FROM tenant_members WHERE user_id = '$USER_B_ID' LIMIT 1;")"
-[[ -n "$TENANT_B" ]] || { echo "tenant B was not auto-provisioned" >&2; exit 1; }
+[[ -n "$TENANT_B" ]] || { echo "tenant B was not created with the account" >&2; exit 1; }
 say "tenant_b=$TENANT_B"
 assert_eq "distinct tenants provisioned" "$(psql_local "SELECT ('$TENANT_A' <> '$TENANT_B');")" "t"
+
+TOKEN_B="$("$REPO_ROOT/e2e/mint-jwt.sh" --email "$EMAIL_B")"
+[[ -n "$TOKEN_B" ]] || { echo "failed to mint JWT for tenant B" >&2; exit 1; }
 
 step "seed each tenant's private project + prospect"
 PROJECT_A_ID="$(api "$TOKEN_A" POST /api/projects "$(jq -nc --arg n "$RUN_TAG-A project" '{name:$n}')" | jq -r '.id // ""')"
@@ -214,11 +215,21 @@ step "account-deletion blast radius (self-host edition): deleting B leaves A int
 # Deletion requires the mandatory survey body (else 400).
 assert_eq "DELETE /api/me/account as B → 200" \
   "$(api_status "$TOKEN_B" DELETE /api/me/account '{"reason":"no_longer_needed"}')" "200"
+assert_eq "auth.users row B removed" "$(psql_local "SELECT count(*)::int FROM auth.users WHERE id='$USER_B_ID';")" "0"
 assert_eq "tenant B removed" "$(psql_local "SELECT count(*)::int FROM tenants WHERE id='$TENANT_B';")" "0"
 assert_eq "project B removed (cascade)" "$(psql_local "SELECT count(*)::int FROM projects WHERE id='$PROJECT_B_ID';")" "0"
 assert_eq "tenant A UNTOUCHED" "$(psql_local "SELECT count(*)::int FROM tenants WHERE id='$TENANT_A';")" "1"
 assert_eq "project A UNTOUCHED" "$(psql_local "SELECT count(*)::int FROM projects WHERE id='$PROJECT_A_ID';")" "1"
 assert_eq "prospect A UNTOUCHED" "$(psql_local "SELECT count(*)::int FROM prospects WHERE id=$PROSPECT_A_ID;")" "1"
+
+step "re-signup: the same email gets exactly one new tenant (no lockout)"
+CREATE_AGAIN="$(curl -sS -X POST "$SUPA_URL/auth/v1/admin/users" \
+  -H "Authorization: Bearer $SVC" -H "apikey: $SVC" -H 'Content-Type: application/json' \
+  -d "$(jq -nc --arg e "$EMAIL_B" --arg p "e2e-pw-$TS" '{email:$e, email_confirm:true, password:$p}')")"
+USER_B_AGAIN_ID="$(echo "$CREATE_AGAIN" | jq -r '.id // ""')"
+[[ -n "$USER_B_AGAIN_ID" && "$USER_B_AGAIN_ID" != "null" ]] || { echo "failed to re-create user B: $CREATE_AGAIN" >&2; exit 1; }
+assert_eq "re-created B has exactly one tenant" \
+  "$(psql_local "SELECT count(*)::int FROM tenant_members WHERE user_id = '$USER_B_AGAIN_ID';")" "1"
 
 step "summary"
 echo "  PASS=$PASS  FAIL=$FAIL" >&2

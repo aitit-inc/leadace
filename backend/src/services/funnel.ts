@@ -5,7 +5,6 @@ import type { ProjectId, SendingIdentityId, TenantId } from '../domain/ids'
 // `message` keeps free-text search working. Fields are tenant/entity ids
 // only — no user ids, emails, or free text.
 export type FunnelEvent =
-  | { event: 'tenant_created'; tenantId: TenantId; caller: 'browser' | 'mcp' }
   | { event: 'gmail_connected'; tenantId: TenantId; signupCta: boolean }
   | { event: 'gmail_scope_rejected'; tenantId: TenantId }
   | { event: 'project_created'; tenantId: TenantId; projectId: ProjectId }

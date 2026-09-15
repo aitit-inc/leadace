@@ -877,9 +877,8 @@ export async function sendAndRecord(
   })
 
   if (!result.ok && result.httpStatus === 412) {
-    // Configuration error (Gmail not connected / token revoked). Drop the
-    // pre_send reservation so the user's quota isn't burned by a misconfig
-    // they can fix and retry.
+    // A mailbox problem the user can fix and retry: drop the pre_send
+    // reservation so it doesn't burn their quota.
     await db.delete(outreachLogs).where(eq(outreachLogs.id, log.id))
     return err('PRECONDITION_FAILED', result.error, result.detail)
   }

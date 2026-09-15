@@ -59,8 +59,8 @@ export async function loadTenantSettings(
     .from(tenants)
     .where(eq(tenants.id, tenantId))
     .limit(1)
-  // Auto-provisioned by auth middleware on first request, so a missing row
-  // is a genuine system error.
+  // Created with the account (auth.users trigger), so a missing row is a
+  // genuine system error.
   if (!row) return err('INTERNAL_ERROR', 'Tenant row missing')
   return ok(row)
 }

@@ -1256,20 +1256,31 @@ export async function updateProspect(
     return ok({ updated: true, prospectId })
   }
 
-  try {
-    await db
-      .update(prospects)
-      .set({ ...updateSet, updatedAt: now })
-      .where(eq(prospects.id, prospectId))
-  } catch (e) {
-    if (e instanceof Error && (/duplicate key|unique constraint|23505/i.test(e.message))) {
+  // Checked up front, not by catching 23505: a failed statement aborts the
+  // request transaction even when caught.
+  const channelMatch = or(
+    updateSet.email ? eq(prospects.email, updateSet.email) : undefined,
+    updateSet.contactFormUrl ? eq(prospects.contactFormUrl, updateSet.contactFormUrl) : undefined,
+    updateSet.platformUrl ? eq(prospects.platformUrl, updateSet.platformUrl) : undefined,
+  )
+  if (channelMatch) {
+    const [taken] = await db
+      .select({ id: prospects.id })
+      .from(prospects)
+      .where(and(eq(prospects.tenantId, tenantId), ne(prospects.id, prospectId), channelMatch))
+      .limit(1)
+    if (taken) {
       return err(
         'CONFLICT',
         'Email, contact form URL, or platform URL is already used by another prospect in this workspace',
       )
     }
-    throw e
   }
+
+  await db
+    .update(prospects)
+    .set({ ...updateSet, updatedAt: now })
+    .where(eq(prospects.id, prospectId))
 
   const emailToVerify = emailChanged && !patch.emailNoSolicitation && typeof patch.email === 'string' ? patch.email : undefined
   return ok({ updated: true, prospectId, emailToVerify })

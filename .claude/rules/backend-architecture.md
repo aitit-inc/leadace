@@ -66,6 +66,10 @@ Enforced by review (no lint rule yet).
   RLS) and puts `tenantId` on context. RLS middleware wraps the rest of the
   request in a transaction with `SET LOCAL ROLE app_rls` + tenant pinned via
   `set_config`.
+- `auth.users` triggers create and delete the tenant with the account
+  (`create_tenant_for_new_user` / `delete_tenant_of_deleted_user`). The
+  middleware never creates one; account deletion deletes the `auth.users`
+  row, not the tenant.
 - Route handlers always use `c.get('db')` (the RLS-wrapped transaction). Raw
   `createDb()` is only for callers with no logged-in user where bypassing RLS
   is intentional: auth middleware, Stripe webhook, public token-authenticated

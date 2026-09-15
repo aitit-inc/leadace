@@ -78,22 +78,25 @@ export async function createInquiryToken(
     return ok({ shortId: branded, inquiryUrl: buildInquiryUrl(appUrl, branded) })
   }
 
-  // PK collision is astronomically rare at 64^8; the retry loop only exists
-  // to avoid surfacing the theoretical race as a 500.
+  // A short_id collision is astronomically rare at 64^8; the retry loop only
+  // exists to avoid surfacing the theoretical race as a 500. ON CONFLICT DO
+  // NOTHING rather than a caught 23505: a failed statement aborts the request
+  // transaction even when caught. No target: both unique constraints on this
+  // table key on short_id, and a concurrent same-tenant collision can trip
+  // either one first.
   for (let attempt = 0; attempt < MAX_INSERT_RETRIES; attempt++) {
     const shortId = asShortId(generateInquiryShortId())
-    try {
-      await db.insert(inquiryTokens).values({
+    const [inserted] = await db
+      .insert(inquiryTokens)
+      .values({
         shortId,
         tenantId,
         prospectId: log.prospectId,
         outreachLogId: log.id,
       })
-      return ok({ shortId, inquiryUrl: buildInquiryUrl(appUrl, shortId) })
-    } catch (e) {
-      if (isUniqueViolation(e) && attempt < MAX_INSERT_RETRIES - 1) continue
-      throw e
-    }
+      .onConflictDoNothing()
+      .returning({ shortId: inquiryTokens.shortId })
+    if (inserted) return ok({ shortId, inquiryUrl: buildInquiryUrl(appUrl, shortId) })
   }
 
   return err('INTERNAL_ERROR', 'Failed to allocate inquiry short_id')
@@ -111,15 +114,6 @@ export async function allocateInquiryUrl(
   if (!enabled) return null
   const result = await createInquiryToken(db, tenantId, appUrl, { outreachLogId })
   return result.ok ? result.value.inquiryUrl : null
-}
-
-function isUniqueViolation(e: unknown): boolean {
-  return (
-    typeof e === 'object' &&
-    e !== null &&
-    'code' in e &&
-    (e as { code: unknown }).code === '23505'
-  )
 }
 
 // Conflates "no such token" and "revoked" into a single null return — the

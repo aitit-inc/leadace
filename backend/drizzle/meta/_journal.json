@@ -680,6 +680,20 @@
       "when": 1789387169579,
       "tag": "0096_worried_gamora",
       "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "7",
+      "when": 1789429505976,
+      "tag": "0097_create_tenant_with_account",
+      "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1789431501723,
+      "tag": "0098_delete_tenant_with_account",
+      "breakpoints": true
     }
   ]
 }

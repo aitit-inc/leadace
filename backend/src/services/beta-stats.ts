@@ -59,9 +59,8 @@ type SnapshotRow = {
 }
 
 export async function collectBetaStats(db: Db, now: Date): Promise<BetaStats> {
-  // One round-trip for all counts. tenants stands in for signups: a signed-in
-  // user triggers tenant auto-provisioning on their first API call, so an
-  // auth.users row without a tenant is effectively unreachable. The inquiry /
+  // One round-trip for all counts. tenants stands in for signups: the
+  // auth.users trigger creates a tenant with every account. The inquiry /
   // reply breakdowns are FILTER aggregates inside a single per-table scan
   // (cross-joined as 1×1 rows), so adding resolution costs no extra scans on
   // the growing inquiry_sessions / responses tables.

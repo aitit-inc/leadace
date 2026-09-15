@@ -1107,7 +1107,7 @@ export function buildToolRegistry(): ToolDef[] {
         revokedSince?: string | null
       }
       const text = !result.connected
-        ? 'Gmail not connected. Have the user sign in at https://app.leadace.ai (Settings → Connect Google).'
+        ? 'Gmail not connected. Have the user connect it at https://app.leadace.ai (Account settings).'
         : result.revokedSince
           ? `Gmail connected as ${result.email}, but Google revoked the stored access on ${result.revokedSince} — sending and reply collection fail until the user reconnects at https://app.leadace.ai (Account settings).`
           : `Gmail connected as ${result.email} (granted: ${result.grantedAt}, last refreshed: ${result.updatedAt}).`

@@ -33,16 +33,3 @@ export function requireStripeEnv(env: {
   }
   return ok({ secretKey, webhookSecret })
 }
-
-// Callers must guard on edition first (parallel to requireStripeEnv): cloud
-// treats this key as required; self-host installs skip the admin call and let
-// the operator delete the auth.users row against their own Supabase.
-export function requireSupabaseAdminEnv(env: {
-  SUPABASE_SERVICE_ROLE_KEY?: string
-}): ServiceResult<{ serviceRoleKey: string }> {
-  const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY
-  if (!serviceRoleKey) {
-    return err('INTERNAL_ERROR', 'Supabase Admin is not configured on this Worker')
-  }
-  return ok({ serviceRoleKey })
-}

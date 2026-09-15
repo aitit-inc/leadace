@@ -8,6 +8,8 @@
 # {email:null} patch is fatal for an email-only prospect but harmless when a
 # contactFormUrl is also stored. A regression here leaves a prospect permanently
 # unreachable. NOT_FOUND (404) precedes the channel check, so a bogus id is 404.
+# An email / form / platform URL another prospect in the tenant already uses is
+# CONFLICT (409), detected before the UPDATE so the request transaction survives.
 #
 # Runs against the local stack (localhost:8787 API + 54322 Postgres). PATCH
 # /prospects has no compliance/quota/plan gate, so this is fully self-host
@@ -170,6 +172,16 @@ assert_eq "notes-only patch → 200" "$CODE" "200"
 step "T6: NOT_FOUND precedes the channel check — bogus id → 404 (not 422)"
 CODE="$(api_status PATCH "/api/prospects/999999999" '{"email":null}')"
 assert_eq "patch non-existent prospect → 404" "$CODE" "404"
+
+step "T7: email another prospect in the tenant already uses → 409 (UPDATE never ran)"
+CODE="$(api_status PATCH "/api/prospects/$P_SNS" "$(jq -nc --arg e "contact@$SNS_DOM" '{email:$e}')")"
+assert_eq "set a free email → 200" "$CODE" "200"
+CODE="$(api_status PATCH "/api/prospects/$P_MULTI" "$(jq -nc --arg e "contact@$SNS_DOM" '{email:$e}')")"; BODY="$(api_body)"
+assert_eq "taken email → 409" "$CODE" "409"
+assert_eq "error = conflict message" "$(echo "$BODY" | jq -r '.error // ""')" \
+  "Email, contact form URL, or platform URL is already used by another prospect in this workspace"
+assert_eq "DB: email unchanged (still NULL after T4)" \
+  "$(psql_local "SELECT (email IS NULL) FROM prospects WHERE id=$P_MULTI;")" "t"
 
 step "summary"
 echo "  PASS=$PASS  FAIL=$FAIL" >&2

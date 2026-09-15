@@ -2,24 +2,37 @@
 
 ![Status: Public Beta](https://img.shields.io/badge/status-Public_Beta-E8755E) ![License](https://img.shields.io/badge/license-Apache_2.0_modified-6EADB0) [![Listed on mcpservers.org](https://mcpservers.org/badge.svg)](https://mcpservers.org/servers/aitit-inc/leadace)
 
-Autonomous lead generation plugin for Claude Cowork and Claude Code.
-Builds prospect lists, runs outbound outreach, and iterates on strategy — all hands-free.
+Autonomous outbound sales agent in your browser. Builds prospect lists, writes
+and sends one email per company from your own mailbox, and improves its
+strategy from every reply and rejection.
 
 Website: https://leadace.ai
 
-> **Two ways to run it.** Use the hosted service at [app.leadace.ai](https://app.leadace.ai) (Free tier — 30 prospects, paid plans from $49/mo), or [self-host](docs/self-host.md) the backend on your own Cloudflare + Supabase. The plugin is the same in either case — point it at the hosted MCP or your own.
+> **Two ways to run it.** Use the hosted service at [app.leadace.ai](https://app.leadace.ai) (Free tier — 30 prospects, paid plans from $49/mo), or [self-host](docs/self-host.md) the backend on your own Cloudflare + Supabase. The web app and the optional Claude plugin work the same on either.
 
 ## For Users
 
-### Prerequisites
+### Get started
 
-- Claude Cowork (in the Claude Desktop app) or Claude Code, on an Anthropic Pro or Max plan — verified on macOS; by default `/setup-cron` runs the daily cycle as a Cowork scheduled task in Anthropic's cloud
+1. Sign in with Google at [app.leadace.ai](https://app.leadace.ai) (Free tier — no card). LeadAce asks to send from your Gmail and to read your inbox, so it can catch the replies.
+2. Paste your website in the chat. Ace proposes who to target and how to approach them. Change anything, then approve.
+3. Read the first drafts. Nothing is sent until you approve, and what you approve goes out from your own inbox.
+
+Email runs entirely in the web app: research, writing, sending and reply collection run on the server. Schedule the daily cycle from the chat or project settings. Further Google accounts and SMTP mailboxes are added in Account settings.
+
+### Claude plugin (optional)
+
+The plugin, for Claude Cowork or Claude Code, runs the same work from a Claude session and adds a browser: it sends the contact-form messages and SNS DMs that the web app leaves for you to send by hand. It works on the same projects as the web app.
+
+#### Prerequisites
+
+- Claude Cowork (in the Claude Desktop app) or Claude Code, on an Anthropic Pro or Max plan — verified on macOS
 - A LeadAce account at https://app.leadace.ai (Free tier — no card)
 - A connected Gmail account — for sending email (granted when you sign in with Google, or via the "Connect Gmail" banner in the web app)
 - Gmail MCP (claude.ai built-in) — for checking email replies
 - A browser, only for browser channels — contact forms run on Cowork's built-in browser or any browser-automation MCP you configure (e.g. Playwright); SNS DMs and SNS reply checking require Claude in Chrome. A scheduled run reaches the browser only while Claude Desktop is open, with its default browser chosen beforehand
 
-### Installation
+#### Installation
 
 In Claude Desktop: Customize → Plugins → Add from a repository →
 `aitit-inc/leadace` → Install → Connectors → Connect, then Customize →
@@ -45,14 +58,14 @@ To update later:
 /plugin update leadace@leadace
 ```
 
-### Sign in to LeadAce
+#### Sign in to LeadAce
 
 The first time the plugin calls a LeadAce tool, your browser opens for Google
 sign-in (the same Google account as the web app). The token is cached locally
 for subsequent runs. See [plugin/README.md](plugin/README.md) for details and
 troubleshooting.
 
-### Usage
+#### Usage
 
 Most commands take your project name as the first argument (chosen during `/leadace` onboarding); `/leadace` itself takes a free-form question or homepage URL.
 Run them in a Cowork session (the Cowork tab, not Chat — `/daily-cycle` runs sub-agents, which Chat can't start) or in Claude Code.
@@ -73,7 +86,7 @@ Run them in a Cowork session (the Cowork tab, not Chat — `/daily-cycle` runs s
 | `/check-feedback <name>` | Surface PMF signals from rejection feedback (feature gaps, competitor presence) — ad-hoc product reflection |
 | **Automation** | |
 | `/daily-cycle <name> [count]` | One-shot bundle: check-responses → evaluate → outbound + build-list |
-| `/setup-cron <name>` | Schedule `/daily-cycle` daily (Cowork scheduled task, Claude Code Desktop task, or an OS scheduler as a last resort) |
+| `/setup-cron <name>` | Set up a daily run (a server-side schedule that needs no machine, a Cowork scheduled task, a Claude Code Desktop task, or an OS scheduler) |
 | **Maintenance** | |
 | `/delete-project <name>` | Permanently delete a project and all its data |
 
@@ -81,7 +94,7 @@ Projects, prospects, outreach logs, and strategy documents live in the cloud
 — there are no local files to manage. Review everything in the web app at
 https://app.leadace.ai.
 
-### Flow
+#### Flow
 
 ```mermaid
 flowchart TD
@@ -128,7 +141,7 @@ modified Apache 2.0 with two additional conditions:
 
 - **Free tier:** 30 prospects (lifetime), 1 project, 1 mailbox, 500 stored prospects.
 - **Paid plans** start at $49/month for 100 prospects a month. A prospect
-  counts once, when its first email goes out; follow-ups are free. Manage
+  counts once, when the first message to it goes out; follow-ups are free. Manage
   your subscription from the web app.
 
 ### Self-host

@@ -1,12 +1,10 @@
 import { createMiddleware } from 'hono/factory'
 import { and, eq, isNull } from 'drizzle-orm'
 import { MCP_AUDIENCE, verifyJwt } from '../../auth/verify-jwt'
-import { randomFromAlphabet } from '../../auth/random-id'
 import { createDb } from '../../db/connection'
-import { tenantMembers, tenantPlans, tenants } from '../../db/schema'
+import { tenantMembers, tenants } from '../../db/schema'
 import { asTenantId } from '../../domain/ids'
 import { logFunnel } from '../../services/funnel'
-import { lookupAuthUser } from '../../services/supabase-admin'
 import type { Env, Variables } from '../types'
 import { INTERNAL_DISPATCH_HEADER, INTERNAL_ORIGIN_HEADER, internalDispatchToken } from '../internal-dispatch'
 
@@ -48,66 +46,22 @@ export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: Varia
       .where(eq(tenantMembers.userId, userId))
       .limit(1)
 
-    let tenantId: string
-    let mcpStamped: boolean
-    if (membership) {
-      tenantId = membership.tenantId
-      mcpStamped = membership.firstMcpConnectedAt !== null
-    } else {
-      // A still-valid token (MCP-minted, ≤1h; or one refreshed from KV) can
-      // outlive the account: without this the deleted user's plugin would
-      // re-provision an empty tenant on its next call. Fails closed — a
-      // tenant is provisioned once per user, so deferring it during an auth
-      // outage costs a retry, while a ghost tenant would be permanent. Cloud
-      // only (needs the service role key); self-host provisions unconditionally.
-      if (c.env.SUPABASE_SERVICE_ROLE_KEY) {
-        const lookup = await lookupAuthUser(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY, userId)
-        if (lookup === 'deleted') return c.json({ error: 'Account no longer exists' }, 401)
-        if (lookup === 'unavailable') return c.json({ error: 'Auth service unavailable' }, 503)
-      }
-      // Wrapped in a transaction so a UNIQUE(user_id) violation on tenant_members
-      // (race against a concurrent first request) rolls back the tenant/plan rows too.
-      const newTenantId = generateId()
-      const now = new Date()
-      try {
-        await db.transaction(async (tx) => {
-          await tx.insert(tenants).values({ id: newTenantId, name: 'My Workspace', createdAt: now })
-          await tx.insert(tenantPlans).values({ tenantId: newTenantId, plan: 'free', createdAt: now, updatedAt: now })
-          await tx.insert(tenantMembers).values({ tenantId: newTenantId, userId, role: 'owner', createdAt: now })
-        })
-        tenantId = newTenantId
-        // An MCP-first signup is stamped by the shared post-block below, not inline.
-        mcpStamped = false
-        logFunnel({ event: 'tenant_created', tenantId: asTenantId(newTenantId), caller: isMcp ? 'mcp' : 'browser' })
-      } catch (e) {
-        // Only the UNIQUE(user_id) race is recoverable by re-reading the winner's
-        // tenantId; anything else rethrows so it surfaces as a real 500.
-        if (!isUniqueViolation(e)) throw e
-        const [existing] = await db
-          .select({
-            tenantId: tenantMembers.tenantId,
-            firstMcpConnectedAt: tenants.firstMcpConnectedAt,
-          })
-          .from(tenantMembers)
-          .innerJoin(tenants, eq(tenants.id, tenantMembers.tenantId))
-          .where(eq(tenantMembers.userId, userId))
-          .limit(1)
-        if (!existing) throw e
-        tenantId = existing.tenantId
-        mcpStamped = existing.firstMcpConnectedAt !== null
-      }
+    // The tenant is created with the account, so no membership means the account is gone.
+    if (!membership) {
+      return c.json({ error: 'Account no longer exists' }, 401)
     }
 
-    c.set('tenantId', asTenantId(tenantId))
+    const tenantId = asTenantId(membership.tenantId)
+    c.set('tenantId', tenantId)
 
     // IS NULL guard keeps the one-time stamp idempotent under concurrent requests.
-    if (isMcp && !mcpStamped) {
+    if (isMcp && membership.firstMcpConnectedAt === null) {
       const stamped = await db
         .update(tenants)
         .set({ firstMcpConnectedAt: new Date() })
         .where(and(eq(tenants.id, tenantId), isNull(tenants.firstMcpConnectedAt)))
         .returning({ id: tenants.id })
-      if (stamped.length > 0) logFunnel({ event: 'mcp_connected', tenantId: asTenantId(tenantId) })
+      if (stamped.length > 0) logFunnel({ event: 'mcp_connected', tenantId })
     }
 
     // Store raw db for downstream middleware (rlsMiddleware wraps it in a transaction)
@@ -116,15 +70,3 @@ export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: Varia
     await next()
   },
 )
-
-const TENANT_ID_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-
-function generateId(length = 21): string {
-  return randomFromAlphabet(TENANT_ID_ALPHABET, length)
-}
-
-// postgres.js surfaces Postgres errors as objects carrying SQLSTATE in `code`;
-// 23505 = unique_violation.
-function isUniqueViolation(e: unknown): boolean {
-  return typeof e === 'object' && e !== null && (e as { code?: unknown }).code === '23505'
-}

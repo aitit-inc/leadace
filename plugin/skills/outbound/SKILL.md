@@ -261,7 +261,7 @@ The server reads the project's `outboundMode` and picks the mailbox (the first o
 
 Track which outcome each call reported for the step 8 report (sent vs. drafted counts).
 
-On a 502 `Send failed`, the outreach is still logged with `status: "failed"` and the prospect's re-eligibility is deferred by the project's no-response recycle window — do not retry manually. On a 412 `Gmail not connected` / `Gmail token revoked`, abort all email sending for this run and surface the message; the user fixes the mailbox in the web app (reconnect the Google account in Account settings, or list another mailbox in Project settings). On a 422 `Recipient email address cannot receive mail`, nothing was sent and the server has retired the email channel for that prospect — never retry email, and use the fallback attempt on another available channel if there is one.
+On a 502 `Send failed`, the outreach is still logged with `status: "failed"` and the prospect's re-eligibility is deferred by the project's no-response recycle window — do not retry manually. On a 412 `Gmail not connected` / `Gmail token revoked` / `Gmail blocked by Workspace admin`, abort all email sending for this run and surface the message; the user fixes the mailbox (reconnect the Google account in Account settings, ask their Workspace admin to allow LeadAce, or list another mailbox in Project settings). On a 422 `Recipient email address cannot receive mail`, nothing was sent and the server has retired the email channel for that prospect — never retry email, and use the fallback attempt on another available channel if there is one.
 
 **Notes:**
 - The body must be the complete content including the signature

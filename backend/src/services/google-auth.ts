@@ -1,11 +1,10 @@
 import { z } from 'zod'
 import { and, eq } from 'drizzle-orm'
 import {
-  GoogleAuthError,
   applyE2eRedirect,
   buildRfc822,
+  getGmailAccessToken,
   loadSendingIdentitySecret,
-  refreshGoogleAccessToken,
   saveGmailRefreshToken,
   sendGmailMessage,
 } from '../auth/google'
@@ -122,22 +121,22 @@ export async function sendNotificationEmail(
     )
   }
 
-  let accessToken: string
-  try {
-    accessToken = await refreshGoogleAccessToken(
-      identity.secret.refreshToken,
-      ctx.clientId,
-      ctx.clientSecret,
-    )
-  } catch (e) {
-    if (e instanceof GoogleAuthError && (e.status === 400 || e.status === 401)) {
-      return err(
-        'PRECONDITION_FAILED',
-        'Gmail token revoked',
-        'Reconnect your Google account in Settings.',
-      )
-    }
-    throw e
+  const token = await getGmailAccessToken(db, {
+    tenantId,
+    credentialIdentityId: identity.identityId,
+    refreshToken: identity.secret.refreshToken,
+    encryptionKey: ctx.encryptionKey,
+    clientId: ctx.clientId,
+    clientSecret: ctx.clientSecret,
+  })
+  if (!token.ok) {
+    return token.rejection === 'revoked'
+      ? err('PRECONDITION_FAILED', 'Gmail token revoked', 'Reconnect your Google account in Settings.')
+      : err(
+          'PRECONDITION_FAILED',
+          'Gmail blocked by Workspace admin',
+          "The Google Workspace admin for this account blocked LeadAce's access. Ask the admin to allow LeadAce, then try again.",
+        )
   }
 
   const to = input.to ?? identity.fromEmail
@@ -157,6 +156,6 @@ export async function sendNotificationEmail(
     extraHeaders: envelope.extraHeaders,
   })
 
-  const result = await sendGmailMessage({ accessToken, rfc822 })
+  const result = await sendGmailMessage({ accessToken: token.accessToken, rfc822 })
   return ok({ to, messageId: result.id, threadId: result.threadId })
 }

@@ -95,7 +95,8 @@ on, need no Claude session, and run fast:
   (open `pending_review` / in-TTL `pre_send` dropped; aged-out `pre_send`
   re-included) — the daily-cycle double-send guard.
 - `regression-prospect-update-channel.sh` — `PATCH /prospects/:id` post-merge
-  contact-channel invariant (can't strip the last channel → 422).
+  contact-channel invariant (can't strip the last channel → 422) and the
+  taken-channel conflict (another prospect's email → 409).
 - `regression-targeting-attributes.sh` — closed-loop Phase A surface:
   `employee_band` INSERT-only bootstrap + explicit PATCH, row-level industry
   vocabulary enforcement on both write paths, and the three observation axes

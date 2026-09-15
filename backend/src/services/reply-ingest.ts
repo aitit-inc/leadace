@@ -1,7 +1,8 @@
-import { and, eq, gte, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm'
+import { and, eq, gte, inArray, isNotNull, or, sql } from 'drizzle-orm'
 import type { Db } from '../db/connection'
+import { isUniqueViolation } from '../db/errors'
 import { outreachLogs, prospects, responses, sendingIdentities } from '../db/schema'
-import { asTenantId, type TenantId } from '../domain/ids'
+import { asSendingIdentityId, asTenantId, type TenantId } from '../domain/ids'
 import { hasReplyReadScope, parseSendingIdentitySecret } from '../domain/sending-identity'
 import {
   attributeReply,
@@ -11,7 +12,7 @@ import {
   type OutreachCandidate,
 } from '../domain/reply'
 import { detectDeterministicType, leadingUnquotedText, type DeterministicType } from '../domain/reply-classify'
-import { GoogleAuthError, refreshGoogleAccessToken } from '../auth/google'
+import { getGmailAccessToken } from '../auth/google'
 import { pollGmailInbox } from './gmail-poll'
 import { pollImapInbox } from './imap-poll'
 import { classifyReply, type ReplyClassification } from './reply-classify'
@@ -120,17 +121,6 @@ export function recordFieldsForReply(
   return { responseType, markDoNotContact: false }
 }
 
-// 23505 (postgres unique_violation) on the responses insert means a concurrent
-// re-poll already recorded this source_message_id — a benign dedup, not a failure.
-function isUniqueViolation(e: unknown): boolean {
-  return (
-    typeof e === 'object' &&
-    e !== null &&
-    'code' in e &&
-    (e as { code?: unknown }).code === '23505'
-  )
-}
-
 async function loadCandidates(
   db: Db,
   tenantId: TenantId,
@@ -192,6 +182,8 @@ type CaptureResult =
   | { ok: false; detail: string; authRevoked: boolean }
 
 async function capture(
+  db: Db,
+  tenantId: TenantId,
   identity: IdentityRow,
   env: ReplyIngestEnv,
   since: Date,
@@ -206,35 +198,21 @@ async function capture(
     )
     return polled.ok ? polled : { ...polled, authRevoked: false }
   }
-  let accessToken: string
-  try {
-    accessToken = await refreshGoogleAccessToken(
-      secret.refreshToken,
-      env.GOOGLE_CLIENT_ID,
-      env.GOOGLE_CLIENT_SECRET,
-    )
-  } catch (e) {
-    // 400/401 = the token is dead; 5xx and network failures must stay transient.
-    if (e instanceof GoogleAuthError && (e.status === 400 || e.status === 401)) {
-      return { ok: false, detail: e.message, authRevoked: true }
-    }
-    throw e
+  const token = await getGmailAccessToken(db, {
+    tenantId,
+    credentialIdentityId: asSendingIdentityId(identity.identity_id),
+    refreshToken: secret.refreshToken,
+    encryptionKey: env.GMAIL_TOKEN_ENCRYPTION_KEY,
+    clientId: env.GOOGLE_CLIENT_ID,
+    clientSecret: env.GOOGLE_CLIENT_SECRET,
+  })
+  if (!token.ok) {
+    return token.rejection === 'revoked'
+      ? { ok: false, detail: token.detail, authRevoked: true }
+      : { ok: false, detail: `Blocked by the Google Workspace admin: ${token.detail}`, authRevoked: false }
   }
-  const polled = await pollGmailInbox(accessToken, since, MAX_MESSAGES_PER_POLL)
+  const polled = await pollGmailInbox(token.accessToken, since, MAX_MESSAGES_PER_POLL)
   return polled.ok ? polled : { ...polled, authRevoked: false }
-}
-
-async function markAuthRevokedIfUnset(db: Db, tenantId: TenantId, identityId: string): Promise<void> {
-  await db
-    .update(sendingIdentities)
-    .set({ authRevokedAt: new Date() })
-    .where(
-      and(
-        eq(sendingIdentities.tenantId, tenantId),
-        eq(sendingIdentities.identityId, identityId),
-        isNull(sendingIdentities.authRevokedAt),
-      ),
-    )
 }
 
 // A failure string can embed a full server response.
@@ -259,7 +237,7 @@ async function markPollFailed(
 async function markPollSucceeded(db: Db, tenantId: TenantId, identityId: string): Promise<void> {
   await db
     .update(sendingIdentities)
-    .set({ lastPolledAt: new Date(), authRevokedAt: null, pollFailingSince: null, lastPollError: null })
+    .set({ lastPolledAt: new Date(), pollFailingSince: null, lastPollError: null })
     .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.identityId, identityId)))
 }
 
@@ -291,13 +269,10 @@ async function ingestIdentity(
     return
   }
 
-  const polled = await capture(identity, env, since, secretRow.secret)
+  const polled = await capture(db, tenantId, identity, env, since, secretRow.secret)
   if (!polled.ok) {
     summary.pollErrors++
-    if (polled.authRevoked) {
-      summary.identitiesAuthRevoked++
-      await markAuthRevokedIfUnset(db, tenantId, identity.identity_id)
-    }
+    if (polled.authRevoked) summary.identitiesAuthRevoked++
     await markPollFailed(db, tenantId, identity.identity_id, polled.detail)
     console.error(`[reply-ingest] poll failed identity=${identity.identity_id} provider=${identity.provider} authRevoked=${polled.authRevoked}: ${polled.detail}`)
     return
@@ -406,11 +381,13 @@ export async function runReplyIngest(db: Db, env: ReplyIngestEnv): Promise<Reply
     identitiesAuthRevoked: 0,
   }
 
-  // A Send-As alias shares its parent's inbox, so only credential-holding rows poll.
+  // A Send-As alias shares its parent's inbox, so only credential-holding rows
+  // poll; a revoked grant cannot come back without a reconnect.
   const identities = await db.execute<IdentityRow>(sql`
     SELECT tenant_id, identity_id, provider, scope, last_polled_at
     FROM sending_identities
     WHERE parent_identity_id IS NULL
+      AND auth_revoked_at IS NULL
   `)
 
   for (const identity of identities) {

@@ -16,6 +16,7 @@ import { sendViaSmtp } from '../services/smtp-send'
 import { logFunnel } from '../services/funnel'
 import { quotedPrintableEncode } from '../domain/smtp'
 import type { Locale } from '../domain/locale'
+import { classifyGoogleTokenRejection } from '../domain/google-token'
 import {
   asSendingIdentityId,
   type SendingIdentityId,
@@ -35,28 +36,58 @@ export class GoogleAuthError extends Error {
   }
 }
 
-export async function refreshGoogleAccessToken(
-  refreshToken: string,
-  clientId: string,
-  clientSecret: string,
-): Promise<string> {
-  const body = new URLSearchParams({
-    grant_type: 'refresh_token',
-    refresh_token: refreshToken,
-    client_id: clientId,
-    client_secret: clientSecret,
-  })
+type GmailAccessToken =
+  | { ok: true; accessToken: string }
+  | { ok: false; rejection: 'revoked' | 'blocked'; detail: string }
+
+// Mark rather than delete a revoked grant: the row keeps its warmup state and
+// carries WHY sending stopped; only the reconnect upsert clears it.
+export async function getGmailAccessToken(
+  db: Db,
+  args: {
+    tenantId: TenantId
+    credentialIdentityId: SendingIdentityId
+    refreshToken: string
+    encryptionKey: string
+    clientId: string
+    clientSecret: string
+  },
+): Promise<GmailAccessToken> {
   const res = await fetch(GOOGLE_TOKEN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: args.refreshToken,
+      client_id: args.clientId,
+      client_secret: args.clientSecret,
+    }),
   })
-  if (!res.ok) {
-    const detail = await res.text()
-    throw new GoogleAuthError(`Google token refresh failed (${res.status}): ${detail}`, res.status)
+  if (res.ok) {
+    const data = (await res.json()) as { access_token: string }
+    return { ok: true, accessToken: data.access_token }
   }
-  const data = (await res.json()) as { access_token: string }
-  return data.access_token
+  const responseBody = await res.text()
+  const detail = `Google token refresh failed (${res.status}): ${responseBody}`
+  if (res.status >= 500 || res.status === 429) throw new GoogleAuthError(detail, res.status)
+  const rejection = classifyGoogleTokenRejection(responseBody)
+  switch (rejection) {
+    case 'revoked':
+      // Only the rejected token is dead: a reconnect that landed during this request stored a new one.
+      await db.execute(sql`
+        UPDATE sending_identities
+        SET auth_revoked_at = COALESCE(auth_revoked_at, now())
+        WHERE tenant_id = ${args.tenantId}
+          AND identity_id = ${args.credentialIdentityId}
+          AND provider = 'gmail_oauth'
+          AND pgp_sym_decrypt(secret, ${args.encryptionKey})::text = ${args.refreshToken}
+      `)
+      return { ok: false, rejection, detail }
+    case 'blocked':
+      return { ok: false, rejection, detail }
+    case 'misconfigured':
+      throw new GoogleAuthError(detail, res.status)
+  }
 }
 
 class GmailSendError extends Error {
@@ -227,7 +258,7 @@ export function plainTextToHtmlBody(plain: string): string {
 // (prospectId, tenantId), not the recipient email, so it stays valid even when
 // the message is routed to a non-prospect address. Caller resolves
 // tenantLegalName / tenantPhysicalAddress via assertTenantComplianceReady first
-// (nullable in the DB for auto-provisioning, mandatory at send).
+// (nullable in the DB until the user fills them in, mandatory at send).
 export async function buildComplianceAttachments(args: {
   prospectId: number
   tenantId: TenantId
@@ -484,26 +515,11 @@ export async function stampMailboxFirstSendIfNeeded(
   if (stamped.length > 0) logFunnel({ event: 'mailbox_first_send', tenantId, identityId })
 }
 
-// Mark rather than delete: the row keeps its warmup state and carries WHY
-// sending stopped; the reconnect upsert restores it in place.
-export async function markGmailAuthRevoked(
-  db: Db,
-  args: { tenantId: TenantId; identityId: SendingIdentityId },
-): Promise<void> {
-  await db.execute(sql`
-    UPDATE sending_identities
-    SET auth_revoked_at = COALESCE(auth_revoked_at, now())
-    WHERE tenant_id = ${args.tenantId}
-      AND identity_id = ${args.identityId}
-      AND provider = 'gmail_oauth'
-  `)
-}
-
 // messageId/threadId are the Gmail resource ids (empty for SMTP). rfc822MessageId
 // is the threading anchor persisted to outreach_logs.message_id.
 export type MailSendResult =
   | { ok: true; kind: 'sent'; messageId: string; threadId: string; rfc822MessageId: string | null; from: string; identityId: SendingIdentityId }
-  | { ok: false; httpStatus: 412; error: 'Gmail not connected' | 'Gmail token revoked'; detail: string }
+  | { ok: false; httpStatus: 412; error: 'Gmail not connected' | 'Gmail token revoked' | 'Gmail blocked by Workspace admin'; detail: string }
   | { ok: false; httpStatus: 502; error: 'Send failed'; detail: string; from: string; mailboxRefused: boolean }
 
 export function formatFromHeader(email: string, displayName: string | null): string {
@@ -583,36 +599,39 @@ export async function sendForIdentity(
 
   switch (identity.secret.provider) {
     case 'gmail_oauth': {
-      let accessToken: string
-      try {
-        accessToken = await refreshGoogleAccessToken(
-          identity.secret.refreshToken,
-          args.clientId,
-          args.clientSecret,
-        )
-      } catch (e) {
-        if (e instanceof GoogleAuthError && (e.status === 400 || e.status === 401)) {
-          // Google rejected the refresh token (revoked / expired / scope dropped).
-          await markGmailAuthRevoked(db, { tenantId: args.tenantId, identityId: identity.credentialIdentityId })
-          return {
-            ok: false,
-            httpStatus: 412,
-            error: 'Gmail token revoked',
-            detail: 'Reconnect your Google account in Account settings.',
-          }
-        }
-        throw e
+      const token = await getGmailAccessToken(db, {
+        tenantId: args.tenantId,
+        credentialIdentityId: identity.credentialIdentityId,
+        refreshToken: identity.secret.refreshToken,
+        encryptionKey: args.encryptionKey,
+        clientId: args.clientId,
+        clientSecret: args.clientSecret,
+      })
+      if (!token.ok) {
+        return token.rejection === 'revoked'
+          ? {
+              ok: false,
+              httpStatus: 412,
+              error: 'Gmail token revoked',
+              detail: 'Reconnect your Google account in Account settings.',
+            }
+          : {
+              ok: false,
+              httpStatus: 412,
+              error: 'Gmail blocked by Workspace admin',
+              detail: "The Google Workspace admin for this account blocked LeadAce's access. Ask the admin to allow LeadAce, then try again.",
+            }
       }
 
       try {
         const rfc822 = buildRfc822({ ...baseRfc822, bcc: envelope.bcc })
-        const result = await sendGmailMessage({ accessToken, rfc822 })
+        const result = await sendGmailMessage({ accessToken: token.accessToken, rfc822 })
         return {
           ok: true,
           kind: 'sent',
           messageId: result.id,
           threadId: result.threadId,
-          rfc822MessageId: await readBackRfc822MessageId(accessToken, result.id),
+          rfc822MessageId: await readBackRfc822MessageId(token.accessToken, result.id),
           from: sendAsEmail,
           identityId: identity.identityId,
         }

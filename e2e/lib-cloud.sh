@@ -97,9 +97,8 @@ cloud_provision_tenant() {
   [[ -n "$THROW_USER_ID" && "$THROW_USER_ID" != "null" ]] || { echo "failed to create throwaway user: $create" >&2; exit 1; }
   TOKEN="$("$REPO_ROOT/e2e/mint-jwt.sh" --email "$email")"
   [[ -n "$TOKEN" ]] || { echo "failed to mint JWT for throwaway tenant" >&2; exit 1; }
-  api GET /api/projects > /dev/null   # auto-provision tenant + tenant_members
   THROW_TENANT_ID="$(psql_local "SELECT tenant_id FROM tenant_members WHERE user_id = '$THROW_USER_ID' LIMIT 1;")"
-  [[ -n "$THROW_TENANT_ID" ]] || { echo "throwaway tenant was not auto-provisioned" >&2; exit 1; }
+  [[ -n "$THROW_TENANT_ID" ]] || { echo "throwaway tenant was not created with the user" >&2; exit 1; }
   say "throwaway tenant=$THROW_TENANT_ID (user=$email)"
 }
 

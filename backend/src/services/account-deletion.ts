@@ -1,10 +1,9 @@
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import {
   ACCOUNT_DELETION_REASONS,
   accountDeletionSurveys,
   tenantPlans,
-  tenants,
 } from '../db/schema'
 import { createDb, type Db } from '../db/connection'
 import type { TenantId } from '../domain/ids'
@@ -35,19 +34,13 @@ export function isStripeCancelTolerable(
 
 export type DeleteAccountConfig = {
   databaseUrl: string
-  supabaseUrl: string
-  // null on self-host installs that don't configure SUPABASE_SERVICE_ROLE_KEY.
-  // The auth.users delete is skipped in that case; the operator handles it
-  // against their own Supabase. tenant cascade still runs.
-  adminKey: string | null
   stripeKey: string | null
   mcpOauthStore: KVNamespace
 }
 
-// Stripe cancel → DB cascade → auth.users delete. auth.users is best-effort
-// last because its failure is recoverable (next login re-provisions a fresh
-// empty tenant); Stripe is first so a billing failure doesn't leave the user
-// paying for a DB that no longer exists.
+// Stripe first so a billing failure doesn't leave the user paying for a deleted
+// account. auth.users goes through the raw connection (app_rls can't reach the
+// auth schema); its AFTER DELETE trigger deletes the tenant in the same transaction.
 export async function deleteOwnAccount(
   cfg: DeleteAccountConfig,
   rlsDb: Db,
@@ -75,14 +68,12 @@ export async function deleteOwnAccount(
     }
   }
 
-  // Raw db (no RLS) so the cascade isn't gated on every child table's policy.
   const adminDb = createDb(cfg.databaseUrl)
-  const deleted = await adminDb
-    .delete(tenants)
-    .where(eq(tenants.id, tenantId))
-    .returning({ id: tenants.id })
+  const deleted = await adminDb.execute(
+    sql`DELETE FROM auth.users WHERE id = ${userId}::uuid RETURNING id`,
+  )
   if (deleted.length === 0) {
-    return err('NOT_FOUND', 'Tenant not found')
+    return err('NOT_FOUND', 'Account not found')
   }
 
   // Swallowed: the deletion is already irreversible, so analytics must not fail it.
@@ -95,33 +86,12 @@ export async function deleteOwnAccount(
     console.error('account-deletion: survey insert failed', e)
   }
 
-  // Best-effort like the auth.users delete below: a plugin left configured
-  // would otherwise keep refreshing its MCP token for up to 30 days.
+  // Best-effort: a plugin left configured would otherwise keep refreshing its
+  // MCP token for up to 30 days.
   try {
     await revokeUserFamilies(cfg.mcpOauthStore, userId)
   } catch (e) {
     console.error('account-deletion: MCP session revoke failed', { userId, e })
-  }
-
-  if (cfg.adminKey) {
-    const res = await fetch(
-      `${cfg.supabaseUrl}/auth/v1/admin/users/${encodeURIComponent(userId)}`,
-      {
-        method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${cfg.adminKey}`,
-          apikey: cfg.adminKey,
-        },
-      },
-    )
-    if (!res.ok) {
-      const body = await res.text().catch(() => '')
-      console.error('account-deletion: Supabase Admin delete failed', {
-        userId,
-        status: res.status,
-        body,
-      })
-    }
   }
 
   return ok(undefined)

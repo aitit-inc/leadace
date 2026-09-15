@@ -353,9 +353,9 @@ export const tenants = pgTable('tenants', {
   id: text('id').primaryKey(),
   name: text('name').notNull().default('My Workspace'),
   // Compliance-mandated tenant identity (CAN-SPAM / CASL footer, CASL §6
-  // sender identification). Nullable at the DB level because tenants are
-  // auto-provisioned on first API access and the user fills these in via
-  // the Tenant Settings UI; backend send paths gate on
+  // sender identification). Nullable at the DB level because the tenant is
+  // created with the account (auth.users trigger) and the user fills these in
+  // via the Tenant Settings UI; backend send paths gate on
   // assertTenantComplianceReady before any actual outreach.
   legalName: text('legal_name'),
   physicalAddress: text('physical_address'),
@@ -389,8 +389,7 @@ export const tenantMembers = pgTable('tenant_members', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   primaryKey({ columns: [table.tenantId, table.userId] }),
-  // 1 user = 1 tenant (current product design). DB-enforced to prevent race conditions
-  // in auth middleware auto-provisioning. Remove if/when teams (many users → 1 tenant) ship.
+  // 1 user = 1 tenant (current product design). Remove if/when teams (many users → 1 tenant) ship.
   unique('uq_tenant_members_user').on(table.userId),
   index('idx_tenant_members_user').on(table.userId),
 ])
@@ -429,8 +428,8 @@ export const sendingIdentities = pgTable('sending_identities', {
   // signal — IMAP has no reliable permanent-vs-transient line to classify.
   pollFailingSince: timestamp('poll_failing_since', { withTimezone: true }),
   lastPollError: text('last_poll_error'),
-  // Google 400/401 on refresh — set by poll and send paths, cleared on
-  // successful poll or reconnect upsert. gmail_oauth only.
+  // Google answered invalid_grant on refresh (the grant is dead) — first
+  // detection kept, cleared only by the reconnect upsert. gmail_oauth only.
   authRevokedAt: timestamp('auth_revoked_at', { withTimezone: true }),
   grantedAt: timestamp('granted_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
