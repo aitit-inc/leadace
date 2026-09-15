@@ -99,14 +99,11 @@
   {#if error}
     <p class="text-danger">{error}</p>
   {/if}
-  <div class="flex items-center gap-2">
-    <button
-      type="submit"
-      disabled={!complete || saving}
-      class="rounded bg-accent px-3 py-1 font-medium text-page hover:bg-accent-strong disabled:opacity-50"
-    >
-      {saving ? 'Saving…' : 'Save and continue'}
-    </button>
-    <a href="/workspace-settings" class="text-text-muted underline hover:text-text">More options</a>
-  </div>
+  <button
+    type="submit"
+    disabled={!complete || saving}
+    class="rounded bg-accent px-3 py-1 font-medium text-page hover:bg-accent-strong disabled:opacity-50"
+  >
+    {saving ? 'Saving…' : 'Save and continue'}
+  </button>
 </form>
