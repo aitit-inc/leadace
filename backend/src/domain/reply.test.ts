@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import {
   attributeReply,
-  fromDomainMatchesRecentSend,
   normalizeEmailForMatch,
   normalizeMessageId,
+  sameDomainCandidates,
   toInboundReply,
   type CapturedReply,
   type InboundReply,
@@ -194,32 +194,39 @@ describe('attributeReply — threading', () => {
   })
 })
 
-describe('fromDomainMatchesRecentSend (colleague-reply recall instrumentation)', () => {
-  it('true when a colleague replies from the domain of a generic-inbox send', () => {
-    expect(
-      fromDomainMatchesRecentSend('taro@Acme.com', [cand(1, 'info@acme.com', '2026-06-08T00:00:00Z')], 30, NOW),
-    ).toBe(true)
+describe('sameDomainCandidates (colleague replies)', () => {
+  const ids = (cs: OutreachCandidate[]) => cs.map((c) => c.outreachLogId)
+
+  it('returns a send whose recipient shares the reply domain', () => {
+    expect(ids(sameDomainCandidates('taro@Acme.com', [cand(1, 'info@acme.com', '2026-06-08T00:00:00Z')], 30, NOW, 5))).toEqual([1])
   })
 
-  it('false when no send in the window used that domain', () => {
-    expect(
-      fromDomainMatchesRecentSend('taro@other.com', [cand(1, 'info@acme.com', '2026-06-08T00:00:00Z')], 30, NOW),
-    ).toBe(false)
+  it('returns none when no send in the window used that domain', () => {
+    expect(sameDomainCandidates('taro@other.com', [cand(1, 'info@acme.com', '2026-06-08T00:00:00Z')], 30, NOW, 5)).toEqual([])
   })
 
-  it('false when the only same-domain send is outside the window', () => {
-    expect(
-      fromDomainMatchesRecentSend('taro@acme.com', [cand(1, 'info@acme.com', '2026-04-01T00:00:00Z')], 30, NOW),
-    ).toBe(false)
+  it('skips a same-domain send outside the window', () => {
+    expect(sameDomainCandidates('taro@acme.com', [cand(1, 'info@acme.com', '2026-04-01T00:00:00Z')], 30, NOW, 5)).toEqual([])
   })
 
-  it('false for a From without a parseable domain', () => {
-    expect(fromDomainMatchesRecentSend('taro', [cand(1, 'info@acme.com', '2026-06-08T00:00:00Z')], 30, NOW)).toBe(false)
+  it('returns none for a From without a parseable domain', () => {
+    expect(sameDomainCandidates('taro', [cand(1, 'info@acme.com', '2026-06-08T00:00:00Z')], 30, NOW, 5)).toEqual([])
   })
 
   it('does not match a subdomain of a domain we sent to', () => {
-    expect(
-      fromDomainMatchesRecentSend('taro@mail.acme.com', [cand(1, 'info@acme.com', '2026-06-08T00:00:00Z')], 30, NOW),
-    ).toBe(false)
+    expect(sameDomainCandidates('taro@mail.acme.com', [cand(1, 'info@acme.com', '2026-06-08T00:00:00Z')], 30, NOW, 5)).toEqual([])
+  })
+
+  it('returns none for a free-mail domain', () => {
+    expect(sameDomainCandidates('someone@gmail.com', [cand(1, 'founder@gmail.com', '2026-06-08T00:00:00Z')], 30, NOW, 5)).toEqual([])
+  })
+
+  it('puts the most recent send first and keeps at most the limit', () => {
+    const pool = [
+      cand(1, 'info@acme.com', '2026-06-01T00:00:00Z'),
+      cand(2, 'sales@acme.com', '2026-06-09T00:00:00Z'),
+      cand(3, 'ceo@acme.com', '2026-06-05T00:00:00Z'),
+    ]
+    expect(ids(sameDomainCandidates('taro@acme.com', pool, 30, NOW, 2))).toEqual([2, 3])
   })
 })

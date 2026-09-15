@@ -6,16 +6,18 @@ import { asSendingIdentityId, asTenantId, type TenantId } from '../domain/ids'
 import { hasReplyReadScope, parseSendingIdentitySecret } from '../domain/sending-identity'
 import {
   attributeReply,
-  fromDomainMatchesRecentSend,
+  sameDomainCandidates,
   toInboundReply,
+  type Attribution,
   type CapturedReply,
+  type InboundReply,
   type OutreachCandidate,
 } from '../domain/reply'
 import { detectDeterministicType, leadingUnquotedText, type DeterministicType } from '../domain/reply-classify'
 import { getGmailAccessToken } from '../auth/google'
 import { pollGmailInbox } from './gmail-poll'
 import { pollImapInbox } from './imap-poll'
-import { classifyReply, type ReplyClassification } from './reply-classify'
+import { classifyReply, matchSameDomainReply, type ReplyClassification } from './reply-classify'
 import { withLlmScope } from './gemini'
 import { recordResponse, type RecordResponseInput } from './responses'
 
@@ -31,6 +33,8 @@ type ReplyIngestEnv = {
 // drop a reply still unattributed or whose record failed once the UTC day rolled.
 const POLL_LOOKBACK_DAYS = 7
 const ATTRIBUTION_WINDOW_DAYS = 30
+// Bounds the prompt when many recipients share one domain.
+const MAX_SAME_DOMAIN_CANDIDATES = 5
 const MAX_MESSAGES_PER_POLL = 50
 const DAY_MS = 24 * 60 * 60 * 1000
 // Cap stored content: a reply's meaningful text is short and top-posted, but a
@@ -46,10 +50,9 @@ export type ReplyIngestSummary = {
   deduped: number
   unattributed: number
   recordErrors: number
-  // Subset of `unattributed`, bounces excluded: the upper bound on what a
-  // domain-level fallback could recover. A per-poll snapshot like `unattributed`
-  // — re-counted every run, never summed across runs.
-  unattributedSameDomain: number
+  // Per-poll snapshots like `unattributed`.
+  sameDomainJudged: number
+  sameDomainMatched: number
   identitiesAuthRevoked: number
 }
 
@@ -175,6 +178,41 @@ async function alreadyRecorded(
     .from(responses)
     .where(and(eq(responses.tenantId, tenantId), inArray(responses.sourceMessageId, messageIds)))
   return new Set(rows.flatMap((r) => (r.id ? [r.id] : [])))
+}
+
+// We mail info@ and a colleague answers from their own address: neither the
+// thread nor the From matches.
+async function matchBySameDomain(
+  db: Db,
+  env: ReplyIngestEnv,
+  tenantId: TenantId,
+  identityId: string,
+  reply: InboundReply,
+  candidates: OutreachCandidate[],
+  now: Date,
+  summary: ReplyIngestSummary,
+): Promise<Attribution | null> {
+  const pool = sameDomainCandidates(reply.fromEmail, candidates, ATTRIBUTION_WINDOW_DAYS, now, MAX_SAME_DOMAIN_CANDIDATES)
+  if (pool.length === 0) return null
+  summary.sameDomainJudged++
+
+  const rows = await db
+    .select({ outreachLogId: outreachLogs.id, subject: outreachLogs.subject, body: outreachLogs.body })
+    .from(outreachLogs)
+    .where(and(eq(outreachLogs.tenantId, tenantId), inArray(outreachLogs.id, pool.map((c) => c.outreachLogId))))
+  const byId = new Map(rows.map((r) => [r.outreachLogId, r]))
+  const sent = pool.flatMap((c) => {
+    const row = byId.get(c.outreachLogId)
+    return row ? [{ outreachLogId: c.outreachLogId, recipient: c.prospectEmail, sentAt: c.sentAt, subject: row.subject, body: row.body }] : []
+  })
+
+  const verdict = await withLlmScope({ tenantId }, () =>
+    matchSameDomainReply(env, { fromEmail: reply.fromEmail, subject: reply.subject, bodyText: leadingUnquotedText(reply.bodyText) }, sent),
+  )
+  if (verdict === null) return null
+  summary.sameDomainMatched++
+  console.log(`[reply-ingest] same-domain match identity=${identityId} msg=${reply.messageId} outreach=${verdict.outreachLogId}: ${verdict.reason}`)
+  return { outreachLogId: verdict.outreachLogId, binding: 'domain' }
 }
 
 type CaptureResult =
@@ -316,14 +354,16 @@ async function ingestIdentity(
       summary.unattributed++
       continue
     }
-    if (attribution === null) {
-      if (fromDomainMatchesRecentSend(reply.fromEmail, candidates, ATTRIBUTION_WINDOW_DAYS, now)) {
-        summary.unattributedSameDomain++
-      }
+    // Only a person's own words are judged: a bounce, auto-reply or reply token
+    // carries nothing that says which send it answers.
+    const bound =
+      attribution ??
+      (det === null ? await matchBySameDomain(db, env, tenantId, identity.identity_id, reply, candidates, now, summary) : null)
+    if (bound === null) {
       summary.unattributed++
       continue
     }
-    const outreachLogId = attribution.outreachLogId
+    const outreachLogId = bound.outreachLogId
 
     const classified = det
       ? { responseType: det, sentiment: 'neutral' as const }
@@ -339,7 +379,7 @@ async function ingestIdentity(
       channel: 'email',
       content,
       sentiment: classified.sentiment,
-      ...recordFieldsForReply(classified.responseType, receivedAtIso, attribution.binding === 'threaded'),
+      ...recordFieldsForReply(classified.responseType, receivedAtIso, bound.binding === 'threaded'),
       receivedAt: receivedAtIso,
       sourceMessageId: reply.messageId,
     }
@@ -377,7 +417,8 @@ export async function runReplyIngest(db: Db, env: ReplyIngestEnv): Promise<Reply
     deduped: 0,
     unattributed: 0,
     recordErrors: 0,
-    unattributedSameDomain: 0,
+    sameDomainJudged: 0,
+    sameDomainMatched: 0,
     identitiesAuthRevoked: 0,
   }
 

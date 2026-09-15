@@ -38,6 +38,7 @@ import { unsubscribeRouter } from './routes/unsubscribe'
 import { inquiryRouter } from './routes/inquiry'
 import { liveRouter } from './routes/live'
 import { createDb } from '../db/connection'
+import { runAccountActivityAlert } from '../services/account-activity'
 import { runDailyBetaStats } from '../services/beta-stats'
 import { runReplyIngest } from '../services/reply-ingest'
 import { watchVerifierBalance } from '../services/email-verify'
@@ -132,6 +133,8 @@ app.onError((err, c) => {
 const VERIFIER_BALANCE_CRON = '0 3 * * *'
 // Hourly server-side reply poll; keep in sync with the wrangler.api.jsonc crons.
 const REPLY_INGEST_CRON = '0 * * * *'
+// WINDOW_MS in services/account-activity.ts assumes this schedule.
+const ACCOUNT_ACTIVITY_CRON = '*/15 * * * *'
 
 const handler = {
   fetch: app.fetch,
@@ -172,13 +175,23 @@ const handler = {
         runReplyIngest(db, env)
           .then((s) => {
             console.log(
-              `[scheduled] reply-ingest polled=${s.identitiesPolled} skipped=${s.identitiesSkipped} errors=${s.pollErrors} authRevoked=${s.identitiesAuthRevoked} recorded=${s.recorded} deduped=${s.deduped} unattributed=${s.unattributed} unattributedSameDomain=${s.unattributedSameDomain} recordErrors=${s.recordErrors}`,
+              `[scheduled] reply-ingest polled=${s.identitiesPolled} skipped=${s.identitiesSkipped} errors=${s.pollErrors} authRevoked=${s.identitiesAuthRevoked} recorded=${s.recorded} deduped=${s.deduped} unattributed=${s.unattributed} sameDomainJudged=${s.sameDomainJudged} sameDomainMatched=${s.sameDomainMatched} recordErrors=${s.recordErrors}`,
             )
           })
           .catch((e: unknown) => {
             console.error('[scheduled] reply-ingest failed', e)
             Sentry.captureException(e)
           }),
+      )
+      return
+    }
+
+    if (controller.cron === ACCOUNT_ACTIVITY_CRON) {
+      ctx.waitUntil(
+        runAccountActivityAlert(db, env, new Date(controller.scheduledTime)).catch((e: unknown) => {
+          console.error('[scheduled] account-activity alert failed', e)
+          Sentry.captureException(e)
+        }),
       )
       return
     }

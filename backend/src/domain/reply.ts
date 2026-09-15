@@ -47,7 +47,8 @@ export type OutreachCandidate = {
 
 // 'threaded' = matched a Message-ID we generated (unforgeable). 'sender' = matched
 // the From address by recency (forgeable; never gates destructive state).
-export type ReplyBinding = 'threaded' | 'sender'
+// 'domain' = a model tied a same-domain sender to one of our sends (forgeable).
+export type ReplyBinding = 'threaded' | 'sender' | 'domain'
 export type Attribution = { outreachLogId: number; binding: ReplyBinding }
 
 export function normalizeEmailForMatch(email: string): string {
@@ -100,24 +101,34 @@ function isMoreRecent(c: OutreachCandidate, best: OutreachCandidate): boolean {
   return sent > bestSent || (sent === bestSent && c.outreachLogId > best.outreachLogId)
 }
 
-// Instrumentation: we mail info@ and a colleague answers from their own address,
-// so neither threading nor From matches and the reply is dropped. An upper bound
-// on that gap — unrelated mail from a domain we mailed matches too. Bounces are
-// the caller's to exclude (a DSN names the recipient's own domain).
-export function fromDomainMatchesRecentSend(
+// Free-mail providers host unrelated people under one domain, so sharing it says
+// nothing about who is answering.
+const FREE_MAIL_DOMAINS = new Set([
+  'gmail.com', 'googlemail.com', 'yahoo.com', 'yahoo.co.jp', 'outlook.com', 'outlook.jp',
+  'hotmail.com', 'live.com', 'msn.com', 'icloud.com', 'me.com', 'mac.com', 'aol.com',
+  'proton.me', 'protonmail.com', 'gmx.com', 'mail.com', 'zoho.com', 'yandex.com',
+  'docomo.ne.jp', 'ezweb.ne.jp', 'au.com', 'softbank.ne.jp', 'i.softbank.jp',
+])
+
+// The sends a reply from the recipient's colleague is judged against.
+export function sameDomainCandidates(
   fromEmail: string,
   candidates: OutreachCandidate[],
   windowDays: number,
   now: Date,
-): boolean {
+  limit: number,
+): OutreachCandidate[] {
   const domain = emailDomain(fromEmail)
-  if (domain === null) return false
+  if (domain === null || FREE_MAIL_DOMAINS.has(domain)) return []
   const nowMs = now.getTime()
   const earliest = nowMs - windowDays * 24 * 60 * 60 * 1000
-  return candidates.some((c) => {
-    const sent = c.sentAt.getTime()
-    return emailDomain(c.prospectEmail) === domain && sent <= nowMs && sent >= earliest
-  })
+  return candidates
+    .filter((c) => {
+      const sent = c.sentAt.getTime()
+      return emailDomain(c.prospectEmail) === domain && sent <= nowMs && sent >= earliest
+    })
+    .sort((a, b) => (isMoreRecent(a, b) ? -1 : 1))
+    .slice(0, limit)
 }
 
 function emailDomain(email: string): string | null {
