@@ -539,6 +539,69 @@ carries no subscription id, so `/me/subscription` answers 404 and the
 plan-change cards are absent from the screenshot rather than merely
 unexercised.
 
+## Claude Code cloud sessions (claude.ai/code)
+
+The harness also runs inside a Claude Code cloud session, where the whole
+stack lives on one Ubuntu VM (4 vCPU / 16 GB / 30 GB). Everything that needs
+only curl, psql and the local stack works there; everything that needs an
+interactive browser does not. This is unrelated to the "cloud-edition" cluster
+above — that one is `LEADACE_EDITION=cloud`, a property of the API Worker, not
+of where the session runs.
+
+| Runs in a cloud session | Doesn't |
+| --- | --- |
+| `npm run typecheck` / `npm test` (backend), `npm run check` (frontend) | `./e2e/setup.sh`, `./e2e/smoke.sh` — the MCP OAuth dance needs Google sign-in in a browser |
+| `make dev` — Supabase, both Workers, the frontend | the real-Gmail leg of `regression-outbound.sh` — no connected `sending_identities` row |
+| `./e2e/regression-all.sh` | `npm run ui` screenshots — no browser |
+| `./e2e/cloud-edition-up.sh` + `./e2e/regression-cloud-all.sh` | anything driving a real Google / Gmail / Stripe account |
+
+### Configure the environment once
+
+At [claude.ai/code](https://claude.ai/code), open the environment selector →
+**Add cloud environment** (or the settings icon on an existing one):
+
+- **Setup script**: the contents of [scripts/cloud-setup.sh](../scripts/cloud-setup.sh).
+  It installs node 24 (the image ships 20/21/22) and the Supabase CLI, and
+  pulls the Supabase images into the environment snapshot so later sessions
+  boot without a multi-GB pull.
+- **Network access**: `Custom`, with the default package-manager list included,
+  plus `dns.google` — the deliverability check resolves MX records over
+  DNS-over-HTTPS and nothing in the default list covers it. Gemini and Gmail
+  are already covered by `*.googleapis.com`.
+- **Environment variables** (`.env` format, optional): `GEMINI_API_KEY`,
+  `OPENAI_API_KEY`, `EMAILABLE_API_KEY`. The curl suites need none of them; the
+  hosted pipeline stages need Gemini. Anyone who uses the environment can read
+  these, so keep production keys out — on Pro/Max an API credential scoped to
+  `generativelanguage.googleapis.com` keeps the key out of the VM entirely.
+
+### Per session
+
+The snapshot restores files, never processes, so each session starts with
+nothing running and without `backend/.dev.vars` or `frontend/.env` — both are
+gitignored, so they are never in the clone:
+
+```bash
+./scripts/cloud-bootstrap.sh                    # dockerd → Supabase → .dev.vars + frontend/.env → migrations → seed → dev tenant
+nohup make dev >/tmp/leadace-dev.log 2>&1 &     # API :8787, MCP :8788, frontend :5273
+for _ in $(seq 60); do curl -sf http://localhost:8787/health >/dev/null && break; sleep 2; done
+./e2e/regression-all.sh
+```
+
+The wait matters: `make dev` migrates and seeds before it launches the Workers,
+and the suites health-check once and give up. If the loop runs out, read
+`/tmp/leadace-dev.log`.
+
+`cloud-bootstrap.sh` refuses to run outside a cloud session — it writes
+`backend/.dev.vars` and `frontend/.env`, which on a developer machine are
+yours. It also sets `E2E_RECIPIENT_OVERRIDE` to a sink address, because
+`APP_URL` is localhost in the VM and the send path refuses a non-public
+opt-out link host without an override. The VM has no Gmail identity, so
+nothing leaves it either way.
+
+The dev user it provisions (`dev@leadace.test`, through the GoTrue Admin API)
+exists so `mint-jwt.sh` has an `auth.users` row to sign for: the suites need a
+tenant, and real sign-in is browser-only.
+
 ## Cleanup
 
 ```bash

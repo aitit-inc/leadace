@@ -20,7 +20,7 @@ Cleanup of a change whose PR is open, before the Codex review. Behaviour does no
 
 Changed content only, in this order:
 
-1. **Comments** — delete any that restate the code. Keep only a *why* the code cannot express, as short as possible.
+1. **Comments** — delete by default. Keep one only for a *why* the code cannot carry, or where dropping it would invite the bug it prevents. As short as it can be.
 2. **Waste** — remove what the change does not need. Aim for the smallest, most obvious implementation that meets the spec. Fewer lines is not the goal; no abstraction for its own sake.
 3. **Symptomatic fixes** — a guard that patches one case → write the rule instead. Only while the edit stays inside the change; anything wider goes in the report.
 4. **LLM-facing text** — prompts, skill / reference text, tool descriptions: shorten without changing meaning. No filler; plain words, short sentences.

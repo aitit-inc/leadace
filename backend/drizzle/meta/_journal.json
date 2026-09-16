@@ -708,6 +708,13 @@
       "when": 1789491099540,
       "tag": "0100_cold_arclight",
       "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1789570644212,
+      "tag": "0101_vitals_engaged",
+      "breakpoints": true
     }
   ]
 }

@@ -154,7 +154,7 @@ describe('deriveAttentionItems', () => {
         { fromEmail: 'z@example.com', sentThatDay: 25 },
       ],
       quota: { exhausted: true, constraint: 'monthly' },
-      futileProjects: [{ projectId: 'p-acme', projectName: 'Acme', sends: 400, replies: 0 }],
+      futileProjects: [{ projectId: 'p-acme', projectName: 'Acme', sends: 400, engaged: 0 }],
       project: { outboundChannelsConfigured: false, pendingDrafts: 3, hotLeadsRecent: 1 },
     })
     expect(items.map((i) => i.kind)).toEqual([
@@ -175,14 +175,14 @@ describe('deriveAttentionItems', () => {
     const items = deriveAttentionItems({
       ...clean,
       futileProjects: [
-        { projectId: 'p-acme', projectName: 'Acme', sends: 400, replies: 0 },
-        { projectId: 'p-globex', projectName: 'Globex', sends: 310, replies: 0 },
+        { projectId: 'p-acme', projectName: 'Acme', sends: 400, engaged: 0 },
+        { projectId: 'p-globex', projectName: 'Globex', sends: 310, engaged: 0 },
       ],
       project: null,
     })
     expect(items).toEqual([
-      { kind: 'outreach_futility', projectId: 'p-acme', projectName: 'Acme', sends: 400, replies: 0 },
-      { kind: 'outreach_futility', projectId: 'p-globex', projectName: 'Globex', sends: 310, replies: 0 },
+      { kind: 'outreach_futility', projectId: 'p-acme', projectName: 'Acme', sends: 400, engaged: 0 },
+      { kind: 'outreach_futility', projectId: 'p-globex', projectName: 'Globex', sends: 310, engaged: 0 },
     ])
   })
 

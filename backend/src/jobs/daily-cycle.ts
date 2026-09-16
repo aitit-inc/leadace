@@ -16,6 +16,16 @@ import { listHostedReachable } from '../services/pipeline/draft'
 import type { CycleDigest } from '../services/pipeline/journal'
 import { discoverStage, draftStage, evaluateStage, journalStage, logStep, STEP_RETRY, tenantTx, unwrap, type StageCtx } from './stages'
 
+// The cycle itself reads nothing of these stages but their summary. Losing one
+// costs a day of what it writes, which beats losing the day's sends.
+async function advisory(run: () => Promise<{ summary: string }>): Promise<string> {
+  try {
+    return (await run()).summary
+  } catch (e) {
+    return `unavailable — ${e instanceof Error ? e.message : String(e)}`
+  }
+}
+
 async function reachableSnapshot(ctx: StageCtx, name: string): Promise<ReachableSnapshot> {
   return ctx.step.do(name, STEP_RETRY, () => tenantTx(ctx, async (db) => {
     const r = unwrap(await listHostedReachable(db, ctx.job.tenantId, ctx.env, ctx.job.projectId, { limit: 1 }))
@@ -46,15 +56,14 @@ export async function runDailyCycle(ctx: StageCtx, params: JobParamsOf<'daily_cy
     return true
   }))
 
-  const evaluated = await evaluateStage(ctx)
-  await stage('evaluate', evaluated.summary)
+  await stage('evaluate', await advisory(() => evaluateStage(ctx)))
 
   const tick = await ctx.step.do('lever-tick', STEP_RETRY, () => tenantTx(ctx, async (db) => {
     const t = unwrap(await runLeverTick(db, tenantId, projectId))
     return { ran: t.ran, archived: t.archived.length, vitals: t.vitals?.verdict ?? null }
   }))
   await decide(tick.ran ? `lever tick ran (archived ${tick.archived}${tick.vitals ? `, vitals ${tick.vitals}` : ''})` : 'lever tick already ran today')
-  if (tick.vitals === 'futile') await decide('FUTILE vitals: recent mature sends draw no replies — check deliverability and targeting')
+  if (tick.vitals === 'futile') await decide('FUTILE vitals: recent mature sends draw no interest — check deliverability and targeting')
 
   const discovery = await ctx.step.do('strategies', STEP_RETRY, () =>
     tenantTx(ctx, async (db) => ({
@@ -105,8 +114,7 @@ export async function runDailyCycle(ctx: StageCtx, params: JobParamsOf<'daily_cy
   }
 
   const digest: CycleDigest = { stages, decisions }
-  const journal = await journalStage(ctx, digest)
-  await stage('journal', journal.summary)
+  await stage('journal', await advisory(() => journalStage(ctx, digest)))
 
   const notified = await ctx.step.do('notify', { retries: { limit: 1, delay: '10 seconds' } }, () => tenantTx(ctx, async (db) => {
     const owner = await getTenantOwnerUserId(db, tenantId)

@@ -12,7 +12,7 @@ import {
 } from '../db/schema'
 import type { Db } from '../db/connection'
 import type { ProjectId, ProjectRef, TenantId } from '../domain/ids'
-import { replyReward } from '../domain/reward'
+import { inquiryRewardByKey, replyReward, REWARDED_INQUIRY_OUTCOMES } from '../domain/reward'
 import { coarseIndustry, type CoarseIndustry } from '../domain/coarse-industry'
 import { type LeverConfig } from '../domain/lever-config'
 import type { TargetingAxisStat } from '../domain/targeting-score'
@@ -28,6 +28,14 @@ import { resolveProject } from './projects'
 // types below are honest about that (`string | number`) and reads normalize
 // with Number(...); the bandit relies on it (wilsonBounds compares responses ≤
 // total — a string compare would lie).
+
+// `::text` because the bound parameters are text, not the inquiry_outcome enum.
+const REWARDED_INQUIRY = sql`s.outcome::text IN (${sql.join(
+  REWARDED_INQUIRY_OUTCOMES.map((outcome) => sql`${outcome}`),
+  sql`, `,
+)})`
+// So a send that drew both a reply and a session is scored once, by the reply.
+const NO_COUNTABLE_REPLY = sql`NOT EXISTS (SELECT 1 FROM responses r WHERE r.outreach_log_id = ol.id AND r.response_type NOT IN ('bounce', 'auto_reply'))`
 
 type ResponseType = (typeof responseTypeEnum.enumValues)[number]
 type Sentiment = (typeof sentimentEnum.enumValues)[number]
@@ -93,7 +101,7 @@ export async function getVariantStats(
   const exec = async <T extends Record<string, unknown>>(q: ReturnType<typeof sql>): Promise<T[]> =>
     Array.from(await db.execute<T>(q)) as T[]
 
-  const [denomRows, responseRows, rewardRows] = await Promise.all([
+  const [denomRows, responseRows, rewardRows, inquiryRows] = await Promise.all([
     exec<{ variantId: string; total: string | number }>(sql`SELECT variant_id AS "variantId", COUNT(*)::int AS total
              FROM outreach_logs
              WHERE project_id = ${projectId} AND status = ${SENT}
@@ -111,6 +119,11 @@ export async function getVariantStats(
                AND ol.variant_id IS NOT NULL AND ol.sent_at < ${matureBefore}${forgetOl}${epochOl}
                AND r.response_type NOT IN ('bounce', 'auto_reply')
              GROUP BY ol.variant_id, r.response_type, r.sentiment`),
+    exec<{ variantId: string; outreachLogId: string | number; outcome: InquiryOutcome }>(sql`SELECT ol.variant_id AS "variantId", ol.id AS "outreachLogId", s.outcome
+             FROM outreach_logs ol JOIN inquiry_sessions s ON s.outreach_log_id = ol.id
+             WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}
+               AND ol.variant_id IS NOT NULL AND ol.sent_at < ${matureBefore}${forgetOl}${epochOl}
+               AND ${REWARDED_INQUIRY} AND ${NO_COUNTABLE_REPLY}`),
   ])
 
   const agg = new Map<string, VariantStat>()
@@ -128,6 +141,15 @@ export async function getVariantStats(
     entry.rewardSum +=
       replyReward({ responseType: row.responseType, sentiment: row.sentiment }, config.reward) *
       Number(row.count)
+  }
+  const inquiryByVariant = inquiryRewardByKey(
+    inquiryRows.map((row) => ({ key: row.variantId, outreachLogId: Number(row.outreachLogId), outcome: row.outcome })),
+    config.reward,
+  )
+  for (const [variantId, reward] of inquiryByVariant) {
+    const entry = agg.get(variantId)
+    if (!entry) continue
+    entry.rewardSum += reward
   }
   return Array.from(agg.values())
 }
@@ -211,7 +233,7 @@ export async function getTargetingStats(
   const notBounced = sql`NOT EXISTS (SELECT 1 FROM responses rb WHERE rb.outreach_log_id = ol.id AND rb.response_type = 'bounce')`
 
   const axisStats = async (axisExpr: ReturnType<typeof sql>): Promise<TargetingAxisStat[]> => {
-    const [denomRows, rewardRows] = await Promise.all([
+    const [denomRows, rewardRows, inquiryRows] = await Promise.all([
       exec<{ value: string | null; total: string | number }>(sql`SELECT ${axisExpr} AS value, COUNT(*)::int AS total
                FROM outreach_logs ol
                  JOIN prospects p ON p.id = ol.prospect_id
@@ -228,6 +250,14 @@ export async function getTargetingStats(
                  AND ol.sent_at < ${matureBefore}${forget}${since} AND ${notBounced}
                  AND r.response_type NOT IN ('bounce', 'auto_reply')
                GROUP BY 1, r.response_type, r.sentiment`),
+      exec<{ value: string | null; outreachLogId: string | number; outcome: InquiryOutcome }>(sql`SELECT ${axisExpr} AS value, ol.id AS "outreachLogId", s.outcome
+               FROM outreach_logs ol
+                 JOIN prospects p ON p.id = ol.prospect_id
+                 JOIN organizations o ON o.id = p.organization_id
+                 JOIN inquiry_sessions s ON s.outreach_log_id = ol.id
+               WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}
+                 AND ol.sent_at < ${matureBefore}${forget}${since} AND ${notBounced}
+                 AND ${REWARDED_INQUIRY} AND ${NO_COUNTABLE_REPLY}`),
     ])
     const keyOf = (v: string | null): string => (v === null ? '<null>' : `v:${v}`)
     const agg = new Map<string, TargetingAxisStat>()
@@ -240,6 +270,15 @@ export async function getTargetingStats(
       entry.rewardSum +=
         replyReward({ responseType: row.responseType, sentiment: row.sentiment }, config.reward) *
         Number(row.count)
+    }
+    const inquiryByValue = inquiryRewardByKey(
+      inquiryRows.map((row) => ({ key: keyOf(row.value), outreachLogId: Number(row.outreachLogId), outcome: row.outcome })),
+      config.reward,
+    )
+    for (const [key, reward] of inquiryByValue) {
+      const entry = agg.get(key)
+      if (!entry) continue
+      entry.rewardSum += reward
     }
     return Array.from(agg.values()).sort((a, b) => {
       if (a.value === null) return b.value === null ? 0 : 1
@@ -274,13 +313,14 @@ export async function getTargetingStats(
 
 // Windowed by futilityLookbackDays (deliberately not rewardLookbackDays —
 // the bandit keeps all history) so the verdict self-clears after a repair.
-// `replies` counts replied sends (not reply rows) so it stays ≤ sends for
-// the Beta posterior.
+// `engaged` counts sends that drew interest, not the signals themselves, so it
+// stays ≤ sends for the Beta posterior — hence no NO_COUNTABLE_REPLY, which the
+// reward queries need only because they weight each signal.
 export async function getFutilityStats(
   db: Db,
   projectId: ProjectId,
   config: LeverConfig,
-): Promise<{ sends: number; replies: number }> {
+): Promise<{ sends: number; engaged: number }> {
   const SENT: OutreachStatus = 'sent'
   const EMAIL: Channel = 'email'
   const matureBefore = sql`now() - make_interval(days => ${config.rewardWindowDays})`
@@ -289,13 +329,15 @@ export async function getFutilityStats(
   const epoch = config.measurementsSince
   const since = epoch === undefined ? sql`` : sql` AND ol.sent_at >= ((${epoch}::date)::timestamp AT TIME ZONE 'UTC')`
   const rows = Array.from(
-    await db.execute<{ sends: string | number; replies: string | number }>(sql`
+    await db.execute<{ sends: string | number; engaged: string | number }>(sql`
       SELECT
         COUNT(*)::int AS sends,
         COUNT(*) FILTER (WHERE EXISTS (
           SELECT 1 FROM responses r WHERE r.outreach_log_id = ol.id
             AND r.response_type NOT IN ('bounce', 'auto_reply')
-        ))::int AS replies
+        ) OR EXISTS (
+          SELECT 1 FROM inquiry_sessions s WHERE s.outreach_log_id = ol.id AND ${REWARDED_INQUIRY}
+        ))::int AS engaged
       FROM outreach_logs ol
       WHERE ol.project_id = ${projectId} AND ol.status = ${SENT} AND ol.channel = ${EMAIL}
         AND ol.sent_at < ${matureBefore}
@@ -303,7 +345,7 @@ export async function getFutilityStats(
         AND NOT EXISTS (SELECT 1 FROM responses rb WHERE rb.outreach_log_id = ol.id AND rb.response_type = 'bounce')
     `),
   )
-  return { sends: Number(rows[0]?.sends ?? 0), replies: Number(rows[0]?.replies ?? 0) }
+  return { sends: Number(rows[0]?.sends ?? 0), engaged: Number(rows[0]?.engaged ?? 0) }
 }
 
 export async function getProjectStats(

@@ -32,7 +32,10 @@ function llmScoped<T>(ctx: StageCtx, fn: () => Promise<T>): Promise<T> {
   return withLlmScope({ tenantId: ctx.job.tenantId, jobId: ctx.job.id }, fn)
 }
 
-export const STEP_RETRY = { retries: { limit: 2, delay: '20 seconds', backoff: 'exponential' }, timeout: '10 minutes' } as const
+// 20 minutes: a stage's real bound is the per-call LLM timeout, and discover's
+// serial extraction clears 10 minutes at six strategies. Workflows charges CPU,
+// not wall clock, so a wider window only delays noticing a stuck step.
+export const STEP_RETRY = { retries: { limit: 2, delay: '20 seconds', backoff: 'exponential' }, timeout: '20 minutes' } as const
 // A step that may hand a message to Gmail has no stable idempotency key across
 // the provider call and the bookkeeping after it — a retry could send twice.
 // sendAndRecord records its own failure; the step runs once.

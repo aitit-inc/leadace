@@ -260,9 +260,9 @@ assert_eq "tick1 no strategy archived" "$(echo "$T1" | jq -rc '[.discovery.archi
 assert_eq "tick1 needsStrategyReplenishment (2 active < target 3)" "$(echo "$T1" | jq -r '.needsStrategyReplenishment')" "true"
 assert_eq "tick1 journals yesterday's registration for s1" "$(echo "$T1" | jq -r '.discovery.registrations.s1')" "1"
 # Vitals: 170 mature email sends (the 60 form sends are out of scope), 41
-# replied sends (v1's duplicate replies count once), healthy rate → ok.
+# engaged sends (v1's duplicate replies count once), healthy rate → ok.
 assert_eq "tick1 vitals counts mature email sends" "$(echo "$T1" | jq -r '.vitals.sends')" "170"
-assert_eq "tick1 vitals counts replied sends distinct" "$(echo "$T1" | jq -r '.vitals.replies')" "41"
+assert_eq "tick1 vitals counts engaged sends distinct" "$(echo "$T1" | jq -r '.vitals.engaged')" "41"
 assert_eq "tick1 vitals verdict ok" "$(echo "$T1" | jq -r '.vitals.verdict')" "ok"
 
 step "run_lever_tick #2 (idempotent — same UTC day)"
@@ -575,7 +575,7 @@ ATT="$(api GET "/api/me/attention")"
 assert_eq "attention feed carries the futile project" \
   "$(echo "$ATT" | jq -r --arg n "$PROJECT_NAME futile" '[.items[] | select(.kind=="outreach_futility" and .projectName==$n)] | length')" "1"
 assert_eq "attention futility carries the measured counts" \
-  "$(echo "$ATT" | jq -r --arg n "$PROJECT_NAME futile" '.items[] | select(.kind=="outreach_futility" and .projectName==$n) | "\(.sends)/\(.replies)"')" "600/0"
+  "$(echo "$ATT" | jq -r --arg n "$PROJECT_NAME futile" '.items[] | select(.kind=="outreach_futility" and .projectName==$n) | "\(.sends)/\(.engaged)"')" "600/0"
 assert_eq "healthy main project raises no futility item" \
   "$(echo "$ATT" | jq -r --arg n "$PROJECT_NAME" '[.items[] | select(.kind=="outreach_futility" and .projectName==$n)] | length')" "0"
 

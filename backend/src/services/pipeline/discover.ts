@@ -236,16 +236,24 @@ export async function runDiscover(
   const searches = settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : []))
   // Queries are spent whether or not every pass answered: count before failing.
   await recordGroundingQueries(db, searches.reduce((n, s) => n + s.search.searchQueries, 0), new Date())
-  const failed = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected')
-  if (failed) {
-    const reason: unknown = failed.reason
-    if (reason instanceof GeminiError) return err('BAD_GATEWAY', 'Search step failed upstream', reason.message)
-    throw reason
+  // A pass upstream shed is that strategy's loss, not the batch's: a step retry
+  // re-buys every search to recover one. Anything else is a bug and rejects.
+  const shed = settled.flatMap((s, i) => {
+    if (s.status === 'fulfilled') return []
+    const reason: unknown = s.reason
+    if (!(reason instanceof GeminiError)) throw reason
+    return [{ slug: plan[i]!.slug, message: reason.message }]
+  })
+  const unavailable = shed.map((s) => s.slug)
+  const first = shed[0]
+  if (searches.length === 0 && first !== undefined) {
+    return err('BAD_GATEWAY', 'Search step failed upstream', first.message)
   }
 
   const found: DiscoverCandidate[] = []
   const planCompliance: Array<{ slug: string; planned: number; found: number }> = []
   let notes = searchNotes
+  let extractionShed: GeminiError | null = null
   for (const [i, { entry, search }] of searches.entries()) {
     await progress(`extracting: ${entry.slug}`, i, plan.length)
     let extracted: z.infer<typeof extractionSchema>
@@ -261,8 +269,10 @@ export async function runDiscover(
         maxOutputTokens: 16384,
       })
     } catch (e) {
-      if (e instanceof GeminiError) return err('BAD_GATEWAY', 'Extraction step failed upstream', e.message)
-      throw e
+      if (!(e instanceof GeminiError)) throw e
+      extractionShed ??= e
+      unavailable.push(entry.slug)
+      continue
     }
     const withStrategy = extracted.candidates
       .filter((c) => apexDomainOf(c.websiteUrl) !== null)
@@ -278,6 +288,12 @@ export async function runDiscover(
     planCompliance.push({ slug: entry.slug, planned: entry.planned, found: withStrategy.length })
     found.push(...withStrategy)
     notes = extracted.searchNotes
+  }
+
+  // planCompliance carries one row per extraction that completed, so an empty
+  // one means the stage produced nothing — the case a step retry can still fix.
+  if (planCompliance.length === 0 && extractionShed !== null) {
+    return err('BAD_GATEWAY', 'Extraction step failed upstream', extractionShed.message)
   }
 
   await progress('checking duplicates', plan.length, plan.length)
@@ -303,7 +319,9 @@ export async function runDiscover(
     if (!saved.ok) console.error('[discover] search_notes save failed', saved.error)
   }
 
-  const summary = `Found ${unique.length} candidates across ${plan.length} strateg${plan.length === 1 ? 'y' : 'ies'}; ${fresh.length} new after dedup.`
+  const ran = plan.length - unavailable.length
+  const note = unavailable.length === 0 ? '' : ` Unavailable upstream: ${unavailable.join(', ')}.`
+  const summary = `Found ${unique.length} candidates across ${ran} of ${plan.length} strateg${plan.length === 1 ? 'y' : 'ies'}; ${fresh.length} new after dedup.${note}`
   return ok({
     candidates: fresh,
     result: {

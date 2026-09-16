@@ -21,7 +21,7 @@ export type AttentionItem =
   | { kind: 'reply_collection_failing'; fromEmail: string; since: string; detail: string | null }
   // The verdict is per project but the feed is tenant-wide, so the item
   // carries the project: name for the bell, id for the CTA's deep link.
-  | { kind: 'outreach_futility'; projectId: string; projectName: string; sends: number; replies: number }
+  | { kind: 'outreach_futility'; projectId: string; projectName: string; sends: number; engaged: number }
   | { kind: 'outreach_drafts'; count: number }
 
 export type IdentityHealthInput = {
@@ -108,7 +108,7 @@ export type AttentionInput = {
   refusedMailboxes: Array<{ fromEmail: string; sentThatDay: number }>
   quota: { exhausted: boolean; constraint: QuotaConstraint | null }
   creditTopUpFailedAt: Date | null
-  futileProjects: Array<{ projectId: string; projectName: string; sends: number; replies: number }>
+  futileProjects: Array<{ projectId: string; projectName: string; sends: number; engaged: number }>
   now: Date
   // null = tenant-wide feed (bell, banners).
   project: {
@@ -152,7 +152,7 @@ export function deriveAttentionItems(input: AttentionInput): AttentionItem[] {
       projectId: p.projectId,
       projectName: p.projectName,
       sends: p.sends,
-      replies: p.replies,
+      engaged: p.engaged,
     })
   }
   if (input.project && input.project.pendingDrafts > 0) {

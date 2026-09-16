@@ -13,5 +13,5 @@ export type AttentionItem =
 	| { kind: 'credit_top_up_failed'; since: string }
 	| { kind: 'reply_collection_scope_missing'; fromEmail: string }
 	| { kind: 'reply_collection_failing'; fromEmail: string; since: string; detail: string | null }
-	| { kind: 'outreach_futility'; projectId: string; projectName: string; sends: number; replies: number }
+	| { kind: 'outreach_futility'; projectId: string; projectName: string; sends: number; engaged: number }
 	| { kind: 'outreach_drafts'; count: number };

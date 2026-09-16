@@ -124,8 +124,8 @@ export function attentionMeta(item: AttentionItem): AttentionMeta {
 			return {
 				icon: HeartPulse,
 				tone: 'warning',
-				title: `Outreach in ${item.projectName} is not getting replies`,
-				desc: `${item.sends} delivered emails drew ${item.replies === 1 ? '1 reply' : `${item.replies} replies`} — statistically below a viable rate. Check deliverability (DMARC, spam placement) and targeting before sending more`,
+				title: `Outreach in ${item.projectName} is drawing no interest`,
+				desc: `${item.engaged} of ${item.sends} delivered emails drew a reply or inquiry-page engagement — statistically below a viable rate. Check deliverability (DMARC, spam placement) and targeting before sending more`,
 				ctaLabel: 'Review',
 				href: '/dashboard',
 			};

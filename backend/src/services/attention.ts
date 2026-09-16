@@ -61,7 +61,7 @@ export async function loadTenantAttentionInput(
     if (row.vitals === null) return []
     const v = JSON.parse(row.vitals) as VitalsAssessment
     return v.verdict === 'futile'
-      ? [{ projectId: row.projectId, projectName: row.projectName, sends: v.sends, replies: v.replies }]
+      ? [{ projectId: row.projectId, projectName: row.projectName, sends: v.sends, engaged: v.engaged }]
       : []
   })
 
