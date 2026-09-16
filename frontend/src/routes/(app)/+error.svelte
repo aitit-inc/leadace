@@ -27,27 +27,22 @@
 </script>
 
 <div class="flex min-h-screen flex-col items-center justify-center px-6 py-10 text-center">
-  <h1 class="mb-3 flex items-center gap-2 font-mono text-base font-semibold text-text">
-    <Logo size={22} class="text-accent" />
+  <h1 class="mb-4 flex items-center gap-2.5 font-display text-xl font-semibold text-text">
+    <Logo size={28} class="text-accent" />
     LeadAce
   </h1>
-  <p class="mb-1 text-sm text-text">Something went wrong loading the app.</p>
-  <p class="mb-4 max-w-md text-xs text-text-muted">
+  <p class="mb-1 text-base text-text">Something went wrong loading the app.</p>
+  <p class="mb-5 max-w-md text-sm text-text-muted">
     {page.error?.message ?? 'Unknown error'}
   </p>
-  <div class="flex gap-3">
-    <button
-      type="button"
-      onclick={retry}
-      disabled={retrying}
-      class="rounded bg-text px-4 py-1.5 text-xs font-medium text-page hover:bg-text/90 transition-colors disabled:opacity-50"
-    >
+  <div class="flex gap-2">
+    <button type="button" onclick={retry} disabled={retrying} class="btn btn-primary">
       {retrying ? 'Retrying…' : 'Try again'}
     </button>
     <button
       type="button"
       onclick={signOut}
-      class="rounded border border-border px-4 py-1.5 text-xs font-medium text-text hover:bg-surface transition-colors"
+      class="btn btn-secondary"
     >
       Sign out
     </button>

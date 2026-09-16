@@ -135,7 +135,7 @@
 <div class="mx-auto max-w-2xl space-y-6">
   <header class="flex items-start justify-between gap-4">
     <div>
-      <h1 class="text-2xl font-semibold text-text">AI Inquiry page</h1>
+      <h1 class="font-display text-2xl font-semibold tracking-tight text-text">AI Inquiry page</h1>
       <p class="mt-1 text-sm text-text-secondary">
         Configure the receiver-facing landing page that recipients see when they tap the link in
         your cold-outreach footer.
@@ -145,29 +145,29 @@
       type="button"
       onclick={openPreview}
       disabled={!data.projectId}
-      class="shrink-0 rounded border border-border bg-surface px-3 py-1.5 text-sm text-text hover:border-text/40 transition-colors disabled:opacity-40"
+      class="btn btn-secondary shrink-0"
     >
       Open preview ↗
     </button>
   </header>
 
   {#if !data.projectId}
-    <div class="rounded-lg border border-border bg-surface p-6 text-center">
+    <div class="card p-6 text-center">
       <p class="text-sm text-text">No project selected.</p>
-      <p class="mt-1 text-xs text-text-muted">
+      <p class="mt-1 text-sm text-text-secondary">
         Pick or create a project from the switcher above to edit its inquiry page.
       </p>
     </div>
   {:else if formData}
     {@const s = formData}
     <form
-      class="space-y-6"
+      class="space-y-3"
       onsubmit={(e) => {
         e.preventDefault();
         void save();
       }}
     >
-      <section class="space-y-2 rounded-lg border border-border bg-surface p-4">
+      <section class="card p-5">
         <label class="flex cursor-pointer items-start gap-3">
           <input
             type="checkbox"
@@ -176,7 +176,7 @@
           />
           <span>
             <span class="block text-sm font-medium text-text">Enable inquiry landing</span>
-            <span class="block text-xs text-text-muted">
+            <span class="mt-0.5 block text-xs text-text-muted">
               When off, your cold-email footer omits the inquiry link and recipients can only
               unsubscribe. The chat backend is also disabled.
             </span>
@@ -184,17 +184,17 @@
         </label>
       </section>
 
-      <section class="space-y-1">
+      <section class="card space-y-1.5 p-5">
         <label for="senderCompanyName" class="block text-sm font-medium text-text">
           Company name
-          <span class="text-text-muted">(optional)</span>
+          <span class="font-normal text-text-muted">(optional)</span>
         </label>
         <p class="text-xs text-text-muted">
           Shown to recipients in the landing header as
-          <span class="font-mono text-text">From [your name], [Role] at [Company]</span>
+          <span class="font-medium text-text">From [your name], [Role] at [Company]</span>
           (Role only when Job title is set, see below). The personal name comes from
           <strong class="text-text">Sender display name</strong> in the
-          <a href="/project-settings" class="underline hover:text-text">Project settings</a>.
+          <a href="/project-settings" class="text-accent-strong hover:underline">Project settings</a>.
           Leave empty to omit the company suffix.
         </p>
         <input
@@ -203,21 +203,21 @@
           maxlength="200"
           bind:value={s.senderCompanyName}
           placeholder="e.g. Acme Inc."
-          class="block w-full rounded border border-border bg-page px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-text/40 focus:outline-none"
+          class="field"
         />
         {#if validationErrors.senderCompanyName}
           <p class="text-xs text-danger">{validationErrors.senderCompanyName}</p>
         {/if}
       </section>
 
-      <section class="space-y-1">
+      <section class="card space-y-1.5 p-5">
         <label for="senderJobTitle" class="block text-sm font-medium text-text">
           Job title
-          <span class="text-text-muted">(optional)</span>
+          <span class="font-normal text-text-muted">(optional)</span>
         </label>
         <p class="text-xs text-text-muted">
           Role shown alongside your name in the landing header as
-          <span class="font-mono text-text">From [your name], [Role] at [Company]</span>.
+          <span class="font-medium text-text">From [your name], [Role] at [Company]</span>.
           Has no effect when <strong class="text-text">Sender display name</strong> is empty.
         </p>
         <input
@@ -226,17 +226,17 @@
           maxlength="200"
           bind:value={s.senderJobTitle}
           placeholder="e.g. Co-founder / Head of Sales"
-          class="block w-full rounded border border-border bg-page px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-text/40 focus:outline-none"
+          class="field"
         />
         {#if validationErrors.senderJobTitle}
           <p class="text-xs text-danger">{validationErrors.senderJobTitle}</p>
         {/if}
       </section>
 
-      <section class="space-y-1">
+      <section class="card space-y-1.5 p-5">
         <label for="brief" class="block text-sm font-medium text-text">
           AI chat brief
-          <span class="text-text-muted">(~1000 chars + 2–4 FAQ items recommended)</span>
+          <span class="font-normal text-text-muted">(~1000 chars + 2–4 FAQ items recommended)</span>
         </label>
         <p class="text-xs text-text-muted">
           What the AI knows about your offer. Cover elevator pitch, problems solved, pricing, trust
@@ -249,17 +249,17 @@
           maxlength="4000"
           bind:value={s.inquiryChatBrief}
           placeholder={`e.g. We help B2B SaaS teams automate cold-outreach research. Replaces 5–10 hours/week of manual prospecting with an autonomous loop tied to your CRM. Pricing from $29/mo. Used by 40+ early-stage teams.\n\nQ: How long is onboarding?\nA: ~30 minutes — connect Gmail, define your ICP, run the first batch.\n\nQ: How do you handle GDPR / data residency?\nA: All recipient data stays in our EU region; we do not sell or repurpose contact info.`}
-          class="block w-full rounded border border-border bg-page px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-text/40 focus:outline-none"
+          class="field"
         ></textarea>
         {#if validationErrors.inquiryChatBrief}
           <p class="text-xs text-danger">{validationErrors.inquiryChatBrief}</p>
         {/if}
       </section>
 
-      <section class="space-y-1">
+      <section class="card space-y-1.5 p-5">
         <label for="oneLiner" class="block text-sm font-medium text-text">
           One-liner pitch
-          <span class="text-text-muted">(≤140 chars)</span>
+          <span class="font-normal text-text-muted">(≤140 chars)</span>
         </label>
         <p class="text-xs text-text-muted">
           Hooky tagline shown at the top of the recipient landing page. Auto-generated by
@@ -271,14 +271,14 @@
           maxlength="140"
           bind:value={s.inquiryOneLiner}
           placeholder="e.g. Stop spending Sundays on prospect research."
-          class="block w-full rounded border border-border bg-page px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-text/40 focus:outline-none"
+          class="field"
         />
         {#if validationErrors.inquiryOneLiner}
           <p class="text-xs text-danger">{validationErrors.inquiryOneLiner}</p>
         {/if}
       </section>
 
-      <section class="space-y-1">
+      <section class="card space-y-1.5 p-5">
         <label for="videoUrl" class="block text-sm font-medium text-text">Intro video URL</label>
         <p class="text-xs text-text-muted">
           YouTube or Vimeo unlisted URL. Embedded automatically. Leave empty to hide.
@@ -288,14 +288,14 @@
           type="url"
           bind:value={s.inquiryVideoUrl}
           placeholder="https://www.youtube.com/watch?v=…"
-          class="block w-full rounded border border-border bg-page px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-text/40 focus:outline-none"
+          class="field"
         />
         {#if validationErrors.inquiryVideoUrl}
           <p class="text-xs text-danger">{validationErrors.inquiryVideoUrl}</p>
         {/if}
       </section>
 
-      <section class="space-y-1">
+      <section class="card space-y-1.5 p-5">
         <label for="pdfUrl" class="block text-sm font-medium text-text">PDF download URL</label>
         <p class="text-xs text-text-muted">
           Optional one-pager / deck. Hosted anywhere reachable over HTTPS.
@@ -305,14 +305,14 @@
           type="url"
           bind:value={s.inquiryPdfUrl}
           placeholder="https://example.com/deck.pdf"
-          class="block w-full rounded border border-border bg-page px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-text/40 focus:outline-none"
+          class="field"
         />
         {#if validationErrors.inquiryPdfUrl}
           <p class="text-xs text-danger">{validationErrors.inquiryPdfUrl}</p>
         {/if}
       </section>
 
-      <section class="space-y-3 rounded-lg border border-border bg-surface p-4">
+      <section class="card space-y-4 p-5">
         <div class="space-y-1">
           <span class="block text-sm font-medium text-text">Call-to-action</span>
           <p class="text-xs text-text-muted">
@@ -357,10 +357,10 @@
           </label>
         </div>
 
-        <div class="space-y-1">
+        <div class="space-y-1.5">
           <label for="ctaUrl" class="block text-sm font-medium text-text">
             {s.inquiryCtaType === 'signup' ? 'Sign up URL' : 'Scheduling URL'}
-            <span class="text-text-muted">
+            <span class="font-normal text-text-muted">
               {s.inquiryCtaType === 'signup' ? '(required)' : '(optional)'}
             </span>
           </label>
@@ -380,7 +380,7 @@
             placeholder={s.inquiryCtaType === 'signup'
               ? 'https://app.example.com/signup'
               : 'https://calendly.com/your-handle/intro'}
-            class="block w-full rounded border border-border bg-page px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-text/40 focus:outline-none"
+            class="field"
           />
           {#if validationErrors.inquiryCtaUrl}
             <p class="text-xs text-danger">{validationErrors.inquiryCtaUrl}</p>
@@ -388,7 +388,7 @@
         </div>
       </section>
 
-      <section class="space-y-2 rounded-lg border border-border bg-surface p-4">
+      <section class="card space-y-2 p-5">
         <span class="block text-sm font-medium text-text">Background</span>
         <p class="text-xs text-text-muted">
           The canvas recipients see on the landing page. Your brand color stays the accent on either.
@@ -415,8 +415,8 @@
         </div>
       </section>
 
-      <section class="grid gap-4 sm:grid-cols-[auto_1fr]">
-        <div class="space-y-1">
+      <section class="card grid gap-4 p-5 sm:grid-cols-[auto_1fr]">
+        <div class="space-y-1.5">
           <label for="brandColor" class="block text-sm font-medium text-text">Brand color</label>
           <p class="text-xs text-text-muted">6-digit hex.</p>
           <div class="flex items-center gap-2">
@@ -432,7 +432,7 @@
               maxlength="7"
               bind:value={s.inquiryBrandColor}
               placeholder="#1a2b3c"
-              class="w-28 rounded border border-border bg-page px-2 py-1.5 font-mono text-xs text-text placeholder:text-text-muted focus:border-text/40 focus:outline-none"
+              class="field w-28 font-mono"
             />
           </div>
           {#if validationErrors.inquiryBrandColor}
@@ -440,7 +440,7 @@
           {/if}
         </div>
 
-        <div class="space-y-1">
+        <div class="space-y-1.5">
           <label for="brandLogo" class="block text-sm font-medium text-text">Brand logo URL</label>
           <p class="text-xs text-text-muted">Square preferred. Shown in the header.</p>
           <div class="flex items-center gap-3">
@@ -449,7 +449,7 @@
               type="url"
               bind:value={s.inquiryBrandLogoUrl}
               placeholder="https://example.com/logo.png"
-              class="flex-1 rounded border border-border bg-page px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-text/40 focus:outline-none"
+              class="field flex-1"
             />
             {#if s.inquiryBrandLogoUrl && !validationErrors.inquiryBrandLogoUrl}
               <img
@@ -466,11 +466,11 @@
         </div>
       </section>
 
-      <div class="flex items-center gap-3 border-t border-border pt-4">
+      <div class="flex items-center gap-3 pt-3">
         <button
           type="submit"
           disabled={saving}
-          class="rounded bg-text px-4 py-2 text-sm font-medium text-page hover:bg-text/90 transition-colors disabled:opacity-40"
+          class="btn btn-primary"
         >
           {saving ? 'Saving…' : 'Save'}
         </button>

@@ -46,8 +46,8 @@
 
 <Modal labelledBy="create-project-title" size="sm" closable={!saving} {onclose}>
   <form onsubmit={handleSubmit}>
-    <h3 id="create-project-title" class="text-sm font-semibold text-text mb-3">Create project</h3>
-    <label for="project-name" class="block text-xs font-medium text-text-secondary mb-1">
+    <h3 id="create-project-title" class="mb-4 font-display text-lg font-semibold text-text">Create project</h3>
+    <label for="project-name" class="mb-1.5 block text-sm font-medium text-text-secondary">
       Project name
     </label>
     <!-- svelte-ignore a11y_autofocus -->
@@ -57,23 +57,19 @@
       required
       autofocus
       placeholder="my-campaign"
-      class="w-full rounded-md bg-surface px-3 py-2 text-sm text-text outline-none focus:ring-2 focus:ring-accent/30 placeholder:text-text-muted"
+      class="field"
     />
     {#if error}
-      <p class="text-danger text-xs mt-2">{error}</p>
+      <p class="mt-2 text-sm text-danger">{error}</p>
     {/if}
-    <div class="mt-5 flex justify-end gap-3">
-      <button
-        type="button"
-        onclick={onclose}
-        class="text-xs text-text-muted hover:text-text transition-colors"
-      >
+    <div class="mt-6 flex justify-end gap-2">
+      <button type="button" onclick={onclose} class="btn btn-ghost">
         Cancel
       </button>
       <button
         type="submit"
         disabled={saving || !name.trim()}
-        class="rounded px-3 py-1.5 text-xs font-medium text-page bg-text hover:bg-text/90 transition-colors disabled:opacity-50"
+        class="btn btn-primary"
       >
         {saving ? 'Creating...' : 'Create'}
       </button>

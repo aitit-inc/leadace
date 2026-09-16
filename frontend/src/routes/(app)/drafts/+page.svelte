@@ -15,6 +15,7 @@
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import Pagination from '$lib/components/Pagination.svelte';
+  import { Check, TriangleAlert } from '@lucide/svelte';
   import type { PageProps } from './$types';
   import { PAGE_SIZE } from '$lib/pagination';
 
@@ -455,8 +456,8 @@
   }
 </script>
 
-<h2 class="text-lg font-semibold text-text mb-1">Drafts</h2>
-<p class="text-xs text-text-muted mb-4">
+<h2 class="mb-1 font-display text-2xl font-semibold tracking-tight text-text">Drafts</h2>
+<p class="mb-4 text-sm text-text-secondary">
   Pending review from <span class="font-mono">/outbound</span> in draft mode. Email drafts send via your
   connected Gmail. Form / SNS drafts are sent manually — open the destination, paste the body, then
   mark as sent. Both count toward your outreach quota.
@@ -464,11 +465,16 @@
 
 {#if banner}
   <div
-    class="mb-4 rounded border px-3 py-2 text-xs {banner.kind === 'error'
-      ? 'border-danger/40 text-danger'
-      : 'border-border text-text-secondary'}"
+    class="mb-4 flex items-start gap-2 rounded-2xl px-4 py-3 text-sm {banner.kind === 'error'
+      ? 'bg-danger/10 text-danger'
+      : 'bg-surface-2 text-text-secondary'}"
   >
-    {banner.text}
+    {#if banner.kind === 'error'}
+      <TriangleAlert size={16} class="mt-0.5 shrink-0" />
+    {:else}
+      <Check size={16} class="mt-0.5 shrink-0" />
+    {/if}
+    <span class="min-w-0 break-words">{banner.text}</span>
   </div>
 {/if}
 
@@ -477,15 +483,15 @@
 {:else if data.drafts.length === 0}
   <EmptyState message="No drafts pending review" />
 {:else}
-  <div class="mb-3 flex items-center justify-between gap-3 rounded border border-border bg-surface px-3 py-2">
-    <label class="flex items-center gap-2 text-xs text-text">
+  <div class="card mb-3 flex items-center justify-between gap-3 px-4 py-2.5">
+    <label class="flex items-center gap-2 text-sm text-text">
       <input
         type="checkbox"
         checked={allSelected}
         indeterminate={someSelected}
         onchange={toggleSelectAll}
       />
-      <span>
+      <span class="tabular-nums">
         {#if selectedIds.size === 0}
           Select all ({data.drafts.length})
         {:else}
@@ -501,7 +507,7 @@
           ? 'Batch send is email-only. Use "Mark sent" on each form / SNS draft instead.'
           : ''}
         onclick={() => (confirming = { kind: 'send-batch', ids: [...selectedIds] })}
-        class="rounded bg-text px-3 py-1.5 text-xs font-medium text-page hover:bg-text/90 transition-colors disabled:opacity-40"
+        class="btn btn-primary btn-sm"
       >
         {batchBusy ? 'Working…' : 'Send selected'}
       </button>
@@ -509,7 +515,7 @@
         type="button"
         disabled={selectedIds.size === 0 || batchBusy}
         onclick={() => (confirming = { kind: 'discard-batch', ids: [...selectedIds] })}
-        class="rounded px-3 py-1.5 text-xs text-danger hover:bg-page transition-colors disabled:opacity-40"
+        class="btn btn-danger-ghost btn-sm"
       >
         Discard selected
       </button>
@@ -524,9 +530,9 @@
       {@const dk = deliverKind(draft.channel)}
       {@const deliverDisabled = busyId === draft.id || (isEmail ? !draft.prospectEmail : !dest.href)}
       {@const isSelected = selectedIds.has(draft.id)}
-      <div class="rounded border {isSelected ? 'border-text/40' : 'border-border'}">
+      <div class="card overflow-hidden {isSelected ? 'ring-1 ring-text/40' : ''}">
         <div class="flex items-stretch">
-          <label class="flex shrink-0 cursor-pointer items-center px-3 hover:bg-surface transition-colors">
+          <label class="flex shrink-0 cursor-pointer items-center pl-4 pr-2 transition-colors hover:bg-surface-2">
             <input
               type="checkbox"
               checked={isSelected}
@@ -535,37 +541,37 @@
           </label>
           <button
             type="button"
-            class="flex-1 text-left px-3 py-2.5 hover:bg-surface transition-colors"
+            class="min-w-0 flex-1 py-3 pl-2 pr-4 text-left transition-colors hover:bg-surface-2 focus-visible:-outline-offset-2"
             onclick={() => toggleExpand(draft)}
           >
           <div class="flex items-baseline justify-between gap-3">
-            <span class="text-sm font-medium text-text truncate">{draft.prospectName}</span>
-            <span class="text-[11px] text-text-muted font-mono shrink-0">
+            <span class="truncate text-sm font-semibold text-text">{draft.prospectName}</span>
+            <span class="shrink-0 text-xs tabular-nums text-text-muted">
               {formatDate(draft.createdAt)}
             </span>
           </div>
-          <div class="mt-0.5 flex items-baseline gap-2">
-            <span class="rounded bg-surface px-1.5 py-0.5 text-[10px] font-medium text-text-secondary shrink-0">
+          <div class="mt-1 flex items-baseline gap-2">
+            <span class="chip shrink-0 bg-surface-2 text-text-secondary">
               {channelLabel(draft.channel)}
             </span>
-            <span class="text-[11px] text-text-muted font-mono truncate">
+            <span class="truncate text-sm text-text-muted">
               {dest.label}
             </span>
             {#if isEmail && draft.subject}
-              <span class="text-xs text-text-secondary truncate">— {draft.subject}</span>
+              <span class="truncate text-sm text-text-secondary">— {draft.subject}</span>
             {/if}
           </div>
           {#if !expanded}
-            <p class="mt-1 text-xs text-text-muted line-clamp-2">{truncate(draft.body, 200)}</p>
+            <p class="mt-1 line-clamp-2 text-sm text-text-muted">{truncate(draft.body, 200)}</p>
           {/if}
           </button>
         </div>
 
         {#if expanded && e}
-          <div class="border-t border-border p-3 space-y-3">
+          <div class="space-y-4 border-t border-border p-4">
             <a
               href="/prospects?q={encodeURIComponent(draft.prospectName)}"
-              class="inline-flex items-center gap-1 text-xs text-accent hover:underline"
+              class="inline-flex items-center gap-1 text-sm text-accent-strong hover:underline"
             >
               View prospect →
             </a>
@@ -574,39 +580,39 @@
                 href={dest.href}
                 target="_blank"
                 rel="noopener noreferrer"
-                class="block text-xs text-accent hover:underline font-mono break-all"
+                class="block break-all text-sm text-accent-strong hover:underline"
               >
                 {dest.label} ↗
               </a>
             {/if}
             {#if isEmail}
               <div>
-                <label class="block text-[11px] font-medium text-text-muted mb-1" for="subject-{draft.id}">
+                <label class="mb-1.5 block text-xs font-semibold text-text-muted" for="subject-{draft.id}">
                   Subject
                 </label>
                 <input
                   id="subject-{draft.id}"
                   type="text"
                   bind:value={e.subject}
-                  class="w-full rounded border border-border bg-page px-2 py-1.5 text-sm text-text"
+                  class="field"
                 />
               </div>
             {/if}
             <div>
-              <label class="block text-[11px] font-medium text-text-muted mb-1" for="body-{draft.id}">
+              <label class="mb-1.5 block text-xs font-semibold text-text-muted" for="body-{draft.id}">
                 Body
               </label>
               <textarea
                 id="body-{draft.id}"
                 bind:value={e.body}
                 rows="12"
-                class="w-full rounded border border-border bg-page px-2 py-1.5 text-sm text-text font-mono resize-y"
+                class="field resize-y leading-relaxed"
               ></textarea>
             </div>
             {#if isEmail}
               {@const pv = previews[draft.id]}
               <div>
-                <span class="block text-[11px] font-medium text-text-muted mb-1">
+                <span class="mb-1.5 block text-xs font-semibold text-text-muted">
                   Signature &amp; footer — appended automatically at send (not editable)
                 </span>
                 {#if !pv || pv.loading}
@@ -615,12 +621,12 @@
                   <p class="text-xs text-danger">Couldn’t load footer preview — {pv.error}</p>
                 {:else if pv.footer?.kind === 'rendered'}
                   <div
-                    class="w-full rounded border border-border border-dashed bg-surface px-2 py-1.5 text-sm text-text-secondary font-mono whitespace-pre-wrap break-words"
+                    class="w-full whitespace-pre-wrap break-words rounded-lg border border-dashed border-border bg-page px-3 py-2 text-sm leading-relaxed text-text-secondary"
                   >{pv.footer.text.replace(/^\n+/, '')}</div>
                 {:else if pv.footer?.kind === 'unavailable'}
                   <p class="text-xs text-text-muted">
                     Footer preview unavailable — complete your
-                    <a href="/workspace-settings" class="text-accent hover:underline">Workspace settings</a>,
+                    <a href="/workspace-settings" class="text-accent-strong hover:underline">Workspace settings</a>,
                     or check that the recipient's country is supported.
                   </p>
                 {/if}
@@ -631,7 +637,7 @@
                 type="button"
                 disabled={!isDirty(draft) || e.saving || busyId === draft.id}
                 onclick={() => handleSaveEditsButton(draft)}
-                class="rounded border border-border bg-page px-3 py-1.5 text-xs text-text hover:bg-surface transition-colors disabled:opacity-40"
+                class="btn btn-secondary"
               >
                 {e.saving ? 'Saving…' : 'Save edits'}
               </button>
@@ -639,7 +645,7 @@
                 <button
                   type="button"
                   onclick={() => copyBody(draft)}
-                  class="rounded border border-border bg-page px-3 py-1.5 text-xs text-text hover:bg-surface transition-colors"
+                  class="btn btn-secondary"
                 >
                   {copiedId === draft.id ? 'Copied!' : 'Copy body'}
                 </button>
@@ -648,7 +654,7 @@
                 type="button"
                 disabled={deliverDisabled}
                 onclick={() => (confirming = { kind: dk, draft })}
-                class="rounded bg-text px-3 py-1.5 text-xs font-medium text-page hover:bg-text/90 transition-colors disabled:opacity-40"
+                class="btn btn-primary"
               >
                 {#if busyId === draft.id}
                   {isEmail ? 'Sending…' : 'Marking…'}
@@ -662,17 +668,17 @@
                 type="button"
                 disabled={busyId === draft.id}
                 onclick={() => (confirming = { kind: 'discard', draft })}
-                class="ml-auto rounded px-3 py-1.5 text-xs text-danger hover:bg-surface transition-colors disabled:opacity-40"
+                class="btn btn-danger-ghost ml-auto"
               >
                 Discard
               </button>
             </div>
             {#if isEmail && !draft.prospectEmail}
-              <p class="text-xs text-danger">
+              <p class="text-sm text-danger">
                 This prospect has no email address. Discard or update the prospect record.
               </p>
             {:else if !isEmail && !dest.href}
-              <p class="text-xs text-danger">
+              <p class="text-sm text-danger">
                 This prospect has no {channelLabel(draft.channel).toLowerCase()} destination. Discard or update the prospect record.
               </p>
             {/if}

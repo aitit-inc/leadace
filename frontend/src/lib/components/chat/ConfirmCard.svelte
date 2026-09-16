@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ShieldAlert } from '@lucide/svelte';
+  import { ShieldAlert, ShieldCheck, TriangleAlert } from '@lucide/svelte';
   import type { PendingCall } from '$lib/types/chat';
 
   let {
@@ -12,52 +12,55 @@
   let danger = $derived(pending.summary.warning !== undefined);
 </script>
 
-<div
-  class="my-2 max-w-[85%] rounded border px-3 py-2.5 text-sm {danger
-    ? 'border-danger/50 bg-danger/5'
-    : 'border-accent/50 bg-accent/10'}"
->
-  <div class="flex items-center gap-2 text-text">
-    <ShieldAlert size={15} class={danger ? 'text-danger' : 'text-accent'} />
-    <span class="font-semibold">{pending.summary.title}</span>
+<div class="card my-3 max-w-2xl p-5 ring-1 {danger ? 'ring-danger/40' : 'ring-accent/50'}">
+  <div class="flex items-start gap-3">
+    <span
+      class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full {danger
+        ? 'bg-danger/12 text-danger'
+        : 'bg-accent/15 text-accent-strong'}"
+    >
+      {#if danger}
+        <ShieldAlert size={18} />
+      {:else}
+        <ShieldCheck size={18} />
+      {/if}
+    </span>
+    <div class="min-w-0">
+      <p class="text-xs font-semibold text-text-muted">Needs your OK</p>
+      <h3 class="font-display text-lg font-semibold leading-snug text-text">{pending.summary.title}</h3>
+    </div>
   </div>
 
-  <dl class="mt-2 space-y-1">
+  <dl class="mt-4 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
     {#each pending.summary.facts as fact (fact.label)}
-      <div class="flex gap-3">
-        <dt class="w-28 shrink-0 text-text-muted">{fact.label}</dt>
-        <dd class="min-w-0 flex-1 text-text-secondary">{fact.value}</dd>
-      </div>
+      <dt class="text-text-muted">{fact.label}</dt>
+      <dd class="break-words text-text">{fact.value}</dd>
     {/each}
   </dl>
 
   {#if pending.summary.body}
-    <p class="mt-2 max-h-56 overflow-auto whitespace-pre-wrap rounded border border-border bg-page p-2 text-text-secondary">
+    <div class="mt-4 max-h-64 overflow-auto whitespace-pre-wrap rounded-xl bg-page p-4 text-sm leading-relaxed text-text-secondary">
       {pending.summary.body}
-    </p>
+    </div>
   {/if}
 
   {#if pending.summary.warning}
-    <p class="mt-2 text-danger">{pending.summary.warning}</p>
+    <p class="mt-3 flex gap-2 text-sm text-danger">
+      <TriangleAlert size={16} class="mt-0.5 shrink-0" />
+      {pending.summary.warning}
+    </p>
   {/if}
 
-  <div class="mt-3 flex items-center gap-3">
+  <div class="mt-5 flex items-center gap-2">
     <button
       type="button"
       disabled={busy}
       onclick={() => onrespond(true)}
-      class="rounded px-3 py-1.5 font-medium text-page hover:bg-accent-strong disabled:opacity-50 {danger
-        ? 'bg-danger'
-        : 'bg-accent'}"
+      class="btn {danger ? 'btn-danger' : 'btn-primary'}"
     >
       {pending.summary.confirmLabel}
     </button>
-    <button
-      type="button"
-      disabled={busy}
-      onclick={() => onrespond(false)}
-      class="text-text-muted hover:text-text disabled:opacity-50"
-    >
+    <button type="button" disabled={busy} onclick={() => onrespond(false)} class="btn btn-ghost">
       Cancel
     </button>
   </div>

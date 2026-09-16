@@ -317,7 +317,7 @@
   style:--brand-fg={safeBrandForeground ?? undefined}
 >
   {#if isPreview}
-    <div class="border-b border-border bg-surface px-4 py-2 text-center text-xs text-text-muted">
+    <div class="border-b border-border bg-surface px-4 py-2 text-center text-sm text-text-secondary">
       Preview — this is what recipients see. Chat is live for testing; the action buttons are inert.
     </div>
   {/if}
@@ -335,7 +335,7 @@
         />
       {/if}
       {#if fromLine}
-        <div class="flex flex-wrap items-baseline gap-x-1 text-xs tracking-wide text-text-muted">
+        <div class="flex flex-wrap items-baseline gap-x-1 text-sm text-text-muted">
           <span>{t.from}</span>
           {#if fromLine.who}
             <span class="font-medium text-text">{fromLine.who}{#if fromLine.role},{/if}</span>
@@ -355,7 +355,7 @@
 
     {#if view.kind === 'meetingRequested'}
       <section class="mt-8">
-        <h1 class="text-2xl font-medium tracking-tight text-text">{t.thanksTitle}</h1>
+        <h1 class="font-display text-3xl font-semibold tracking-tight text-balance text-text">{t.thanksTitle}</h1>
         {#if landing.cta.type === 'meeting' && landing.cta.schedulingUrl}
           <p class="mt-3 text-sm leading-relaxed text-text-secondary">
             {t.schedulingIntro(displayName)}
@@ -365,12 +365,12 @@
               href={landing.cta.schedulingUrl}
               target="_blank"
               rel="noopener noreferrer"
-              class="brand-link text-accent underline decoration-text-muted/40 underline-offset-4 hover:text-text hover:decoration-text"
+              class="brand-link text-accent-strong underline decoration-text-muted/40 underline-offset-4 hover:text-text hover:decoration-text"
             >
               {t.openSchedulingPage}
             </a>
           </p>
-          <p class="mt-4 text-xs text-text-muted">
+          <p class="mt-4 text-sm text-text-muted">
             {t.schedulingPopupHint(displayName)}
           </p>
         {:else}
@@ -384,7 +384,7 @@
       </section>
     {:else if view.kind === 'signupClicked'}
       <section class="mt-8">
-        <h1 class="text-2xl font-medium tracking-tight text-text">{t.signupTitle}</h1>
+        <h1 class="font-display text-3xl font-semibold tracking-tight text-balance text-text">{t.signupTitle}</h1>
         {#if landing.cta.type === 'signup'}
           <p class="mt-3 text-sm leading-relaxed text-text-secondary">
             {t.signupIntro(displayName)}
@@ -394,19 +394,19 @@
               href={landing.cta.signupUrl}
               target="_blank"
               rel="noopener noreferrer"
-              class="brand-link text-accent underline decoration-text-muted/40 underline-offset-4 hover:text-text hover:decoration-text"
+              class="brand-link text-accent-strong underline decoration-text-muted/40 underline-offset-4 hover:text-text hover:decoration-text"
             >
               {t.openSignupPage}
             </a>
           </p>
-          <p class="mt-4 text-xs text-text-muted">
+          <p class="mt-4 text-sm text-text-muted">
             {t.signupPopupHint}
           </p>
         {/if}
       </section>
     {:else if view.kind === 'unsubscribed'}
       <section class="mt-8">
-        <h1 class="text-2xl font-medium tracking-tight text-text">{t.unsubTitle}</h1>
+        <h1 class="font-display text-3xl font-semibold tracking-tight text-balance text-text">{t.unsubTitle}</h1>
         <p class="mt-3 text-sm leading-relaxed text-text-secondary">
           {t.unsubBody}
         </p>
@@ -424,26 +424,26 @@
                 type="button"
                 disabled={actionBusy}
                 onclick={() => pickChip(reason)}
-                class="rounded-full border border-border bg-surface px-3 py-1.5 text-xs text-text hover:border-text/40 transition-colors disabled:opacity-40"
+                class="btn btn-secondary"
               >
                 {t.chip[reason]}
               </button>
             {/each}
           </div>
           {#if actionError}
-            <p class="mt-3 text-xs text-danger">{actionError}</p>
+            <p class="mt-3 text-sm text-danger">{actionError}</p>
           {/if}
         {/if}
       </section>
     {:else}
-      <h1 class="mt-10 text-2xl font-medium tracking-tight text-text">{greeting}</h1>
+      <h1 class="mt-10 font-display text-3xl font-semibold tracking-tight text-balance text-text">{greeting}</h1>
 
       {#if landing.oneLiner}
         <p class="mt-4 text-lg leading-relaxed text-text-secondary">{landing.oneLiner}</p>
       {/if}
 
       {#if videoSrc}
-        <div class="mt-8 aspect-video w-full overflow-hidden rounded bg-black">
+        <div class="mt-8 aspect-video w-full overflow-hidden rounded-2xl bg-surface-2">
           <iframe
             src={videoSrc}
             title={t.videoTitle}
@@ -470,7 +470,7 @@
             type="button"
             disabled={isPreview || actionBusy}
             onclick={handleSignupClick}
-            class="brand-cta rounded-full bg-text px-5 py-2 text-sm font-medium text-page transition-colors hover:bg-text/85 disabled:opacity-40"
+            class="btn brand-cta bg-text text-page hover:bg-text/85"
           >
             {actionBusy ? t.ctaOpening : t.ctaSignup}
           </button>
@@ -479,7 +479,7 @@
             type="button"
             disabled={isPreview || actionBusy}
             onclick={handleRequestMeeting}
-            class="brand-cta rounded-full bg-text px-5 py-2 text-sm font-medium text-page transition-colors hover:bg-text/85 disabled:opacity-40"
+            class="btn brand-cta bg-text text-page hover:bg-text/85"
           >
             {actionBusy
               ? t.ctaSending
@@ -504,7 +504,7 @@
       {#if landing.chatEnabled}
         <section class="mt-12 border-t border-border pt-8">
           <div class="flex items-baseline justify-between">
-            <h2 class="text-sm font-semibold uppercase tracking-[0.12em] text-text-secondary">
+            <h2 class="font-display text-xl font-semibold text-text">
               {t.chatHeading}
             </h2>
             <span class="text-xs tabular-nums text-text-muted">{chatTurnsUsed} / {chatTurnsMax}</span>
@@ -517,7 +517,7 @@
                   type="button"
                   onclick={() => void handleFaqChip(question)}
                   disabled={chatBusy || !onSendChat}
-                  class="brand-chip rounded-full border border-border bg-surface px-3 py-1.5 text-xs text-text-secondary transition-colors hover:border-text/40 hover:text-text disabled:opacity-40"
+                  class="brand-chip rounded-full border border-border bg-surface px-3 py-1.5 text-sm text-text-secondary transition-colors hover:border-text/40 hover:text-text disabled:opacity-40"
                 >
                   {question}
                 </button>
@@ -553,7 +553,7 @@
           {/if}
 
           {#if reachedTurnLimit}
-            <p class="mt-5 text-xs text-text-muted">
+            <p class="mt-5 text-sm text-text-muted">
               {t.chatLimitPre}<strong class="text-text">{t.chatLimitBtn}</strong>{t.chatLimitPost}
             </p>
           {:else}
@@ -589,7 +589,7 @@
       {/if}
 
       {#if actionError}
-        <p class="mt-4 text-xs text-danger">{actionError}</p>
+        <p class="mt-4 text-sm text-danger">{actionError}</p>
       {/if}
 
       <div class="mt-16 flex justify-center">
@@ -597,14 +597,14 @@
           type="button"
           disabled={isPreview || actionBusy}
           onclick={startUnsubscribe}
-          class="rounded-full border border-border bg-surface px-4 py-1.5 text-xs text-text-secondary transition-colors hover:border-text/40 hover:text-text disabled:opacity-40"
+          class="btn btn-secondary whitespace-normal"
         >
           {actionBusy ? t.unsubscribing : t.unsubscribeCta}
         </button>
       </div>
     {/if}
 
-    <footer class="mt-12 flex items-center justify-between gap-3 border-t border-border pt-4 text-[11px] tracking-wide text-text-muted">
+    <footer class="mt-12 flex items-center justify-between gap-3 border-t border-border pt-4 text-xs text-text-muted">
       <span>
         Powered by <a href="https://leadace.ai" target="_blank" rel="noopener noreferrer" class="underline decoration-text-muted/30 underline-offset-4 hover:text-text hover:decoration-text">LeadAce</a>
       </span>

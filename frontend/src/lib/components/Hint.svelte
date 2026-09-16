@@ -39,7 +39,7 @@
   {#if open}
     <div
       role="tooltip"
-      class="absolute left-0 top-full z-30 mt-2 w-[min(20rem,calc(100vw-3rem))] cursor-default rounded-md border border-border bg-page px-3 py-2 text-left text-xs font-normal normal-case leading-relaxed tracking-normal text-text-secondary shadow-lg"
+      class="absolute left-0 top-full z-30 mt-2 w-[min(20rem,calc(100vw-3rem))] cursor-default rounded-xl border border-border bg-surface px-3 py-2 text-left text-xs font-normal normal-case leading-relaxed tracking-normal text-text-secondary shadow-lg"
     >
       {@render children()}
     </div>

@@ -125,153 +125,151 @@
   <title>Plans · LeadAce</title>
 </svelte:head>
 
-<h2 class="text-lg font-semibold text-text mb-6">Plans</h2>
+<div class="mx-auto max-w-4xl">
+  <h2 class="mb-6 font-display text-2xl font-semibold tracking-tight text-text">Plans</h2>
 
-{#if message}
-  <div class="mb-6 rounded bg-surface px-4 py-3 text-sm text-text">{message}</div>
-{/if}
+  {#if message}
+    <div class="card mb-6 px-4 py-3 text-sm text-text">{message}</div>
+  {/if}
 
-{#if !plan}
-  <p class="text-sm text-danger">
-    Couldn't load plan info{data.planError ? `: ${data.planError}` : '.'} Reload the page to try again.
-  </p>
-{:else}
-  <div class="rounded-md border border-border p-5 mb-6">
-    <div class="flex items-start justify-between mb-5">
-      <div>
-        <p class="text-xs text-text-muted uppercase tracking-wider mb-1">Current plan</p>
-        <p class="text-xl font-semibold text-text capitalize">
-          {plan.plan}
-          {#if plan.plan === 'free'}
-            <span class="ml-1 text-xs font-normal text-text-muted">(trial)</span>
-          {/if}
-        </p>
-      </div>
-      {#if EDITION === 'cloud' && isPaidPlan(plan.plan)}
-        <button
-          onclick={handlePortal}
-          disabled={portalLoading}
-          class="rounded px-3 py-1.5 text-xs font-medium text-text border border-border hover:bg-surface transition-colors disabled:opacity-50"
-        >
-          {portalLoading ? 'Opening...' : 'Manage subscription'}
-        </button>
-      {/if}
-    </div>
-
-    {#if EDITION === 'cloud' && isPaidPlan(plan.plan)}
-      <p class="text-xs text-text-muted mb-5 -mt-2">
-        Update payment method, view invoices, or cancel via the Stripe Customer Portal.
-      </p>
-    {/if}
-    {#if EDITION !== 'cloud'}
-      <p class="text-xs text-text-muted mb-5 -mt-2">
-        Self-hosted edition — unlimited usage. Billing is disabled on this install.
-      </p>
-    {/if}
-
-    <div class="grid grid-cols-2 gap-6">
-      <div class="space-y-3">
-        {#if plan.quota.kind === 'unlimited'}
-          <div>
-            <p class="text-xs text-text-muted mb-1">Prospects</p>
-            <p class="font-mono text-lg text-text">unlimited</p>
-          </div>
-        {:else}
-          {@const label = QUOTA_WINDOW_LABEL[plan.quota.window]}
-          {@const allowances = [
-            { label: `New prospects contacted (${label})`, usage: plan.quota.contacted },
-            { label: `Found by LeadAce (${label})`, usage: plan.quota.found },
-          ]}
-          {#each allowances as { label, usage } (label)}
-            <div>
-              <p class="text-xs text-text-muted mb-1">{label}</p>
-              <p class="font-mono text-lg text-text">
-                {formatQuota(usage.used, usage.limit)}
-              </p>
-              <div class="mt-1.5 h-1 w-full rounded-full bg-surface">
-                <div
-                  class="h-1 rounded-full {usage.remaining === 0 && !creditsCoverOverage(plan.quota.credits, USAGE_PRICE_CENTS.contacted)
-                    ? 'bg-accent'
-                    : 'bg-text'}"
-                  style="width: {Math.min(100, (usage.used / usage.limit) * 100)}%"
-                ></div>
-              </div>
-            </div>
-          {/each}
-          <p class="text-xs text-text-muted">
-            Follow-ups are free.{creditsCoverOverage(plan.quota.credits, USAGE_PRICE_CENTS.contacted)
-              ? ' Usage past an allowance comes out of your credits.'
-              : ''}
+  {#if !plan}
+    <p class="text-sm text-danger">
+      Couldn't load plan info{data.planError ? `: ${data.planError}` : '.'} Reload the page to try again.
+    </p>
+  {:else}
+    <div class="card mb-6 p-6">
+      <div class="mb-5 flex items-start justify-between">
+        <div>
+          <p class="mb-1 text-xs font-semibold text-text-muted">Current plan</p>
+          <p class="font-display text-xl font-semibold capitalize text-text">
+            {plan.plan}
+            {#if plan.plan === 'free'}
+              <span class="ml-1 font-sans text-xs font-normal text-text-muted">(trial)</span>
+            {/if}
           </p>
+        </div>
+        {#if EDITION === 'cloud' && isPaidPlan(plan.plan)}
+          <button onclick={handlePortal} disabled={portalLoading} class="btn btn-secondary btn-sm">
+            {portalLoading ? 'Opening...' : 'Manage subscription'}
+          </button>
         {/if}
       </div>
-      {#if plan.prospects}
-        <div>
-          <p class="text-xs text-text-muted mb-1">Stored prospects</p>
-          <p class="font-mono text-lg text-text">
-            {formatQuota(plan.prospects.used, plan.prospects.limit)}
-          </p>
-          {#if plan.prospects.limit !== null}
-            <div class="mt-1.5 h-1 w-full rounded-full bg-surface">
-              <div
-                class="h-1 rounded-full {plan.prospects.remaining === 0 ? 'bg-accent' : 'bg-text'}"
-                style="width: {Math.min(100, (plan.prospects.used / plan.prospects.limit) * 100)}%"
-              ></div>
+
+      {#if EDITION === 'cloud' && isPaidPlan(plan.plan)}
+        <p class="-mt-2 mb-5 text-sm text-text-secondary">
+          Update payment method, view invoices, or cancel via the Stripe Customer Portal.
+        </p>
+      {/if}
+      {#if EDITION !== 'cloud'}
+        <p class="-mt-2 mb-5 text-sm text-text-secondary">
+          Self-hosted edition — unlimited usage. Billing is disabled on this install.
+        </p>
+      {/if}
+
+      <div class="grid grid-cols-2 gap-6">
+        <div class="space-y-3">
+          {#if plan.quota.kind === 'unlimited'}
+            <div>
+              <p class="mb-1 text-xs font-semibold text-text-muted">Prospects</p>
+              <p class="text-lg font-semibold text-text">unlimited</p>
             </div>
+          {:else}
+            {@const label = QUOTA_WINDOW_LABEL[plan.quota.window]}
+            {@const allowances = [
+              { label: `New prospects contacted (${label})`, usage: plan.quota.contacted },
+              { label: `Found by LeadAce (${label})`, usage: plan.quota.found },
+            ]}
+            {#each allowances as { label, usage } (label)}
+              <div>
+                <p class="mb-1 text-xs font-semibold text-text-muted">{label}</p>
+                <p class="font-display text-lg font-semibold tabular-nums text-text">
+                  {formatQuota(usage.used, usage.limit)}
+                </p>
+                <div class="mt-1.5 h-1 w-full rounded-full bg-surface-2">
+                  <div
+                    class="h-1 rounded-full {usage.remaining === 0 && !creditsCoverOverage(plan.quota.credits, USAGE_PRICE_CENTS.contacted)
+                      ? 'bg-warning'
+                      : 'bg-text-muted'}"
+                    style="width: {Math.min(100, (usage.used / usage.limit) * 100)}%"
+                  ></div>
+                </div>
+              </div>
+            {/each}
+            <p class="text-xs text-text-muted">
+              Follow-ups are free.{creditsCoverOverage(plan.quota.credits, USAGE_PRICE_CENTS.contacted)
+                ? ' Usage past an allowance comes out of your credits.'
+                : ''}
+            </p>
           {/if}
         </div>
-      {/if}
+        {#if plan.prospects}
+          <div>
+            <p class="mb-1 text-xs font-semibold text-text-muted">Stored prospects</p>
+            <p class="font-display text-lg font-semibold tabular-nums text-text">
+              {formatQuota(plan.prospects.used, plan.prospects.limit)}
+            </p>
+            {#if plan.prospects.limit !== null}
+              <div class="mt-1.5 h-1 w-full rounded-full bg-surface-2">
+                <div
+                  class="h-1 rounded-full {plan.prospects.remaining === 0 ? 'bg-warning' : 'bg-text-muted'}"
+                  style="width: {Math.min(100, (plan.prospects.used / plan.prospects.limit) * 100)}%"
+                ></div>
+              </div>
+            {/if}
+          </div>
+        {/if}
+      </div>
     </div>
-  </div>
 
-  {#if EDITION === 'cloud' && plan.quota.kind === 'capped' && plan.quota.credits}
-    <CreditsPanel
-      credits={plan.quota.credits}
-      {token}
-      onChanged={() => invalidate('app:plan')}
-    />
-  {/if}
-
-  {#if EDITION === 'cloud' && isPaidPlan(plan.plan) && (data.subscription || data.subscriptionError)}
-    <p class="text-xs font-medium text-text-secondary mb-4">Change plan</p>
-    {#if data.subscription}
-      <PlanChange
-        current={plan.plan}
-        subscription={data.subscription}
+    {#if EDITION === 'cloud' && plan.quota.kind === 'capped' && plan.quota.credits}
+      <CreditsPanel
+        credits={plan.quota.credits}
         {token}
-        onChanged={handlePlanChanged}
+        onChanged={() => invalidate('app:plan')}
       />
-    {:else}
-      <p class="text-sm text-danger">
-        Couldn't load subscription details: {data.subscriptionError}. Reload the page to try again.
-      </p>
+    {/if}
+
+    {#if EDITION === 'cloud' && isPaidPlan(plan.plan) && (data.subscription || data.subscriptionError)}
+      <p class="mb-4 font-display text-lg font-semibold text-text">Change plan</p>
+      {#if data.subscription}
+        <PlanChange
+          current={plan.plan}
+          subscription={data.subscription}
+          {token}
+          onChanged={handlePlanChanged}
+        />
+      {:else}
+        <p class="text-sm text-danger">
+          Couldn't load subscription details: {data.subscriptionError}. Reload the page to try again.
+        </p>
+      {/if}
+    {/if}
+
+    {#if EDITION === 'cloud' && plan.plan === 'free'}
+      <p class="mb-4 font-display text-lg font-semibold text-text">Upgrade</p>
+
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
+        {#each PAID_TIERS as tier (tier.tier)}
+          <div class="card flex flex-col p-5">
+            <p class="text-sm font-semibold text-text">{tier.name}</p>
+            <p class="mt-1">
+              <span class="font-display text-2xl font-semibold tabular-nums text-text">${tier.monthlyPrice}</span>
+              <span class="text-sm text-text-muted">/month</span>
+            </p>
+            <ul class="mt-3 flex-1 space-y-1 text-sm text-text-secondary">
+              <li>{tier.projects}</li>
+              <li>{tier.outreach}</li>
+            </ul>
+            <button
+              onclick={() => handleUpgrade(tier)}
+              disabled={checkoutLoading !== null}
+              class="btn btn-primary mt-4 w-full"
+            >
+              {checkoutLoading === tier.tier ? 'Redirecting...' : `Upgrade to ${tier.name}`}
+            </button>
+          </div>
+        {/each}
+      </div>
     {/if}
   {/if}
-
-  {#if EDITION === 'cloud' && plan.plan === 'free'}
-    <p class="text-xs font-medium text-text-secondary mb-4">Upgrade</p>
-
-    <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-      {#each PAID_TIERS as tier (tier.tier)}
-        <div class="rounded-md border border-border p-4 flex flex-col">
-          <p class="text-sm font-medium text-text">{tier.name}</p>
-          <p class="mt-1">
-            <span class="font-mono text-xl font-semibold text-text">${tier.monthlyPrice}</span>
-            <span class="text-xs text-text-muted">/month</span>
-          </p>
-          <ul class="mt-3 space-y-1 text-xs text-text-secondary flex-1">
-            <li>{tier.projects}</li>
-            <li>{tier.outreach}</li>
-          </ul>
-          <button
-            onclick={() => handleUpgrade(tier)}
-            disabled={checkoutLoading !== null}
-            class="mt-4 w-full rounded px-3 py-1.5 text-xs font-medium text-page bg-accent hover:bg-accent-strong transition-colors disabled:opacity-50"
-          >
-            {checkoutLoading === tier.tier ? 'Redirecting...' : `Upgrade to ${tier.name}`}
-          </button>
-        </div>
-      {/each}
-    </div>
-  {/if}
-{/if}
+</div>

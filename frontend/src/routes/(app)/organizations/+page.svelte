@@ -32,8 +32,8 @@
 </script>
 
 <div class="flex items-center justify-between mb-4">
-  <h2 class="text-lg font-semibold text-text">Organizations</h2>
-  <span class="text-xs text-text-muted font-mono">{data.total} total</span>
+  <h2 class="font-display text-2xl font-semibold tracking-tight text-text">Organizations</h2>
+  <span class="text-sm tabular-nums text-text-muted">{data.total} total</span>
 </div>
 
 <div class="mb-4">
@@ -42,15 +42,15 @@
     value={data.q}
     oninput={onQueryInput}
     placeholder="Search by name or domain"
-    class="w-full md:w-80 bg-surface rounded px-3 py-1.5 text-xs text-text outline-none placeholder:text-text-muted"
+    class="field md:w-80"
   />
 </div>
 
 {#if data.organizations.length === 0}
   <EmptyState message="No organizations yet. Run /build-list or /import-prospects to add prospects — their organizations are created automatically." />
 {:else}
-  <div class="space-y-0">
-    <div class="hidden md:grid grid-cols-[1.5fr_1fr_70px_70px_100px] gap-4 px-3 py-2 text-xs font-medium text-text-muted">
+  <div class="card overflow-hidden">
+    <div class="hidden md:grid grid-cols-[1.5fr_1fr_70px_70px_100px] gap-4 border-b border-border px-5 py-2.5 text-xs font-semibold text-text-muted">
       <span>Name</span>
       <span>Domain</span>
       <span class="text-center">Prosp.</span>
@@ -58,35 +58,39 @@
       <span class="text-right">Updated</span>
     </div>
 
-    {#each data.organizations as o}
-      <a
-        href="/organizations/{o.id}"
-        class="hidden md:grid grid-cols-[1.5fr_1fr_70px_70px_100px] gap-4 px-3 py-2.5 text-sm hover:bg-surface transition-colors rounded"
-      >
-        <span class="text-text truncate">{o.name}</span>
-        <span class="text-xs text-text-secondary font-mono truncate self-center">{o.domain}</span>
-        <span class="text-center text-xs font-mono text-text-secondary self-center">{o.prospectCount}</span>
-        <span class="text-center text-xs font-mono text-text-secondary self-center">{o.projectCount}</span>
-        <span class="text-right text-xs font-mono text-text-muted self-center">
-          {new Date(o.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-        </span>
-      </a>
+    <div class="divide-y divide-border">
+      {#each data.organizations as o}
+        <div>
+          <a
+            href="/organizations/{o.id}"
+            class="hidden md:grid grid-cols-[1.5fr_1fr_70px_70px_100px] gap-4 px-5 py-3 text-sm hover:bg-surface-2 transition-colors focus-visible:-outline-offset-2"
+          >
+            <span class="text-text truncate">{o.name}</span>
+            <span class="text-text-secondary truncate self-center">{o.domain}</span>
+            <span class="text-center tabular-nums text-text-secondary self-center">{o.prospectCount}</span>
+            <span class="text-center tabular-nums text-text-secondary self-center">{o.projectCount}</span>
+            <span class="text-right text-xs tabular-nums text-text-muted self-center">
+              {new Date(o.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+            </span>
+          </a>
 
-      <a
-        href="/organizations/{o.id}"
-        class="flex md:hidden flex-col gap-1 px-3 py-3 text-left hover:bg-surface transition-colors rounded"
-      >
-        <p class="text-sm text-text truncate">{o.name}</p>
-        <p class="text-xs text-text-muted font-mono truncate">{o.domain}</p>
-        <div class="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px] text-text-muted">
-          <span>{o.prospectCount} prospects</span>
-          <span aria-hidden="true">·</span>
-          <span>{o.projectCount} projects</span>
-          <span aria-hidden="true">·</span>
-          <span>{new Date(o.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+          <a
+            href="/organizations/{o.id}"
+            class="flex md:hidden flex-col gap-1 px-5 py-3 text-left hover:bg-surface-2 transition-colors focus-visible:-outline-offset-2"
+          >
+            <p class="text-sm text-text truncate">{o.name}</p>
+            <p class="text-xs text-text-muted truncate">{o.domain}</p>
+            <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs tabular-nums text-text-muted">
+              <span>{o.prospectCount} prospects</span>
+              <span aria-hidden="true">·</span>
+              <span>{o.projectCount} projects</span>
+              <span aria-hidden="true">·</span>
+              <span>{new Date(o.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+            </div>
+          </a>
         </div>
-      </a>
-    {/each}
+      {/each}
+    </div>
   </div>
   <Pagination page={data.page} pageSize={PAGE_SIZE} total={data.total} onChange={onPageChange} />
 {/if}

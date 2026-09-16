@@ -50,45 +50,37 @@
 </script>
 
 <form
-  class="my-2 max-w-[85%] space-y-2 rounded border border-accent/50 bg-accent/10 px-3 py-2 text-xs"
+  class="card my-3 max-w-2xl space-y-4 p-5 ring-1 ring-accent/50"
   onsubmit={(e) => {
     e.preventDefault();
     void save();
   }}
 >
-  <div class="flex items-center gap-2 text-text">
-    <BadgeCheck size={14} class="text-accent" />
-    <span class="font-medium">Confirm your sender identity</span>
+  <div class="flex items-start gap-3">
+    <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent/15 text-accent-strong">
+      <BadgeCheck size={18} />
+    </span>
+    <div class="min-w-0">
+      <h3 class="font-display text-lg font-semibold leading-snug text-text">Confirm your sender identity</h3>
+      <p class="mt-0.5 text-sm text-text-secondary">
+        Every email's footer carries this by law. Ace filled in what your site shows; fix anything that is off.
+      </p>
+    </div>
   </div>
-  <p class="text-text-muted">
-    Every email's footer carries this by law. Ace filled in what your site shows; fix anything that is off.
-  </p>
-  <label class="block space-y-1">
-    <span class="font-medium text-text">Legal name</span>
-    <input
-      type="text"
-      maxlength="200"
-      bind:value={legalName}
-      disabled={saving}
-      class="block w-full rounded border border-border bg-page px-2 py-1 text-sm text-text focus:border-accent focus:outline-none"
-    />
+  <label class="block space-y-1.5">
+    <span class="text-sm font-medium text-text">Legal name</span>
+    <input type="text" maxlength="200" bind:value={legalName} disabled={saving} class="field" />
   </label>
-  <label class="block space-y-1">
-    <span class="font-medium text-text">Postal address</span>
-    <textarea
-      rows={2}
-      maxlength="500"
-      bind:value={physicalAddress}
-      disabled={saving}
-      class="block w-full resize-none rounded border border-border bg-page px-2 py-1 text-sm text-text focus:border-accent focus:outline-none"
-    ></textarea>
+  <label class="block space-y-1.5">
+    <span class="text-sm font-medium text-text">Postal address</span>
+    <textarea rows={2} maxlength="500" bind:value={physicalAddress} disabled={saving} class="field resize-none"></textarea>
   </label>
-  <label class="block space-y-1">
-    <span class="font-medium text-text">Sender country</span>
+  <label class="block space-y-1.5">
+    <span class="text-sm font-medium text-text">Sender country</span>
     <select
       bind:value={defaultSenderCountry}
       disabled={saving}
-      class="block w-full rounded border border-border bg-page px-2 py-1 text-sm text-text focus:border-accent focus:outline-none"
+      class="field"
     >
       <option value={null}>— Select —</option>
       {#each SUPPORTED_COUNTRIES as { code, label } (code)}
@@ -97,13 +89,9 @@
     </select>
   </label>
   {#if error}
-    <p class="text-danger">{error}</p>
+    <p class="text-sm text-danger">{error}</p>
   {/if}
-  <button
-    type="submit"
-    disabled={!complete || saving}
-    class="rounded bg-accent px-3 py-1 font-medium text-page hover:bg-accent-strong disabled:opacity-50"
-  >
+  <button type="submit" disabled={!complete || saving} class="btn btn-primary">
     {saving ? 'Saving…' : 'Save and continue'}
   </button>
 </form>

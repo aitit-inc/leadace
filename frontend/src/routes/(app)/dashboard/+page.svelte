@@ -4,6 +4,7 @@
   import type {
     AttentionItem,
     DashboardActivityKind,
+    DashboardPeriod,
     FunnelStageKey,
     JournalEvent,
   } from '$lib/types/dashboard';
@@ -26,7 +27,6 @@
     UserPlus,
     Clock,
     Check,
-    BellRing,
     Target,
   } from '@lucide/svelte';
   import { attentionMeta, humanize, type AttentionMeta } from '$lib/attention-meta';
@@ -52,13 +52,13 @@
   // `stage` indexes summary.kpis and is the /outreach?stage= param.
   const STAGE_DEFS: Record<
     FunnelStageKey,
-    { stage: FunnelStageFilter; label: string; icon: typeof Send; sub: string; highlight: boolean }
+    { stage: FunnelStageFilter; label: string; icon: typeof Send; sub: string; inbound: boolean }
   > = {
-    sent: { stage: 'approached', label: 'Approached', icon: Send, sub: 'prospects contacted', highlight: false },
-    delivered: { stage: 'delivered', label: 'Delivered', icon: MailCheck, sub: 'no bounce came back', highlight: false },
-    reached: { stage: 'reached', label: 'Reached', icon: MousePointerClick, sub: 'opened their page', highlight: false },
-    engaged: { stage: 'engaged', label: 'Engaged', icon: MessagesSquare, sub: 'replied, chatted, or signed up', highlight: false },
-    won: { stage: 'won', label: 'Won', icon: Trophy, sub: 'meetings + signups', highlight: true },
+    sent: { stage: 'approached', label: 'Approached', icon: Send, sub: 'prospects contacted', inbound: false },
+    delivered: { stage: 'delivered', label: 'Delivered', icon: MailCheck, sub: 'no bounce came back', inbound: false },
+    reached: { stage: 'reached', label: 'Reached', icon: MousePointerClick, sub: 'opened their page', inbound: true },
+    engaged: { stage: 'engaged', label: 'Engaged', icon: MessagesSquare, sub: 'replied, chatted, or signed up', inbound: true },
+    won: { stage: 'won', label: 'Won', icon: Trophy, sub: 'meetings + signups', inbound: true },
   };
   let stageCards = $derived(
     summary
@@ -79,6 +79,12 @@
   function stageHref(stage: string): string {
     return data.period === 'all' ? `/outreach?stage=${stage}` : `/outreach?stage=${stage}&period=${data.period}`;
   }
+
+  const PERIOD_PHRASE: Record<DashboardPeriod, string> = {
+    '7d': 'In the last 7 days',
+    '30d': 'In the last 30 days',
+    all: 'So far',
+  };
 
   const LEARNING_STAGE_LABELS: Record<string, string> = {
     targeting: 'Targeting',
@@ -140,8 +146,8 @@
   }
 
   const TONE_CHIP: Record<AttentionMeta['tone'], string> = {
-    accent: 'bg-accent/15 text-accent',
-    info: 'bg-info/15 text-info',
+    accent: 'bg-accent/15 text-accent-strong',
+    inbound: 'bg-inbound/15 text-inbound',
     danger: 'bg-danger/15 text-danger',
     warning: 'bg-warning/15 text-warning',
   };
@@ -150,13 +156,13 @@
   function activityMeta(kind: DashboardActivityKind): ActivityMeta {
     switch (kind) {
       case 'meeting':
-        return { label: 'Meeting request', chip: 'bg-success/15 text-success', muted: false };
+        return { label: 'Meeting request', chip: 'bg-inbound/15 text-inbound', muted: false };
       case 'signup':
-        return { label: 'Signed up', chip: 'bg-success/15 text-success', muted: false };
+        return { label: 'Signed up', chip: 'bg-inbound/15 text-inbound', muted: false };
       case 'replied':
-        return { label: 'Replied', chip: 'bg-success/15 text-success', muted: false };
+        return { label: 'Replied', chip: 'bg-inbound/15 text-inbound', muted: false };
       case 'inquired':
-        return { label: 'Chatted', chip: 'bg-info/15 text-info', muted: false };
+        return { label: 'Chatted', chip: 'bg-inbound/15 text-inbound', muted: false };
       case 'opened':
         return { label: 'Opened page', chip: 'bg-surface-2 text-text-secondary', muted: true };
       case 'unsubscribed':
@@ -171,73 +177,89 @@
   }
 </script>
 
+<svelte:head>
+  <title>Home · LeadAce</title>
+</svelte:head>
+
 {#if summary}
+  {@const approached = summary.kpis.approached.current}
+  {@const engaged = summary.kpis.engaged.current}
+  {@const won = summary.kpis.won.current}
   <div class="mx-auto max-w-5xl space-y-6">
-    <div class="flex flex-wrap items-end justify-between gap-3">
-      <div>
-        <h1 class="text-xl font-semibold text-text">Sales Dashboard</h1>
-        <p class="mt-0.5 text-sm text-text-secondary">How your AI sales rep is doing</p>
-      </div>
-      <div class="flex items-center gap-3">
-        {#if summary.lastCycleDate}
-          <span class="text-xs text-text-muted">Last cycle {fmtDay(summary.lastCycleDate)}</span>
-        {/if}
+    <header class="space-y-4">
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
         {#if paused}
-          <span class="inline-flex items-center gap-1.5 rounded-full bg-warning/15 px-2.5 py-1 text-xs font-medium text-warning">
+          <span class="chip bg-warning/10 text-warning">
             <span class="h-1.5 w-1.5 rounded-full bg-warning"></span>
             Paused
           </span>
         {:else}
-          <span class="inline-flex items-center gap-1.5 rounded-full bg-success/15 px-2.5 py-1 text-xs font-medium text-success">
-            <span class="h-1.5 w-1.5 rounded-full bg-success"></span>
+          <span class="chip bg-inbound/10 text-inbound">
+            <span class="h-1.5 w-1.5 rounded-full bg-inbound"></span>
             Autopilot on
           </span>
         {/if}
-        <div class="flex items-center rounded-md border border-border bg-surface p-0.5 text-xs font-medium">
+        {#if summary.lastCycleDate}
+          <span class="text-sm text-text-muted">Last cycle {fmtDay(summary.lastCycleDate)}</span>
+        {/if}
+        <div class="ml-auto inline-flex rounded-full bg-surface-2 p-0.5" role="group" aria-label="Period">
           {#each PERIODS as p}
             <button
               type="button"
               onclick={() => setPeriod(p.key)}
-              class="rounded px-2.5 py-1 {data.period === p.key ? 'bg-surface-2 text-text' : 'text-text-muted hover:text-text'}"
+              aria-pressed={data.period === p.key}
+              class="rounded-full px-3 py-1 text-sm transition-colors {data.period === p.key
+                ? 'bg-surface font-semibold text-text'
+                : 'text-text-secondary hover:text-text'}"
             >
               {p.label}
             </button>
           {/each}
         </div>
       </div>
-    </div>
+      <h1 class="max-w-3xl font-display text-3xl font-semibold leading-tight tracking-tight text-balance text-text">
+        <!-- Sends count by send date and engagement by reply date, so each is stated on its own. -->
+        {#if approached > 0}
+          {PERIOD_PHRASE[data.period]}, Ace contacted
+          <span class="tabular-nums text-accent-strong">{approached}</span>
+          {approached === 1 ? 'prospect' : 'prospects'}.
+        {:else if data.period === 'all'}
+          Ace hasn't contacted anyone yet.
+        {:else}
+          {PERIOD_PHRASE[data.period]}, Ace didn't contact any new prospects.
+        {/if}
+        {#if engaged > 0}
+          <span class="tabular-nums text-inbound">{engaged}</span>
+          {engaged === 1 ? 'prospect' : 'prospects'} engaged{#if won > 0}, and
+            <span class="tabular-nums text-inbound">{won}</span>
+            turned into {won === 1 ? 'a meeting or sign-up' : 'meetings or sign-ups'}{/if}.
+        {:else if approached > 0}
+          No one has engaged yet.
+        {/if}
+      </h1>
+    </header>
 
     <div class="space-y-3">
       {#if summary.attention.length > 0}
-        <section class="overflow-hidden rounded-xl border border-border bg-surface">
-          <div class="flex items-center gap-2 border-b border-border px-5 py-3">
-            <span class="flex h-6 w-6 items-center justify-center rounded-full bg-warning/15 text-warning">
-              <BellRing size={14} />
-            </span>
-            <h2 class="text-sm font-semibold text-text">Needs your attention</h2>
-            <span class="rounded-full bg-warning/15 px-2 py-0.5 text-xs font-semibold text-warning">
-              {summary.attention.length}
-            </span>
-            <span class="ml-auto hidden text-xs text-text-muted sm:inline">Things the AI can't decide for you</span>
+        <section class="card overflow-hidden">
+          <div class="flex items-center gap-2 px-5 pb-2 pt-4">
+            <h2 class="font-display text-lg font-semibold text-text">Needs your attention</h2>
+            <span class="chip bg-surface-2 tabular-nums text-text-secondary">{summary.attention.length}</span>
+            <span class="ml-auto hidden text-sm text-text-muted sm:inline">Things the AI can't decide for you</span>
           </div>
           <div class="divide-y divide-border">
             {#each summary.attention as item}
               {@const meta = attentionMeta(item)}
               {@const Icon = meta.icon}
               <div class="flex items-center gap-3 px-5 py-3">
-                <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg {TONE_CHIP[meta.tone]}">
+                <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full {TONE_CHIP[meta.tone]}">
                   <Icon size={18} />
                 </span>
                 <div class="min-w-0 flex-1">
-                  <p class="text-sm font-medium text-text">{meta.title}</p>
-                  <p class="truncate text-xs text-text-secondary">{meta.desc}</p>
+                  <p class="text-sm font-semibold text-text">{meta.title}</p>
+                  <p class="truncate text-sm text-text-secondary">{meta.desc}</p>
                 </div>
-                <a
-                  href={meta.href}
-                  class="shrink-0 rounded-md px-3 py-1.5 text-xs font-semibold {meta.tone === 'accent'
-                    ? 'bg-accent text-white hover:bg-accent-strong'
-                    : 'border border-border bg-surface text-text hover:bg-surface-2'}"
-                >
+                <a href={meta.href} class="btn btn-sm shrink-0 {meta.tone === 'accent' ? 'btn-primary' : 'btn-secondary'}">
                   {meta.ctaLabel}
                 </a>
               </div>
@@ -255,12 +277,12 @@
       {/if}
 
       {#if summary.attention.length === 0 && data.suggestions.length === 0}
-        <section class="flex items-center gap-4 rounded-xl border border-success/30 bg-success/10 px-5 py-5">
-          <span class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-success/20 text-success">
-            <Check size={26} />
+        <section class="card flex items-center gap-4 p-5">
+          <span class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-inbound/15 text-inbound">
+            <Check size={24} />
           </span>
           <div>
-            <h2 class="text-base font-semibold text-text">All clear — nothing needs you</h2>
+            <h2 class="font-display text-lg font-semibold text-text">All clear — nothing needs you</h2>
             <p class="mt-0.5 text-sm text-text-secondary">
               Sit back. The AI keeps approaching prospects and surfaces anything that needs you here.
             </p>
@@ -270,83 +292,84 @@
     </div>
 
     <section
-      class="grid grid-cols-2 gap-3 {stageCards.length === 5 ? 'lg:grid-cols-5' : 'lg:grid-cols-4'}"
+      class="grid grid-cols-2 gap-px overflow-hidden rounded-2xl bg-border {stageCards.length === 5
+        ? 'lg:grid-cols-5'
+        : 'lg:grid-cols-4'}"
     >
       {#each stageCards as card (card.key)}
         {@const Icon = card.icon}
-        <a
-          href={stageHref(card.stage)}
-          class="rounded-xl border p-4 transition-colors {card.highlight
-            ? 'border-accent/30 bg-accent/5 hover:bg-accent/10'
-            : 'border-border bg-surface hover:bg-surface-2'}"
-        >
-          <div class="flex items-center justify-between">
-            <span class="text-xs font-medium uppercase tracking-wider {card.highlight ? 'text-accent-strong' : 'text-text-muted'}">
-              {card.label}
+        <a href={stageHref(card.stage)} class="flex flex-col gap-1 bg-surface p-5 transition-colors hover:bg-surface-2 focus-visible:-outline-offset-2">
+          <span class="flex items-center justify-between text-sm font-medium text-text-secondary">
+            {card.label}
+            <Icon size={16} class="text-text-muted" />
+          </span>
+          <span class="flex items-baseline gap-2">
+            <span
+              class="font-display text-4xl font-semibold tabular-nums tracking-tight {card.inbound && card.value.current > 0
+                ? 'text-inbound'
+                : 'text-text'}"
+            >
+              {card.value.current}
             </span>
-            <Icon size={15} class={card.highlight ? 'text-accent' : 'text-text-muted'} />
-          </div>
-          <div class="mt-2 flex items-baseline gap-2">
-            <span class="font-mono text-3xl font-semibold text-text">{card.value.current}</span>
             {#if card.value.deltaPct !== null}
               {#if card.value.deltaPct >= 0}
-                <span class="inline-flex items-center gap-0.5 text-xs font-medium text-success">
-                  <TrendingUp size={13} />{card.value.deltaPct}%
+                <span class="inline-flex items-center gap-0.5 text-xs font-semibold tabular-nums text-inbound">
+                  <TrendingUp size={14} />{card.value.deltaPct}%
                 </span>
               {:else}
-                <span class="inline-flex items-center gap-0.5 text-xs font-medium text-danger">
-                  <TrendingDown size={13} />{card.value.deltaPct}%
+                <span class="inline-flex items-center gap-0.5 text-xs font-semibold tabular-nums text-danger">
+                  <TrendingDown size={14} />{card.value.deltaPct}%
                 </span>
               {/if}
             {/if}
-          </div>
-          <p class="mt-1 text-xs text-text-muted">
+          </span>
+          <span class="text-xs text-text-muted">
             {#if card.conversion !== null && card.prevLabel}
-              <span class="font-medium text-text-secondary">{card.conversion}% of {card.prevLabel}</span> ·
+              <span class="font-semibold text-text-secondary">{card.conversion}% of {card.prevLabel}</span> ·
             {/if}
             {card.sub}
-          </p>
+          </span>
         </a>
       {/each}
     </section>
 
     <section class="grid grid-cols-1 gap-3 lg:grid-cols-5">
       <div class="space-y-3 lg:col-span-3">
-        <div class="rounded-xl border border-border bg-surface p-5">
-          <div class="mb-1 flex items-center justify-between">
-            <h3 class="text-sm font-semibold text-text">Activity</h3>
-            <div class="flex items-center gap-3 text-xs">
-              <span class="flex items-center gap-1 text-text-muted"><span class="inline-block h-2 w-2 rounded-sm bg-surface-2"></span>Sent</span>
-              <span class="flex items-center gap-1 text-text-muted"><span class="inline-block h-2 w-2 rounded-sm bg-accent"></span>Replies</span>
+        <div class="card p-5">
+          <div class="mb-1 flex items-center justify-between gap-3">
+            <h3 class="font-display text-lg font-semibold text-text">Activity</h3>
+            <div class="flex items-center gap-3 text-xs text-text-muted">
+              <span class="flex items-center gap-1.5"><span class="inline-block h-2.5 w-2.5 rounded-sm bg-surface-2"></span>Sent</span>
+              <span class="flex items-center gap-1.5"><span class="inline-block h-2.5 w-2.5 rounded-sm bg-inbound"></span>Replies</span>
             </div>
           </div>
           {#if hasReplyData}
-            <div class="mb-3 flex items-baseline gap-2">
-              <span class="text-xs text-text-muted">Reply rate · {data.period === 'all' ? 'all-time' : data.period}</span>
-              <span class="font-mono text-sm font-medium text-text">
+            <div class="mb-4 flex items-center gap-2 text-sm">
+              <span class="text-text-muted">Reply rate · {data.period === 'all' ? 'all-time' : data.period}</span>
+              <span class="font-semibold tabular-nums text-text">
                 {summary.replyRateTrend.previous}% → {summary.replyRateTrend.current}%
               </span>
               {#if summary.replyRateTrend.current >= summary.replyRateTrend.previous}
-                <TrendingUp size={13} class="text-success" />
+                <TrendingUp size={14} class="text-inbound" />
               {:else}
-                <TrendingDown size={13} class="text-danger" />
+                <TrendingDown size={14} class="text-danger" />
               {/if}
             </div>
           {/if}
           {#if hasTrendActivity}
-            <div class="flex h-28 gap-[3px]">
+            <div class="flex h-32 gap-[3px]">
               {#each summary.trend as pt}
                 <div class="flex h-full flex-1 flex-col justify-end" title="{pt.date}: {pt.sent} sent, {pt.responses} replies">
                   <div
                     class="flex w-full flex-col justify-end overflow-hidden rounded-sm bg-surface-2"
                     style="height: {Math.round((pt.sent / trendMax) * 100)}%"
                   >
-                    <div class="w-full bg-accent" style="height: {pt.sent ? Math.min(100, Math.round((pt.responses / pt.sent) * 100)) : 0}%"></div>
+                    <div class="w-full bg-inbound" style="height: {pt.sent ? Math.min(100, Math.round((pt.responses / pt.sent) * 100)) : 0}%"></div>
                   </div>
                 </div>
               {/each}
             </div>
-            <div class="mt-1.5 flex justify-between text-[10px] text-text-muted">
+            <div class="mt-2 flex justify-between text-xs text-text-muted">
               <span>30 days ago</span><span>today</span>
             </div>
           {:else}
@@ -354,19 +377,19 @@
           {/if}
         </div>
 
-        <div class="rounded-xl border border-border bg-surface">
-          <div class="flex items-center justify-between border-b border-border px-5 py-3">
-            <h3 class="text-sm font-semibold text-text">Recent activity</h3>
-            <a href="/outreach" class="text-xs font-medium text-accent hover:text-accent-strong">View all</a>
+        <div class="card overflow-hidden">
+          <div class="flex items-center justify-between px-5 pb-2 pt-4">
+            <h3 class="font-display text-lg font-semibold text-text">Recent activity</h3>
+            <a href="/outreach" class="text-sm font-semibold text-accent-strong hover:underline">View all</a>
           </div>
           {#if summary.recentActivity.length > 0}
             <div class="divide-y divide-border text-sm">
               {#each summary.recentActivity as ev}
                 {@const meta = activityMeta(ev.kind)}
                 <div class="flex items-center gap-3 px-5 py-2.5">
-                  <span class="w-16 shrink-0 text-xs text-text-muted">{timeAgo(ev.at)}</span>
+                  <span class="w-16 shrink-0 text-xs tabular-nums text-text-muted">{timeAgo(ev.at)}</span>
                   <span class="w-40 shrink-0 truncate text-text">{ev.prospectName}</span>
-                  <span class="rounded px-1.5 py-0.5 text-[11px] font-medium {meta.chip}">{meta.label}</span>
+                  <span class="chip {meta.chip}">{meta.label}</span>
                   <span class="ml-auto hidden truncate text-xs text-text-muted sm:inline">{ev.organizationDomain}</span>
                 </div>
               {/each}
@@ -378,16 +401,16 @@
       </div>
 
       <div class="space-y-3 lg:col-span-2">
-        <div class="rounded-xl border border-border bg-surface p-5">
+        <div class="card p-5">
           <div class="mb-3 flex items-center gap-2">
-            <Brain size={16} class="text-accent" />
-            <h3 class="text-sm font-semibold text-text">What the AI is doing</h3>
+            <Brain size={18} class="text-inbound" />
+            <h3 class="font-display text-lg font-semibold text-text">What the AI is doing</h3>
           </div>
           {#if summary.learning.angles.length > 0 || summary.learning.bestSubject || summary.journal.length > 0 || summary.learning.log.length > 0}
-            <ul class="space-y-3 text-sm">
+            <ul class="space-y-4 text-sm">
               <li>
-                <p class="flex items-center gap-1.5 text-text">
-                  <FlaskConical size={14} class="text-info" />
+                <p class="flex items-center gap-2 text-text">
+                  <FlaskConical size={16} class="text-inbound" />
                   {#if summary.learning.state === 'optimizing'}
                     Optimizing across {summary.learning.angles.length} message {summary.learning.angles.length === 1 ? 'angle' : 'angles'}
                   {:else}
@@ -399,16 +422,16 @@
                 {/if}
               </li>
               {#if summary.learning.angles.length > 0}
-                <li class="border-t border-border pt-3">
-                  <p class="text-xs uppercase tracking-wider text-text-muted">Testing now</p>
-                  <ul class="mt-1.5 space-y-1">
+                <li class="border-t border-border pt-4">
+                  <p class="text-xs font-semibold text-text-muted">Testing now</p>
+                  <ul class="mt-2 space-y-1.5">
                     {#each summary.learning.angles as angle}
-                      <li class="flex items-baseline justify-between gap-2 text-xs">
+                      <li class="flex items-baseline justify-between gap-2">
                         <span class="min-w-0 truncate text-text" title={angle.variantId}>
                           {angle.label ?? angle.variantId}
-                          {#if angle.leader}<span class="ml-1 rounded bg-success/15 px-1.5 py-0.5 font-medium text-success">leading</span>{/if}
+                          {#if angle.leader}<span class="chip ml-1 bg-inbound/15 text-inbound">Leading</span>{/if}
                         </span>
-                        <span class="shrink-0 font-mono text-text-secondary">
+                        <span class="shrink-0 text-xs tabular-nums text-text-secondary">
                           {angle.total} {angle.total === 1 ? 'send' : 'sends'} · {angle.mature ? `${angle.replyRate}%` : 'maturing'}
                         </span>
                       </li>
@@ -417,24 +440,24 @@
                 </li>
               {/if}
               {#if summary.learning.bestSubject}
-                <li class="border-t border-border pt-3">
-                  <p class="text-xs uppercase tracking-wider text-text-muted">Leading subject line</p>
-                  <p class="mt-0.5 truncate text-text" title={summary.learning.bestSubject.pattern}>
-                    "{summary.learning.bestSubject.pattern}"
+                <li class="border-t border-border pt-4">
+                  <p class="text-xs font-semibold text-text-muted">Leading subject line</p>
+                  <p class="mt-1 truncate text-text" title={summary.learning.bestSubject.pattern}>
+                    “{summary.learning.bestSubject.pattern}”
                   </p>
-                  <p class="text-xs text-success">
+                  <p class="text-xs tabular-nums text-inbound">
                     {summary.learning.bestSubject.replyRate}% reply rate · {summary.learning.bestSubject.n} sends{summary.learning.bestSubject.mature ? ' · winning' : ' · still testing'}
                   </p>
                 </li>
               {/if}
               {#if summary.journal.length > 0}
-                <li class="border-t border-border pt-3">
-                  <p class="text-xs uppercase tracking-wider text-text-muted">Recent decisions</p>
-                  <ul class="mt-1.5 space-y-1.5">
+                <li class="border-t border-border pt-4">
+                  <p class="text-xs font-semibold text-text-muted">Recent decisions</p>
+                  <ul class="mt-2 space-y-2">
                     {#each summary.journal.slice(0, JOURNAL_SHOWN) as event}
                       {@const j = journalText(event)}
-                      <li class="flex gap-2 text-xs">
-                        <span class="shrink-0 font-mono text-text-muted">{fmtDay(event.date)}</span>
+                      <li class="flex gap-3">
+                        <span class="w-12 shrink-0 text-xs tabular-nums text-text-muted">{fmtDay(event.date)}</span>
                         <span class="min-w-0 break-words text-text-secondary">
                           {j.text}{#if j.detail}{' '}<span class="text-text-muted">({j.detail})</span>{/if}
                         </span>
@@ -442,17 +465,17 @@
                     {/each}
                   </ul>
                   {#if summary.journal.length > JOURNAL_SHOWN}
-                    <p class="mt-1.5 text-xs text-text-muted">+{summary.journal.length - JOURNAL_SHOWN} more in the last 30 days</p>
+                    <p class="mt-2 text-xs text-text-muted">+{summary.journal.length - JOURNAL_SHOWN} more in the last 30 days</p>
                   {/if}
                 </li>
               {/if}
               {#if summary.learning.log.length > 0}
-                <li class="border-t border-border pt-3">
-                  <p class="text-xs uppercase tracking-wider text-text-muted">Learnings</p>
-                  <ul class="mt-1.5 space-y-1.5">
+                <li class="border-t border-border pt-4">
+                  <p class="text-xs font-semibold text-text-muted">Learnings</p>
+                  <ul class="mt-2 space-y-2">
                     {#each summary.learning.log.slice(0, LEARNINGS_SHOWN) as entry}
-                      <li class="flex gap-2 text-xs" title={entry.date}>
-                        <span class="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 font-medium text-text-secondary">
+                      <li class="flex items-start gap-2" title={entry.date}>
+                        <span class="chip shrink-0 bg-surface-2 text-text-secondary">
                           {LEARNING_STAGE_LABELS[entry.stage] ?? humanize(entry.stage)}
                         </span>
                         <span class="min-w-0 break-words text-text-secondary">
@@ -462,7 +485,7 @@
                     {/each}
                   </ul>
                   {#if summary.learning.log.length > LEARNINGS_SHOWN}
-                    <p class="mt-1.5 text-xs text-text-muted">+{summary.learning.log.length - LEARNINGS_SHOWN} more</p>
+                    <p class="mt-2 text-xs text-text-muted">+{summary.learning.log.length - LEARNINGS_SHOWN} more</p>
                   {/if}
                 </li>
               {/if}
@@ -474,34 +497,34 @@
           {/if}
         </div>
 
-        <div class="rounded-xl border border-border bg-surface p-5">
+        <div class="card p-5">
           <div class="mb-1 flex items-center gap-2">
-            <MessageSquareX size={16} class="text-text-muted" />
-            <h3 class="text-sm font-semibold text-text">What the market is telling you</h3>
+            <MessageSquareX size={18} class="text-inbound" />
+            <h3 class="font-display text-lg font-semibold text-text">What the market is telling you</h3>
           </div>
-          <p class="mb-3 text-xs text-text-muted">
+          <p class="mb-4 text-sm text-text-muted">
             From rejection replies. The AI can't fix these on its own — they're your business calls.
           </p>
           {#if summary.rejections.total > 0}
-            <div class="space-y-2">
+            <div class="space-y-3">
               {#each summary.rejections.topReasons as r}
                 <div class="space-y-1">
-                  <div class="flex justify-between text-xs">
+                  <div class="flex justify-between text-sm">
                     <span class="text-text-secondary">{humanize(r.reason)}</span>
-                    <span class="font-mono text-text-muted">{r.percentage}%</span>
+                    <span class="tabular-nums text-text-muted">{r.percentage}%</span>
                   </div>
-                  <div class="h-1.5 rounded-full bg-surface-2">
-                    <div class="h-1.5 rounded-full bg-text-muted" style="width: {Math.round((r.percentage / rejectionMax) * 100)}%"></div>
+                  <div class="h-2 rounded-full bg-surface-2">
+                    <div class="h-2 rounded-full bg-inbound" style="width: {Math.round((r.percentage / rejectionMax) * 100)}%"></div>
                   </div>
                 </div>
               {/each}
             </div>
             {#if summary.rejections.productSignal}
-              <div class="mt-3 rounded-lg bg-warning/10 p-2.5">
+              <div class="mt-4 rounded-xl bg-warning/10 p-3">
                 <div class="flex gap-2">
-                  <Lightbulb size={14} class="mt-0.5 shrink-0 text-warning" />
-                  <p class="text-xs text-text-secondary">
-                    <span class="font-medium text-text">Product signal:</span>
+                  <Lightbulb size={16} class="mt-0.5 shrink-0 text-warning" />
+                  <p class="text-sm text-text-secondary">
+                    <span class="font-semibold text-text">Product signal:</span>
                     {summary.rejections.productSignal.count}
                     {summary.rejections.productSignal.count === 1 ? 'prospect' : 'prospects'} cited a missing feature. Worth a roadmap look.
                   </p>
@@ -509,8 +532,8 @@
                 {#if summary.rejections.productSignal.quotes.length > 0}
                   <ul class="mt-2 space-y-1 pl-6">
                     {#each summary.rejections.productSignal.quotes as q}
-                      <li class="text-xs text-text-secondary">
-                        <span class="italic">"{q.freeText}"</span>
+                      <li class="text-sm text-text-secondary">
+                        <span class="italic">“{q.freeText}”</span>
                         <span class="text-text-muted">— {q.organizationName}</span>
                       </li>
                     {/each}
@@ -519,11 +542,11 @@
               </div>
             {/if}
             {#if summary.rejections.budgetSignal}
-              <div class="mt-3 rounded-lg bg-warning/10 p-2.5">
+              <div class="mt-3 rounded-xl bg-warning/10 p-3">
                 <div class="flex gap-2">
-                  <Banknote size={14} class="mt-0.5 shrink-0 text-warning" />
-                  <p class="text-xs text-text-secondary">
-                    <span class="font-medium text-text">Pricing signal:</span>
+                  <Banknote size={16} class="mt-0.5 shrink-0 text-warning" />
+                  <p class="text-sm text-text-secondary">
+                    <span class="font-semibold text-text">Pricing signal:</span>
                     {summary.rejections.budgetSignal.count}
                     {summary.rejections.budgetSignal.count === 1 ? 'prospect' : 'prospects'} said the price didn't fit. Worth a pricing look.
                   </p>
@@ -531,8 +554,8 @@
                 {#if summary.rejections.budgetSignal.quotes.length > 0}
                   <ul class="mt-2 space-y-1 pl-6">
                     {#each summary.rejections.budgetSignal.quotes as q}
-                      <li class="text-xs text-text-secondary">
-                        <span class="italic">"{q.freeText}"</span>
+                      <li class="text-sm text-text-secondary">
+                        <span class="italic">“{q.freeText}”</span>
                         <span class="text-text-muted">— {q.organizationName}</span>
                       </li>
                     {/each}
@@ -541,14 +564,14 @@
               </div>
             {/if}
             {#if summary.rejections.decisionMakers.length > 0}
-              <div class="mt-3">
-                <p class="flex items-center gap-1.5 text-xs uppercase tracking-wider text-text-muted">
-                  <UserPlus size={13} /> Who to reach instead
+              <div class="mt-4">
+                <p class="flex items-center gap-1.5 text-xs font-semibold text-text-muted">
+                  <UserPlus size={14} /> Who to reach instead
                 </p>
-                <ul class="mt-1.5 space-y-1.5">
+                <ul class="mt-2 space-y-1.5">
                   {#each summary.rejections.decisionMakers as dm}
-                    <li class="text-xs text-text-secondary">
-                      <span class="font-medium text-text">{dm.name ?? dm.role ?? dm.email}</span>
+                    <li class="text-sm text-text-secondary">
+                      <span class="font-semibold text-text">{dm.name ?? dm.role ?? dm.email}</span>
                       {#if dm.name && dm.role}<span> · {dm.role}</span>{/if}
                       {#if dm.email && (dm.name || dm.role)}<span class="text-text-muted"> · {dm.email}</span>{/if}
                       <span class="text-text-muted"> — via {dm.organizationName}</span>
@@ -558,24 +581,24 @@
               </div>
             {/if}
             {#if summary.rejections.notRelevant.length > 0}
-              <div class="mt-3">
-                <p class="flex items-center gap-1.5 text-xs uppercase tracking-wider text-text-muted">
-                  <Target size={13} /> Wrong-fit notes
+              <div class="mt-4">
+                <p class="flex items-center gap-1.5 text-xs font-semibold text-text-muted">
+                  <Target size={14} /> Wrong-fit notes
                 </p>
-                <ul class="mt-1.5 space-y-1.5">
+                <ul class="mt-2 space-y-1.5">
                   {#each summary.rejections.notRelevant as n}
-                    <li class="text-xs text-text-secondary">
-                      <span class="italic">"{n.freeText}"</span>
+                    <li class="text-sm text-text-secondary">
+                      <span class="italic">“{n.freeText}”</span>
                       <span class="text-text-muted">— {n.organizationName}{n.industry ? ` · ${n.industry}` : ''}</span>
                     </li>
                   {/each}
                 </ul>
-                <p class="mt-1.5 text-xs text-text-muted">The AI already folds these into its targeting.</p>
+                <p class="mt-2 text-xs text-text-muted">The AI already folds these into its targeting.</p>
               </div>
             {/if}
             {#if summary.rejections.recontactSoon}
-              <p class="mt-2.5 flex items-center gap-1.5 text-xs text-text-muted">
-                <Clock size={13} />
+              <p class="mt-3 flex items-center gap-1.5 text-xs text-text-muted">
+                <Clock size={14} />
                 {summary.rejections.recontactSoon.count} set to re-approach in {humanize(summary.rejections.recontactSoon.window)}
               </p>
             {/if}

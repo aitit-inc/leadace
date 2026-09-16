@@ -9,6 +9,7 @@
   import ConfirmCard from '$lib/components/chat/ConfirmCard.svelte';
   import SenderIdentityCard, { type SenderIdentityProposal } from '$lib/components/chat/SenderIdentityCard.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+  import Logo from '$lib/components/Logo.svelte';
   import type { ChatEvent, ChatMessage, PendingCall } from '$lib/types/chat';
   import { TERMINAL_JOB_STATUSES, type Job, type JobDetail } from '$lib/types/jobs';
   import type { PageProps } from './$types';
@@ -87,6 +88,18 @@
   });
   let showIdentityCard = $derived(
     data.attention.some((a) => a.kind === 'compliance_incomplete') && (data.thread?.projectId ?? data.activeProjectId) !== null,
+  );
+  let liveThreadJobs = $derived(
+    data.thread ? Object.values(jobs).filter((j) => !TERMINAL_JOB_STATUSES.includes(j.status)) : [],
+  );
+  let fresh = $derived(
+    activity.length === 0 &&
+      liveThreadJobs.length === 0 &&
+      messages.length === 0 &&
+      !streamingText &&
+      !running &&
+      !pending &&
+      !showIdentityCard,
   );
 
   async function identitySaved() {
@@ -279,7 +292,68 @@
   <title>Chat · LeadAce</title>
 </svelte:head>
 
-<div class="flex h-[calc(100vh-7rem)] gap-4">
+{#snippet quickActionRow(centered: boolean)}
+  <div class="flex flex-wrap gap-2 {centered ? 'justify-center' : ''}">
+    {#each quickActions as a (a.label)}
+      <button
+        type="button"
+        disabled={sending || stopping}
+        onclick={() => send(a.text)}
+        class="rounded-full bg-surface px-3 py-1.5 text-sm text-text-secondary transition-colors hover:bg-surface-2 hover:text-text disabled:opacity-50"
+      >
+        {a.label}
+      </button>
+    {/each}
+  </div>
+{/snippet}
+
+{#snippet composer(centered: boolean)}
+  <form
+    class="flex items-end gap-2 rounded-3xl border border-border bg-surface p-2 pl-4 transition-colors focus-within:border-accent {centered
+      ? 'shadow-lg'
+      : ''}"
+    onsubmit={(e) => {
+      e.preventDefault();
+      void send(input);
+    }}
+  >
+    <!-- svelte-ignore a11y_autofocus -->
+    <textarea
+      bind:value={input}
+      rows={centered ? 1 : 2}
+      autofocus={centered}
+      aria-label="Message Ace"
+      placeholder={data.activeProjectId ? 'Tell Ace what to do…' : 'https://your-company.com'}
+      onkeydown={(e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          void send(input);
+        }
+      }}
+      class="max-h-40 min-w-0 flex-1 resize-none bg-transparent py-2 text-base text-text placeholder:text-text-muted focus:outline-none"
+    ></textarea>
+    {#if running}
+      <button
+        type="button"
+        onclick={stop}
+        disabled={stopping}
+        aria-label="Stop"
+        title="Stop"
+        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-2 text-text transition-colors hover:bg-border disabled:opacity-50"
+      >
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" class="h-3.5 w-3.5">
+          <rect x="2" y="2" width="12" height="12" rx="2" />
+        </svg>
+      </button>
+    {:else}
+      <button type="submit" disabled={sending || stopping || !input.trim()} class="btn btn-primary h-10">
+        {data.activeProjectId ? 'Send' : 'Start'}
+      </button>
+    {/if}
+  </form>
+{/snippet}
+
+<div class="flex h-[calc(100vh-7rem)] gap-6">
   <div class="hidden md:block">
     <ThreadList
       threads={data.threads}
@@ -290,124 +364,112 @@
     />
   </div>
 
-  <section class="flex min-w-0 flex-1 flex-col">
-    <div class="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-      {#if activity.length > 0}
-        <h2 class="text-xs font-medium text-text-muted">Activity</h2>
-        {#each activity as job (job.id)}
-          <JobCard {job} oncancel={cancel} ondetails={loadDetails} showOrigin />
-        {/each}
-      {:else if messages.length === 0 && !streamingText}
-        <div class="mx-auto max-w-lg py-10 text-center">
-          <h2 class="text-base font-semibold text-text">Ask Ace anything about your outreach</h2>
-          <p class="mt-2 text-base text-text-muted">
-            {#if data.activeProjectId}
-              Find prospects, draft outreach, run the daily cycle, or ask how the numbers look.
-            {:else}
-              Paste your company's website URL to set up your first project. Ace reads the site, proposes who to
-              contact and what to say, and starts once you approve.
-            {/if}
-          </p>
+  <section
+    class="flex min-w-0 flex-1 flex-col {fresh ? 'items-center justify-center overflow-y-auto px-2 py-8' : ''}"
+  >
+    {#if fresh}
+      <div class="text-center">
+        <div class="animate-rise">
+          <Logo size={44} class="mx-auto text-accent" />
         </div>
-      {/if}
-      {#each messages as m (m.id)}
-        {#if m.content.role === 'job'}
-          {#if jobs[m.content.jobId]}
-            <JobCard job={jobs[m.content.jobId]!} ondetails={loadDetails} />
+        <h1 class="mx-auto mt-5 max-w-xl animate-rise font-display text-3xl font-semibold tracking-tight text-balance text-text">
+          {data.activeProjectId ? 'What should Ace do next?' : 'Paste your website to begin'}
+        </h1>
+        <p class="mx-auto mt-3 max-w-lg animate-rise text-base text-text-secondary">
+          {#if data.activeProjectId}
+            Find prospects, draft outreach, run the daily cycle, or ask how the numbers look.
           {:else}
-            <p class="text-xs text-text-muted">{m.content.summary}</p>
+            Ace reads your site, suggests who to contact and what to say, then waits for your OK. Nothing is sent
+            until you approve it.
           {/if}
-        {:else}
-          <MessageItem content={m.content} />
-        {/if}
-      {/each}
-      {#if data.thread}
-        {#each Object.values(jobs).filter((j) => !TERMINAL_JOB_STATUSES.includes(j.status)) as job (job.id)}
-          <JobCard {job} oncancel={cancel} ondetails={loadDetails} />
-        {/each}
-      {/if}
-      {#if streamingText}
-        <p class="max-w-[85%] whitespace-pre-wrap text-base text-text">{streamingText}</p>
-      {/if}
-      {#if stopping}
-        <p class="text-xs text-text-muted">Stopping…</p>
-      {:else if running}
-        <p class="text-xs text-text-muted">
-          {liveSteps === 0 ? 'Thinking…' : `Working… (${liveSteps} step${liveSteps === 1 ? '' : 's'})`}
         </p>
+      </div>
+    {:else}
+      <div class="min-h-0 w-full flex-1 overflow-y-auto pr-1">
+        <div class="mx-auto max-w-3xl space-y-4 pb-2">
+          {#if activity.length > 0}
+            <h2 class="font-display text-lg font-semibold text-text">Activity</h2>
+            {#each activity as job (job.id)}
+              <JobCard {job} oncancel={cancel} ondetails={loadDetails} showOrigin />
+            {/each}
+          {/if}
+          {#each messages as m (m.id)}
+            <div class="animate-rise">
+              {#if m.content.role === 'job'}
+                {#if jobs[m.content.jobId]}
+                  <JobCard job={jobs[m.content.jobId]!} ondetails={loadDetails} />
+                {:else}
+                  <p class="text-sm text-text-muted">{m.content.summary}</p>
+                {/if}
+              {:else}
+                <MessageItem content={m.content} />
+              {/if}
+            </div>
+          {/each}
+          {#each liveThreadJobs as job (job.id)}
+            <JobCard {job} oncancel={cancel} ondetails={loadDetails} />
+          {/each}
+          {#if streamingText}
+            <p class="max-w-[85%] whitespace-pre-wrap text-base leading-relaxed text-text">{streamingText}</p>
+          {/if}
+          {#if stopping}
+            <p class="text-sm text-text-muted">Stopping…</p>
+          {:else if running}
+            <p class="flex items-center gap-2 text-sm text-text-muted">
+              <span class="flex gap-1" aria-hidden="true">
+                {#each [0, 1, 2] as i (i)}
+                  <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" style="animation-delay: {i * 150}ms"></span>
+                {/each}
+              </span>
+              {liveSteps === 0 ? 'Thinking…' : `Working… (${liveSteps} step${liveSteps === 1 ? '' : 's'})`}
+            </p>
+          {/if}
+          {#if pending}
+            <ConfirmCard {pending} busy={running || stopping} onrespond={respond} />
+          {/if}
+          {#if showIdentityCard}
+            {#key proposal.callId}
+              <SenderIdentityCard {proposal} {token} onsaved={identitySaved} />
+            {/key}
+          {/if}
+          {#if error}
+            <p class="text-sm text-danger">{error}</p>
+          {/if}
+          <div bind:this={bottom}></div>
+        </div>
+      </div>
+    {/if}
+
+    <!-- One composer for both layouts, so sending the first message keeps focus in it. -->
+    <div class="mx-auto w-full {fresh ? 'mt-8 max-w-2xl animate-rise' : 'max-w-3xl space-y-2 pt-3'}">
+      {#if !fresh && data.activeProjectId}
+        {@render quickActionRow(false)}
       {/if}
-      {#if pending}
-        <ConfirmCard {pending} busy={running || stopping} onrespond={respond} />
-      {/if}
-      {#if showIdentityCard}
-        {#key proposal.callId}
-          <SenderIdentityCard {proposal} {token} onsaved={identitySaved} />
-        {/key}
-      {/if}
-      {#if error}
-        <p class="text-xs text-danger">{error}</p>
-      {/if}
-      <div bind:this={bottom}></div>
+      {@render composer(fresh)}
     </div>
 
-    <div class="mt-3 border-t border-border pt-3">
-      {#if data.activeProjectId}
-        <div class="mb-2 flex flex-wrap gap-1.5">
-          {#each quickActions as a (a.label)}
-            <button
-              type="button"
-              disabled={sending || stopping}
-              onclick={() => send(a.text)}
-              class="rounded-full border border-border px-2.5 py-1 text-xs text-text-secondary hover:bg-surface hover:text-text disabled:opacity-50"
-            >
-              {a.label}
-            </button>
-          {/each}
-        </div>
-      {/if}
-      <form
-        class="flex gap-2"
-        onsubmit={(e) => {
-          e.preventDefault();
-          void send(input);
-        }}
-      >
-        <textarea
-          bind:value={input}
-          rows={2}
-          placeholder={data.activeProjectId ? 'Tell Ace what to do…' : 'https://your-company.com'}
-          onkeydown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              void send(input);
-            }
-          }}
-          class="min-w-0 flex-1 resize-none rounded border border-border bg-page px-3 py-2 text-base text-text focus:border-accent focus:outline-none"
-        ></textarea>
-        {#if running}
-          <button
-            type="button"
-            onclick={stop}
-            disabled={stopping}
-            aria-label="Stop"
-            title="Stop"
-            class="inline-flex h-10 min-w-[4.5rem] items-center justify-center self-end rounded bg-accent px-4 text-page hover:bg-accent-strong disabled:opacity-50"
-          >
-            <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" class="h-3.5 w-3.5">
-              <rect x="2" y="2" width="12" height="12" rx="2" />
-            </svg>
-          </button>
+    {#if fresh}
+      <div class="mt-5 w-full max-w-2xl animate-rise">
+        {#if data.activeProjectId}
+          {@render quickActionRow(true)}
         {:else}
-          <button
-            type="submit"
-            disabled={sending || stopping || !input.trim()}
-            class="inline-flex h-10 min-w-[4.5rem] items-center justify-center self-end rounded bg-accent px-4 text-base font-medium text-page hover:bg-accent-strong disabled:opacity-50"
-          >
-            Send
-          </button>
+          <ol class="flex flex-wrap justify-center gap-2" aria-label="What happens next">
+            {#each ['Reads your site', 'Suggests who to contact', 'Finds companies that fit', 'Drafts emails for your OK'] as step, i (step)}
+              <li
+                class="rounded-full px-3 py-1.5 text-sm {i === 0
+                  ? 'bg-accent/10 font-semibold text-accent-strong'
+                  : 'bg-surface text-text-secondary'}"
+              >
+                {step}
+              </li>
+            {/each}
+          </ol>
         {/if}
-      </form>
-    </div>
+      </div>
+      {#if error}
+        <p class="mt-4 text-sm text-danger">{error}</p>
+      {/if}
+    {/if}
   </section>
 </div>
 

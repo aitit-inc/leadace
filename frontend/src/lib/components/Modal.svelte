@@ -38,7 +38,7 @@
   oncancel={(e) => !closable && e.preventDefault()}
   {onclose}
   onclick={(e) => e.target === el && closable && el.close()}
-  class="m-auto w-full {maxWidth} rounded-md border border-border bg-page p-0 text-text backdrop:bg-black/30"
+  class="m-auto w-full {maxWidth} rounded-3xl border border-border bg-surface p-0 text-text shadow-lg backdrop:bg-black/40"
 >
   <div class="p-6">{@render children()}</div>
 </dialog>

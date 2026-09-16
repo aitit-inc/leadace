@@ -29,7 +29,7 @@
 
 {#if visible}
   <div
-    class="fixed inset-x-0 bottom-0 z-50 border-t border-border bg-surface px-4 py-3 text-sm text-text-secondary shadow-[0_-1px_0_0_rgba(0,0,0,0.04)] md:inset-x-auto md:bottom-4 md:right-4 md:w-96 md:rounded-md md:border md:shadow-none"
+    class="fixed inset-x-0 bottom-0 z-50 border-t border-border bg-surface px-4 py-3 text-sm text-text-secondary md:inset-x-auto md:bottom-4 md:right-4 md:w-96 md:rounded-2xl md:border md:shadow-lg"
     role="region"
     aria-label="Cookie notice"
   >
@@ -44,7 +44,7 @@
       <button
         type="button"
         onclick={accept}
-        class="rounded-md border border-border bg-page px-3 py-1.5 text-xs font-medium text-text transition-colors hover:border-accent hover:text-accent"
+        class="btn btn-secondary btn-sm"
       >
         Got it
       </button>

@@ -61,8 +61,8 @@
 </script>
 
 <div class="flex items-center justify-between mb-4">
-  <h2 class="text-lg font-semibold text-text">Prospects</h2>
-  <span class="text-xs text-text-muted font-mono">{data.total} total</span>
+  <h2 class="font-display text-2xl font-semibold tracking-tight text-text">Prospects</h2>
+  <span class="text-sm tabular-nums text-text-muted">{data.total} total</span>
 </div>
 
 <div class="flex flex-wrap items-center gap-3 mb-4">
@@ -71,15 +71,15 @@
     value={filterQ}
     oninput={onQueryInput}
     placeholder="Search by name, contact, or domain"
-    class="w-full md:w-80 bg-surface rounded px-3 py-1.5 text-xs text-text outline-none placeholder:text-text-muted"
+    class="field md:w-80"
   />
-  <select value={filterStatus} onchange={onStatusChange} class="bg-surface rounded px-2 py-1 text-xs text-text outline-none">
+  <select value={filterStatus} onchange={onStatusChange} class="field w-auto">
     <option value="">All statuses</option>
     {#each STATUSES as s}
       <option value={s}>{s}</option>
     {/each}
   </select>
-  <select value={filterPriority} onchange={onPriorityChange} class="bg-surface rounded px-2 py-1 text-xs text-text outline-none">
+  <select value={filterPriority} onchange={onPriorityChange} class="field w-auto">
     <option value="">All priorities</option>
     {#each [1, 2, 3, 4, 5] as p}
       <option value={String(p)}>P{p}</option>
@@ -90,8 +90,8 @@
 {#if data.prospects.length === 0}
   <EmptyState message="No prospects found" />
 {:else}
-  <div class="space-y-0">
-    <div class="hidden md:grid grid-cols-[1fr_140px_70px_50px_100px] gap-4 px-3 py-2 text-xs font-medium text-text-muted">
+  <div class="card overflow-hidden">
+    <div class="hidden md:grid grid-cols-[1fr_140px_90px_50px_100px] gap-4 border-b border-border px-5 py-2.5 text-xs font-semibold text-text-muted">
       <span>Name / Organization</span>
       <span>Channels</span>
       <span>Status</span>
@@ -99,50 +99,54 @@
       <span class="text-right">Added</span>
     </div>
 
-    {#each data.prospects as p}
-      <button
-        class="hidden md:grid w-full grid-cols-[1fr_140px_70px_50px_100px] gap-4 px-3 py-2.5 text-left text-sm hover:bg-surface transition-colors rounded"
-        onclick={() => (expandedId = expandedId === p.ppId ? null : p.ppId)}
-      >
-        <div class="min-w-0">
-          <p class="text-text truncate">{p.name}</p>
-          <p class="text-xs text-text-muted truncate">{p.organizationName}</p>
-        </div>
-        <span class="text-xs text-text-secondary self-center">{channelLabel(p)}</span>
-        <span class="self-center"><StatusBadge status={p.status} /></span>
-        <span class="text-center text-xs font-mono text-text-secondary self-center">P{p.priority}</span>
-        <span class="text-right text-xs font-mono text-text-muted self-center">
-          {new Date(p.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-        </span>
-      </button>
+    <div class="divide-y divide-border">
+      {#each data.prospects as p}
+        <div>
+          <button
+            class="hidden md:grid w-full grid-cols-[1fr_140px_90px_50px_100px] gap-4 px-5 py-3 text-left text-sm hover:bg-surface-2 transition-colors focus-visible:-outline-offset-2"
+            onclick={() => (expandedId = expandedId === p.ppId ? null : p.ppId)}
+          >
+            <div class="min-w-0">
+              <p class="text-text truncate">{p.name}</p>
+              <p class="text-xs text-text-muted truncate">{p.organizationName}</p>
+            </div>
+            <span class="text-text-secondary self-center">{channelLabel(p)}</span>
+            <span class="self-center"><StatusBadge status={p.status} /></span>
+            <span class="text-center tabular-nums text-text-secondary self-center">P{p.priority}</span>
+            <span class="text-right text-xs tabular-nums text-text-muted self-center">
+              {new Date(p.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+            </span>
+          </button>
 
-      <button
-        class="flex md:hidden w-full flex-col gap-1 px-3 py-3 text-left hover:bg-surface transition-colors rounded"
-        onclick={() => (expandedId = expandedId === p.ppId ? null : p.ppId)}
-      >
-        <div class="flex items-start justify-between gap-2">
-          <p class="min-w-0 flex-1 truncate text-sm text-text">{p.name}</p>
-          <span class="shrink-0"><StatusBadge status={p.status} /></span>
-        </div>
-        <p class="text-xs text-text-muted truncate">{p.organizationName}</p>
-        <div class="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px] text-text-muted">
-          <span>{channelLabel(p)}</span>
-          <span aria-hidden="true">·</span>
-          <span>P{p.priority}</span>
-          <span aria-hidden="true">·</span>
-          <span>{new Date(p.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
-        </div>
-      </button>
+          <button
+            class="flex md:hidden w-full flex-col gap-1 px-5 py-3 text-left hover:bg-surface-2 transition-colors focus-visible:-outline-offset-2"
+            onclick={() => (expandedId = expandedId === p.ppId ? null : p.ppId)}
+          >
+            <div class="flex items-start justify-between gap-2">
+              <p class="min-w-0 flex-1 truncate text-sm text-text">{p.name}</p>
+              <span class="shrink-0"><StatusBadge status={p.status} /></span>
+            </div>
+            <p class="text-xs text-text-muted truncate">{p.organizationName}</p>
+            <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs tabular-nums text-text-muted">
+              <span>{channelLabel(p)}</span>
+              <span aria-hidden="true">·</span>
+              <span>P{p.priority}</span>
+              <span aria-hidden="true">·</span>
+              <span>{new Date(p.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+            </div>
+          </button>
 
-      {#if expandedId === p.ppId}
-        <div class="mx-3 mb-2 rounded bg-surface px-4 py-3">
-          <ProspectDetail {p} />
-          <p class="mt-2 text-xs">
-            <a href="/prospects/{p.prospectId}" class="text-accent hover:underline">Open prospect →</a>
-          </p>
+          {#if expandedId === p.ppId}
+            <div class="mx-5 mb-4 rounded-xl bg-page px-4 py-3">
+              <ProspectDetail {p} />
+              <p class="mt-3 text-sm">
+                <a href="/prospects/{p.prospectId}" class="font-semibold text-accent-strong hover:underline">Open prospect →</a>
+              </p>
+            </div>
+          {/if}
         </div>
-      {/if}
-    {/each}
+      {/each}
+    </div>
   </div>
   <Pagination page={data.page} pageSize={PAGE_SIZE} total={data.total} onChange={onPageChange} />
 {/if}

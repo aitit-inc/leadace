@@ -64,16 +64,16 @@
 </svelte:head>
 
 <div class="mx-auto max-w-md px-6 py-12">
-  <a href="/" class="inline-flex items-center gap-1.5 text-xs text-text-muted hover:text-text">
-    <Logo size={14} class="text-accent" />
-    ← LeadAce
+  <a href="/" class="inline-flex items-center gap-2 text-text hover:text-text-secondary">
+    <Logo size={22} class="text-accent" />
+    <span class="font-display text-lg font-semibold tracking-tight">LeadAce</span>
   </a>
-  <h1 class="mt-4 text-2xl font-semibold text-text">{ja ? '配信停止' : 'Unsubscribe'}</h1>
+  <h1 class="mt-10 font-display text-3xl font-semibold tracking-tight text-text">{ja ? '配信停止' : 'Unsubscribe'}</h1>
 
-  <div class="mt-8 text-sm leading-relaxed text-text-secondary">
+  <div class="mt-8 text-base leading-relaxed text-text-secondary">
     {#if view.kind === 'invalid'}
       <p class="text-danger">{view.message}</p>
-      <p class="mt-3 text-xs text-text-muted">
+      <p class="mt-3 text-sm text-text-muted">
         If you got here from one of our emails and the link is broken, reply to that email
         and we'll remove you manually.
       </p>
@@ -87,11 +87,11 @@
       {@const sender = view.organizationName ? view.organizationName : ja ? 'この送信者' : 'this sender'}
       {#if ja}
         <p>
-          <span class="font-mono">{view.email}</span> は {sender} の配信からすでに停止されています。これ以上の操作は不要です。
+          <span class="font-medium text-text">{view.email}</span> は {sender} の配信からすでに停止されています。これ以上の操作は不要です。
         </p>
       {:else}
         <p>
-          <span class="font-mono">{view.email}</span> is already unsubscribed from
+          <span class="font-medium text-text">{view.email}</span> is already unsubscribed from
           {sender}. No further action needed.
         </p>
       {/if}
@@ -99,11 +99,11 @@
       {@const sender = view.organizationName ? view.organizationName : ja ? 'この送信者' : 'this sender'}
       {#if ja}
         <p>
-          下のボタンをクリックすると、<span class="font-mono">{view.email}</span> を {sender} の配信から停止します。今後、ご連絡メールをお送りすることはありません。
+          下のボタンをクリックすると、<span class="font-medium text-text">{view.email}</span> を {sender} の配信から停止します。今後、ご連絡メールをお送りすることはありません。
         </p>
       {:else}
         <p>
-          Click below to unsubscribe <span class="font-mono">{view.email}</span> from
+          Click below to unsubscribe <span class="font-medium text-text">{view.email}</span> from
           {sender}. We won't send you any more outreach emails.
         </p>
       {/if}
@@ -112,7 +112,7 @@
           type="button"
           disabled={submitting}
           onclick={confirm}
-          class="rounded bg-text px-4 py-2 text-xs font-medium text-page hover:bg-text/90 transition-colors disabled:opacity-40"
+          class="btn btn-primary"
         >
           {submitting ? (ja ? '停止しています…' : 'Unsubscribing…') : ja ? '配信を停止' : 'Unsubscribe'}
         </button>

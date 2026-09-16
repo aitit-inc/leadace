@@ -18,7 +18,7 @@ import type { AttentionItem } from '$lib/types/attention';
 // Shared by bell and dashboard so one item never gets two descriptions.
 export type AttentionMeta = {
 	icon: Component;
-	tone: 'accent' | 'info' | 'danger' | 'warning';
+	tone: 'accent' | 'inbound' | 'danger' | 'warning';
 	title: string;
 	desc: string;
 	ctaLabel: string;
@@ -36,7 +36,7 @@ export function attentionMeta(item: AttentionItem): AttentionMeta {
 		case 'hot_leads':
 			return {
 				icon: Target,
-				tone: 'accent',
+				tone: 'inbound',
 				title: `${item.count} meeting ${item.count === 1 ? 'request' : 'requests'} waiting`,
 				desc: 'Prospects asked to talk — book the call',
 				ctaLabel: 'Review',
@@ -45,7 +45,7 @@ export function attentionMeta(item: AttentionItem): AttentionMeta {
 		case 'outreach_drafts':
 			return {
 				icon: Mail,
-				tone: 'info',
+				tone: 'accent',
 				title: `${item.count} ${item.count === 1 ? 'draft' : 'drafts'} ready to review`,
 				desc: 'AI-drafted outreach — review & send',
 				ctaLabel: 'Review',

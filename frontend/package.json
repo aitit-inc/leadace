@@ -9,6 +9,7 @@
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
 		"test": "vitest run",
+		"ui": "node scripts/ui-scenarios.mjs",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch"
 	},
@@ -17,6 +18,7 @@
 		"@sveltejs/kit": "^2.69.2",
 		"@sveltejs/vite-plugin-svelte": "^7.2.0",
 		"@types/node": "^22.20.1",
+		"playwright-core": "^1.63.0",
 		"svelte": "^5.56.4",
 		"svelte-check": "^4.7.2",
 		"typescript": "^6.0.3",

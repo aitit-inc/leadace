@@ -22,10 +22,14 @@
   let buttonEl: HTMLButtonElement | null = $state(null);
   let menuEl: HTMLDivElement | null = $state(null);
 
+  let meta = $derived((user?.user_metadata ?? {}) as Record<string, unknown>);
   let avatarUrl = $derived.by(() => {
-    const meta = (user?.user_metadata ?? {}) as Record<string, unknown>;
     const v = meta['avatar_url'] ?? meta['picture'];
     return typeof v === 'string' ? v : null;
+  });
+  let displayName = $derived.by(() => {
+    const v = meta['full_name'] ?? meta['name'];
+    return typeof v === 'string' && v.trim() ? v : (user?.email ?? 'Account');
   });
   let displayInitial = $derived((user?.email ?? '?').charAt(0).toUpperCase());
 
@@ -72,56 +76,57 @@
     aria-haspopup="menu"
     aria-expanded={open}
     title={user?.email ?? 'Account'}
-    class="block h-9 w-9 overflow-hidden rounded-full border border-border hover:ring-2 hover:ring-border focus:outline-none focus:ring-2 focus:ring-text/30"
+    class="flex w-full items-center gap-2.5 rounded-full p-1.5 pr-3 text-left transition-colors hover:bg-surface-2"
   >
-    {#if avatarUrl}
-      <img src={avatarUrl} alt="" class="h-full w-full object-cover" referrerpolicy="no-referrer" />
-    {:else}
-      <span class="flex h-full w-full items-center justify-center bg-surface text-sm text-text-muted">
-        {displayInitial}
-      </span>
-    {/if}
+    <span class="h-8 w-8 shrink-0 overflow-hidden rounded-full bg-surface-2">
+      {#if avatarUrl}
+        <img src={avatarUrl} alt="" class="h-full w-full object-cover" referrerpolicy="no-referrer" />
+      {:else}
+        <span class="flex h-full w-full items-center justify-center text-sm font-semibold text-text-secondary">
+          {displayInitial}
+        </span>
+      {/if}
+    </span>
+    <span class="min-w-0 flex-1">
+      <span class="block truncate text-sm font-semibold text-text">{displayName}</span>
+      {#if plan}
+        <span class="block truncate text-xs capitalize text-text-muted">{plan.plan} plan</span>
+      {/if}
+    </span>
   </button>
 
   {#if open}
     <div
       bind:this={menuEl}
       role="menu"
-      class="absolute bottom-12 left-0 z-40 w-60 rounded-md border border-border bg-page shadow-lg"
+      class="absolute bottom-full left-0 z-40 mb-2 w-64 overflow-hidden rounded-2xl border border-border bg-surface shadow-lg"
     >
-      <div class="px-3 py-3 border-b border-border">
+      <div class="border-b border-border px-4 py-3">
         <p class="truncate text-xs text-text-muted">Signed in as</p>
-        <p class="truncate text-sm text-text font-mono">{user?.email ?? '—'}</p>
+        <p class="truncate text-sm text-text">{user?.email ?? '—'}</p>
       </div>
 
       {#if plan}
         <a
           href="/plans"
           onclick={close}
-          class="block px-3 py-2.5 border-b border-border hover:bg-surface transition-colors"
+          class="block border-b border-border px-4 py-3 transition-colors hover:bg-surface-2"
         >
-          <div class="flex items-center justify-between mb-1">
-            <span class="text-xs text-text-muted uppercase tracking-wider">Plan</span>
-            <span class="text-[10px] text-text-muted uppercase tracking-wider">
-              {plan.quota.kind === 'unlimited'
-                ? '∞'
-                : `prospects ${QUOTA_WINDOW_LABEL[plan.quota.window]}`}
-            </span>
-          </div>
           <div class="flex items-center justify-between">
-            <span class="text-sm font-medium text-text capitalize">{plan.plan}</span>
+            <span class="text-sm font-semibold capitalize text-text">{plan.plan}</span>
             {#if plan.quota.kind === 'capped'}
-              <span class="font-mono text-[11px] text-text-muted">
+              <span class="text-xs tabular-nums text-text-muted">
                 {formatQuotaCompact(plan.quota.contacted.used, plan.quota.contacted.limit)}
               </span>
             {/if}
           </div>
+          <p class="text-xs text-text-muted">
+            {plan.quota.kind === 'unlimited' ? 'Unlimited prospects' : `Prospects ${QUOTA_WINDOW_LABEL[plan.quota.window]}`}
+          </p>
           {#if plan.quota.kind === 'capped'}
-            <div class="mt-1.5 h-0.5 w-full rounded-full bg-surface">
+            <div class="mt-2 h-1 w-full rounded-full bg-surface-2">
               <div
-                class="h-0.5 rounded-full {plan.quota.contacted.remaining === 0
-                  ? 'bg-accent'
-                  : 'bg-text-muted'}"
+                class="h-1 rounded-full {plan.quota.contacted.remaining === 0 ? 'bg-warning' : 'bg-text-muted'}"
                 style="width: {Math.min(100, (plan.quota.contacted.used / plan.quota.contacted.limit) * 100)}%"
               ></div>
             </div>
@@ -134,33 +139,33 @@
           href="/plans"
           onclick={close}
           role="menuitem"
-          class="flex items-center gap-2.5 px-3 py-1.5 text-sm text-text-secondary hover:bg-surface hover:text-text transition-colors"
+          class="flex items-center gap-2.5 px-4 py-2 text-sm text-text-secondary transition-colors hover:bg-surface-2 hover:text-text"
         >
-          <CreditCard size={14} />
+          <CreditCard size={16} />
           Plans
         </a>
         <a
           href="/workspace-settings"
           onclick={close}
           role="menuitem"
-          class="flex items-center gap-2.5 px-3 py-1.5 text-sm text-text-secondary hover:bg-surface hover:text-text transition-colors"
+          class="flex items-center gap-2.5 px-4 py-2 text-sm text-text-secondary transition-colors hover:bg-surface-2 hover:text-text"
         >
-          <Briefcase size={14} />
+          <Briefcase size={16} />
           Workspace
         </a>
         <a
           href="/account-settings"
           onclick={close}
           role="menuitem"
-          class="flex items-center gap-2.5 px-3 py-1.5 text-sm text-text-secondary hover:bg-surface hover:text-text transition-colors"
+          class="flex items-center gap-2.5 px-4 py-2 text-sm text-text-secondary transition-colors hover:bg-surface-2 hover:text-text"
         >
-          <UserIcon size={14} />
+          <UserIcon size={16} />
           Account
         </a>
       </nav>
 
-      <div class="border-t border-border px-3 py-2 flex items-center justify-between">
-        <span class="text-xs text-text-muted">Theme</span>
+      <div class="flex items-center justify-between border-t border-border px-4 py-2">
+        <span class="text-sm text-text-secondary">Theme</span>
         <ThemeToggle />
       </div>
 
@@ -168,16 +173,16 @@
         type="button"
         onclick={handleLogout}
         role="menuitem"
-        class="flex w-full items-center gap-2.5 border-t border-border px-3 py-2 text-left text-sm text-text-secondary hover:bg-surface hover:text-text transition-colors"
+        class="flex w-full items-center gap-2.5 border-t border-border px-4 py-2.5 text-left text-sm text-text-secondary transition-colors hover:bg-surface-2 hover:text-text"
       >
-        <LogOut size={14} />
+        <LogOut size={16} />
         Sign out
       </button>
 
       {#if EDITION === 'cloud'}
-        <div class="flex gap-3 border-t border-border px-3 py-2 text-[11px] text-text-muted">
-          <a href="/terms" onclick={close} class="hover:text-text transition-colors">Terms</a>
-          <a href="/privacy" onclick={close} class="hover:text-text transition-colors">Privacy</a>
+        <div class="flex gap-3 border-t border-border px-4 py-2 text-xs text-text-muted">
+          <a href="/terms" onclick={close} class="hover:text-text">Terms</a>
+          <a href="/privacy" onclick={close} class="hover:text-text">Privacy</a>
         </div>
       {/if}
     </div>

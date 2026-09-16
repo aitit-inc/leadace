@@ -47,20 +47,20 @@
 
 <Modal labelledBy="add-alias-title" closable={!saving} {onclose}>
   <form onsubmit={submit}>
-    <h3 id="add-alias-title" class="text-sm font-semibold text-text">Add a Send-As alias</h3>
-    <p class="mt-1 text-xs text-text-secondary">
+    <h3 id="add-alias-title" class="font-display text-lg font-semibold text-text">Add a Send-As alias</h3>
+    <p class="mt-2 text-sm text-text-secondary">
       An address your Google account already sends as. It becomes a mailbox of its own, with its own
       warmup and daily cap. Replies land in the parent inbox.
     </p>
 
-    <div class="mt-4 space-y-4">
+    <div class="mt-5 space-y-4">
       <div>
-        <label for="alias-parent" class="block text-xs text-text-secondary">Sends through</label>
+        <label for="alias-parent" class="block text-sm font-medium text-text">Sends through</label>
         <select
           id="alias-parent"
           bind:value={parentId}
           disabled={saving || parents.length === 1}
-          class="mt-1 w-full rounded border border-border bg-page px-2 py-1.5 font-mono text-sm text-text disabled:opacity-70"
+          class="field mt-1.5"
         >
           {#each parents as p (p.identityId)}
             <option value={p.identityId}>{p.fromEmail}</option>
@@ -68,7 +68,7 @@
         </select>
       </div>
       <div>
-        <label for="alias-email" class="flex items-center gap-1.5 text-xs text-text-secondary">
+        <label for="alias-email" class="flex items-center gap-1.5 text-sm font-medium text-text">
           Alias address
           <Hint label="Alias requirements">
             Must already be verified under
@@ -76,7 +76,7 @@
               href="https://mail.google.com/mail/u/0/#settings/accounts"
               target="_blank"
               rel="noopener"
-              class="underline hover:text-text">Gmail → Settings → Accounts and Import → "Send mail as"</a
+              class="text-accent-strong hover:underline">Gmail → Settings → Accounts and Import → "Send mail as"</a
             >
             with "Treat as an alias" on; Gmail rejects an unverified one at send time. For a separate
             domain, add it to Google Workspace as a secondary domain with its own DKIM key. A
@@ -91,29 +91,20 @@
           placeholder="sales@yourdomain.com"
           bind:value={fromEmail}
           disabled={saving}
-          class="mt-1 w-full rounded border border-border bg-page px-2 py-1.5 font-mono text-sm text-text disabled:opacity-50"
+          class="field mt-1.5"
         />
       </div>
     </div>
 
     {#if error}
-      <p class="mt-3 text-xs text-danger">{error}</p>
+      <p class="mt-3 text-sm text-danger">{error}</p>
     {/if}
 
-    <div class="mt-6 flex justify-end gap-3">
-      <button
-        type="button"
-        onclick={onclose}
-        disabled={saving}
-        class="text-xs text-text-muted hover:text-text disabled:opacity-50"
-      >
+    <div class="mt-6 flex justify-end gap-2">
+      <button type="button" onclick={onclose} disabled={saving} class="btn btn-ghost">
         Cancel
       </button>
-      <button
-        type="submit"
-        disabled={saving}
-        class="rounded bg-accent px-3 py-1.5 text-xs font-medium text-page hover:bg-accent-strong disabled:opacity-50"
-      >
+      <button type="submit" disabled={saving} class="btn btn-primary">
         {saving ? 'Adding…' : 'Add alias'}
       </button>
     </div>

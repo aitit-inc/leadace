@@ -18,12 +18,12 @@
     {DAY_LABELS[day]}
   </label>
 {/each}
-<select bind:value={hour} class="rounded border border-border bg-page px-1 py-0.5 text-xs text-text">
+<select bind:value={hour} class="field w-auto tabular-nums">
   {#each HOURS as h (h)}
     <option value={h}>{String(h).padStart(2, '0')}:00</option>
   {/each}
 </select>
-<select bind:value={timezone} class="rounded border border-border bg-page px-1 py-0.5 text-xs text-text">
+<select bind:value={timezone} class="field w-auto">
   {#each ZONES as zone (zone)}
     <option value={zone}>{zone}</option>
   {/each}

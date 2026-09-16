@@ -51,19 +51,19 @@
   }
 </script>
 
-<div class="rounded border border-border p-3 {schedule.enabled ? '' : 'opacity-60'}">
-  <div class="flex items-start justify-between gap-2">
-    <span class="text-xs font-medium text-text">{when}</span>
-    <div class="flex shrink-0 gap-3 text-xs">
+<div class="rounded-xl border border-border p-4 {schedule.enabled ? '' : 'opacity-60'}">
+  <div class="flex items-center justify-between gap-2">
+    <span class="text-sm font-medium tabular-nums text-text">{when}</span>
+    <div class="flex shrink-0 gap-1">
       <button
         type="button"
-        class="text-accent hover:text-accent-strong transition-colors"
+        class="btn btn-secondary btn-sm"
         disabled={busy}
         onclick={() => run(() => updateSchedule(schedule.id, { enabled: !schedule.enabled }, fetch, token))}
         >{schedule.enabled ? 'Turn off' : 'Turn on'}</button>
       <button
         type="button"
-        class="text-text-muted hover:text-danger transition-colors"
+        class="btn btn-danger-ghost btn-sm"
         disabled={busy}
         onclick={() => run(() => deleteSchedule(schedule.id, fetch, token))}>Delete</button>
     </div>
@@ -73,15 +73,15 @@
     rows="2"
     maxlength="2000"
     bind:value={form.prompt}
-    class="mt-2 w-full rounded border border-border bg-page px-2 py-1 text-sm text-text"
+    class="field mt-2"
   ></textarea>
 
-  <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-text-secondary">
+  <div class="mt-2 flex flex-wrap items-center gap-2 text-sm text-text-secondary">
     <ScheduleFields bind:days={form.days} bind:hour={form.hour} bind:timezone={form.timezone} />
     {#if dirty}
       <button
         type="button"
-        class="rounded bg-accent px-2 py-0.5 text-xs text-white hover:bg-accent-strong transition-colors disabled:opacity-50"
+        class="btn btn-secondary btn-sm"
         disabled={busy || form.prompt.trim() === '' || form.days.length === 0}
         onclick={() => run(() => updateSchedule(schedule.id, form, fetch, token))}>Save</button>
     {/if}

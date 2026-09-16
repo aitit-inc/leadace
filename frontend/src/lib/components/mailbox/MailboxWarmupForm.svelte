@@ -113,12 +113,12 @@
 </script>
 
 {#if identity.sendRefusal}
-  <div class="space-y-1 rounded border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
+  <div class="space-y-1.5 rounded-xl bg-danger/10 px-3 py-2.5 text-sm text-danger">
     <p>
       Refused by the mail provider on {formatDateTime(identity.sendRefusal.lastAt)}.{#if identity.heldUntil}{' '}Sending
         held until {formatDateTime(identity.heldUntil)}.{/if}
     </p>
-    <p class="line-clamp-2 break-words font-mono" title={identity.sendRefusal.detail}>
+    <p class="line-clamp-2 break-words font-mono text-xs" title={identity.sendRefusal.detail}>
       {replyText(identity.sendRefusal.detail)}
     </p>
     <div class="flex flex-wrap items-center gap-2">
@@ -130,7 +130,7 @@
         type="button"
         onclick={markRefusalResolved}
         disabled={saving}
-        class="rounded border border-border bg-page px-2.5 py-1 text-xs text-text hover:bg-surface disabled:opacity-50"
+        class="btn btn-secondary btn-sm"
       >
         Mark resolved
       </button>
@@ -141,14 +141,14 @@
 {#if draft}
   <div class="space-y-4 {identity.sendRefusal ? 'mt-4' : ''}">
     <div>
-      <label for="cap-override-{identity.identityId}" class="flex items-center gap-1.5 text-xs text-text-secondary">
+      <label for="cap-override-{identity.identityId}" class="flex items-center gap-1.5 text-sm font-medium text-text">
         Daily cap override
         <Hint label="About the daily cap override">
           Blank follows the warmup ramp. A number sets a fixed daily cap right away and skips the
           ramp. 0 stops sending until you clear it.
         </Hint>
       </label>
-      <div class="mt-1 flex items-center gap-2">
+      <div class="mt-1.5 flex items-center gap-2">
         <input
           id="cap-override-{identity.identityId}"
           type="text"
@@ -156,21 +156,21 @@
           placeholder="Default"
           bind:value={draft.capOverrideInput}
           disabled={saving}
-          class="w-28 rounded border border-border bg-page px-2 py-1.5 text-sm text-text disabled:opacity-50"
+          class="field w-28 tabular-nums"
         />
-        <span class="text-xs text-text-muted">/ day</span>
+        <span class="text-sm text-text-muted">/ day</span>
       </div>
     </div>
 
     <div>
-      <span class="block text-xs text-text-secondary">Pause sending</span>
-      <div class="mt-1 flex flex-wrap gap-2">
+      <span class="block text-sm font-medium text-text">Pause sending</span>
+      <div class="mt-1.5 flex flex-wrap gap-2">
         {#each [1, 7, 30] as days (days)}
           <button
             type="button"
             onclick={() => pauseForDays(days)}
             disabled={saving}
-            class="rounded border border-border bg-page px-2.5 py-1 text-xs text-text hover:bg-surface disabled:opacity-50"
+            class="btn btn-secondary btn-sm"
           >
             {days} {days === 1 ? 'day' : 'days'}
           </button>
@@ -180,7 +180,7 @@
             type="button"
             onclick={resumeSending}
             disabled={saving}
-            class="rounded border border-border bg-page px-2.5 py-1 text-xs text-text hover:bg-surface disabled:opacity-50"
+            class="btn btn-secondary btn-sm"
           >
             Resume
           </button>
@@ -202,15 +202,15 @@
         type="button"
         onclick={save}
         disabled={saving || !changed(draft)}
-        class="rounded bg-accent px-3 py-1.5 text-xs font-medium text-page transition-colors hover:bg-accent-strong disabled:opacity-50"
+        class="btn btn-primary btn-sm"
       >
         {saving ? 'Saving…' : 'Save'}
       </button>
       {#if message}
-        <span class="text-xs text-text-muted">{message}</span>
+        <span class="text-sm text-text-muted">{message}</span>
       {/if}
       {#if errorMsg}
-        <span class="text-xs text-danger">{errorMsg}</span>
+        <span class="text-sm text-danger">{errorMsg}</span>
       {/if}
     </div>
   </div>

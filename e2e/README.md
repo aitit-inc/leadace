@@ -477,6 +477,67 @@ and is not billed per token. The harness explicitly relies on subscription
 auth (no `ANTHROPIC_API_KEY` is exported) so `total_cost_usd` reads as
 informational only.
 
+## UI scenarios (screens that need a particular account state)
+
+Some screens never show up in a developer's own local workspace: the
+sign-in page (you are already signed in), the first chat of a workspace
+with no project, a tool call waiting for approval, the billing screens
+(self-host hides them), account deletion, and the `/q` page a recipient
+sees. `frontend/scripts/ui-scenarios.mjs` seeds that state and opens it.
+
+```bash
+cd frontend
+npm run ui -- list                            # what exists
+npm run ui -- open approval                   # headed Chrome, signed in; stays open
+npm run ui -- shot                            # every scenario, light + dark
+npm run ui -- shot plans-credits --theme dark --keep
+```
+
+Screenshots land in `e2e/output/ui/<scenario>--<page>--<theme>.png` — the
+attachments a UI pull request needs.
+
+Each scenario provisions its own GoTrue user and tenant, seeds only that
+tenant (the API for anything the app itself can do, psql for state the app
+cannot reach — a pending approval, a credit balance), and deletes both on
+exit. `--keep` leaves them in place to poke at.
+
+Sign-in is Google-only and email logins are disabled, so there is no
+password to type: an admin-minted magic link is verified into a real
+session and `@supabase/ssr` writes it into the browser as the cookie the
+app reads. The app keeps no mock auth path.
+
+`shot` is also an assertion: the page must answer with a status below 400
+and carry the text (or selector) the scenario seeded it with, so a fixture
+that drifts from the app fails loudly. Exit status: `0` all good, `1` a
+setup or stack failure, `2` a page did not render its state. Console
+errors are printed but do not fail the run.
+
+Prerequisites: the local stack (`make dev`), a `psql` client on `PATH` (the
+scenarios seed state the app itself cannot reach, and `make dev` runs
+Postgres in Docker without installing a client), and Google Chrome —
+Playwright drives the installed browser, so there is no separate download.
+`inquiry` also needs `E2E_RECIPIENT_OVERRIDE` set in `backend/.dev.vars`:
+an inquiry link is an opt-out link, and the send path refuses to build one
+from a host that is not public https, which `localhost` never is. The two
+`plans-*` scenarios boot their own cloud-edition API worker (`:8789`) and
+frontend (`:5274`), because billing UI only exists in the cloud edition,
+and stop them again on exit. That second dev server shares the project's
+`.svelte-kit` directory with the everyday one; what it generates there is
+identical, but the running server may reload once while it starts.
+
+When reading a screenshot: the cookie notice is dismissed up front (it
+covers the bottom of every page and belongs to no screen in particular),
+and `/q` pins its own light/dark from project settings, so both of its
+shots are meant to look the same.
+
+Not covered: Stripe Checkout, the customer portal and the plan-change
+cards. All three need a live Stripe test-mode subscription, the same
+boundary the cloud-edition regression cluster stops at. That is also the
+one way `plans-credits` differs from a real Starter workspace: its fixture
+carries no subscription id, so `/me/subscription` answers 404 and the
+plan-change cards are absent from the screenshot rather than merely
+unexercised.
+
 ## Cleanup
 
 ```bash

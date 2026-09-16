@@ -4,7 +4,7 @@
   let { log }: { log: JobLogLine[] } = $props();
 </script>
 
-<ol class="mt-1 space-y-0.5 border-l border-border pl-2">
+<ol class="mt-2 space-y-1 border-l-2 border-border pl-3 text-xs">
   {#each log as l}
     <li class="flex gap-2">
       <span class="shrink-0 tabular-nums text-text-muted">
@@ -21,7 +21,7 @@
             class={l.outcome === 'failed'
               ? 'text-danger'
               : l.outcome === 'sent' || l.outcome === 'drafted'
-                ? 'text-success'
+                ? 'text-accent-strong'
                 : 'text-text-muted'}>{PROSPECT_OUTCOME_LABELS[l.outcome]}</span
           >{#if 'subject' in l}: “{l.subject}”{:else if 'reason' in l}: {l.reason}{/if}
         </span>

@@ -60,24 +60,24 @@
     aria-expanded={open}
     disabled={connecting}
     onclick={() => (open = !open)}
-    class="inline-flex items-center gap-1 rounded bg-accent px-3 py-1.5 text-xs font-medium text-page transition-colors hover:bg-accent-strong disabled:opacity-50"
+    class="btn btn-primary btn-sm"
   >
     {connecting ? 'Connecting…' : 'Add mailbox'}
     <ChevronDown size={14} />
   </button>
   {#if open}
     <div
-      class="absolute right-0 top-full z-20 mt-1.5 w-72 rounded-md border border-border bg-page p-1 shadow-lg"
+      class="absolute right-0 top-full z-20 mt-2 w-72 rounded-2xl border border-border bg-surface p-1.5 shadow-lg"
     >
       {#each items as item (item.label)}
         <button
           type="button"
           disabled={item.blocked !== null}
           onclick={() => pick(item.action)}
-          class="flex w-full flex-col items-start rounded px-2.5 py-2 text-left hover:bg-surface disabled:cursor-not-allowed disabled:opacity-50"
+          class="flex w-full flex-col items-start rounded-xl px-3 py-2 text-left transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          <span class="text-sm text-text">{item.label}</span>
-          <span class="text-[11px] {item.blocked ? 'text-warning' : 'text-text-muted'}">
+          <span class="text-sm font-semibold text-text">{item.label}</span>
+          <span class="text-xs {item.blocked ? 'text-warning' : 'text-text-muted'}">
             {item.blocked ?? item.desc}
           </span>
         </button>

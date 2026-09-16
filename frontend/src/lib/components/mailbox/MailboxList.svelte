@@ -63,79 +63,81 @@
   }
 </script>
 
-<div class="mb-3 flex flex-wrap items-center justify-between gap-3">
-  <div class="flex items-center gap-1.5">
-    <h3 class="text-xs font-medium uppercase tracking-wider text-text-muted">Mailboxes</h3>
-    <Hint label="About mailboxes">
-      LeadAce sends outreach from these mailboxes and reads their inboxes (read-only) for replies.
-      It never changes or deletes your mail. Each mailbox has its own warmup and daily cap. Choose
-      which ones a project sends from in that project's Settings.
-    </Hint>
-  </div>
-  <AddMailboxMenu
-    freeBlocked={planTier === 'free'}
-    hasGoogle={googles.length > 0}
-    {connecting}
-    onGoogle={connectGoogle}
-    onAlias={() => openAlias()}
-    onSmtp={() => (dialog = { kind: 'smtp' })}
-  />
-</div>
-
-{#if notice?.kind === 'connected'}
-  <p class="mb-3 text-xs text-text-muted">Connected <span class="font-mono">{notice.email}</span>.</p>
-{:else if notice?.kind === 'error'}
-  <p class="mb-3 text-xs text-danger">{notice.message}</p>
-{/if}
-{#if identitiesError}
-  <p class="mb-3 text-xs text-danger">
-    Couldn't load your mailboxes — the list may be incomplete. Reload to retry.
-  </p>
-{/if}
-{#if gmailStatus.state === 'error'}
-  <p class="mb-3 text-xs text-danger">{gmailStatus.message}</p>
-{/if}
-{#if connectError}
-  <p class="mb-3 text-xs text-danger">{connectError}</p>
-{/if}
-
-<div class="rounded-md border border-border">
-  {#if !hasSignIn}
-    <div class="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-      <div class="flex min-w-0 items-center gap-3">
-        <span class="text-text-muted"><Mail size={16} /></span>
-        <div class="min-w-0">
-          <p class="truncate font-mono text-sm font-medium text-text">
-            {gmailStatus.state === 'revoked' ? gmailStatus.email : 'Sign-in Google account'}
-          </p>
-          <p class="mt-1 text-[11px] text-danger">
-            {gmailStatus.state === 'revoked' ? 'Access revoked' : 'Not connected'} · sending is off
-            until you connect it
-          </p>
-        </div>
-      </div>
-      <button
-        type="button"
-        onclick={connectSignIn}
-        disabled={connecting}
-        class="rounded border border-border bg-page px-3 py-1.5 text-xs font-medium text-text hover:bg-surface disabled:opacity-50"
-      >
-        {connecting ? 'Connecting…' : gmailStatus.state === 'revoked' ? 'Reconnect' : 'Connect Gmail'}
-      </button>
+<section class="card p-5">
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div class="flex items-center gap-1.5">
+      <h3 class="font-display text-lg font-semibold text-text">Mailboxes</h3>
+      <Hint label="About mailboxes">
+        LeadAce sends outreach from these mailboxes and reads their inboxes (read-only) for replies.
+        It never changes or deletes your mail. Each mailbox has its own warmup and daily cap. Choose
+        which ones a project sends from in that project's Settings.
+      </Hint>
     </div>
-  {/if}
-  {#each rows as identity (identity.identityId)}
-    <MailboxRow
-      {identity}
-      {identities}
+    <AddMailboxMenu
       freeBlocked={planTier === 'free'}
-      {session}
-      {onChanged}
-      onReconnectSignIn={connectSignIn}
-      onAddAlias={openAlias}
+      hasGoogle={googles.length > 0}
+      {connecting}
+      onGoogle={connectGoogle}
+      onAlias={() => openAlias()}
+      onSmtp={() => (dialog = { kind: 'smtp' })}
     />
-  {/each}
-</div>
+  </div>
+
+  {#if notice?.kind === 'connected'}
+    <p class="mt-3 text-sm text-text-secondary">Connected {notice.email}.</p>
+  {:else if notice?.kind === 'error'}
+    <p class="mt-3 text-sm text-danger">{notice.message}</p>
+  {/if}
+  {#if identitiesError}
+    <p class="mt-3 text-sm text-danger">
+      Couldn't load your mailboxes — the list may be incomplete. Reload to retry.
+    </p>
+  {/if}
+  {#if gmailStatus.state === 'error'}
+    <p class="mt-3 text-sm text-danger">{gmailStatus.message}</p>
+  {/if}
+  {#if connectError}
+    <p class="mt-3 text-sm text-danger">{connectError}</p>
+  {/if}
+
+  <div class="-mx-5 mt-4 border-t border-border">
+    {#if !hasSignIn}
+      <div class="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+        <div class="flex min-w-0 items-center gap-3">
+          <span class="text-text-muted"><Mail size={16} /></span>
+          <div class="min-w-0">
+            <p class="truncate text-sm font-semibold text-text">
+              {gmailStatus.state === 'revoked' ? gmailStatus.email : 'Sign-in Google account'}
+            </p>
+            <p class="mt-1 text-xs text-danger">
+              {gmailStatus.state === 'revoked' ? 'Access revoked' : 'Not connected'} · sending is off
+              until you connect it
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onclick={connectSignIn}
+          disabled={connecting}
+          class="btn btn-secondary btn-sm"
+        >
+          {connecting ? 'Connecting…' : gmailStatus.state === 'revoked' ? 'Reconnect' : 'Connect Gmail'}
+        </button>
+      </div>
+    {/if}
+    {#each rows as identity (identity.identityId)}
+      <MailboxRow
+        {identity}
+        {identities}
+        freeBlocked={planTier === 'free'}
+        {session}
+        {onChanged}
+        onReconnectSignIn={connectSignIn}
+        onAddAlias={openAlias}
+      />
+    {/each}
+  </div>
+</section>
 
 {#if dialog?.kind === 'alias'}
   <AddAliasDialog

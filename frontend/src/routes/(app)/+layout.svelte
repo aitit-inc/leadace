@@ -6,12 +6,12 @@
   import AccountMenu from '$lib/components/AccountMenu.svelte';
   import AlertBell from '$lib/components/AlertBell.svelte';
   import {
-    LayoutDashboard,
+    House,
     Users,
     Building2,
     Send,
-    FilePen,
-    MessageSquare,
+    Mail,
+    Reply,
     ChartBar,
     FileText,
     Inbox,
@@ -20,7 +20,9 @@
     X,
     TriangleAlert,
     Rocket,
-    Bot,
+    MessageCircle,
+    Ellipsis,
+    ChevronDown,
   } from '@lucide/svelte';
   import type { Component } from 'svelte';
   import { connectGmail } from '$lib/gmail-oauth';
@@ -29,6 +31,7 @@
   let { data, children }: LayoutProps = $props();
   let showCreate = $state(false);
   let drawerOpen = $state(false);
+  let moreOpen = $state(false);
   let connectingGmail = $state(false);
   let gmailConnectError = $state<string | null>(null);
 
@@ -50,19 +53,21 @@
   }
 
   type NavItem = { href: string; label: string; icon: Component };
-  const nav: NavItem[] = [
-    { href: '/chat', label: 'Chat', icon: Bot },
-    { href: '/dashboard', label: 'Home', icon: LayoutDashboard },
+  const primaryNav: NavItem[] = [
+    { href: '/chat', label: 'Chat', icon: MessageCircle },
+    { href: '/dashboard', label: 'Home', icon: House },
     { href: '/prospects', label: 'Prospects', icon: Users },
-    { href: '/organizations', label: 'Orgs', icon: Building2 },
-    { href: '/outreach', label: 'Outreach', icon: Send },
-    { href: '/drafts', label: 'Drafts', icon: FilePen },
-    { href: '/responses', label: 'Replies', icon: MessageSquare },
-    { href: '/evaluations', label: 'Eval', icon: ChartBar },
-    { href: '/documents', label: 'Docs', icon: FileText },
-    { href: '/inquiry-settings', label: 'Inquiry', icon: Inbox },
-    { href: '/project-settings', label: 'Settings', icon: Settings },
+    { href: '/drafts', label: 'Drafts', icon: Mail },
+    { href: '/responses', label: 'Replies', icon: Reply },
   ];
+  const moreNav: NavItem[] = [
+    { href: '/organizations', label: 'Organizations', icon: Building2 },
+    { href: '/outreach', label: 'Outreach', icon: Send },
+    { href: '/evaluations', label: 'Evaluations', icon: ChartBar },
+    { href: '/documents', label: 'Documents', icon: FileText },
+    { href: '/inquiry-settings', label: 'Inquiry page', icon: Inbox },
+  ];
+  const settingsNav: NavItem = { href: '/project-settings', label: 'Settings', icon: Settings };
 
   // Pages NOT listed here (prospects, organizations' siblings, project-
   // settings, etc.) are hidden behind the "No projects yet" CTA below when
@@ -89,7 +94,27 @@
     void page.url.pathname;
     drawerOpen = false;
   });
+
+  // Keep the current page visible in the nav.
+  $effect(() => {
+    if (moreNav.some((i) => isActive(i.href))) moreOpen = true;
+  });
 </script>
+
+{#snippet navLink(item: NavItem)}
+  {@const Icon = item.icon}
+  {@const active = isActive(item.href)}
+  <a
+    href={item.href}
+    aria-current={active ? 'page' : undefined}
+    class="flex items-center gap-3 rounded-full px-3 py-2 text-sm transition-colors {active
+      ? 'bg-surface font-semibold text-text'
+      : 'text-text-secondary hover:bg-surface-2 hover:text-text'}"
+  >
+    <Icon size={18} class="shrink-0" />
+    <span class="min-w-0 flex-1 truncate">{item.label}</span>
+  </a>
+{/snippet}
 
 <div class="flex h-screen">
   {#if drawerOpen}
@@ -102,49 +127,51 @@
   {/if}
 
   <aside
-    class="fixed inset-y-0 left-0 z-30 flex w-16 flex-col justify-between border-r border-border bg-page py-3 transition-transform md:static md:translate-x-0 {drawerOpen
+    class="fixed inset-y-0 left-0 z-30 flex w-64 flex-col bg-page px-3 py-4 transition-[translate,visibility] duration-200 ease-spring md:static md:w-56 md:translate-x-0 md:border-r md:border-border {drawerOpen
       ? 'translate-x-0'
-      : '-translate-x-full'}"
-    aria-hidden={!drawerOpen}
+      : '-translate-x-full max-md:invisible'}"
   >
-    <div>
-      <div class="mb-5 flex items-center justify-center px-1 relative">
-        <a
-          href="/dashboard"
-          title="LeadAce"
-          class="text-accent hover:text-accent-strong transition-colors"
-        >
-          <Logo size={22} />
-        </a>
-        <button
-          type="button"
-          class="md:hidden absolute right-1 top-0 p-1 text-text-muted hover:text-text"
-          aria-label="Close menu"
-          onclick={() => (drawerOpen = false)}
-        >
-          <X size={18} />
-        </button>
-      </div>
-      <nav class="space-y-0.5 px-1.5">
-        {#each nav as item}
-          {@const Icon = item.icon}
-          <a
-            href={item.href}
-            title={item.label}
-            class="flex flex-col items-center gap-0.5 rounded px-1 py-2 transition-colors {isActive(
-              item.href,
-            )
-              ? 'bg-surface-2 text-text'
-              : 'text-text-secondary hover:text-text hover:bg-surface'}"
-          >
-            <Icon size={18} />
-            <span class="text-[10px] leading-none">{item.label}</span>
-          </a>
-        {/each}
-      </nav>
+    <div class="flex items-center justify-between px-2 pb-5">
+      <a href="/dashboard" class="flex items-center gap-2.5 text-text">
+        <Logo size={24} class="text-accent" />
+        <span class="font-display text-lg font-semibold tracking-tight">LeadAce</span>
+      </a>
+      <button
+        type="button"
+        class="btn-ghost rounded-full p-1.5 md:hidden"
+        aria-label="Close menu"
+        onclick={() => (drawerOpen = false)}
+      >
+        <X size={18} />
+      </button>
     </div>
 
-    <div class="flex justify-center">
+    <nav class="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto" aria-label="Main">
+      {#each primaryNav as item (item.href)}
+        {@render navLink(item)}
+      {/each}
+      <button
+        type="button"
+        onclick={() => (moreOpen = !moreOpen)}
+        aria-expanded={moreOpen}
+        class="flex items-center gap-3 rounded-full px-3 py-2 text-sm text-text-secondary transition-colors hover:bg-surface-2 hover:text-text"
+      >
+        <Ellipsis size={18} class="shrink-0" />
+        <span class="flex-1 text-left">More</span>
+        <ChevronDown size={16} class="transition-transform duration-200 {moreOpen ? 'rotate-180' : ''}" />
+      </button>
+      {#if moreOpen}
+        <div class="flex flex-col gap-0.5 pl-3">
+          {#each moreNav as item (item.href)}
+            {@render navLink(item)}
+          {/each}
+        </div>
+      {/if}
+      <div class="mx-3 my-2 h-px bg-border"></div>
+      {@render navLink(settingsNav)}
+    </nav>
+
+    <div class="pt-3">
       <AccountMenu user={data.user} plan={data.plan} supabase={data.supabase} />
     </div>
   </aside>
@@ -156,10 +183,10 @@
         oncreated={() => window.location.reload()}
       />
     {/if}
-    <header class="flex items-center gap-3 border-b border-border px-4 py-3 md:px-6">
+    <header class="flex items-center gap-2 border-b border-border px-3 py-2.5 md:px-6">
       <button
         type="button"
-        class="-ml-1 p-1 text-text-muted hover:text-text md:hidden"
+        class="btn-ghost rounded-full p-1.5 md:hidden"
         aria-label="Open menu"
         aria-expanded={drawerOpen}
         onclick={() => (drawerOpen = true)}
@@ -173,39 +200,27 @@
     </header>
 
     {#if data.projects.length === 0 && page.url.pathname !== '/chat' && page.url.pathname !== '/dashboard'}
-      <div class="border-b border-accent/40 bg-accent/10 px-4 py-2 md:px-6">
-        <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-          <div class="flex items-center gap-2 text-sm text-text">
-            <Rocket size={16} class="text-accent" />
-            <span>Paste your website URL in the chat to set up your first project.</span>
-          </div>
-          <a
-            href="/chat"
-            class="rounded border border-accent/60 bg-page px-3 py-1 text-xs font-medium text-accent hover:bg-accent/10"
-          >
-            Finish setup
-          </a>
+      <div class="mx-4 mt-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-2xl bg-accent/12 px-4 py-3 md:mx-8">
+        <div class="flex items-center gap-2.5 text-sm text-text">
+          <Rocket size={18} class="shrink-0 text-accent-strong" />
+          <span>Paste your website URL in the chat to set up your first project.</span>
         </div>
+        <a href="/chat" class="btn btn-primary btn-sm">Finish setup</a>
       </div>
     {/if}
 
     {#if gmailBannerItem && page.url.pathname !== '/dashboard'}
-      <div class="border-b border-danger/40 bg-danger/10 px-4 py-2 md:px-6">
-        <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-          <div class="flex items-center gap-2 text-sm text-danger">
-            <TriangleAlert size={16} />
+      <div class="mx-4 mt-4 rounded-2xl bg-danger/10 px-4 py-3 md:mx-8">
+        <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <div class="flex items-center gap-2.5 text-sm text-danger">
+            <TriangleAlert size={18} class="shrink-0" />
             <span>
               {gmailBannerItem.kind === 'gmail_auth_revoked'
                 ? 'Google access was revoked — sending and reply collection are stopped until you reconnect.'
                 : 'Gmail is not connected — outbound email sending is disabled.'}
             </span>
           </div>
-          <button
-            type="button"
-            onclick={handleConnectGmail}
-            disabled={connectingGmail}
-            class="rounded border border-danger/60 bg-page px-3 py-1 text-xs font-medium text-danger hover:bg-danger/10 disabled:opacity-50"
-          >
+          <button type="button" onclick={handleConnectGmail} disabled={connectingGmail} class="btn btn-danger btn-sm">
             {connectingGmail ? 'Connecting…' : 'Connect Gmail'}
           </button>
         </div>
@@ -215,23 +230,19 @@
       </div>
     {/if}
 
-    <main class="flex-1 overflow-y-auto px-4 py-4 md:px-6 md:py-5">
+    <main class="flex-1 overflow-y-auto px-4 py-5 md:px-8 md:py-6">
       {#if data.activeProjectId || isTenantScoped(page.url.pathname)}
         {@render children()}
       {:else}
-        <div class="flex flex-col items-center justify-center h-full gap-4">
-          <div class="text-center">
-            <p class="text-sm text-text">No projects yet</p>
-            <p class="text-xs text-text-muted mt-1">
+        <div class="flex h-full flex-col items-center justify-center gap-4 text-center">
+          <Logo size={40} class="text-accent" />
+          <div>
+            <p class="font-display text-xl font-semibold text-text">No projects yet</p>
+            <p class="mt-1 text-sm text-text-secondary">
               Paste your website URL in the chat — Ace proposes who to contact and what to say.
             </p>
           </div>
-          <a
-            href="/chat"
-            class="rounded bg-text px-4 py-1.5 text-xs font-medium text-page hover:bg-text/90 transition-colors"
-          >
-            Set up in chat
-          </a>
+          <a href="/chat" class="btn btn-primary">Set up in chat</a>
         </div>
       {/if}
     </main>

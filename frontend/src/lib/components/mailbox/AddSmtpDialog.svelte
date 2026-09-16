@@ -63,20 +63,19 @@
     }
   }
 
-  const input =
-    'mt-1 rounded border border-border bg-page px-2 py-1.5 text-sm text-text disabled:opacity-50';
-  const label = 'flex items-center gap-1.5 text-xs text-text-secondary';
+  const input = 'field mt-1.5';
+  const label = 'flex items-center gap-1.5 text-sm font-medium text-text';
 </script>
 
 <Modal labelledBy="add-smtp-title" closable={!saving} {onclose}>
   <form onsubmit={submit}>
-    <h3 id="add-smtp-title" class="text-sm font-semibold text-text">Add an SMTP mailbox</h3>
-    <p class="mt-1 text-xs text-text-secondary">
+    <h3 id="add-smtp-title" class="font-display text-lg font-semibold text-text">Add an SMTP mailbox</h3>
+    <p class="mt-2 text-sm text-text-secondary">
       For a provider other than Google. Both connections are checked when you add it. For a Google
       account, use "Connect a Google account" instead.
     </p>
 
-    <div class="mt-4 space-y-4">
+    <div class="mt-5 space-y-4">
       <div>
         <label for="smtp-from" class={label}>From address</label>
         <!-- svelte-ignore a11y_autofocus -->
@@ -87,7 +86,7 @@
           placeholder="sales@yourdomain.com"
           bind:value={fromEmail}
           disabled={saving}
-          class="{input} w-full font-mono"
+          class={input}
         />
       </div>
 
@@ -149,7 +148,7 @@
           placeholder="Usually the full email address"
           bind:value={username}
           disabled={saving}
-          class="{input} w-full font-mono"
+          class={input}
         />
       </div>
 
@@ -167,29 +166,20 @@
           autocomplete="off"
           bind:value={appPassword}
           disabled={saving}
-          class="{input} w-full font-mono"
+          class="{input} font-mono"
         />
       </div>
     </div>
 
     {#if error}
-      <p class="mt-3 text-xs text-danger">{error}</p>
+      <p class="mt-3 text-sm text-danger">{error}</p>
     {/if}
 
-    <div class="mt-6 flex justify-end gap-3">
-      <button
-        type="button"
-        onclick={onclose}
-        disabled={saving}
-        class="text-xs text-text-muted hover:text-text disabled:opacity-50"
-      >
+    <div class="mt-6 flex justify-end gap-2">
+      <button type="button" onclick={onclose} disabled={saving} class="btn btn-ghost">
         Cancel
       </button>
-      <button
-        type="submit"
-        disabled={saving}
-        class="rounded bg-accent px-3 py-1.5 text-xs font-medium text-page hover:bg-accent-strong disabled:opacity-50"
-      >
+      <button type="submit" disabled={saving} class="btn btn-primary">
         {saving ? 'Checking…' : 'Add mailbox'}
       </button>
     </div>

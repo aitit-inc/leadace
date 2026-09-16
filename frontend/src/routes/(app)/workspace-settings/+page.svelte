@@ -100,7 +100,7 @@
 
 <div class="mx-auto max-w-2xl space-y-6">
   <header>
-    <h1 class="text-2xl font-semibold text-text">Workspace settings</h1>
+    <h1 class="font-display text-2xl font-semibold tracking-tight text-text">Workspace settings</h1>
     <p class="mt-1 text-sm text-text-secondary">
       Identity used in the default footer of every outgoing email (CAN-SPAM / CASL). All sends
       are blocked until legal name, physical address, and sender country are set.
@@ -109,7 +109,7 @@
 
   {#if formData}
     {#if !complianceReady}
-      <div class="rounded-lg border border-warning bg-warning/10 p-3 text-sm text-warning">
+      <div class="rounded-2xl bg-warning/10 px-4 py-3 text-sm text-warning">
         Compliance footer is incomplete. Outbound sends will return 412 until legal name, physical
         address, and sender country are filled in.
       </div>
@@ -122,93 +122,95 @@
         void save();
       }}
     >
-      <section class="space-y-1">
-        <label for="name" class="block text-sm font-medium text-text">Workspace display name</label>
-        <p class="text-xs text-text-muted">
-          Internal label only. Shown in the project switcher; never sent to recipients.
-        </p>
-        <input
-          id="name"
-          type="text"
-          maxlength="120"
-          bind:value={formData.name}
-          class="block w-full rounded border border-border bg-page px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-text/40 focus:outline-none"
-        />
-        {#if validationErrors.name}
-          <p class="text-xs text-danger">{validationErrors.name}</p>
-        {/if}
-      </section>
+      <div class="card space-y-5 p-6">
+        <section class="space-y-1.5">
+          <label for="name" class="block text-sm font-medium text-text">Workspace display name</label>
+          <p class="text-xs text-text-muted">
+            Internal label only. Shown in the project switcher; never sent to recipients.
+          </p>
+          <input
+            id="name"
+            type="text"
+            maxlength="120"
+            bind:value={formData.name}
+            class="field"
+          />
+          {#if validationErrors.name}
+            <p class="text-xs text-danger">{validationErrors.name}</p>
+          {/if}
+        </section>
 
-      <section class="space-y-1">
-        <label for="legalName" class="block text-sm font-medium text-text">
-          Legal name <span class="text-danger">*</span>
-        </label>
-        <p class="text-xs text-text-muted">
-          The registered company name (LLC / Inc / Ltd) shown verbatim in the footer.
-        </p>
-        <input
-          id="legalName"
-          type="text"
-          maxlength="200"
-          bind:value={formData.legalName}
-          placeholder="LeadAce Inc."
-          class="block w-full rounded border border-border bg-page px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-text/40 focus:outline-none"
-        />
-        {#if validationErrors.legalName}
-          <p class="text-xs text-danger">{validationErrors.legalName}</p>
-        {/if}
-      </section>
+        <section class="space-y-1.5">
+          <label for="legalName" class="block text-sm font-medium text-text">
+            Legal name <span class="text-danger">*</span>
+          </label>
+          <p class="text-xs text-text-muted">
+            The registered company name (LLC / Inc / Ltd) shown verbatim in the footer.
+          </p>
+          <input
+            id="legalName"
+            type="text"
+            maxlength="200"
+            bind:value={formData.legalName}
+            placeholder="LeadAce Inc."
+            class="field"
+          />
+          {#if validationErrors.legalName}
+            <p class="text-xs text-danger">{validationErrors.legalName}</p>
+          {/if}
+        </section>
 
-      <section class="space-y-1">
-        <label for="physicalAddress" class="block text-sm font-medium text-text">
-          Physical mailing address <span class="text-danger">*</span>
-        </label>
-        <p class="text-xs text-text-muted">
-          Street address / suite / city / state / postal / country. CAN-SPAM requires a USPS-deliverable
-          address (street, registered PO Box, or CMRA private mailbox). Self-host users: this is your
-          responsibility.
-        </p>
-        <textarea
-          id="physicalAddress"
-          rows="3"
-          maxlength="500"
-          bind:value={formData.physicalAddress}
-          placeholder="123 Market Street, Suite 400, San Francisco, CA 94103, United States"
-          class="block w-full rounded border border-border bg-page px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-text/40 focus:outline-none"
-        ></textarea>
-        {#if validationErrors.physicalAddress}
-          <p class="text-xs text-danger">{validationErrors.physicalAddress}</p>
-        {/if}
-      </section>
+        <section class="space-y-1.5">
+          <label for="physicalAddress" class="block text-sm font-medium text-text">
+            Physical mailing address <span class="text-danger">*</span>
+          </label>
+          <p class="text-xs text-text-muted">
+            Street address / suite / city / state / postal / country. CAN-SPAM requires a USPS-deliverable
+            address (street, registered PO Box, or CMRA private mailbox). Self-host users: this is your
+            responsibility.
+          </p>
+          <textarea
+            id="physicalAddress"
+            rows="3"
+            maxlength="500"
+            bind:value={formData.physicalAddress}
+            placeholder="123 Market Street, Suite 400, San Francisco, CA 94103, United States"
+            class="field"
+          ></textarea>
+          {#if validationErrors.physicalAddress}
+            <p class="text-xs text-danger">{validationErrors.physicalAddress}</p>
+          {/if}
+        </section>
 
-      <section class="space-y-1">
-        <label for="defaultSenderCountry" class="block text-sm font-medium text-text">
-          Default sender country <span class="text-danger">*</span>
-        </label>
-        <p class="text-xs text-text-muted">
-          Two-letter ISO 3166-1 code. LeadAce currently sends to US, CA, and JP recipients only;
-          recipient country comes from the prospect / organization, not this field. Other entries
-          are accepted but not yet supported by the send guardrail.
-        </p>
-        <select
-          id="defaultSenderCountry"
-          bind:value={formData.defaultSenderCountry}
-          class="block w-full rounded border border-border bg-page px-3 py-2 text-sm text-text focus:border-text/40 focus:outline-none"
-        >
-          <option value={null}>— Select —</option>
-          {#each SUPPORTED_COUNTRIES as { code, label } (code)}
-            <option value={code}>{label}</option>
-          {/each}
-        </select>
-        {#if validationErrors.defaultSenderCountry}
-          <p class="text-xs text-danger">{validationErrors.defaultSenderCountry}</p>
-        {/if}
-      </section>
+        <section class="space-y-1.5">
+          <label for="defaultSenderCountry" class="block text-sm font-medium text-text">
+            Default sender country <span class="text-danger">*</span>
+          </label>
+          <p class="text-xs text-text-muted">
+            Two-letter ISO 3166-1 code. LeadAce currently sends to US, CA, and JP recipients only;
+            recipient country comes from the prospect / organization, not this field. Other entries
+            are accepted but not yet supported by the send guardrail.
+          </p>
+          <select
+            id="defaultSenderCountry"
+            bind:value={formData.defaultSenderCountry}
+            class="field"
+          >
+            <option value={null}>— Select —</option>
+            {#each SUPPORTED_COUNTRIES as { code, label } (code)}
+              <option value={code}>{label}</option>
+            {/each}
+          </select>
+          {#if validationErrors.defaultSenderCountry}
+            <p class="text-xs text-danger">{validationErrors.defaultSenderCountry}</p>
+          {/if}
+        </section>
+      </div>
 
-      <section class="space-y-4 border-t border-border pt-6">
+      <section class="card space-y-5 p-6">
         <div>
-          <h2 class="text-sm font-semibold text-text">Japanese footer (for Japanese-language projects)</h2>
-          <p class="mt-1 text-xs text-text-muted">
+          <h2 class="font-display text-lg font-semibold text-text">Japanese footer (for Japanese-language projects)</h2>
+          <p class="mt-1 text-sm text-text-secondary">
             Optional. When a project's message language is Japanese (Project settings →
             Message language), the default footer uses these instead of the values above — so a
             bilingual sender shows its Japanese legal identity to Japanese audiences and the
@@ -216,7 +218,7 @@
           </p>
         </div>
 
-        <div class="space-y-1">
+        <div class="space-y-1.5">
           <label for="legalNameJa" class="block text-sm font-medium text-text">Legal name (Japanese)</label>
           <input
             id="legalNameJa"
@@ -224,14 +226,14 @@
             maxlength="200"
             bind:value={formData.legalNameJa}
             placeholder="リードエース株式会社"
-            class="block w-full rounded border border-border bg-page px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-text/40 focus:outline-none"
+            class="field"
           />
           {#if validationErrors.legalNameJa}
             <p class="text-xs text-danger">{validationErrors.legalNameJa}</p>
           {/if}
         </div>
 
-        <div class="space-y-1">
+        <div class="space-y-1.5">
           <label for="physicalAddressJa" class="block text-sm font-medium text-text">
             Physical mailing address (Japanese)
           </label>
@@ -241,7 +243,7 @@
             maxlength="500"
             bind:value={formData.physicalAddressJa}
             placeholder="〒100-0001 東京都千代田区千代田1-1 リードエースビル4階"
-            class="block w-full rounded border border-border bg-page px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-text/40 focus:outline-none"
+            class="field"
           ></textarea>
           {#if validationErrors.physicalAddressJa}
             <p class="text-xs text-danger">{validationErrors.physicalAddressJa}</p>
@@ -249,14 +251,14 @@
         </div>
       </section>
 
-      <section class="space-y-1 border-t border-border pt-6">
+      <section class="card space-y-1.5 p-6">
         <label for="notificationEmail" class="block text-sm font-medium text-text">
           Notification email
         </label>
         <p class="text-xs text-text-muted">
           Where the plugin sends its run notifications (daily-cycle start and completion reports).
           They go out from your connected Gmail and, by default, to that same address
-          {#if data.connectedGmail}(<span class="font-mono">{data.connectedGmail}</span>){:else}(none connected yet — see Account settings){/if}.
+          {#if data.connectedGmail}({data.connectedGmail}){:else}(none connected yet — see Account settings){/if}.
           Enter an address to redirect them; leave blank to use the default. This can only be
           changed here, never by the plugin.
         </p>
@@ -266,23 +268,19 @@
           maxlength="254"
           bind:value={formData.notificationEmail}
           placeholder={data.connectedGmail ?? 'you@example.com'}
-          class="block w-full rounded border border-border bg-page px-3 py-2 text-sm text-text placeholder:text-text-muted focus:border-text/40 focus:outline-none"
+          class="field"
         />
         {#if validationErrors.notificationEmail}
           <p class="text-xs text-danger">{validationErrors.notificationEmail}</p>
         {/if}
       </section>
 
-      <div class="flex items-center gap-3 border-t border-border pt-4">
-        <button
-          type="submit"
-          disabled={saving}
-          class="rounded bg-text px-4 py-2 text-sm font-medium text-page hover:bg-text/90 transition-colors disabled:opacity-40"
-        >
+      <div class="flex items-center gap-3">
+        <button type="submit" disabled={saving} class="btn btn-primary">
           {saving ? 'Saving…' : 'Save'}
         </button>
         {#if saveMessage}
-          <span class={saveMessage.startsWith('Error') ? 'text-xs text-danger' : 'text-xs text-text-muted'}>
+          <span class={saveMessage.startsWith('Error') ? 'text-sm text-danger' : 'text-sm text-text-muted'}>
             {saveMessage}
           </span>
         {/if}

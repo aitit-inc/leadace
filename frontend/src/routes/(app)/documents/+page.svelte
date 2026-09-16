@@ -141,7 +141,7 @@
 
 </script>
 
-<h2 class="text-lg font-semibold text-text mb-6">Documents</h2>
+<h2 class="mb-6 font-display text-2xl font-semibold tracking-tight text-text">Documents</h2>
 
 {#if !data.activeProjectId}
   <EmptyState message="No active project. Create one with /leadace first." />
@@ -152,13 +152,13 @@
         {#each data.documents as doc}
           <button
             onclick={() => selectDoc(doc.slug)}
-            class="text-left px-3 py-2 rounded text-sm transition-colors md:w-full
+            class="rounded-xl px-3 py-2 text-left text-sm transition-colors md:w-full
               {selectedSlug === doc.slug
-                ? 'bg-surface-2 text-text font-medium'
-                : 'text-text-secondary hover:text-text hover:bg-surface'}"
+                ? 'bg-surface font-semibold text-text'
+                : 'text-text-secondary hover:bg-surface-2 hover:text-text'}"
           >
             <span class="block">{label(doc.slug)}</span>
-            <span class="block text-xs text-text-muted mt-0.5">
+            <span class="mt-0.5 block text-xs font-normal tabular-nums text-text-muted">
               {doc.updatedAt ? formatDate(doc.updatedAt) : 'Not created yet'}
             </span>
           </button>
@@ -173,15 +173,15 @@
         <p class="text-text-muted text-sm">Loading...</p>
       {:else if editing}
         <div class="mb-3 flex items-center justify-between gap-2">
-          <h3 class="text-base font-semibold text-text">{label(selectedSlug)}</h3>
-          <div class="flex items-center gap-3">
-            <button onclick={cancelEdit} class="text-xs text-text-muted hover:text-text">
+          <h3 class="font-display text-lg font-semibold text-text">{label(selectedSlug)}</h3>
+          <div class="flex items-center gap-2">
+            <button onclick={cancelEdit} class="btn btn-ghost btn-sm">
               Cancel
             </button>
             <button
               onclick={save}
               disabled={saving || !draft.trim()}
-              class="rounded bg-text px-3 py-1 text-xs font-medium text-page transition-opacity hover:opacity-90 disabled:opacity-40"
+              class="btn btn-primary btn-sm"
             >
               {saving ? 'Saving…' : 'Save'}
             </button>
@@ -192,24 +192,24 @@
           aria-label={label(selectedSlug)}
           rows="22"
           spellcheck="false"
-          class="w-full resize-y rounded border border-border bg-page p-4 text-sm text-text font-mono leading-relaxed focus:border-text/60 focus:outline-none"
+          class="field resize-y p-4 leading-relaxed"
         ></textarea>
         {#if saveError}
-          <p class="mt-2 text-xs text-danger">{saveError}</p>
+          <p class="mt-2 text-sm text-danger">{saveError}</p>
         {/if}
       {:else if !currentDoc}
         <EmptyState message="Document not found" />
       {:else}
         <div class="mb-4 flex items-center justify-between gap-2">
           <div>
-            <h3 class="text-base font-semibold text-text">{label(selectedSlug)}</h3>
-            <p class="text-xs text-text-muted mt-0.5">Last updated: {formatDate(currentDoc.createdAt)}</p>
+            <h3 class="font-display text-lg font-semibold text-text">{label(selectedSlug)}</h3>
+            <p class="mt-0.5 text-xs tabular-nums text-text-muted">Last updated: {formatDate(currentDoc.createdAt)}</p>
           </div>
-          <div class="flex items-center gap-3">
-            <button onclick={startEdit} class="text-xs text-accent hover:underline">Edit</button>
+          <div class="flex items-center gap-2">
+            <button onclick={startEdit} class="btn btn-secondary btn-sm">Edit</button>
             <button
               onclick={() => (showHistory ? (showHistory = false) : loadHistory())}
-              class="text-xs text-accent hover:underline"
+              class="btn btn-ghost btn-sm"
             >
               {showHistory ? 'Hide history' : 'Show history'}
             </button>
@@ -217,49 +217,49 @@
         </div>
 
         {#if pendingApproval}
-          <div class="mb-4 flex flex-col gap-2 rounded border border-border bg-surface p-3 sm:flex-row sm:items-center sm:justify-between">
-            <p class="text-xs text-text-secondary">
-              <span class="font-medium text-text">Pending approval.</span>
+          <div class="mb-4 flex flex-col gap-3 rounded-2xl bg-warning/10 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <p class="text-sm text-text-secondary">
+              <span class="font-semibold text-text">Pending approval.</span>
               This version was saved by the agent. Skills follow a playbook only once you approve it — read it first; it runs as procedure.
             </p>
             <button
               onclick={approve}
               disabled={approving}
-              class="shrink-0 rounded bg-text px-3 py-1 text-xs font-medium text-page transition-opacity hover:opacity-90 disabled:opacity-40"
+              class="btn btn-primary btn-sm shrink-0"
             >
               {approving ? 'Approving…' : 'Approve'}
             </button>
           </div>
           {#if approveError}
-            <p class="mb-2 text-xs text-danger">{approveError}</p>
+            <p class="mb-2 text-sm text-danger">{approveError}</p>
           {/if}
         {/if}
 
-        <div class="rounded border border-border bg-page p-4 overflow-x-auto">
-          <pre class="text-sm text-text whitespace-pre-wrap font-mono leading-relaxed">{currentDoc.content}</pre>
+        <div class="card overflow-x-auto p-5">
+          <pre class="whitespace-pre-wrap font-sans text-sm leading-relaxed text-text">{currentDoc.content}</pre>
         </div>
 
         {#if showHistory && history.length > 0}
           <div class="mt-6">
-            <h4 class="text-xs font-medium text-text-muted uppercase tracking-wider mb-3">
+            <h4 class="mb-3 text-xs font-semibold text-text-muted">
               Version History ({history.length})
             </h4>
-            <div class="space-y-3">
+            <div class="card divide-y divide-border overflow-hidden">
               {#each history as ver, i}
-                <details class="border border-border rounded">
-                  <summary class="px-3 py-2 text-xs cursor-pointer hover:bg-surface transition-colors">
-                    <span class="font-mono text-text-muted">{formatDate(ver.createdAt)}</span>
+                <details>
+                  <summary class="cursor-pointer px-4 py-2.5 text-sm transition-colors hover:bg-surface-2 focus-visible:-outline-offset-2">
+                    <span class="tabular-nums text-text-secondary">{formatDate(ver.createdAt)}</span>
                     {#if i === 0}
-                      <span class="ml-2 text-accent font-medium">current</span>
+                      <span class="chip ml-2 text-text-secondary ring-1 ring-inset ring-border">current</span>
                     {/if}
                     {#if selectedSlug && isPlaybook(selectedSlug)}
-                      <span class="ml-2 {ver.approvedAt ? 'text-text-muted' : 'text-danger'}">
+                      <span class="chip ml-2 {ver.approvedAt ? 'text-text-muted ring-1 ring-inset ring-border' : 'bg-warning/15 text-warning'}">
                         {ver.approvedAt ? 'approved' : 'pending approval'}
                       </span>
                     {/if}
                   </summary>
-                  <div class="px-3 py-2 border-t border-border bg-surface">
-                    <pre class="text-xs text-text whitespace-pre-wrap font-mono leading-relaxed">{ver.content}</pre>
+                  <div class="border-t border-border bg-page px-4 py-3">
+                    <pre class="whitespace-pre-wrap font-sans text-sm leading-relaxed text-text-secondary">{ver.content}</pre>
                   </div>
                 </details>
               {/each}

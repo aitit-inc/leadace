@@ -219,328 +219,332 @@
   <title>Project settings · LeadAce</title>
 </svelte:head>
 
-<h2 class="text-lg font-semibold text-text mb-6">
-  Project settings
-  {#if projectName}
-    <span class="ml-2 text-sm font-normal text-text-secondary">— {projectName}</span>
+<div class="mx-auto max-w-3xl space-y-6">
+  <h2 class="font-display text-2xl font-semibold tracking-tight text-text">
+    Project settings
+    {#if projectName}
+      <span class="ml-2 font-sans text-sm font-normal tracking-normal text-text-secondary">— {projectName}</span>
+    {/if}
+  </h2>
+
+  {#if message}
+    <div class="card px-5 py-3 text-sm text-text">{message}</div>
   {/if}
-</h2>
 
-{#if message}
-  <div class="mb-6 rounded bg-surface px-4 py-3 text-sm text-text">{message}</div>
-{/if}
+  <section class="card p-6">
+    <h3 class="font-display text-lg font-semibold text-text">Outbound</h3>
 
-<section class="mb-10">
-  <h3 class="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">Outbound</h3>
-
-  {#if projectSettings}
-    {@const s = projectSettings}
-    <div class="rounded-md border border-border p-5 space-y-5">
-      <div>
-        <label for="outbound-mode" class="block text-xs font-medium text-text-secondary mb-1">
-          Outbound mode
-        </label>
-        <select
-          id="outbound-mode"
-          bind:value={s.outboundMode}
-          class="w-full max-w-xs rounded border border-border bg-page px-2 py-1.5 text-sm text-text"
-        >
-          <option value="send">Send immediately</option>
-          <option value="draft">Create drafts only</option>
-        </select>
-        <p class="mt-1 text-xs text-text-muted">
-          In draft mode, <span class="font-mono">/outbound</span> stores composed messages here as
-          drafts (status <span class="font-mono">pending_review</span>) instead of sending. Review
-          and send each one from the
-          <a href="/drafts" class="underline hover:text-text">Drafts</a> page; sending counts toward
-          your monthly outreach quota.
-        </p>
-      </div>
-
-      <ProjectMailboxes
-        projectId={s.projectId}
-        identities={data.sendingIdentities}
-        sendingIdentityIds={s.sendingIdentityIds}
-        {token}
-        onChanged={() => invalidate('app:project-settings')}
-      />
-      {#if sendingIdentitiesError}
-        <p class="text-xs text-text-muted">Couldn't load your mailboxes. Reload to edit the list.</p>
-      {/if}
-
-      <div>
-        <label for="sender-display-name" class="block text-xs font-medium text-text-secondary mb-1">
-          Sender display name
-        </label>
-        <input
-          id="sender-display-name"
-          type="text"
-          placeholder="(use Gmail default)"
-          bind:value={s.senderDisplayName}
-          class="w-full max-w-xs rounded border border-border bg-page px-2 py-1.5 text-sm text-text"
-        />
-      </div>
-
-      <div class="flex items-start gap-2">
-        <input
-          id="unsubscribe-enabled"
-          type="checkbox"
-          bind:checked={s.unsubscribeEnabled}
-          class="mt-0.5"
-        />
-        <label for="unsubscribe-enabled" class="text-sm text-text">
-          Attach the RFC 8058 List-Unsubscribe one-click header to outbound emails
-          <span class="block text-xs text-text-secondary">
-            Off by default: the header marks mail as bulk and pushes cold email into
-            Gmail's Promotions tab. The default footer carries the opt-out (a reply
-            instruction, or the inquiry-landing link when enabled) — keep an opt-out
-            line in a custom footer too — so opt-out compliance does not depend on
-            this header.
-          </span>
-        </label>
-      </div>
-
-      <div>
-        <div class="block text-xs font-medium text-text-secondary mb-2">
-          Message language
-        </div>
-        <div class="flex gap-4">
-          {#each TARGET_LANGUAGES as lang (lang)}
-            <label class="flex items-center gap-2 text-sm text-text">
-              <input type="radio" name="target-language" value={lang} bind:group={s.targetLanguage} />
-              <span>{LANGUAGE_LABELS[lang]}</span>
-            </label>
-          {/each}
-        </div>
-        <p class="mt-2 text-xs text-text-muted">
-          Language of this project's outbound messages — the AI-written subject and body,
-          and the footer below. One project targets one language; create separate projects
-          for audiences in different languages. Pages recipients open in a browser
-          (inquiry landing, unsubscribe) follow the visitor's browser language instead.
-        </p>
-      </div>
-
-      <div>
-        <label for="email-footer" class="block text-xs font-medium text-text-secondary mb-1">
-          Message footer
-        </label>
-        {#if s.inquiryLandingEnabled}
-          <p class="text-xs text-text-muted">
-            The inquiry landing is enabled, so the footer carries each prospect's personal
-            inquiry link and is assembled per send — it can't be replaced with static text.
-            Disable the landing in
-            <a href="/inquiry-settings" class="underline hover:text-text">Inquiry settings</a>
-            to customize the footer.
+    {#if projectSettings}
+      {@const s = projectSettings}
+      <div class="mt-5 space-y-6">
+        <div>
+          <label for="outbound-mode" class="mb-1.5 block text-sm font-medium text-text">
+            Outbound mode
+          </label>
+          <select
+            id="outbound-mode"
+            bind:value={s.outboundMode}
+            class="field max-w-xs"
+          >
+            <option value="send">Send immediately</option>
+            <option value="draft">Create drafts only</option>
+          </select>
+          <p class="mt-1.5 text-xs text-text-muted">
+            In draft mode, <span class="font-mono">/outbound</span> stores composed messages here as
+            drafts (status <span class="font-mono">pending_review</span>) instead of sending. Review
+            and send each one from the
+            <a href="/drafts" class="text-accent-strong hover:underline">Drafts</a> page; sending counts toward
+            your monthly outreach quota.
           </p>
-        {:else}
-          <textarea
-            id="email-footer"
-            rows="5"
-            bind:value={footerText}
-            class="w-full max-w-lg rounded border border-border bg-page px-2 py-1.5 text-sm text-text font-mono"
-          ></textarea>
-          <div class="mt-1 flex items-center gap-3">
-            <span class="text-xs {computedFooterOverride() !== null ? 'text-accent' : 'text-text-muted'}">
-              {computedFooterOverride() !== null ? 'Custom' : 'Default'}
-            </span>
-            <button
-              type="button"
-              onclick={resetFooter}
-              disabled={!s.footerDefault || footerText.trim() === s.footerDefault}
-              class="text-xs text-accent hover:text-accent-strong transition-colors disabled:opacity-50"
-            >
-              Reset to default
-            </button>
-          </div>
-          <p class="mt-1 text-xs text-text-muted">
-            Appended after the body of every outbound message — emails, and the form /
-            social-DM draft text you copy from Drafts. The default is assembled in the
-            message language above and the opt-out wording varies per prospect. Edited
-            text is sent verbatim to everyone; keep your sender identity, address, and an
-            opt-out instruction in it (that content is your legal responsibility).
-            Clearing the text restores the default.
-          </p>
-          {#if !s.footerDefault}
-            <p class="mt-1 text-xs text-text-muted">
-              No default available yet — set Legal name and Physical address in
-              <a href="/workspace-settings" class="underline hover:text-text">Workspace settings</a>.
-            </p>
-          {/if}
+        </div>
+
+        <ProjectMailboxes
+          projectId={s.projectId}
+          identities={data.sendingIdentities}
+          sendingIdentityIds={s.sendingIdentityIds}
+          {token}
+          onChanged={() => invalidate('app:project-settings')}
+        />
+        {#if sendingIdentitiesError}
+          <p class="text-xs text-text-muted">Couldn't load your mailboxes. Reload to edit the list.</p>
         {/if}
-      </div>
 
-      <div>
-        <div class="block text-xs font-medium text-text-secondary mb-2">
-          Outbound channels
+        <div>
+          <label for="sender-display-name" class="mb-1.5 block text-sm font-medium text-text">
+            Sender display name
+          </label>
+          <input
+            id="sender-display-name"
+            type="text"
+            placeholder="(use Gmail default)"
+            bind:value={s.senderDisplayName}
+            class="field max-w-xs"
+          />
         </div>
-        <div class="space-y-2">
-          {#each OUTBOUND_CHANNELS as ch (ch)}
-            <label class="flex items-start gap-2 text-sm text-text">
-              <input
-                type="checkbox"
-                checked={s.outboundChannels.includes(ch)}
-                onchange={(e) => toggleChannel(ch, (e.currentTarget as HTMLInputElement).checked)}
-                class="mt-0.5"
-              />
-              <span>
-                <span class="font-medium">{CHANNEL_LABELS[ch]}</span>
-                <span class="block text-xs text-text-muted">{CHANNEL_HINTS[ch]}</span>
-              </span>
-            </label>
-          {/each}
-        </div>
-        <p class="mt-2 text-xs text-text-muted">
-          Channels available to automated outbound (<span class="font-mono">/build-list</span>,
-          <span class="font-mono">/outbound</span>). Prospects whose only reachable channel is
-          unchecked are excluded from automated outbound. Leaving every box unchecked pauses
-          automated outbound for this project.
-        </p>
-      </div>
 
-      <div>
-        <div class="block text-xs font-medium text-text-secondary mb-2">
-          Target countries
-        </div>
-        <div class="space-y-2">
-          {#each ALLOWED_SEND_COUNTRIES as code (code)}
-            <label class="flex items-center gap-2 text-sm text-text">
-              <input
-                type="checkbox"
-                checked={s.targetCountries.includes(code)}
-                onchange={(e) => toggleCountry(code, (e.currentTarget as HTMLInputElement).checked)}
-              />
-              <span>
-                {COUNTRY_LABELS[code]} <span class="text-text-muted font-mono text-xs">({code})</span>
-              </span>
-            </label>
-          {/each}
-        </div>
-        <p class="mt-2 text-xs text-text-muted">
-          {#if s.targetCountries.length === 0}
-            No project-level restriction — the compliance allowlist (US / CA / JP) is the only gate.
-          {:else}
-            Automated <span class="font-mono">/build-list</span> focuses discovery on the selected
-            countries and <span class="font-mono">/outbound</span> skips prospects outside the set.
-            The send-time compliance check still applies independently.
-          {/if}
-        </p>
-      </div>
-
-      <div>
         <div class="flex items-start gap-2">
           <input
-            id="followup-enabled"
+            id="unsubscribe-enabled"
             type="checkbox"
-            bind:checked={s.followUpSequence.enabled}
+            bind:checked={s.unsubscribeEnabled}
             class="mt-0.5"
           />
-          <label for="followup-enabled" class="text-sm text-text">
-            Auto follow-up on unanswered emails
+          <label for="unsubscribe-enabled" class="text-sm font-medium text-text">
+            Attach the RFC 8058 List-Unsubscribe one-click header to outbound emails
+            <span class="mt-0.5 block text-xs font-normal text-text-muted">
+              Off by default: the header marks mail as bulk and pushes cold email into
+              Gmail's Promotions tab. The default footer carries the opt-out (a reply
+              instruction, or the inquiry-landing link when enabled) — keep an opt-out
+              line in a custom footer too — so opt-out compliance does not depend on
+              this header.
+            </span>
           </label>
         </div>
 
-        {#if s.followUpSequence.enabled}
-          <div class="mt-3 ml-6 space-y-2">
-            {#each s.followUpSequence.gapDays as _gap, i (i)}
-              <div class="flex items-center gap-2 text-sm text-text">
-                <span class="w-16 text-text-secondary">Touch {i + 2}</span>
-                <input
-                  type="number"
-                  min="1"
-                  max="90"
-                  step="1"
-                  bind:value={s.followUpSequence.gapDays[i]}
-                  class="w-16 rounded border border-border bg-page px-2 py-1 text-sm text-text"
-                />
-                <span class="text-text-muted text-xs">days after the previous touch</span>
-                {#if s.followUpSequence.gapDays.length > 1}
-                  <button
-                    type="button"
-                    onclick={() => removeFollowupTouch(i)}
-                    aria-label="Remove touch {i + 2}"
-                    class="text-text-muted hover:text-danger transition-colors"
-                  >✕</button>
-                {/if}
-              </div>
+        <div>
+          <div class="mb-2 text-sm font-medium text-text">
+            Message language
+          </div>
+          <div class="flex gap-4">
+            {#each TARGET_LANGUAGES as lang (lang)}
+              <label class="flex items-center gap-2 text-sm text-text">
+                <input type="radio" name="target-language" value={lang} bind:group={s.targetLanguage} />
+                <span>{LANGUAGE_LABELS[lang]}</span>
+              </label>
             {/each}
-            {#if s.followUpSequence.gapDays.length < MAX_FOLLOWUP_GAPS}
+          </div>
+          <p class="mt-2 text-xs text-text-muted">
+            Language of this project's outbound messages — the AI-written subject and body,
+            and the footer below. One project targets one language; create separate projects
+            for audiences in different languages. Pages recipients open in a browser
+            (inquiry landing, unsubscribe) follow the visitor's browser language instead.
+          </p>
+        </div>
+
+        <div>
+          <label for="email-footer" class="mb-1.5 block text-sm font-medium text-text">
+            Message footer
+          </label>
+          {#if s.inquiryLandingEnabled}
+            <p class="text-xs text-text-muted">
+              The inquiry landing is enabled, so the footer carries each prospect's personal
+              inquiry link and is assembled per send — it can't be replaced with static text.
+              Disable the landing in
+              <a href="/inquiry-settings" class="text-accent-strong hover:underline">Inquiry settings</a>
+              to customize the footer.
+            </p>
+          {:else}
+            <textarea
+              id="email-footer"
+              rows="5"
+              bind:value={footerText}
+              class="field max-w-lg"
+            ></textarea>
+            <div class="mt-1.5 flex items-center gap-2">
+              <span
+                class="chip {computedFooterOverride() !== null
+                  ? 'bg-accent/10 text-accent-strong'
+                  : 'bg-surface-2 text-text-secondary'}"
+              >
+                {computedFooterOverride() !== null ? 'Custom' : 'Default'}
+              </span>
               <button
                 type="button"
-                onclick={addFollowupTouch}
-                class="text-xs text-accent hover:text-accent-strong transition-colors"
-              >+ add touch</button>
-            {/if}
-            <p class="mt-1 text-xs text-text-muted">
-              Sends at day {followupSendDays.join(', ')}
-              <span class="text-text-secondary">({followupSendDays.length} emails total)</span>
+                onclick={resetFooter}
+                disabled={!s.footerDefault || footerText.trim() === s.footerDefault}
+                class="btn btn-ghost btn-sm"
+              >
+                Reset to default
+              </button>
+            </div>
+            <p class="mt-1.5 text-xs text-text-muted">
+              Appended after the body of every outbound message — emails, and the form /
+              social-DM draft text you copy from Drafts. The default is assembled in the
+              message language above and the opt-out wording varies per prospect. Edited
+              text is sent verbatim to everyone; keep your sender identity, address, and an
+              opt-out instruction in it (that content is your legal responsibility).
+              Clearing the text restores the default.
             </p>
+            {#if !s.footerDefault}
+              <p class="mt-1 text-xs text-text-muted">
+                No default available yet — set Legal name and Physical address in
+                <a href="/workspace-settings" class="text-accent-strong hover:underline">Workspace settings</a>.
+              </p>
+            {/if}
+          {/if}
+        </div>
+
+        <div>
+          <div class="mb-2 text-sm font-medium text-text">
+            Outbound channels
+          </div>
+          <div class="space-y-2">
+            {#each OUTBOUND_CHANNELS as ch (ch)}
+              <label class="flex items-start gap-2 text-sm text-text">
+                <input
+                  type="checkbox"
+                  checked={s.outboundChannels.includes(ch)}
+                  onchange={(e) => toggleChannel(ch, (e.currentTarget as HTMLInputElement).checked)}
+                  class="mt-0.5"
+                />
+                <span>
+                  <span class="font-medium">{CHANNEL_LABELS[ch]}</span>
+                  <span class="block text-xs text-text-muted">{CHANNEL_HINTS[ch]}</span>
+                </span>
+              </label>
+            {/each}
+          </div>
+          <p class="mt-2 text-xs text-text-muted">
+            Channels available to automated outbound (<span class="font-mono">/build-list</span>,
+            <span class="font-mono">/outbound</span>). Prospects whose only reachable channel is
+            unchecked are excluded from automated outbound. Leaving every box unchecked pauses
+            automated outbound for this project.
+          </p>
+        </div>
+
+        <div>
+          <div class="mb-2 text-sm font-medium text-text">
+            Target countries
+          </div>
+          <div class="space-y-2">
+            {#each ALLOWED_SEND_COUNTRIES as code (code)}
+              <label class="flex items-center gap-2 text-sm text-text">
+                <input
+                  type="checkbox"
+                  checked={s.targetCountries.includes(code)}
+                  onchange={(e) => toggleCountry(code, (e.currentTarget as HTMLInputElement).checked)}
+                />
+                <span>
+                  {COUNTRY_LABELS[code]} <span class="text-text-muted">({code})</span>
+                </span>
+              </label>
+            {/each}
+          </div>
+          <p class="mt-2 text-xs text-text-muted">
+            {#if s.targetCountries.length === 0}
+              No project-level restriction — the compliance allowlist (US / CA / JP) is the only gate.
+            {:else}
+              Automated <span class="font-mono">/build-list</span> focuses discovery on the selected
+              countries and <span class="font-mono">/outbound</span> skips prospects outside the set.
+              The send-time compliance check still applies independently.
+            {/if}
+          </p>
+        </div>
+
+        <div>
+          <div class="flex items-start gap-2">
+            <input
+              id="followup-enabled"
+              type="checkbox"
+              bind:checked={s.followUpSequence.enabled}
+              class="mt-0.5"
+            />
+            <label for="followup-enabled" class="text-sm font-medium text-text">
+              Auto follow-up on unanswered emails
+            </label>
+          </div>
+
+          {#if s.followUpSequence.enabled}
+            <div class="mt-3 ml-6 space-y-2">
+              {#each s.followUpSequence.gapDays as _gap, i (i)}
+                <div class="flex items-center gap-2 text-sm text-text">
+                  <span class="w-16 tabular-nums text-text-secondary">Touch {i + 2}</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max="90"
+                    step="1"
+                    bind:value={s.followUpSequence.gapDays[i]}
+                    class="field w-20 tabular-nums"
+                  />
+                  <span class="text-text-muted">days after the previous touch</span>
+                  {#if s.followUpSequence.gapDays.length > 1}
+                    <button
+                      type="button"
+                      onclick={() => removeFollowupTouch(i)}
+                      aria-label="Remove touch {i + 2}"
+                      class="btn btn-ghost btn-sm"
+                    >✕</button>
+                  {/if}
+                </div>
+              {/each}
+              {#if s.followUpSequence.gapDays.length < MAX_FOLLOWUP_GAPS}
+                <button
+                  type="button"
+                  onclick={addFollowupTouch}
+                  class="btn btn-secondary btn-sm"
+                >+ add touch</button>
+              {/if}
+              <p class="mt-1 text-xs tabular-nums text-text-muted">
+                Sends at day {followupSendDays.join(', ')}
+                <span class="text-text-secondary">({followupSendDays.length} emails total)</span>
+              </p>
+            </div>
+          {/if}
+
+          <p class="mt-2 text-xs text-text-muted">
+            When a prospect doesn't reply, <span class="font-mono">/outbound</span> queues a short,
+            fresh-angle follow-up on this cadence and stops automatically on any real reply, bounce, or
+            unsubscribe (auto-replies don't stop it). Follow-ups don't count against your plan — a
+            prospect counts once, when its first email goes out — but an N-email sequence still
+            multiplies your mailbox's daily send volume by N.
+          </p>
+        </div>
+
+        <ProjectSchedules
+          projectId={s.projectId}
+          schedules={data.schedules}
+          {token}
+          onChanged={() => invalidate('app:project-settings')}
+        />
+
+        {#if s.publicScoreboardEligible}
+          <div class="flex items-start gap-2">
+            <input
+              id="public-scoreboard-enabled"
+              type="checkbox"
+              bind:checked={s.publicScoreboardEnabled}
+              class="mt-0.5"
+            />
+            <label for="public-scoreboard-enabled" class="text-sm font-medium text-text">
+              Publish a public scoreboard for this project
+              <span class="mt-0.5 block text-xs font-normal text-text-muted">
+                Shows this project's outbound numbers (sends, human replies, reply and bounce
+                rates) and the agent's daily public journal on the unauthenticated
+                <a href="/live" class="text-accent-strong hover:underline">/live</a> page. The daily cycle
+                writes the journal only while this is on; third-party names in it are replaced
+                by industry and size, once by the agent and once more on the server. Turning it
+                off takes the page down within five minutes.
+              </span>
+            </label>
           </div>
         {/if}
 
-        <p class="mt-2 text-xs text-text-muted">
-          When a prospect doesn't reply, <span class="font-mono">/outbound</span> queues a short,
-          fresh-angle follow-up on this cadence and stops automatically on any real reply, bounce, or
-          unsubscribe (auto-replies don't stop it). Follow-ups don't count against your plan — a
-          prospect counts once, when its first email goes out — but an N-email sequence still
-          multiplies your mailbox's daily send volume by N.
-        </p>
-      </div>
-
-      <ProjectSchedules
-        projectId={s.projectId}
-        schedules={data.schedules}
-        {token}
-        onChanged={() => invalidate('app:project-settings')}
-      />
-
-      {#if s.publicScoreboardEligible}
-        <div class="flex items-start gap-2">
-          <input
-            id="public-scoreboard-enabled"
-            type="checkbox"
-            bind:checked={s.publicScoreboardEnabled}
-            class="mt-0.5"
-          />
-          <label for="public-scoreboard-enabled" class="text-sm text-text">
-            Publish a public scoreboard for this project
-            <span class="block text-xs text-text-secondary">
-              Shows this project's outbound numbers (sends, human replies, reply and bounce
-              rates) and the agent's daily public journal on the unauthenticated
-              <a href="/live" class="underline hover:text-text">/live</a> page. The daily cycle
-              writes the journal only while this is on; third-party names in it are replaced
-              by industry and size, once by the agent and once more on the server. Turning it
-              off takes the page down within five minutes.
-            </span>
-          </label>
+        <div class="flex items-center gap-3 border-t border-border pt-5">
+          <button
+            type="button"
+            onclick={saveProjectSettings}
+            disabled={savingSettings}
+            class="btn btn-primary"
+          >
+            {savingSettings ? 'Saving…' : 'Save'}
+          </button>
+          {#if settingsMessage}
+            <span class="text-xs text-text-muted">{settingsMessage}</span>
+          {/if}
         </div>
-      {/if}
-
-      <div class="flex items-center gap-3 pt-2">
-        <button
-          type="button"
-          onclick={saveProjectSettings}
-          disabled={savingSettings}
-          class="rounded px-3 py-1.5 text-xs font-medium text-page bg-accent hover:bg-accent-strong transition-colors disabled:opacity-50"
-        >
-          {savingSettings ? 'Saving…' : 'Save'}
-        </button>
-        {#if settingsMessage}
-          <span class="text-xs text-text-muted">{settingsMessage}</span>
-        {/if}
       </div>
-    </div>
-  {/if}
-</section>
+    {/if}
+  </section>
 
-<section>
-  <h3 class="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">Danger zone</h3>
+  <section class="card p-6">
+    <h3 class="font-display text-lg font-semibold text-text">Danger zone</h3>
 
-  {#if activeProjectId}
-    <div class="rounded-md border border-danger/30 p-4">
-      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+    {#if activeProjectId}
+      <div class="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p class="text-sm font-medium text-text">Delete project</p>
-          <p class="text-xs text-text-secondary mt-0.5">
+          <p class="mt-0.5 text-sm text-text-secondary">
             Permanently delete <span class="font-medium break-words"
               >{projectName ?? activeProjectId}</span
             > and all its data (prospects, outreach logs, responses, evaluations).
@@ -549,14 +553,14 @@
         <button
           onclick={() => (showDeleteDialog = true)}
           disabled={deleting}
-          class="rounded px-3 py-1.5 text-xs font-medium text-danger border border-danger/40 hover:bg-danger hover:text-page transition-colors disabled:opacity-50 self-start sm:self-auto"
+          class="btn btn-danger self-start sm:self-auto"
         >
           Delete
         </button>
       </div>
-    </div>
-  {/if}
-</section>
+    {/if}
+  </section>
+</div>
 
 {#if showDeleteDialog}
   <ConfirmDialog

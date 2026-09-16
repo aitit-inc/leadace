@@ -44,13 +44,13 @@
 {#if data.result.state === 'invalid'}
   <div class="min-h-screen bg-page">
     <div class="mx-auto max-w-2xl px-6 py-10">
-      <a href="/" class="inline-flex items-center gap-1.5 text-xs text-text-muted hover:text-text">
-        <Logo size={14} class="text-accent" />
-        ← LeadAce
+      <a href="/" class="inline-flex items-center gap-2 text-text hover:text-text-secondary">
+        <Logo size={22} class="text-accent" />
+        <span class="font-display text-lg font-semibold tracking-tight">LeadAce</span>
       </a>
-      <h1 class="mt-4 text-2xl font-semibold text-text">Link expired</h1>
-      <p class="mt-3 text-sm leading-relaxed text-text-secondary">{data.result.message}</p>
-      <p class="mt-3 text-xs text-text-muted">
+      <h1 class="mt-10 font-display text-3xl font-semibold tracking-tight text-text">Link expired</h1>
+      <p class="mt-3 text-base leading-relaxed text-text-secondary">{data.result.message}</p>
+      <p class="mt-3 text-sm text-text-muted">
         If you got here from one of our partners' emails and the link is broken, just reply to that
         email and they'll follow up directly.
       </p>

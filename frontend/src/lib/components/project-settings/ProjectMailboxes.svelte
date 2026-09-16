@@ -100,7 +100,7 @@
       Each email goes out from the first mailbox below with sends left today; when its daily cap is
       reached, the next one takes over. Drag or use the arrows to set the order. A mailbox's daily
       cap is shared by every project that lists it. Mailboxes are added in
-      <a href="/account-settings" class="underline hover:text-text">Account settings</a>.
+      <a href="/account-settings" class="text-accent-strong hover:underline">Account settings</a>.
     </p>
   </div>
 
@@ -108,14 +108,14 @@
     <p class="text-sm text-text-secondary">
       {#if signInGmail}
         None listed — every email goes out from the sign-in Gmail,
-        <span class="font-mono">{signInGmail.fromEmail}</span>. List mailboxes to send from another
+        <span class="font-medium text-text">{signInGmail.fromEmail}</span>. List mailboxes to send from another
         Google account, an alias or a custom mailbox, or to spread sends over several.
       {:else}
         None listed and no Gmail connected — email sending is off until you list a mailbox.
       {/if}
     </p>
   {:else}
-    <ol class="max-w-3xl divide-y divide-border rounded border border-border">
+    <ol class="max-w-3xl divide-y divide-border rounded-xl border border-border">
       {#each listed as i, idx (i.identityId)}
         <li
           draggable="true"
@@ -126,13 +126,13 @@
             dragIndex = null;
           }}
           ondragend={() => (dragIndex = null)}
-          class="flex flex-wrap items-center gap-x-4 gap-y-2 px-3 py-2 {dragIndex === idx ? 'opacity-50' : ''}"
+          class="flex flex-wrap items-center gap-x-4 gap-y-2 px-3 py-2.5 {dragIndex === idx ? 'opacity-50' : ''}"
         >
           <span class="cursor-grab select-none text-text-muted" aria-hidden="true">⋮⋮</span>
-          <span class="w-5 text-xs text-text-muted">{idx + 1}</span>
+          <span class="w-5 text-xs tabular-nums text-text-muted">{idx + 1}</span>
           <div class="min-w-0 flex-1">
-            <p class="truncate font-mono text-sm text-text">{i.fromEmail}</p>
-            <p class="mt-0.5 text-xs text-text-muted">
+            <p class="truncate text-sm font-medium text-text">{i.fromEmail}</p>
+            <p class="mt-0.5 text-xs tabular-nums text-text-muted">
               {kindLabel(i)} · today {i.used}/{i.cap} sent · {capLabel(i)}
               {#if i.pausedUntil}· paused{/if}
               {#if i.heldUntil}· held after a provider refusal{/if}
@@ -147,7 +147,7 @@
               aria-label="Daily cap for {i.fromEmail}"
               bind:value={capInputs[i.identityId]}
               disabled={saving}
-              class="w-16 rounded border border-border bg-page px-2 py-1 text-sm text-text disabled:opacity-50"
+              class="field w-20 tabular-nums"
             />
           </label>
           <div class="flex gap-1">
@@ -156,20 +156,20 @@
               aria-label="Move {i.fromEmail} up"
               onclick={() => move(idx, idx - 1)}
               disabled={saving || idx === 0}
-              class="rounded border border-border bg-page px-2 py-1 text-xs text-text hover:bg-surface disabled:opacity-50"
+              class="btn btn-secondary btn-sm"
             >↑</button>
             <button
               type="button"
               aria-label="Move {i.fromEmail} down"
               onclick={() => move(idx, idx + 1)}
               disabled={saving || idx === listed.length - 1}
-              class="rounded border border-border bg-page px-2 py-1 text-xs text-text hover:bg-surface disabled:opacity-50"
+              class="btn btn-secondary btn-sm"
             >↓</button>
             <button
               type="button"
               onclick={() => (pool = pool.filter((id) => id !== i.identityId))}
               disabled={saving}
-              class="rounded border border-border bg-page px-2.5 py-1 text-xs text-text hover:bg-surface disabled:opacity-50"
+              class="btn btn-secondary btn-sm"
             >Remove</button>
           </div>
         </li>
@@ -178,18 +178,18 @@
   {/if}
 
   {#if available.length > 0}
-    <p class="text-xs font-medium text-text-secondary">Available mailboxes</p>
-    <ul class="max-w-3xl space-y-1">
+    <p class="text-xs font-semibold text-text-muted">Available mailboxes</p>
+    <ul class="max-w-3xl space-y-1.5">
       {#each available as i (i.identityId)}
         <li class="flex items-center gap-3 text-sm">
           <button
             type="button"
             onclick={() => (pool = [...pool, i.identityId])}
             disabled={saving}
-            class="rounded border border-border bg-page px-2.5 py-1 text-xs text-text hover:bg-surface disabled:opacity-50"
+            class="btn btn-secondary btn-sm"
           >Add</button>
-          <span class="font-mono text-text-secondary">{i.fromEmail}</span>
-          <span class="text-xs text-text-muted">{kindLabel(i)} · today {i.used}/{i.cap} sent</span>
+          <span class="text-text-secondary">{i.fromEmail}</span>
+          <span class="text-xs tabular-nums text-text-muted">{kindLabel(i)} · today {i.used}/{i.cap} sent</span>
         </li>
       {/each}
     </ul>
@@ -200,7 +200,7 @@
       type="button"
       onclick={save}
       disabled={saving || invalidCap}
-      class="rounded px-3 py-1.5 text-xs font-medium text-page bg-accent hover:bg-accent-strong transition-colors disabled:opacity-50"
+      class="btn btn-secondary"
     >
       {saving ? 'Saving…' : 'Save mailboxes'}
     </button>

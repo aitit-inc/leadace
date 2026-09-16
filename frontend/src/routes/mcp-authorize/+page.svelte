@@ -140,68 +140,68 @@
   <div class="w-full max-w-sm px-6">
     <div class="mb-1 flex items-center gap-2.5">
       <Logo size={32} class="text-accent" />
-      <h1 class="font-mono text-2xl font-semibold text-text">LeadAce</h1>
+      <h1 class="font-display text-2xl font-semibold tracking-tight text-text">LeadAce</h1>
     </div>
 
     {#if status === 'loading'}
-      <p class="mt-8 font-mono text-sm text-text-muted">Loading authorization request…</p>
+      <p class="mt-8 text-sm text-text-muted">Loading authorization request…</p>
     {:else if status === 'error'}
-      <p class="text-text-muted text-sm mb-2">Authorization error</p>
-      <p class="text-danger text-sm mb-6">{errorMessage}</p>
-      <a href="/" class="text-text-muted hover:text-text text-xs underline">Back to LeadAce</a>
+      <p class="mt-8 font-display text-xl font-semibold text-text">Authorization error</p>
+      <p class="mt-2 mb-6 text-sm text-danger">{errorMessage}</p>
+      <a href="/" class="text-sm text-text-secondary underline underline-offset-2 hover:text-text">Back to LeadAce</a>
     {:else if status === 'success'}
-      <p class="text-text-muted text-sm mb-2">Authorized</p>
-      <p class="text-text text-sm mb-4">
+      <p class="mt-8 font-display text-xl font-semibold text-text">Authorized</p>
+      <p class="mt-2 mb-4 text-sm text-text">
         {displayClient} has access to your LeadAce account.
       </p>
-      <p class="text-xs text-text-muted leading-relaxed mb-3">
+      <p class="mb-3 text-sm leading-relaxed text-text-secondary">
         Returning you to {displayClient}. You can close this tab once your terminal resumes.
       </p>
-      <p class="text-xs text-text-muted leading-relaxed mb-2">
+      <p class="mb-2 text-sm leading-relaxed text-text-secondary">
         If your terminal is waiting for a URL instead of resuming automatically, copy this and
         paste it back into the terminal:
       </p>
-      <div class="flex items-center gap-2 mb-2">
+      <div class="mb-3 flex items-center gap-2">
         <input
           type="text"
           readonly
           value={finalRedirect}
-          class="flex-1 min-w-0 rounded border border-border bg-surface px-2 py-1 font-mono text-[11px] text-text"
+          class="field min-w-0 flex-1 font-mono"
           onclick={(e) => (e.currentTarget as HTMLInputElement).select()}
         />
         <button
           type="button"
           onclick={copyRedirect}
-          class="shrink-0 rounded border border-border bg-page px-2 py-1 text-[11px] text-text hover:bg-surface"
+          class="btn btn-secondary shrink-0"
         >
           {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
       <a
         href={finalRedirect}
-        class="block text-xs text-text-muted hover:text-text underline"
+        class="block text-sm text-text-secondary underline underline-offset-2 hover:text-text"
       >
         Or click here to return now
       </a>
     {:else}
-      <p class="text-text-muted text-sm mb-6">
-        Authorize <span class="font-medium text-text">{displayClient}</span> to access your LeadAce account
+      <p class="mt-8 mb-4 font-display text-xl font-semibold text-text-secondary">
+        Authorize <span class="text-text">{displayClient}</span> to access your LeadAce account
       </p>
 
-      <p class="text-xs text-text-muted leading-relaxed mb-4">
+      <p class="mb-4 text-sm leading-relaxed text-text-secondary">
         Signed in as <span class="font-medium text-text">{user?.email ?? ''}</span>.
         Approving lets {displayClient} call LeadAce on your behalf with the same access your
         own browser session has — including reading, creating, updating, and deleting prospects,
         projects, and outreach data, and sending email through your connected Gmail. Revoke
         access at any time from
-        <a href="/account-settings" class="underline hover:text-text">Account → Connected MCP clients</a>;
+        <a href="/account-settings" class="text-accent-strong underline underline-offset-2">Account → Connected MCP clients</a>;
         signing out of {displayClient} itself does not revoke it.
       </p>
 
-      <div class="mb-6 rounded border border-border bg-surface px-3 py-2">
-        <p class="text-[11px] text-text-muted">After approval, your browser will be sent to:</p>
-        <p class="font-mono text-xs text-text break-all">{redirectHost}</p>
-        <p class="mt-1 text-[11px] text-text-muted">
+      <div class="card mb-6 px-4 py-3">
+        <p class="text-sm text-text-secondary">After approval, your browser will be sent to:</p>
+        <p class="mt-1 font-mono text-sm break-all text-text">{redirectHost}</p>
+        <p class="mt-1 text-sm text-text-muted">
           Cancel if this host doesn't match the tool you started.
         </p>
       </div>
@@ -211,7 +211,7 @@
           type="button"
           onclick={handleApprove}
           disabled={status === 'submitting'}
-          class="w-full rounded-md bg-text py-2 text-sm font-medium text-page transition-colors hover:bg-text/90 disabled:opacity-50"
+          class="btn btn-primary w-full whitespace-normal"
         >
           {status === 'submitting' ? 'Authorizing…' : `Authorize ${displayClient}`}
         </button>
@@ -219,14 +219,14 @@
           type="button"
           onclick={handleDeny}
           disabled={status === 'submitting'}
-          class="w-full rounded-md border border-border bg-page py-2 text-sm font-medium text-text transition-colors hover:bg-surface disabled:opacity-50"
+          class="btn btn-secondary w-full"
         >
           Cancel
         </button>
       </div>
 
       {#if errorMessage}
-        <p class="text-danger text-xs mt-4">{errorMessage}</p>
+        <p class="mt-4 text-sm text-danger">{errorMessage}</p>
       {/if}
     {/if}
   </div>

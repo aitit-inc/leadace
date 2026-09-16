@@ -74,20 +74,23 @@
   }
 </script>
 
-<div class="flex min-h-screen items-center justify-center bg-page">
-  <div class="w-full max-w-sm px-6">
-    <div class="flex items-center gap-2.5 mb-1">
+<div class="flex min-h-screen items-center justify-center bg-page px-6 py-12">
+  <div class="w-full max-w-md">
+    <div class="flex animate-rise items-center gap-2.5">
       <Logo size={32} class="text-accent" />
-      <h1 class="font-mono text-2xl font-semibold text-text">LeadAce</h1>
+      <span class="font-display text-2xl font-semibold tracking-tight text-text">LeadAce</span>
     </div>
-    <p class="text-text-muted text-sm mb-8">
+    <h1 class="mt-10 animate-rise font-display text-3xl font-semibold leading-tight tracking-tight text-balance text-text">
+      {fromSignupCta ? 'See who it emails and what it says, before anything is sent.' : 'Welcome back'}
+    </h1>
+    <p class="mt-3 animate-rise text-base text-text-secondary">
       {fromSignupCta
         ? 'Start free: sign in with Google and your account is created. No card, no separate form.'
         : 'Sign in with your Google account'}
     </p>
 
     {#if deletedNotice}
-      <p class="text-text text-xs mb-4 rounded-md border border-border bg-surface px-3 py-2">
+      <p class="mt-6 rounded-xl bg-surface px-4 py-3 text-sm text-text">
         Your account has been deleted.
       </p>
     {/if}
@@ -96,9 +99,9 @@
       type="button"
       onclick={handleGoogle}
       disabled={loading}
-      class="w-full rounded-md border border-border bg-page py-2 text-sm font-medium text-text transition-colors hover:bg-surface disabled:opacity-50 flex items-center justify-center gap-2"
+      class="btn btn-secondary mt-8 h-12 w-full animate-rise [--btn-fs:var(--text-base)]"
     >
-      <svg width="16" height="16" viewBox="0 0 18 18" aria-hidden="true">
+      <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
         <path
           fill="#4285F4"
           d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.57 2.68-3.88 2.68-6.62z"
@@ -120,10 +123,23 @@
     </button>
 
     {#if error}
-      <p class="text-danger text-xs mt-4">{error}</p>
+      <p class="mt-4 text-sm text-danger">{error}</p>
     {/if}
 
-    <p class="mt-6 text-[11px] text-text-muted">
+    {#if fromSignupCta}
+      <ol class="mt-8 space-y-3 text-sm text-text-secondary" aria-label="What happens next">
+        {#each ['Sign in with Google', 'Paste your website in the chat', 'Read the first drafts — nothing goes out until you approve'] as step, i (step)}
+          <li class="flex items-center gap-3">
+            <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface-2 text-xs font-semibold tabular-nums text-text">
+              {i + 1}
+            </span>
+            {step}
+          </li>
+        {/each}
+      </ol>
+    {/if}
+
+    <p class="mt-8 text-xs leading-relaxed text-text-muted">
       LeadAce will request permission to send email on your behalf and to read your Gmail inbox
       (read-only) to detect and classify replies to your outreach. We never modify or delete your
       messages. See our <a href="/privacy" class="underline hover:text-text">Privacy Policy</a> for
@@ -131,14 +147,14 @@
     </p>
 
     {#if EDITION === 'cloud'}
-      <p class="mt-10 text-[11px] text-text-muted text-center">
+      <p class="mt-6 text-xs text-text-muted">
         By continuing, you agree to the
         <a href="/terms" class="underline hover:text-text">Terms</a>
         and
         <a href="/privacy" class="underline hover:text-text">Privacy Policy</a>.
       </p>
     {:else}
-      <p class="mt-10 text-[11px] text-text-muted text-center">
+      <p class="mt-6 text-xs text-text-muted">
         This is a self-hosted LeadAce instance. Your use is governed by whatever terms the
         operator of this site provides.
       </p>

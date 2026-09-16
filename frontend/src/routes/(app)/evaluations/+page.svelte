@@ -10,203 +10,206 @@
   }
 </script>
 
-<h2 class="text-lg font-semibold text-text mb-6">Evaluations</h2>
+<h2 class="mb-6 font-display text-2xl font-semibold tracking-tight text-text">Evaluations</h2>
 
 {#if !data.stats}
   <EmptyState message="No data available" />
 {:else}
   {@const stats = data.stats}
-  <section class="mb-10">
-    <h3 class="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">Current Metrics</h3>
+  {@const replyTone = stats.metrics.responseCounts.totalResponses > 0 ? 'text-inbound' : 'text-text'}
+  <section class="mb-10 space-y-3">
+    <h3 class="font-display text-lg font-semibold text-text">Current Metrics</h3>
 
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 mb-6">
-      <div>
-        <p class="text-2xl font-mono font-semibold text-text">{stats.metrics.totalOutreach}</p>
-        <p class="text-xs text-text-muted mt-0.5">Total outreach</p>
+    <div class="grid grid-cols-2 gap-px overflow-hidden rounded-2xl bg-border md:grid-cols-4">
+      <div class="bg-surface p-5">
+        <p class="font-display text-3xl font-semibold tracking-tight tabular-nums text-text">{stats.metrics.totalOutreach}</p>
+        <p class="mt-1 text-sm text-text-secondary">Total outreach</p>
       </div>
-      <div>
-        <p class="text-2xl font-mono font-semibold text-text">{stats.metrics.responseCounts.totalResponses}</p>
-        <p class="text-xs text-text-muted mt-0.5">Responses</p>
+      <div class="bg-surface p-5">
+        <p class="font-display text-3xl font-semibold tracking-tight tabular-nums {replyTone}">
+          {stats.metrics.responseCounts.totalResponses}
+        </p>
+        <p class="mt-1 text-sm text-text-secondary">Responses</p>
       </div>
-      <div>
-        <p class="text-2xl font-mono font-semibold text-text">
+      <div class="bg-surface p-5">
+        <p class="font-display text-3xl font-semibold tracking-tight tabular-nums {replyTone}">
           {pct(stats.metrics.responseCounts.totalResponses, stats.metrics.totalOutreach)}
         </p>
-        <p class="text-xs text-text-muted mt-0.5">Response rate</p>
+        <p class="mt-1 text-sm text-text-secondary">Response rate</p>
       </div>
-      <div>
-        <p class="text-2xl font-mono font-semibold {stats.dataSufficiency.sufficient ? 'text-success' : 'text-warning'}">
+      <div class="bg-surface p-5">
+        <p class="font-display text-3xl font-semibold tracking-tight {stats.dataSufficiency.sufficient ? 'text-inbound' : 'text-warning'}">
           {stats.dataSufficiency.sufficient ? 'Yes' : 'No'}
         </p>
-        <p class="text-xs text-text-muted mt-0.5">Data sufficient · {stats.dataSufficiency.totalSent} sends</p>
+        <p class="mt-1 text-sm tabular-nums text-text-secondary">Data sufficient · {stats.dataSufficiency.totalSent} sends</p>
       </div>
     </div>
 
     {#if stats.metrics.channelResponseRate.length > 0}
-      <div class="mb-6">
-        <p class="text-xs font-medium text-text-secondary mb-2">By channel</p>
-        <div class="grid grid-cols-[1fr_60px_70px_60px] md:grid-cols-[1fr_80px_80px_80px] gap-2 text-xs">
-          <span class="text-text-muted">Channel</span>
-          <span class="text-text-muted text-right">Sent</span>
-          <span class="text-text-muted text-right">Resp.</span>
-          <span class="text-text-muted text-right">Rate</span>
+      <div class="card p-5">
+        <p class="mb-3 text-sm font-semibold text-text">By channel</p>
+        <div class="grid grid-cols-[1fr_60px_70px_60px] md:grid-cols-[1fr_80px_80px_80px] gap-2 text-sm">
+          <span class="text-xs font-semibold text-text-muted">Channel</span>
+          <span class="text-right text-xs font-semibold text-text-muted">Sent</span>
+          <span class="text-right text-xs font-semibold text-text-muted">Resp.</span>
+          <span class="text-right text-xs font-semibold text-text-muted">Rate</span>
           {#each stats.metrics.channelResponseRate as ch}
-            <span class="text-text font-mono truncate">{ch.channel}</span>
-            <span class="text-text-secondary text-right font-mono">{ch.total}</span>
-            <span class="text-text-secondary text-right font-mono">{ch.responses}</span>
-            <span class="text-text text-right font-mono">{pct(ch.responses, ch.total)}</span>
+            <span class="truncate text-text">{ch.channel}</span>
+            <span class="text-right tabular-nums text-text-secondary">{ch.total}</span>
+            <span class="text-right tabular-nums text-text-secondary">{ch.responses}</span>
+            <span class="text-right tabular-nums text-text">{pct(ch.responses, ch.total)}</span>
           {/each}
         </div>
       </div>
     {/if}
 
     {#if stats.metrics.channelByIndustry.length > 0}
-      <div class="mb-6">
-        <p class="text-xs font-medium text-text-secondary mb-2">By industry × channel</p>
-        <div class="grid grid-cols-[1fr_64px_44px_44px_52px] md:grid-cols-[1fr_90px_70px_70px_80px] gap-2 text-xs">
-          <span class="text-text-muted">Industry</span>
-          <span class="text-text-muted">Channel</span>
-          <span class="text-text-muted text-right">Sent</span>
-          <span class="text-text-muted text-right">Resp.</span>
-          <span class="text-text-muted text-right">Rate</span>
+      <div class="card p-5">
+        <p class="mb-3 text-sm font-semibold text-text">By industry × channel</p>
+        <div class="grid grid-cols-[1fr_64px_44px_44px_52px] md:grid-cols-[1fr_90px_70px_70px_80px] gap-2 text-sm">
+          <span class="text-xs font-semibold text-text-muted">Industry</span>
+          <span class="text-xs font-semibold text-text-muted">Channel</span>
+          <span class="text-right text-xs font-semibold text-text-muted">Sent</span>
+          <span class="text-right text-xs font-semibold text-text-muted">Resp.</span>
+          <span class="text-right text-xs font-semibold text-text-muted">Rate</span>
           {#each stats.metrics.channelByIndustry as ci}
-            <span class="text-text truncate">{ci.industry ?? 'Unclassified'}</span>
-            <span class="text-text-secondary font-mono truncate">{ci.channel}</span>
-            <span class="text-text-secondary text-right font-mono">{ci.total}</span>
-            <span class="text-text-secondary text-right font-mono">{ci.responses}</span>
-            <span class="text-text text-right font-mono">{pct(ci.responses, ci.total)}</span>
+            <span class="truncate text-text">{ci.industry ?? 'Unclassified'}</span>
+            <span class="truncate text-text-secondary">{ci.channel}</span>
+            <span class="text-right tabular-nums text-text-secondary">{ci.total}</span>
+            <span class="text-right tabular-nums text-text-secondary">{ci.responses}</span>
+            <span class="text-right tabular-nums text-text">{pct(ci.responses, ci.total)}</span>
           {/each}
         </div>
-        <p class="text-[11px] text-text-muted mt-1.5">Rates on small Sent counts are noisy — weigh by Sent.</p>
+        <p class="mt-3 text-xs text-text-muted">Rates on small Sent counts are noisy — weigh by Sent.</p>
       </div>
     {/if}
 
     {#if stats.metrics.industryResponseRate.length > 0}
-      <div class="mb-6">
-        <p class="text-xs font-medium text-text-secondary mb-2">By industry · reply-matured sends</p>
-        <div class="grid grid-cols-[1fr_60px_70px_60px] md:grid-cols-[1fr_80px_80px_80px] gap-2 text-xs">
-          <span class="text-text-muted">Industry</span>
-          <span class="text-text-muted text-right">Sent</span>
-          <span class="text-text-muted text-right">Resp.</span>
-          <span class="text-text-muted text-right">Rate</span>
+      <div class="card p-5">
+        <p class="mb-3 text-sm font-semibold text-text">By industry · reply-matured sends</p>
+        <div class="grid grid-cols-[1fr_60px_70px_60px] md:grid-cols-[1fr_80px_80px_80px] gap-2 text-sm">
+          <span class="text-xs font-semibold text-text-muted">Industry</span>
+          <span class="text-right text-xs font-semibold text-text-muted">Sent</span>
+          <span class="text-right text-xs font-semibold text-text-muted">Resp.</span>
+          <span class="text-right text-xs font-semibold text-text-muted">Rate</span>
           {#each stats.metrics.industryResponseRate as ind}
-            <span class="text-text truncate">{ind.industry}</span>
-            <span class="text-text-secondary text-right font-mono">{ind.total}</span>
-            <span class="text-text-secondary text-right font-mono">{ind.responses}</span>
-            <span class="text-text text-right font-mono">{pct(ind.responses, ind.total)}</span>
+            <span class="truncate text-text">{ind.industry}</span>
+            <span class="text-right tabular-nums text-text-secondary">{ind.total}</span>
+            <span class="text-right tabular-nums text-text-secondary">{ind.responses}</span>
+            <span class="text-right tabular-nums text-text">{pct(ind.responses, ind.total)}</span>
           {/each}
         </div>
       </div>
     {/if}
 
     {#if stats.metrics.sizeResponseRate.length > 0}
-      <div class="mb-6">
-        <p class="text-xs font-medium text-text-secondary mb-2">By company size · reply-matured sends</p>
-        <div class="grid grid-cols-[1fr_60px_70px_60px] md:grid-cols-[1fr_80px_80px_80px] gap-2 text-xs">
-          <span class="text-text-muted">Employees</span>
-          <span class="text-text-muted text-right">Sent</span>
-          <span class="text-text-muted text-right">Resp.</span>
-          <span class="text-text-muted text-right">Rate</span>
+      <div class="card p-5">
+        <p class="mb-3 text-sm font-semibold text-text">By company size · reply-matured sends</p>
+        <div class="grid grid-cols-[1fr_60px_70px_60px] md:grid-cols-[1fr_80px_80px_80px] gap-2 text-sm">
+          <span class="text-xs font-semibold text-text-muted">Employees</span>
+          <span class="text-right text-xs font-semibold text-text-muted">Sent</span>
+          <span class="text-right text-xs font-semibold text-text-muted">Resp.</span>
+          <span class="text-right text-xs font-semibold text-text-muted">Rate</span>
           {#each stats.metrics.sizeResponseRate as s}
-            <span class="text-text font-mono">{s.employeeBand}</span>
-            <span class="text-text-secondary text-right font-mono">{s.total}</span>
-            <span class="text-text-secondary text-right font-mono">{s.responses}</span>
-            <span class="text-text text-right font-mono">{pct(s.responses, s.total)}</span>
+            <span class="tabular-nums text-text">{s.employeeBand}</span>
+            <span class="text-right tabular-nums text-text-secondary">{s.total}</span>
+            <span class="text-right tabular-nums text-text-secondary">{s.responses}</span>
+            <span class="text-right tabular-nums text-text">{pct(s.responses, s.total)}</span>
           {/each}
         </div>
       </div>
     {/if}
 
     {#if stats.metrics.countryResponseRate.length > 0}
-      <div class="mb-6">
-        <p class="text-xs font-medium text-text-secondary mb-2">By country · reply-matured sends</p>
-        <div class="grid grid-cols-[1fr_60px_70px_60px] md:grid-cols-[1fr_80px_80px_80px] gap-2 text-xs">
-          <span class="text-text-muted">Country</span>
-          <span class="text-text-muted text-right">Sent</span>
-          <span class="text-text-muted text-right">Resp.</span>
-          <span class="text-text-muted text-right">Rate</span>
+      <div class="card p-5">
+        <p class="mb-3 text-sm font-semibold text-text">By country · reply-matured sends</p>
+        <div class="grid grid-cols-[1fr_60px_70px_60px] md:grid-cols-[1fr_80px_80px_80px] gap-2 text-sm">
+          <span class="text-xs font-semibold text-text-muted">Country</span>
+          <span class="text-right text-xs font-semibold text-text-muted">Sent</span>
+          <span class="text-right text-xs font-semibold text-text-muted">Resp.</span>
+          <span class="text-right text-xs font-semibold text-text-muted">Rate</span>
           {#each stats.metrics.countryResponseRate as c}
-            <span class="text-text font-mono">{c.country ?? 'Unknown'}</span>
-            <span class="text-text-secondary text-right font-mono">{c.total}</span>
-            <span class="text-text-secondary text-right font-mono">{c.responses}</span>
-            <span class="text-text text-right font-mono">{pct(c.responses, c.total)}</span>
+            <span class="text-text">{c.country ?? 'Unknown'}</span>
+            <span class="text-right tabular-nums text-text-secondary">{c.total}</span>
+            <span class="text-right tabular-nums text-text-secondary">{c.responses}</span>
+            <span class="text-right tabular-nums text-text">{pct(c.responses, c.total)}</span>
           {/each}
         </div>
       </div>
     {/if}
 
     {#if stats.metrics.discoveryStrategyResponseRate.length > 0}
-      <div class="mb-6">
-        <p class="text-xs font-medium text-text-secondary mb-2">By discovery strategy</p>
-        <div class="grid grid-cols-[1fr_52px_52px_52px_60px] md:grid-cols-[1fr_70px_70px_70px_80px] gap-2 text-xs">
-          <span class="text-text-muted">Strategy</span>
-          <span class="text-text-muted text-right">Sent</span>
-          <span class="text-text-muted text-right">Resp.</span>
-          <span class="text-text-muted text-right">Rate</span>
-          <span class="text-text-muted text-right">Bounce</span>
+      <div class="card p-5">
+        <p class="mb-3 text-sm font-semibold text-text">By discovery strategy</p>
+        <div class="grid grid-cols-[1fr_52px_52px_52px_60px] md:grid-cols-[1fr_70px_70px_70px_80px] gap-2 text-sm">
+          <span class="text-xs font-semibold text-text-muted">Strategy</span>
+          <span class="text-right text-xs font-semibold text-text-muted">Sent</span>
+          <span class="text-right text-xs font-semibold text-text-muted">Resp.</span>
+          <span class="text-right text-xs font-semibold text-text-muted">Rate</span>
+          <span class="text-right text-xs font-semibold text-text-muted">Bounce</span>
           {#each stats.metrics.discoveryStrategyResponseRate as d}
-            <span class="text-text font-mono truncate">{d.strategy ?? 'Unattributed'}</span>
-            <span class="text-text-secondary text-right font-mono">{d.total}</span>
-            <span class="text-text-secondary text-right font-mono">{d.responses}</span>
-            <span class="text-text text-right font-mono">{pct(d.responses, d.total)}</span>
-            <span class="text-text-secondary text-right font-mono">{d.bounceRate.toFixed(1)}%</span>
+            <span class="truncate text-text">{d.strategy ?? 'Unattributed'}</span>
+            <span class="text-right tabular-nums text-text-secondary">{d.total}</span>
+            <span class="text-right tabular-nums text-text-secondary">{d.responses}</span>
+            <span class="text-right tabular-nums text-text">{pct(d.responses, d.total)}</span>
+            <span class="text-right tabular-nums text-text-secondary">{d.bounceRate.toFixed(1)}%</span>
           {/each}
         </div>
-        <p class="text-[11px] text-text-muted mt-1.5">High bounce marks a dead source. Bounce % counts threaded email sends only.</p>
+        <p class="mt-3 text-xs text-text-muted">High bounce marks a dead source. Bounce % counts threaded email sends only.</p>
       </div>
     {/if}
 
     {#if stats.metrics.variantResponseRate.length > 0}
-      <div class="mb-6">
-        <p class="text-xs font-medium text-text-secondary mb-2">By message angle · reply-matured sends</p>
-        <div class="grid grid-cols-[1fr_56px_44px_44px_44px_60px] md:grid-cols-[1fr_80px_70px_70px_70px_80px] gap-2 text-xs">
-          <span class="text-text-muted">Angle</span>
-          <span class="text-text-muted">Status</span>
-          <span class="text-text-muted text-right">Sent</span>
-          <span class="text-text-muted text-right">Resp.</span>
-          <span class="text-text-muted text-right">Rate</span>
-          <span class="text-text-muted text-right">Reward/send</span>
+      <div class="card p-5">
+        <p class="mb-3 text-sm font-semibold text-text">By message angle · reply-matured sends</p>
+        <div class="grid grid-cols-[1fr_56px_44px_44px_44px_60px] md:grid-cols-[1fr_80px_70px_70px_70px_80px] gap-2 text-sm">
+          <span class="text-xs font-semibold text-text-muted">Angle</span>
+          <span class="text-xs font-semibold text-text-muted">Status</span>
+          <span class="text-right text-xs font-semibold text-text-muted">Sent</span>
+          <span class="text-right text-xs font-semibold text-text-muted">Resp.</span>
+          <span class="text-right text-xs font-semibold text-text-muted">Rate</span>
+          <span class="text-right text-xs font-semibold text-text-muted">Reward/send</span>
           {#each stats.metrics.variantResponseRate as v}
             <span class="min-w-0">
-              <span class="block text-text font-mono truncate">{v.variantId}</span>
-              {#if v.label}<span class="block text-text-muted truncate">{v.label}</span>{/if}
+              <span class="block truncate font-mono text-text">{v.variantId}</span>
+              {#if v.label}<span class="block truncate text-xs text-text-muted">{v.label}</span>{/if}
             </span>
-            <span class={v.active ? 'text-success' : 'text-text-muted'}>{v.active ? 'Active' : 'Archived'}</span>
-            <span class="text-text-secondary text-right font-mono">{v.total}</span>
-            <span class="text-text-secondary text-right font-mono">{v.responses}</span>
-            <span class="text-text text-right font-mono">{pct(v.responses, v.total)}</span>
-            <span class="text-text text-right font-mono">{v.meanReward.toFixed(2)}</span>
+            <span class={v.active ? 'text-text' : 'text-text-muted'}>{v.active ? 'Active' : 'Archived'}</span>
+            <span class="text-right tabular-nums text-text-secondary">{v.total}</span>
+            <span class="text-right tabular-nums text-text-secondary">{v.responses}</span>
+            <span class="text-right tabular-nums text-text">{pct(v.responses, v.total)}</span>
+            <span class="text-right tabular-nums text-text">{v.meanReward.toFixed(2)}</span>
           {/each}
         </div>
       </div>
     {/if}
 
     {#if stats.metrics.priorityResponseRate.length > 0}
-      <div class="mb-6">
-        <p class="text-xs font-medium text-text-secondary mb-2">By priority</p>
-        <div class="grid grid-cols-[1fr_60px_70px_60px] md:grid-cols-[1fr_80px_80px_80px] gap-2 text-xs">
-          <span class="text-text-muted">Priority</span>
-          <span class="text-text-muted text-right">Sent</span>
-          <span class="text-text-muted text-right">Resp.</span>
-          <span class="text-text-muted text-right">Rate</span>
+      <div class="card p-5">
+        <p class="mb-3 text-sm font-semibold text-text">By priority</p>
+        <div class="grid grid-cols-[1fr_60px_70px_60px] md:grid-cols-[1fr_80px_80px_80px] gap-2 text-sm">
+          <span class="text-xs font-semibold text-text-muted">Priority</span>
+          <span class="text-right text-xs font-semibold text-text-muted">Sent</span>
+          <span class="text-right text-xs font-semibold text-text-muted">Resp.</span>
+          <span class="text-right text-xs font-semibold text-text-muted">Rate</span>
           {#each stats.metrics.priorityResponseRate as pr}
-            <span class="text-text font-mono">P{pr.priority}</span>
-            <span class="text-text-secondary text-right font-mono">{pr.total}</span>
-            <span class="text-text-secondary text-right font-mono">{pr.responses}</span>
-            <span class="text-text text-right font-mono">{pct(pr.responses, pr.total)}</span>
+            <span class="tabular-nums text-text">P{pr.priority}</span>
+            <span class="text-right tabular-nums text-text-secondary">{pr.total}</span>
+            <span class="text-right tabular-nums text-text-secondary">{pr.responses}</span>
+            <span class="text-right tabular-nums text-text">{pct(pr.responses, pr.total)}</span>
           {/each}
         </div>
       </div>
     {/if}
 
     {#if stats.metrics.sentimentBreakdown.length > 0}
-      <div class="mb-6">
-        <p class="text-xs font-medium text-text-secondary mb-2">Sentiment breakdown</p>
-        <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+      <div class="card p-5">
+        <p class="mb-3 text-sm font-semibold text-text">Sentiment breakdown</p>
+        <div class="flex flex-wrap gap-2">
           {#each stats.metrics.sentimentBreakdown as s}
-            <span class="font-mono">
-              <span class="text-text-muted">{s.sentiment}/{s.responseType}:</span>
-              <span class="text-text font-medium">{s.count}</span>
+            <span class="chip bg-inbound/10 text-inbound">
+              <span class="font-normal">{s.sentiment}/{s.responseType}:</span>
+              <span class="tabular-nums">{s.count}</span>
             </span>
           {/each}
         </div>
@@ -217,28 +220,28 @@
       {@const ioc = stats.metrics.inquiryOutcomeCounts}
       {@const iocTotal = ioc.opened + ioc.inquired + ioc.lead + ioc.signup_clicked + ioc.unsubscribed}
       {#if iocTotal > 0}
-        <div>
-          <p class="text-xs font-medium text-text-secondary mb-2">Inquiry landing outcomes</p>
-          <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-            <span class="font-mono">
-              <span class="text-text-muted">opened:</span>
-              <span class="text-text font-medium">{ioc.opened}</span>
+        <div class="card p-5">
+          <p class="mb-3 text-sm font-semibold text-text">Inquiry landing outcomes</p>
+          <div class="flex flex-wrap gap-2">
+            <span class="chip bg-inbound/10 text-inbound">
+              <span class="font-normal">opened:</span>
+              <span class="tabular-nums">{ioc.opened}</span>
             </span>
-            <span class="font-mono">
-              <span class="text-text-muted">inquired:</span>
-              <span class="text-text font-medium">{ioc.inquired}</span>
+            <span class="chip bg-inbound/10 text-inbound">
+              <span class="font-normal">inquired:</span>
+              <span class="tabular-nums">{ioc.inquired}</span>
             </span>
-            <span class="font-mono">
-              <span class="text-text-muted">lead:</span>
-              <span class="text-text font-medium">{ioc.lead}</span>
+            <span class="chip bg-inbound/10 text-inbound">
+              <span class="font-normal">lead:</span>
+              <span class="tabular-nums">{ioc.lead}</span>
             </span>
-            <span class="font-mono">
-              <span class="text-text-muted">signup_clicked:</span>
-              <span class="text-text font-medium">{ioc.signup_clicked}</span>
+            <span class="chip bg-inbound/10 text-inbound">
+              <span class="font-normal">signup_clicked:</span>
+              <span class="tabular-nums">{ioc.signup_clicked}</span>
             </span>
-            <span class="font-mono">
-              <span class="text-text-muted">unsubscribed:</span>
-              <span class="text-text font-medium">{ioc.unsubscribed}</span>
+            <span class="chip bg-inbound/10 text-inbound">
+              <span class="font-normal">unsubscribed:</span>
+              <span class="tabular-nums">{ioc.unsubscribed}</span>
             </span>
           </div>
         </div>
@@ -248,15 +251,15 @@
 
   {#if stats.dailyActivity.length > 0}
     <section class="mb-10">
-      <h3 class="text-xs font-medium text-text-muted uppercase tracking-wider mb-4">Activity trend · last 30d</h3>
-      <div class="grid grid-cols-[1fr_70px_70px] md:grid-cols-[1fr_80px_80px] gap-2 text-xs max-w-sm">
-        <span class="text-text-muted">Date</span>
-        <span class="text-text-muted text-right">Sent</span>
-        <span class="text-text-muted text-right">Resp.</span>
+      <h3 class="mb-3 font-display text-lg font-semibold text-text">Activity trend · last 30d</h3>
+      <div class="card grid max-w-sm grid-cols-[1fr_70px_70px] gap-2 p-5 text-sm md:grid-cols-[1fr_80px_80px]">
+        <span class="text-xs font-semibold text-text-muted">Date</span>
+        <span class="text-right text-xs font-semibold text-text-muted">Sent</span>
+        <span class="text-right text-xs font-semibold text-text-muted">Resp.</span>
         {#each stats.dailyActivity as d}
-          <span class="text-text font-mono">{d.date.slice(5)}</span>
-          <span class="text-text-secondary text-right font-mono">{d.sent}</span>
-          <span class="text-text-secondary text-right font-mono">{d.responses}</span>
+          <span class="tabular-nums text-text">{d.date.slice(5)}</span>
+          <span class="text-right tabular-nums text-text-secondary">{d.sent}</span>
+          <span class="text-right tabular-nums text-text-secondary">{d.responses}</span>
         {/each}
       </div>
     </section>

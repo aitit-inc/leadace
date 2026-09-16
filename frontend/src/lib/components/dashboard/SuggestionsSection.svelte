@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Sparkles, Copy, Check } from '@lucide/svelte';
+  import { Copy, Check } from '@lucide/svelte';
   import { dismissSuggestion } from '$lib/api/suggestions';
   import type { Suggestion } from '$lib/types/suggestions';
 
@@ -43,19 +43,14 @@
   }
 </script>
 
-<section class="overflow-hidden rounded-xl border border-border bg-surface">
-  <div class="flex items-center gap-2 border-b border-border px-5 py-3">
-    <span class="flex h-6 w-6 items-center justify-center rounded-full bg-accent/15 text-accent">
-      <Sparkles size={14} />
-    </span>
-    <h2 class="text-sm font-semibold text-text">Suggestions</h2>
-    <span class="rounded-full bg-accent/15 px-2 py-0.5 text-xs font-semibold text-accent">
-      {suggestions.length}
-    </span>
-    <span class="ml-auto hidden text-xs text-text-muted sm:inline">Next steps the AI recommends</span>
+<section class="card overflow-hidden">
+  <div class="flex items-center gap-2 px-5 pb-2 pt-4">
+    <h2 class="font-display text-lg font-semibold text-text">Suggestions</h2>
+    <span class="chip bg-surface-2 tabular-nums text-text-secondary">{suggestions.length}</span>
+    <span class="ml-auto hidden text-sm text-text-muted sm:inline">Next steps the AI recommends</span>
   </div>
   {#if dismissError}
-    <p class="border-b border-border px-5 py-2 text-xs text-danger">{dismissError}</p>
+    <p class="px-5 py-2 text-sm text-danger">{dismissError}</p>
   {/if}
   <div class="divide-y divide-border">
     {#each suggestions as s (s.id)}
@@ -69,29 +64,23 @@
             type="button"
             onclick={() => dismiss(s)}
             disabled={dismissingId === s.id}
-            class="shrink-0 rounded-md border border-border bg-surface px-3 py-1.5 text-xs font-medium text-text-muted hover:bg-surface-2 hover:text-text disabled:opacity-50"
+            class="btn btn-ghost btn-sm shrink-0"
           >
             Dismiss
           </button>
         </div>
-        <div class="mt-3 overflow-hidden rounded-lg border border-border bg-surface-2">
-          <div class="flex items-center justify-between gap-2 border-b border-border px-3 py-1.5">
-            <span class="text-[11px] font-medium uppercase tracking-wider text-text-muted">
-              Run this in Claude Code
-            </span>
-            <button
-              type="button"
-              onclick={() => copyCommand(s)}
-              class="inline-flex shrink-0 items-center gap-1 rounded-md border border-border bg-surface px-2 py-1 text-xs font-medium text-text-secondary hover:text-text"
-            >
+        <div class="mt-3 overflow-hidden rounded-xl bg-surface-2">
+          <div class="flex items-center justify-between gap-2 px-3 py-2">
+            <span class="text-xs font-semibold text-text-secondary">Run this in Claude Code</span>
+            <button type="button" onclick={() => copyCommand(s)} class="btn btn-secondary btn-sm">
               {#if copiedId === s.id}
-                <Check size={13} class="text-success" /> Copied
+                <Check size={14} class="text-inbound" /> Copied
               {:else}
-                <Copy size={13} /> Copy
+                <Copy size={14} /> Copy
               {/if}
             </button>
           </div>
-          <pre class="overflow-x-auto px-3 py-2"><code class="font-mono text-xs text-text">{s.command}</code></pre>
+          <pre class="overflow-x-auto px-3 pb-3"><code class="font-mono text-xs text-text">{s.command}</code></pre>
         </div>
       </div>
     {/each}

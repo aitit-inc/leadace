@@ -65,9 +65,9 @@
     <button
       type="button"
       onclick={openCreate}
-      class="flex items-center gap-1.5 rounded px-2 py-1 text-sm text-text-secondary hover:bg-surface hover:text-text transition-colors"
+      class="btn btn-ghost btn-sm"
     >
-      <Plus size={14} />
+      <Plus size={16} />
       New project
     </button>
   {:else}
@@ -77,10 +77,10 @@
       onclick={toggle}
       aria-haspopup="menu"
       aria-expanded={open}
-      class="flex items-center gap-1.5 rounded px-2 py-1 text-sm font-mono text-text hover:bg-surface transition-colors focus:outline-none focus:bg-surface"
+      class="flex max-w-full items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold text-text transition-colors hover:bg-surface-2"
     >
       <span class="truncate">{activeProject?.name ?? 'Select project'}</span>
-      <ChevronDown size={14} class="text-text-muted" />
+      <ChevronDown size={16} class="shrink-0 text-text-muted" />
     </button>
   {/if}
 
@@ -88,7 +88,7 @@
     <div
       bind:this={menuEl}
       role="menu"
-      class="absolute left-0 top-full z-40 mt-1 w-56 rounded-md border border-border bg-page shadow-lg"
+      class="absolute left-0 top-full z-40 mt-2 w-64 overflow-hidden rounded-2xl border border-border bg-surface shadow-lg"
     >
       <ul class="max-h-72 overflow-y-auto py-1">
         {#each projects as proj (proj.id)}
@@ -98,11 +98,11 @@
               type="button"
               role="menuitem"
               onclick={() => selectProject(proj.id)}
-              class="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm font-mono transition-colors {active
-                ? 'bg-surface text-text'
-                : 'text-text-secondary hover:bg-surface hover:text-text'}"
+              class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm transition-colors {active
+                ? 'font-semibold text-text'
+                : 'text-text-secondary hover:bg-surface-2 hover:text-text'}"
             >
-              <span class="w-3.5 shrink-0 text-accent">
+              <span class="w-4 shrink-0 text-text">
                 {#if active}
                   <Check size={14} />
                 {/if}
@@ -116,9 +116,9 @@
         type="button"
         role="menuitem"
         onclick={openCreate}
-        class="flex w-full items-center gap-2 border-t border-border px-3 py-2 text-left text-xs text-text-secondary hover:bg-surface hover:text-text transition-colors"
+        class="flex w-full items-center gap-2 border-t border-border px-4 py-2.5 text-left text-sm text-text-secondary transition-colors hover:bg-surface-2 hover:text-text"
       >
-        <Plus size={14} />
+        <Plus size={16} />
         New project
       </button>
     </div>

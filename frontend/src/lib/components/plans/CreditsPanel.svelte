@@ -44,8 +44,6 @@
     return { enabled: true, amountCents: amount.cents, thresholdCents: threshold.cents };
   });
 
-  const inputClass = 'rounded border bg-page px-2 py-1.5 text-sm text-text disabled:opacity-50';
-
   async function buy(packCents: number) {
     buying = packCents;
     message = '';
@@ -82,11 +80,11 @@
   }
 </script>
 
-<div class="rounded-md border border-border p-5 mb-6">
-  <div class="flex flex-wrap items-start justify-between gap-4 mb-2">
+<div class="card mb-6 p-6">
+  <div class="mb-2 flex flex-wrap items-start justify-between gap-4">
     <div>
-      <p class="text-xs text-text-muted uppercase tracking-wider mb-1">Prepaid credits</p>
-      <p class="font-mono text-xl font-semibold {credits.balanceCents < 0 ? 'text-danger' : 'text-text'}">
+      <p class="mb-1 text-xs font-semibold text-text-muted">Prepaid credits</p>
+      <p class="font-display text-2xl font-semibold tabular-nums {credits.balanceCents < 0 ? 'text-danger' : 'text-text'}">
         {formatCents(credits.balanceCents)}
       </p>
     </div>
@@ -97,14 +95,14 @@
             type="button"
             onclick={() => buy(pack)}
             disabled={buying !== null}
-            class="rounded px-3 py-1.5 text-xs font-medium text-text border border-border hover:bg-surface transition-colors disabled:opacity-50"
+            class="btn btn-secondary btn-sm"
           >
             {buying === pack ? 'Redirecting...' : `Add ${formatCents(pack)}`}
           </button>
         {/each}
       </div>
       <div class="flex items-center gap-2 text-sm text-text">
-        <label for="credit-custom-pack" class="text-xs text-text-secondary">or $</label>
+        <label for="credit-custom-pack" class="text-sm text-text-secondary">or $</label>
         <input
           id="credit-custom-pack"
           type="text"
@@ -113,13 +111,13 @@
           bind:value={customPackText}
           disabled={buying !== null}
           aria-invalid={customPackInvalid}
-          class="w-20 {inputClass} {customPackInvalid ? 'border-danger' : 'border-border'}"
+          class="field w-20"
         />
         <button
           type="button"
           onclick={() => customPack.cents !== null && buy(customPack.cents)}
           disabled={buying !== null || customPack.cents === null}
-          class="rounded px-3 py-1.5 text-xs font-medium text-text border border-border hover:bg-surface transition-colors disabled:opacity-50"
+          class="btn btn-secondary btn-sm"
         >
           {customPack.cents !== null && buying === customPack.cents ? 'Redirecting...' : 'Add'}
         </button>
@@ -129,7 +127,7 @@
       {/if}
     </div>
   </div>
-  <p class="text-xs text-text-muted mb-4">
+  <p class="mb-4 text-sm text-text-secondary">
     Past your allowance, a new prospect costs {formatCents(USAGE_PRICE_CENTS.contacted)} and a
     prospect LeadAce finds costs {formatCents(USAGE_PRICE_CENTS.found)}. Credits never expire.
     {creditsCoverOverage(credits, USAGE_PRICE_CENTS.contacted)
@@ -138,7 +136,7 @@
   </p>
 
   {#if credits.autoTopUp.failedAt}
-    <div class="mb-4 rounded border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">
+    <div class="mb-4 rounded-xl bg-danger/10 px-3 py-2 text-sm text-danger">
       {#if credits.autoTopUp.enabled}
         The charge on {new Date(credits.autoTopUp.failedAt).toLocaleDateString()} was declined.
         Update your card via Manage subscription if you have not. Auto top-up is on again, and
@@ -150,18 +148,18 @@
     </div>
   {/if}
 
-  <div class="flex items-start gap-2 mb-3">
+  <div class="mb-3 flex items-start gap-2">
     <input id="auto-top-up" type="checkbox" bind:checked={enabled} disabled={saving} class="mt-0.5" />
-    <label for="auto-top-up" class="text-sm text-text">
+    <label for="auto-top-up" class="text-sm font-medium text-text">
       Top up automatically
-      <span class="block text-xs text-text-secondary">
+      <span class="block text-xs font-normal text-text-muted">
         Charged to your subscription's card the moment the balance drops below the threshold,
         so it never runs out mid-run.
       </span>
     </label>
   </div>
-  <div class="flex flex-wrap items-center gap-2 text-sm text-text mb-1">
-    <label for="auto-top-up-threshold" class="text-xs text-text-secondary">When below $</label>
+  <div class="mb-1 flex flex-wrap items-center gap-2 text-sm text-text">
+    <label for="auto-top-up-threshold" class="text-sm text-text-secondary">When below $</label>
     <input
       id="auto-top-up-threshold"
       type="text"
@@ -169,9 +167,9 @@
       bind:value={thresholdText}
       disabled={saving || !enabled}
       aria-invalid={thresholdInvalid}
-      class="w-16 {inputClass} {thresholdInvalid ? 'border-danger' : 'border-border'}"
+      class="field w-16"
     />
-    <label for="auto-top-up-amount" class="text-xs text-text-secondary">add $</label>
+    <label for="auto-top-up-amount" class="text-sm text-text-secondary">add $</label>
     <input
       id="auto-top-up-amount"
       type="text"
@@ -180,7 +178,7 @@
       bind:value={amountText}
       disabled={saving || !enabled}
       aria-invalid={amountInvalid}
-      class="w-20 {inputClass} {amountInvalid ? 'border-danger' : 'border-border'}"
+      class="field w-20"
     />
     <datalist id="auto-top-up-packs">
       {#each CREDIT_PACK_CENTS as pack (pack)}
@@ -191,12 +189,12 @@
       type="button"
       onclick={save}
       disabled={saving || patch === null}
-      class="rounded px-3 py-1.5 text-xs font-medium text-page bg-accent hover:bg-accent-strong transition-colors disabled:opacity-50"
+      class="btn btn-primary btn-sm"
     >
       {saving ? 'Saving...' : 'Save'}
     </button>
   </div>
-  <p class="text-xs mb-3 {thresholdInvalid || amountInvalid ? 'text-danger' : 'text-text-muted'}">
+  <p class="mb-3 text-xs {thresholdInvalid || amountInvalid ? 'text-danger' : 'text-text-muted'}">
     {#if thresholdInvalid}
       Threshold: {threshold.error}
     {:else if amountInvalid}

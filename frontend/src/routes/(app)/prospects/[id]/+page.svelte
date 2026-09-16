@@ -9,27 +9,27 @@
 </script>
 
 <div class="mb-4">
-  <a href="/prospects" class="text-xs text-text-muted hover:text-text">← Prospects</a>
+  <a href="/prospects" class="text-sm text-text-muted transition-colors hover:text-text">← Prospects</a>
 </div>
 
 {#if !data.prospect}
   <EmptyState message="Prospect not found" />
 {:else}
   {@const p = data.prospect}
-  <div class="rounded bg-surface px-4 py-4">
+  <div class="card p-5">
     <div class="flex items-start justify-between gap-3">
       <div class="min-w-0 flex-1">
-        <h2 class="text-lg font-semibold text-text">{p.name}</h2>
-        <p class="text-xs text-text-muted mt-1">{p.organizationName}</p>
+        <h2 class="font-display text-2xl font-semibold tracking-tight text-text">{p.name}</h2>
+        <p class="text-sm text-text-secondary mt-1">{p.organizationName}</p>
       </div>
       <span class="shrink-0"><StatusBadge status={p.status} /></span>
     </div>
-    <div class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-secondary">
-      <span class="font-mono">P{p.priority}</span>
+    <div class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-text-secondary">
+      <span class="tabular-nums">P{p.priority}</span>
       <span aria-hidden="true">·</span>
       <span>{channelLabel(p)}</span>
       <span aria-hidden="true">·</span>
-      <span class="font-mono text-text-muted">
+      <span class="tabular-nums text-text-muted">
         Added {new Date(p.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
       </span>
     </div>

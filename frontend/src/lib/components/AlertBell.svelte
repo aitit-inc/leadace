@@ -31,8 +31,8 @@
   }
 
   const TONE_TEXT: Record<ReturnType<typeof attentionMeta>['tone'], string> = {
-    accent: 'text-accent',
-    info: 'text-info',
+    accent: 'text-accent-strong',
+    inbound: 'text-inbound',
     danger: 'text-danger',
     warning: 'text-warning',
   };
@@ -64,12 +64,12 @@
     aria-haspopup="menu"
     aria-expanded={open}
     aria-label={items.length > 0 ? `Alerts (${items.length})` : 'Alerts'}
-    class="relative flex h-9 w-9 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-surface hover:text-text focus:outline-none focus:ring-2 focus:ring-text/30"
+    class="relative flex h-9 w-9 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-surface-2 hover:text-text"
   >
     <Bell size={18} />
     {#if items.length > 0}
       <span
-        class="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-medium text-page"
+        class="absolute -right-0.5 -top-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-accent px-1 text-xs font-semibold tabular-nums text-on-accent"
       >
         {items.length}
       </span>
@@ -80,25 +80,25 @@
     <div
       bind:this={menuEl}
       role="menu"
-      class="absolute right-0 top-11 z-40 w-80 rounded-md border border-border bg-page shadow-lg"
+      class="absolute right-0 top-11 z-40 w-80 overflow-hidden rounded-2xl border border-border bg-surface shadow-lg"
     >
       {#if items.length === 0}
-        <p class="px-3 py-4 text-sm text-text-muted">No alerts.</p>
+        <p class="px-4 py-4 text-sm text-text-muted">Nothing needs you right now.</p>
       {:else}
         <ul class="divide-y divide-border">
           {#each items as item}
             {@const meta = attentionMeta(item)}
-            <li class="px-3 py-3">
-              <div class="flex items-start gap-2">
-                <meta.icon size={14} class="mt-0.5 shrink-0 {TONE_TEXT[meta.tone]}" />
+            <li class="px-4 py-3">
+              <div class="flex items-start gap-2.5">
+                <meta.icon size={16} class="mt-0.5 shrink-0 {TONE_TEXT[meta.tone]}" />
                 <div class="min-w-0">
-                  <p class="text-sm font-medium text-text">{meta.title}</p>
-                  <p class="mt-0.5 text-xs text-text-muted">{meta.desc}</p>
+                  <p class="text-sm font-semibold text-text">{meta.title}</p>
+                  <p class="mt-0.5 text-xs text-text-secondary">{meta.desc}</p>
                   <a
                     href={meta.href}
                     onclick={(e) => followCta(e, item, meta.href)}
                     role="menuitem"
-                    class="mt-1.5 inline-block text-xs font-medium text-accent hover:text-accent-strong transition-colors"
+                    class="mt-1.5 inline-block text-sm font-semibold text-accent-strong hover:underline"
                   >
                     {meta.ctaLabel} →
                   </a>

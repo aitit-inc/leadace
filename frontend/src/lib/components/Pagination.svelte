@@ -17,7 +17,7 @@
 
 {#if total > pageSize}
   <div class="mt-4 flex items-center justify-between gap-3 border-t border-border pt-3">
-    <span class="text-xs text-text-muted font-mono">
+    <span class="text-xs tabular-nums text-text-muted">
       {firstShown}–{lastShown} of {total}
     </span>
     <div class="flex items-center gap-2">
@@ -25,18 +25,18 @@
         type="button"
         disabled={!canPrev}
         onclick={() => onChange(page - 1)}
-        class="rounded border border-border bg-surface px-3 py-1 text-xs text-text hover:border-text/40 transition-colors disabled:opacity-40"
+        class="btn btn-secondary btn-sm"
       >
         ← Prev
       </button>
-      <span class="text-xs text-text-muted font-mono">
+      <span class="text-xs tabular-nums text-text-muted">
         {page} / {totalPages}
       </span>
       <button
         type="button"
         disabled={!canNext}
         onclick={() => onChange(page + 1)}
-        class="rounded border border-border bg-surface px-3 py-1 text-xs text-text hover:border-text/40 transition-colors disabled:opacity-40"
+        class="btn btn-secondary btn-sm"
       >
         Next →
       </button>

@@ -44,8 +44,8 @@
   let actionError = $state('');
 
   const TONE: Record<typeof status.tone, string> = {
-    ok: 'bg-success/10 text-success',
-    warning: 'bg-warning/10 text-warning',
+    ok: 'bg-inbound/10 text-inbound',
+    warning: 'bg-warning/15 text-warning',
     danger: 'bg-danger/10 text-danger',
   };
 
@@ -84,9 +84,9 @@
     type="button"
     onclick={() => (open = !open)}
     aria-expanded={open}
-    class="grid w-full grid-cols-[1.25rem_minmax(0,1fr)_auto_1rem] items-center gap-3 px-4 py-3 text-left hover:bg-surface {open
-      ? 'bg-surface'
-      : ''} {isAlias ? 'pl-10' : ''}"
+    class="grid w-full grid-cols-[1.25rem_minmax(0,1fr)_auto_1rem] items-center gap-3 px-5 py-3 text-left transition-colors hover:bg-surface-2/60 {open
+      ? 'bg-surface-2/60'
+      : ''} {isAlias ? 'pl-11' : ''}"
   >
     <span class="text-text-muted">
       {#if isAlias}
@@ -98,30 +98,30 @@
       {/if}
     </span>
     <span class="min-w-0">
-      <span class="block truncate font-mono text-sm font-medium text-text">{identity.fromEmail}</span>
-      <span class="mt-1 flex flex-wrap items-center gap-1.5 text-[11px]">
-        <span class="rounded-full border border-border px-2 py-px text-text-secondary">
+      <span class="block truncate text-sm font-semibold text-text">{identity.fromEmail}</span>
+      <span class="mt-1 flex flex-wrap items-center gap-1.5">
+        <span class="chip bg-surface-2 text-text-secondary">
           {kindLabel(identity, parent)}
         </span>
-        <span class="inline-flex items-center gap-1 rounded-full px-2 py-px font-medium {TONE[status.tone]}">
+        <span class="chip {TONE[status.tone]}">
           <span class="h-1.5 w-1.5 rounded-full bg-current"></span>
           {status.label}
         </span>
       </span>
     </span>
-    <span class="text-right font-mono text-xs tabular-nums text-text-secondary">
-      <span class="font-medium text-text">{identity.used}</span> / {identity.cap} today
-      <span class="block font-sans text-[11px] text-text-muted">{warmupLabel(identity)}</span>
+    <span class="text-right text-sm tabular-nums text-text-secondary">
+      <span class="font-semibold text-text">{identity.used}</span> / {identity.cap} today
+      <span class="block text-xs text-text-muted">{warmupLabel(identity)}</span>
     </span>
-    <span class="text-text-muted transition-transform {open ? 'rotate-180' : ''}">
+    <span class="text-text-muted transition-transform duration-200 ease-spring {open ? 'rotate-180' : ''}">
       <ChevronDown size={16} />
     </span>
   </button>
 
   {#if open}
-    <div class="border-t border-dashed border-border px-4 pb-4 pt-4 {isAlias ? 'md:pl-[4.75rem]' : 'md:pl-12'}">
+    <div class="border-t border-dashed border-border px-5 pb-4 pt-4 {isAlias ? 'md:pl-19' : 'md:pl-13'}">
       <div class="grid gap-5 md:grid-cols-2 md:gap-x-8">
-        <dl class="grid grid-cols-[auto_1fr] content-start gap-x-4 gap-y-1.5 text-xs">
+        <dl class="grid grid-cols-[auto_1fr] content-start gap-x-4 gap-y-1.5 text-sm tabular-nums">
           <dt class="text-text-muted">Today</dt>
           <dd class="text-text">{identity.used} sent · {identity.remaining} left</dd>
           <dt class="flex items-center gap-1.5 text-text-muted">
@@ -165,7 +165,7 @@
           {/if}
           {#if parent}
             <dt class="text-text-muted">Replies</dt>
-            <dd class="text-text">Land in <span class="font-mono">{parent.fromEmail}</span></dd>
+            <dd class="text-text">Land in {parent.fromEmail}</dd>
           {/if}
           <dt class="text-text-muted">Projects</dt>
           <dd class="text-text">
@@ -177,7 +177,7 @@
           </dd>
           {#if identity.kind === 'gmail' && aliases.length > 0}
             <dt class="text-text-muted">Aliases</dt>
-            <dd class="font-mono text-text">{aliases.map((a) => a.fromEmail).join(', ')}</dd>
+            <dd class="text-text">{aliases.map((a) => a.fromEmail).join(', ')}</dd>
           {/if}
           {#if identity.pausedUntil}
             <dt class="text-text-muted">Paused until</dt>
@@ -197,9 +197,7 @@
               type="button"
               onclick={reconnect}
               disabled={connecting}
-              class="rounded border px-2.5 py-1 text-xs hover:bg-surface disabled:opacity-50 {revoked
-                ? 'border-danger/40 text-danger'
-                : 'border-border bg-page text-text'}"
+              class="btn btn-sm {revoked ? 'btn-primary' : 'btn-secondary'}"
             >
               {connecting ? 'Connecting…' : isAlias ? `Reconnect ${account.fromEmail}` : 'Reconnect'}
             </button>
@@ -210,13 +208,13 @@
               onclick={() => onAddAlias(identity)}
               disabled={freeBlocked}
               title={freeBlocked ? 'Paid plan required' : undefined}
-              class="rounded px-2 py-1 text-xs text-text-secondary hover:bg-surface hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+              class="btn btn-ghost btn-sm"
             >
               + Add alias
             </button>
           {/if}
           {#if actionError}
-            <span class="text-xs text-danger">{actionError}</span>
+            <span class="text-sm text-danger">{actionError}</span>
           {/if}
         </div>
         {#if !identity.signInAccount}
@@ -224,7 +222,7 @@
             type="button"
             onclick={() => (confirmRemove = true)}
             disabled={removing}
-            class="rounded px-2 py-1 text-xs text-danger hover:bg-surface disabled:opacity-50"
+            class="btn btn-danger-ghost btn-sm"
           >
             {removing ? 'Removing…' : isAlias ? 'Remove alias' : 'Remove mailbox'}
           </button>

@@ -14,8 +14,8 @@ docs/                            # Project-wide design docs, runbooks, task trac
 
 Area standards live in `.claude/rules/` and auto-load when you touch matching
 files: `backend-architecture.md` (backend/), `frontend-architecture.md`
-(frontend/), `plugin-development.md` (plugin/, backend/seed-content/),
-`release.md` (plugin.json). Starting work in an area before touching its
+(frontend/), `design-system.md` (frontend/, landing/), `plugin-development.md`
+(plugin/, backend/seed-content/), `release.md` (plugin.json). Starting work in an area before touching its
 files? Read its rule first.
 
 ## Commands
@@ -29,6 +29,10 @@ cd frontend && npm run check     # required before committing frontend
 
 The three check commands are the pre-release checklist. Local E2E harness:
 `e2e/` (see `e2e/README.md`; prerequisites in `.claude/skills/local-e2e/SKILL.md`).
+Screens that need a particular account state — sign-in, a first chat, an
+approval card, plans, account deletion, a recipient's `/q` page — are seeded
+and opened or screenshotted by `cd frontend && npm run ui`, which lists the
+scenarios (e2e/README.md → UI scenarios).
 
 ## Product Principles
 

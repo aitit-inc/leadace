@@ -14,22 +14,22 @@
 
 {#if content.role === 'user'}
   <div class="flex justify-end">
-    <div class="max-w-[80%] whitespace-pre-wrap rounded-lg bg-text px-3 py-2 text-base text-page">
+    <div class="max-w-[80%] whitespace-pre-wrap rounded-3xl rounded-br-lg bg-surface-2 px-4 py-2.5 text-base text-text">
       {content.parts.map((p) => p.text).join('')}
     </div>
   </div>
 {:else if content.role === 'model'}
   {@const text = content.parts.flatMap((p) => ('text' in p ? [p.text] : [])).join('')}
   {#if text}
-    <div class="prose-chat max-w-[85%] text-base text-text">{@html renderChatMarkdown(text)}</div>
+    <div class="prose-chat max-w-[85%] text-base leading-relaxed text-text">{@html renderChatMarkdown(text)}</div>
   {/if}
 {:else}
   <div class="max-w-[85%]">
-    <button type="button" class="text-xs text-text-muted hover:text-text" onclick={() => (expanded = !expanded)}>
+    <button type="button" class="text-xs font-semibold text-text-muted hover:text-text" onclick={() => (expanded = !expanded)}>
       {content.parts.length} step{content.parts.length === 1 ? '' : 's'} {expanded ? '▾' : '▸'}
     </button>
     {#if expanded}
-      <dl class="mt-1 space-y-1 border-l border-border pl-2 text-xs text-text-muted">
+      <dl class="mt-1 space-y-1 border-l-2 border-border pl-3 text-xs text-text-muted">
         {#each content.parts as p (p.functionResponse.id)}
           <dt class="text-text-secondary">{humanize(p.functionResponse.name)}</dt>
           <dd class="max-h-40 overflow-auto whitespace-pre-wrap">{stepResult(p.functionResponse.response)}</dd>

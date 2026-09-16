@@ -24,43 +24,51 @@
   }
 </script>
 
-<div class="my-2 rounded border border-border bg-surface px-3 py-2 text-xs">
+<div class="card my-2 px-4 py-3 text-sm">
   <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
     {#if running}
-      <Loader2 size={14} class="animate-spin text-accent" />
+      <Loader2 size={16} class="animate-spin text-accent-strong" />
     {:else if job.status === 'succeeded'}
-      <CheckCircle2 size={14} class="text-success" />
+      <CheckCircle2 size={16} class="text-inbound" />
     {:else if job.status === 'cancelled'}
-      <Ban size={14} class="text-text-muted" />
+      <Ban size={16} class="text-text-muted" />
     {:else}
-      <XCircle size={14} class="text-danger" />
+      <XCircle size={16} class="text-danger" />
     {/if}
-    <span class="font-medium text-text">{JOB_KIND_LABELS[job.kind]}</span>
+    <span class="font-semibold text-text">{JOB_KIND_LABELS[job.kind]}</span>
     <span class="text-text-muted">{JOB_STATUS_LABELS[job.status]}</span>
-    <span class="text-text-muted">
+    <span class="text-xs text-text-muted">
       · {new Date(job.createdAt).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
     </span>
     {#if showOrigin}
-      <span class="text-text-muted">· {JOB_ORIGIN_LABELS[job.startedBy]}</span>
+      <span class="text-xs text-text-muted">· {JOB_ORIGIN_LABELS[job.startedBy]}</span>
       {#if job.threadId}
-        <a href="/chat?t={job.threadId}" class="text-text-muted underline hover:text-text">Open chat</a>
+        <a href="/chat?t={job.threadId}" class="text-xs text-text-muted underline hover:text-text">Open chat</a>
       {/if}
     {/if}
     {#if running && oncancel}
-      <button type="button" class="ml-auto text-text-muted hover:text-danger" onclick={() => oncancel?.(job.id)}>Cancel</button>
+      <button type="button" class="ml-auto text-sm text-text-muted hover:text-danger" onclick={() => oncancel?.(job.id)}>Cancel</button>
     {/if}
   </div>
   {#if running && job.progress}
     <p class="mt-1 text-text-secondary">
       {job.progress.step}{job.progress.total !== null ? ` · ${job.progress.done}/${job.progress.total}` : ''}
     </p>
+    {#if job.progress.total}
+      <div class="mt-2 h-1 rounded-full bg-surface-2">
+        <div
+          class="h-1 rounded-full bg-accent transition-[width] duration-200 ease-spring"
+          style="width: {Math.min(100, (job.progress.done / job.progress.total) * 100)}%"
+        ></div>
+      </div>
+    {/if}
   {:else if job.status === 'succeeded' && job.result}
     <p class="mt-1 text-text-secondary">{job.result.summary}</p>
   {:else if job.status === 'failed' && job.error}
     <p class="mt-1 text-danger">{job.error}</p>
   {/if}
   {#if job.logEntries > 0}
-    <button type="button" class="mt-1 text-text-muted hover:text-text" onclick={toggle}>Details {open ? '▾' : '▸'}</button>
+    <button type="button" class="mt-2 text-xs font-semibold text-text-muted hover:text-text" onclick={toggle}>Details {open ? '▾' : '▸'}</button>
     {#if open}
       {#if log}
         <JobLog {log} />

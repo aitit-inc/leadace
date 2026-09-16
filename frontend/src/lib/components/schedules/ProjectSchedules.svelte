@@ -44,7 +44,7 @@
     <h3 class="text-sm font-medium text-text">Scheduled runs</h3>
     <p class="mt-1 text-xs text-text-muted">
       An instruction the server runs on its own, written the way you would say it in the
-      <a href="/chat" class="underline hover:text-text">chat</a>. A run reads your data and starts
+      <a href="/chat" class="text-accent-strong hover:underline">chat</a>. A run reads your data and starts
       jobs; outreach follows the outbound mode above (held as drafts, or sent) and your plan's quota
       still caps sends. It never deletes anything, never sets do-not-contact, and never changes a
       schedule. Each run is logged to its own chat thread. Up to {MAX_SCHEDULES_PER_PROJECT} per project.
@@ -59,31 +59,31 @@
   {/each}
 
   {#if adding}
-    <div class="rounded border border-border p-3">
+    <div class="rounded-xl border border-border p-4">
       <textarea
         rows="2"
         maxlength="2000"
         bind:value={draft.prompt}
         placeholder="Run today's cycle for up to 30 prospects."
-        class="w-full rounded border border-border bg-page px-2 py-1 text-sm text-text"
+        class="field"
       ></textarea>
-      <div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-text-secondary">
+      <div class="mt-2 flex flex-wrap items-center gap-2 text-sm text-text-secondary">
         <ScheduleFields bind:days={draft.days} bind:hour={draft.hour} bind:timezone={draft.timezone} />
         <button
           type="button"
-          class="rounded bg-accent px-2 py-0.5 text-xs text-white hover:bg-accent-strong transition-colors disabled:opacity-50"
+          class="btn btn-secondary btn-sm"
           disabled={busy || draft.prompt.trim() === '' || draft.days.length === 0}
           onclick={add}>Add</button>
         <button
           type="button"
-          class="text-xs text-text-muted hover:text-text transition-colors"
+          class="btn btn-ghost btn-sm"
           onclick={() => (adding = false)}>Cancel</button>
       </div>
     </div>
   {:else if schedules.length < MAX_SCHEDULES_PER_PROJECT}
     <button
       type="button"
-      class="text-xs text-accent hover:text-accent-strong transition-colors"
+      class="btn btn-secondary btn-sm"
       onclick={() => (adding = true)}>+ add a scheduled run</button>
   {/if}
 

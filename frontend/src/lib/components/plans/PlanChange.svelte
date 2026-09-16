@@ -53,15 +53,15 @@
 </script>
 
 {#if message}
-  <div class="mb-4 rounded bg-surface px-4 py-3 text-sm text-danger">{message}</div>
+  <div class="mb-4 rounded-2xl bg-danger/10 px-4 py-3 text-sm text-danger">{message}</div>
 {/if}
 
 {#if locked}
-  <p class="mb-4 text-xs text-text-muted">
+  <p class="mb-4 text-sm text-text-secondary">
     Your subscription ends on {periodEnd}. Reactivate it in the Stripe Customer Portal to change plan.
   </p>
 {:else if subscription.scheduledPlan}
-  <div class="mb-4 flex items-center justify-between rounded-md border border-border px-4 py-3">
+  <div class="card mb-4 flex items-center justify-between gap-4 px-5 py-4">
     <p class="text-sm text-text">
       {tierName(subscription.scheduledPlan)} from {periodEnd}. {tierName(current)} stays active until
       then.
@@ -70,34 +70,32 @@
     <button
       onclick={() => run(() => cancelPlanChange(fetch, token), false)}
       disabled={busy}
-      class="shrink-0 rounded px-3 py-1.5 text-xs font-medium text-text border border-border hover:bg-surface transition-colors disabled:opacity-50"
+      class="btn btn-secondary btn-sm shrink-0"
     >
       Keep {tierName(current)}
     </button>
   </div>
 {/if}
 
-<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
   {#each PAID_TIERS as tier (tier.tier)}
-    <div class="rounded-md border border-border p-4 flex flex-col">
-      <p class="text-sm font-medium text-text">{tier.name}</p>
+    <div class="card flex flex-col p-5 {tier.tier === current ? 'ring-2 ring-text/40' : ''}">
+      <p class="text-sm font-semibold text-text">{tier.name}</p>
       <p class="mt-1">
-        <span class="font-mono text-xl font-semibold text-text">${tier.monthlyPrice}</span>
-        <span class="text-xs text-text-muted">/month</span>
+        <span class="font-display text-2xl font-semibold tabular-nums text-text">${tier.monthlyPrice}</span>
+        <span class="text-sm text-text-muted">/month</span>
       </p>
-      <ul class="mt-3 space-y-1 text-xs text-text-secondary flex-1">
+      <ul class="mt-3 flex-1 space-y-1 text-sm text-text-secondary">
         <li>{tier.projects}</li>
         <li>{tier.outreach}</li>
       </ul>
       {#if tier.tier === current}
-        <p class="mt-4 text-center text-xs text-text-muted py-1.5">Current plan</p>
+        <p class="mt-4 py-2 text-center text-sm font-semibold text-text-secondary">Current plan</p>
       {:else}
         <button
           onclick={() => (pending = tier)}
           disabled={busy || locked || !tier.priceId || tier.tier === subscription.scheduledPlan}
-          class="mt-4 w-full rounded px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50 {isUpgrade(tier)
-            ? 'text-page bg-accent hover:bg-accent-strong'
-            : 'text-text border border-border hover:bg-surface'}"
+          class="btn mt-4 w-full whitespace-normal {isUpgrade(tier) ? 'btn-primary' : 'btn-secondary'}"
         >
           {isUpgrade(tier) ? `Upgrade to ${tier.name}` : `Switch to ${tier.name} on ${periodEnd}`}
         </button>

@@ -11,7 +11,7 @@
 </script>
 
 <div
-  class="inline-flex rounded border border-border bg-surface p-0.5 text-text-muted"
+  class="inline-flex rounded-full bg-surface-2 p-0.5 text-text-muted"
   role="group"
   aria-label="Theme"
 >
@@ -22,9 +22,8 @@
       onclick={() => theme.setChoice(opt.value)}
       aria-pressed={$theme === opt.value}
       title={opt.label}
-      class="flex items-center justify-center rounded px-1.5 py-0.5 transition-colors {$theme ===
-      opt.value
-        ? 'bg-page text-text'
+      class="flex h-6 w-7 items-center justify-center rounded-full transition-colors {$theme === opt.value
+        ? 'bg-surface text-text'
         : 'hover:text-text'}"
     >
       <Icon size={14} aria-hidden="true" />

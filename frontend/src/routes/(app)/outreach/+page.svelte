@@ -110,7 +110,7 @@
   function statusDot(s: OutreachStatus): string {
     switch (s) {
       case 'sent':
-        return 'bg-success';
+        return 'bg-accent';
       case 'pending_review':
         return 'bg-text-muted';
       case 'failed':
@@ -127,23 +127,23 @@
   // Labels/colors match the dashboard's Recent activity chips.
   const INQUIRY_OUTCOME_META: Record<InquiryOutcome, { label: string; chip: string }> = {
     opened: { label: 'Opened page', chip: 'bg-surface-2 text-text-secondary' },
-    inquired: { label: 'Chatted', chip: 'bg-info/15 text-info' },
+    inquired: { label: 'Chatted', chip: 'bg-inbound/15 text-inbound' },
     unsubscribed: { label: 'Unsubscribed', chip: 'bg-danger/15 text-danger' },
-    signup_clicked: { label: 'Signed up', chip: 'bg-success/15 text-success' },
-    lead: { label: 'Meeting request', chip: 'bg-success/15 text-success' },
+    signup_clicked: { label: 'Signed up', chip: 'bg-inbound/15 text-inbound' },
+    lead: { label: 'Meeting request', chip: 'bg-inbound/15 text-inbound' },
   };
 </script>
 
-<h2 class="text-lg font-semibold text-text mb-4">Outreach Logs</h2>
+<h2 class="font-display text-2xl font-semibold tracking-tight text-text mb-4">Outreach Logs</h2>
 
 <div class="flex flex-wrap items-center gap-4 mb-4">
-  <select value={filterStage} onchange={onStageChange} class="bg-surface rounded px-2 py-1 text-xs text-text outline-none">
+  <select value={filterStage} onchange={onStageChange} class="field w-auto">
     <option value="">All sends</option>
     {#each STAGE_OPTIONS as s}
       <option value={s.value}>{s.label}</option>
     {/each}
   </select>
-  <select value={filterPeriod} onchange={onPeriodChange} class="bg-surface rounded px-2 py-1 text-xs text-text outline-none">
+  <select value={filterPeriod} onchange={onPeriodChange} class="field w-auto">
     <option value="">All time</option>
     {#each PERIOD_OPTIONS as p}
       <option value={p.value}>{p.label}</option>
@@ -159,8 +159,8 @@
 {#if data.logs.length === 0}
   <EmptyState message={filterStage || filterPeriod ? 'No sends match the current filter' : 'No outreach logs yet'} />
 {:else}
-  <div class="space-y-0">
-    <div class="hidden md:grid grid-cols-[110px_68px_60px_190px_minmax(0,1fr)] gap-4 px-3 py-2 text-xs font-medium text-text-muted">
+  <div class="card overflow-hidden">
+    <div class="hidden md:grid grid-cols-[110px_80px_100px_190px_minmax(0,1fr)] gap-4 border-b border-border px-5 py-2.5 text-xs font-semibold text-text-muted">
       <span>Date</span>
       <span>Channel</span>
       <span>Status</span>
@@ -168,113 +168,117 @@
       <span>Subject / Body</span>
     </div>
 
-    {#each data.logs as log}
-      <button
-        class="hidden md:grid w-full grid-cols-[110px_68px_60px_190px_minmax(0,1fr)] items-center gap-4 px-3 py-2.5 text-left text-sm hover:bg-surface transition-colors rounded"
-        onclick={() => toggleExpand(log.id)}
-      >
-        <span class="text-text-secondary text-xs font-mono">{formatDate(log.sentAt)}</span>
-        <span><ChannelBadge channel={log.channel} /></span>
-        <span>
-          <span class="inline-block h-1.5 w-1.5 rounded-full {statusDot(log.status)}"></span>
-          <span class="text-xs text-text-secondary ml-1">{log.status}</span>
-        </span>
-        <span class="min-w-0">
-          <span class="block truncate text-text">{log.prospectName}</span>
-          {#if log.prospectEmail}
-            <span class="block truncate text-xs text-text-muted font-mono">{log.prospectEmail}</span>
-          {/if}
-        </span>
-        <span class="text-text truncate">
-          {#if log.subject}
-            <span class="font-medium">{log.subject}</span> &mdash;
-          {/if}
-          {truncate(log.body)}
-          {#if log.responseCount > 0}
-            <span class="ml-2 text-[11px] text-success font-medium">↳ {replyLabel(log.responseCount)}</span>
-          {/if}
-          {#if log.inquiryOutcome}
-            <span class="ml-2 rounded px-1.5 py-0.5 text-[11px] font-medium {INQUIRY_OUTCOME_META[log.inquiryOutcome].chip}">
-              {INQUIRY_OUTCOME_META[log.inquiryOutcome].label}
+    <div class="divide-y divide-border">
+      {#each data.logs as log}
+        <div>
+          <button
+            class="hidden md:grid w-full grid-cols-[110px_80px_100px_190px_minmax(0,1fr)] items-center gap-4 px-5 py-3 text-left text-sm hover:bg-surface-2 transition-colors focus-visible:-outline-offset-2"
+            onclick={() => toggleExpand(log.id)}
+          >
+            <span class="text-text-secondary text-xs tabular-nums">{formatDate(log.sentAt)}</span>
+            <span><ChannelBadge channel={log.channel} /></span>
+            <span>
+              <span class="inline-block h-1.5 w-1.5 rounded-full {statusDot(log.status)}"></span>
+              <span class="text-xs text-text-secondary ml-1">{log.status}</span>
             </span>
-          {/if}
-        </span>
-      </button>
-
-      <button
-        class="flex md:hidden w-full flex-col gap-1 px-3 py-3 text-left hover:bg-surface transition-colors rounded"
-        onclick={() => toggleExpand(log.id)}
-      >
-        <div class="flex items-center justify-between gap-2">
-          <div class="flex items-center gap-2 min-w-0">
-            <ChannelBadge channel={log.channel} />
-            <span class="text-[11px] text-text-muted font-mono truncate">{formatDate(log.sentAt)}</span>
-          </div>
-          <div class="flex items-center gap-1 shrink-0">
-            <span class="inline-block h-1.5 w-1.5 rounded-full {statusDot(log.status)}"></span>
-            <span class="text-[11px] text-text-secondary">{log.status}</span>
-          </div>
-        </div>
-        <div class="min-w-0">
-          <p class="text-sm text-text truncate">{log.prospectName}</p>
-          {#if log.prospectEmail}
-            <p class="text-[11px] text-text-muted font-mono truncate">{log.prospectEmail}</p>
-          {/if}
-        </div>
-        {#if log.subject}
-          <p class="text-sm font-medium text-text truncate">{log.subject}</p>
-        {/if}
-        <p class="text-xs text-text-secondary line-clamp-2">{truncate(log.body, 120)}</p>
-        {#if log.responseCount > 0 && log.latestResponseAt}
-          <p class="text-[11px] text-success font-medium">↳ {replyLabel(log.responseCount)} · {formatDate(log.latestResponseAt)}</p>
-        {/if}
-        {#if log.inquiryOutcome}
-          <p>
-            <span class="rounded px-1.5 py-0.5 text-[11px] font-medium {INQUIRY_OUTCOME_META[log.inquiryOutcome].chip}">
-              {INQUIRY_OUTCOME_META[log.inquiryOutcome].label}
+            <span class="min-w-0">
+              <span class="block truncate text-text">{log.prospectName}</span>
+              {#if log.prospectEmail}
+                <span class="block truncate text-xs text-text-muted">{log.prospectEmail}</span>
+              {/if}
             </span>
-          </p>
-        {/if}
-      </button>
+            <span class="text-text truncate">
+              {#if log.subject}
+                <span class="font-medium">{log.subject}</span> &mdash;
+              {/if}
+              {truncate(log.body)}
+              {#if log.responseCount > 0}
+                <span class="ml-2 text-xs text-inbound font-medium">↳ {replyLabel(log.responseCount)}</span>
+              {/if}
+              {#if log.inquiryOutcome}
+                <span class="chip ml-2 {INQUIRY_OUTCOME_META[log.inquiryOutcome].chip}">
+                  {INQUIRY_OUTCOME_META[log.inquiryOutcome].label}
+                </span>
+              {/if}
+            </span>
+          </button>
 
-      {#if expandedId === log.id}
-        <div class="mx-3 mb-2 rounded bg-surface px-4 py-3">
-          <p class="text-xs mb-2 break-all">
-            <span class="text-text-muted">To:</span>
-            <a href="/prospects/{log.prospectId}" class="text-accent hover:underline">{log.prospectName}</a>
-            {#if log.prospectEmail}<span class="font-mono text-text-muted ml-1">{log.prospectEmail}</span>{/if}
-          </p>
-          {#if log.subject}
-            <p class="text-xs font-medium text-text mb-1 break-words">{log.subject}</p>
-          {/if}
-          <p class="text-xs text-text-secondary whitespace-pre-wrap break-words">{log.body}</p>
-          {#if log.errorMessage}
-            <p class="text-xs text-danger mt-2 break-words">Error: {log.errorMessage}</p>
-          {/if}
+          <button
+            class="flex md:hidden w-full flex-col gap-1 px-5 py-3 text-left hover:bg-surface-2 transition-colors focus-visible:-outline-offset-2"
+            onclick={() => toggleExpand(log.id)}
+          >
+            <div class="flex items-center justify-between gap-2">
+              <div class="flex items-center gap-2 min-w-0">
+                <ChannelBadge channel={log.channel} />
+                <span class="text-xs tabular-nums text-text-muted truncate">{formatDate(log.sentAt)}</span>
+              </div>
+              <div class="flex items-center gap-1 shrink-0">
+                <span class="inline-block h-1.5 w-1.5 rounded-full {statusDot(log.status)}"></span>
+                <span class="text-xs text-text-secondary">{log.status}</span>
+              </div>
+            </div>
+            <div class="min-w-0">
+              <p class="text-sm text-text truncate">{log.prospectName}</p>
+              {#if log.prospectEmail}
+                <p class="text-xs text-text-muted truncate">{log.prospectEmail}</p>
+              {/if}
+            </div>
+            {#if log.subject}
+              <p class="text-sm font-medium text-text truncate">{log.subject}</p>
+            {/if}
+            <p class="text-sm text-text-secondary line-clamp-2">{truncate(log.body, 120)}</p>
+            {#if log.responseCount > 0 && log.latestResponseAt}
+              <p class="text-xs tabular-nums text-inbound font-medium">↳ {replyLabel(log.responseCount)} · {formatDate(log.latestResponseAt)}</p>
+            {/if}
+            {#if log.inquiryOutcome}
+              <p>
+                <span class="chip {INQUIRY_OUTCOME_META[log.inquiryOutcome].chip}">
+                  {INQUIRY_OUTCOME_META[log.inquiryOutcome].label}
+                </span>
+              </p>
+            {/if}
+          </button>
 
-          {#if log.responseCount > 0}
-            <div class="mt-3 border-t border-border pt-3 space-y-2">
-              <p class="text-[11px] font-medium text-text-muted uppercase tracking-wider">Replies ({log.responseCount})</p>
-              {#if loadingResponses[log.id]}
-                <p class="text-xs text-text-muted">Loading replies...</p>
-              {:else if responsesCache[log.id]}
-                {#each responsesCache[log.id] as r}
-                  <div class="rounded bg-page px-3 py-2 space-y-1.5">
-                    <div class="flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
-                      <span class="font-mono">{formatDate(r.receivedAt)}</span>
-                      <SentimentBadge sentiment={r.sentiment} />
-                      <span class="font-mono text-text-secondary">{r.responseType}</span>
-                      <ChannelBadge channel={r.channel} />
-                    </div>
-                    <p class="text-xs text-text-secondary whitespace-pre-wrap break-words">{r.content}</p>
-                  </div>
-                {/each}
+          {#if expandedId === log.id}
+            <div class="mx-5 mb-4 rounded-xl bg-page px-4 py-3">
+              <p class="text-sm mb-2 break-all">
+                <span class="text-text-muted">To:</span>
+                <a href="/prospects/{log.prospectId}" class="text-accent-strong hover:underline">{log.prospectName}</a>
+                {#if log.prospectEmail}<span class="text-text-muted ml-1">{log.prospectEmail}</span>{/if}
+              </p>
+              {#if log.subject}
+                <p class="text-sm font-medium text-text mb-1 break-words">{log.subject}</p>
+              {/if}
+              <p class="text-sm text-text-secondary whitespace-pre-wrap break-words">{log.body}</p>
+              {#if log.errorMessage}
+                <p class="text-sm text-danger mt-2 break-words">Error: {log.errorMessage}</p>
+              {/if}
+
+              {#if log.responseCount > 0}
+                <div class="mt-3 border-t border-border pt-3 space-y-2">
+                  <p class="text-xs font-semibold text-text-muted">Replies ({log.responseCount})</p>
+                  {#if loadingResponses[log.id]}
+                    <p class="text-xs text-text-muted">Loading replies...</p>
+                  {:else if responsesCache[log.id]}
+                    {#each responsesCache[log.id] as r}
+                      <div class="rounded-xl bg-surface px-3 py-2.5 space-y-1.5">
+                        <div class="flex flex-wrap items-center gap-2 text-xs text-text-muted">
+                          <span class="tabular-nums">{formatDate(r.receivedAt)}</span>
+                          <SentimentBadge sentiment={r.sentiment} />
+                          <span class="text-text-secondary">{r.responseType}</span>
+                          <ChannelBadge channel={r.channel} />
+                        </div>
+                        <p class="text-sm text-text-secondary whitespace-pre-wrap break-words">{r.content}</p>
+                      </div>
+                    {/each}
+                  {/if}
+                </div>
               {/if}
             </div>
           {/if}
         </div>
-      {/if}
-    {/each}
+      {/each}
+    </div>
   </div>
   <Pagination page={data.page} pageSize={PAGE_SIZE} total={data.total} onChange={onPageChange} />
 {/if}
