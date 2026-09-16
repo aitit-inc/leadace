@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { datedEvents, inRetrieved, newestFirst } from './enrich'
+import { datedEvents, inRetrieved, newestFirst, parseStored } from './enrich'
 
 describe('inRetrieved', () => {
   const retrieved = ['https://Example.com/News/A/']
@@ -37,5 +37,26 @@ describe('datedEvents', () => {
 describe('newestFirst', () => {
   it('orders by the leading date, newest first, and drops exact duplicates', () => {
     expect(newestFirst(['2026-07-24: b', '2026-09-01: a', '2026-08-27: c', '2026-09-01: a'])).toEqual(['2026-09-01: a', '2026-08-27: c', '2026-07-24: b'])
+  })
+})
+
+describe('parseStored', () => {
+  const candidate = {
+    name: 'Acme', organizationName: 'Acme Inc', websiteUrl: 'https://acme.example',
+    overview: 'Builds things', industry: 'Other', matchReason: 'Ships an MCP server',
+    priority: 1 as const, signals: [],
+  }
+
+  it('applies a default for a field the stored shape predates', () => {
+    const { candidates, stale } = parseStored([candidate as never])
+    expect(stale).toEqual([])
+    expect(candidates[0]?.matchSourceUrls).toEqual([])
+  })
+
+  it('drops a shape too old to parse without failing the batch', () => {
+    const legacy = { ...candidate, name: 'Old', signals: ['2026-03-12: Series B (TechCrunch)'] }
+    const { candidates, stale } = parseStored([legacy as never, candidate as never])
+    expect(stale).toEqual(['Old'])
+    expect(candidates).toHaveLength(1)
   })
 })

@@ -16,7 +16,7 @@ Generate the `SALES_STRATEGY.md` document with the following structure:
 (Industry/domain, size, role, characteristics)
 ### Secondary Target
 ### Prerequisites
-(What must already be true for them to use and buy this, and where that is publicly observable)
+(What must already be true for them to use and buy this, and where a page states it)
 ### Not a fit
 (Who looks like a target but cannot use it or has no reason to buy)
 
@@ -75,7 +75,7 @@ The two modes are mutually exclusive per project — the inquiry-settings page e
 **Generation guidelines:**
 - **Target length ~180 lines or fewer.** This is a strategy design doc — do not pad sections. Never add a runtime-actuals / KPI-history table: send / draft / response counts live in structured storage and are surfaced in the Web UI. The `## KPI` section carries *target* metrics + the reverse-calc tree only, never actuals.
 - Keep the elevator pitch specific and concise. Avoid jargon; make it easy to understand
-- Target is the premise everything else rests on. Be specific ("SaaS companies with 50-200 employees in the US", not "small businesses"); `Prerequisites` is observable evidence that someone can use and buy this, not a persona label; `Not a fit` is who to skip — `/build-list` drops them, `/evaluate` re-examines this section first
+- Target is the premise everything else rests on. Be specific ("SaaS companies with 50-200 employees in the US", not "small businesses"). `Prerequisites` names what a page states of the company itself — "publishes X", not "mentions X". `Not a fit` outranks `Prerequisites`: a company that matches it is skipped however well it qualifies — `/build-list` drops them, `/evaluate` re-examines this section first
 - Structure messaging to lead with recipient benefits
 - List at least 10 search keywords
 - Discovery strategies are NOT a section of this document — they live in the project's strategy registry (`upsert_discovery_strategy` / `get_lever_state`), where /build-list executes them and /evaluate attributes reply rates per slug.

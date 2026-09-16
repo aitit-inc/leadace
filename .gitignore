@@ -7,6 +7,8 @@
 .env*
 .envrc*
 dev.ports.env*
+# Codex CLI writes error.log into the working directory.
+*.log
 !.envrc.example
 !dev.ports.env.example
 

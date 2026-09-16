@@ -51,6 +51,9 @@ export const discoverCandidateSchema = z.object({
   country: z.string().regex(/^[A-Z]{2}$/).optional(),
   employeeBand: z.enum(['1-10', '11-50', '51-200', '201+']).optional(),
   matchReason: z.string().min(1).max(1000),
+  // Where the qualifying Prerequisite is observable; without it no later stage
+  // can check the match.
+  matchSourceUrls: z.array(signalSourceSchema).max(SIGNAL_MAX_SOURCES).default([]),
   priority: z.literal([1, 2, 3, 4, 5]),
   discoveryStrategy: discoveryStrategySchema.optional(),
   // Unconfirmed claims; enrich keeps only the ones their pages state.

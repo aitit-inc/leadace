@@ -11,7 +11,7 @@
 
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { extractionPrompt, extractionSchema, searchPrompt, sourcedSignals } from '../src/services/pipeline/discover'
+import { extractionPrompt, extractionSchema, passageUrls, searchPrompt, sourcedSignals } from '../src/services/pipeline/discover'
 import { enrichCandidate } from '../src/services/pipeline/enrich'
 import { callGeminiGroundedText, callGeminiJson, GeminiError, HOSTED_MODEL } from '../src/services/gemini'
 import { apexDomainOf, parseIndustryVocabulary, type HostedEnv } from '../src/services/pipeline/context'
@@ -122,6 +122,7 @@ async function measure(plan: (typeof strategies)[number]): Promise<void> {
       industry: industries.includes(c.industry) ? c.industry : 'Other',
       priority: c.priority as DiscoverCandidate['priority'],
       discoveryStrategy: plan.slug,
+      matchSourceUrls: passageUrls(c.matchPassages, search.citations),
       signals: sourcedSignals(c.signals, search.citations),
     }))
     .slice(0, Math.ceil(plan.count * 1.5))

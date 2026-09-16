@@ -3,19 +3,18 @@ import { loadEnv } from 'vite';
 
 const dev = process.env.NODE_ENV !== 'production';
 
-// Scope prod connect-src to the app's own backend origins instead of all
-// https:. Read from the same PUBLIC_ env the client uses (works for self-host
-// too); fall back to https: if any is unset so a build without them still runs.
+// Scoped from the same PUBLIC_ env the client uses, so self-host gets its own
+// origins and a build without them still runs. An https source does not match a
+// wss: URL, so the API's ws origin is listed on its own.
 const publicEnv = loadEnv(dev ? 'development' : 'production', process.cwd(), 'PUBLIC_');
-const backendOrigins = [
-	publicEnv.PUBLIC_API_URL,
-	publicEnv.PUBLIC_MCP_URL,
-	publicEnv.PUBLIC_SUPABASE_URL,
-]
-	.filter(Boolean)
-	.map((url) => new URL(url).origin);
-const prodConnectSrc =
-	backendOrigins.length === 3 ? ['self', ...backendOrigins] : ['self', 'https:'];
+const originOf = (url) => url && new URL(url).origin;
+const apiOrigin = originOf(publicEnv.PUBLIC_API_URL);
+const mcpOrigin = originOf(publicEnv.PUBLIC_MCP_URL);
+const supabaseOrigin = originOf(publicEnv.PUBLIC_SUPABASE_URL);
+const connectSrc =
+	apiOrigin && mcpOrigin && supabaseOrigin
+		? ['self', apiOrigin, apiOrigin.replace(/^http/, 'ws'), mcpOrigin, supabaseOrigin]
+		: ['self', 'https:', 'wss:'];
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
@@ -32,10 +31,8 @@ const config = {
 				'style-src': ['self', 'unsafe-inline', 'https://fonts.googleapis.com'],
 				'font-src': ['self', 'https://fonts.gstatic.com'],
 				'img-src': ['self', 'data:', 'https:'],
-				// dev also needs localhost + the Vite HMR websocket
-				'connect-src': dev
-					? ['self', 'http://localhost:*', 'ws://localhost:*', 'https:', 'wss:']
-					: prodConnectSrc,
+				// The wildcards also cover Vite's HMR socket.
+				'connect-src': dev ? [...connectSrc, 'http://localhost:*', 'ws://localhost:*'] : connectSrc,
 				'frame-src': [
 					'https://www.youtube.com',
 					'https://www.youtube-nocookie.com',

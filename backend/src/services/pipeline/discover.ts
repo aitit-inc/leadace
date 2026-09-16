@@ -52,8 +52,9 @@ export const CYCLE_MIN_CANDIDATES_PER_SEARCH = 10
 
 export const extractionSchema = z.object({
   candidates: z.array(
-    discoverCandidateSchema.omit({ discoveryStrategy: true, priority: true }).extend({
+    discoverCandidateSchema.omit({ discoveryStrategy: true, priority: true, matchSourceUrls: true }).extend({
       priority: z.number().int().min(1).max(5),
+      matchPassages: z.array(z.number().int()).max(SIGNAL_MAX_SOURCES).default([]),
       signals: z.array(z.object({ text: z.string().max(300), passages: z.array(z.number().int()) })).max(5).default([]),
     }),
   ),
@@ -132,6 +133,7 @@ ${args.priorNotes ?? '(none — create the document)'}
 ## Rules for candidates
 - name, organizationName (legal entity, or the name), websiteUrl (official site), overview, industry (exact vocabulary value), matchReason (why it fits — one or two sentences, naming the observable Prerequisite), priority 1–5 (1 = perfectly matches and the need is clear … 5 = indirect possibility; raise by one when the site or a press release shows an email address).
 - country only when evident (ISO 3166-1 alpha-2); employeeBand one of 1-10 / 11-50 / 51-200 / 201+ only with an honest basis.
+- matchPassages: the numbers of the cited passages that state that Prerequisite of this organization itself; a passage that only mentions what the Prerequisite is about does not state that this organization meets it. Leave empty when no passage states it.
 - signals: text "YYYY-MM-DD: what happened" with every name exactly as the notes write it, and passages, the numbers of the cited passages that state it; drop a signal no cited passage states; leave empty when none.
 - overview and matchReason carry no dated events (funding, hiring, launches, partnerships, press) — those go only in signals, which a later step checks against their pages.
 - Drop duplicates by domain. Keep only candidates with an official URL and an overview.
@@ -148,10 +150,14 @@ Markdown with exactly these sections, merged with the prior version (never overw
 Record this pass under strategy "${args.strategySlug}".`
 }
 
+export function passageUrls(passages: number[], citations: Citation[]): string[] {
+  const pages = passages.flatMap((n) => citations[n - 1]?.pages ?? []).filter((u) => signalSourceSchema.safeParse(u).success)
+  return [...new Set(pages)].slice(0, SIGNAL_MAX_SOURCES)
+}
+
 export function sourcedSignals(signals: Array<{ text: string; passages: number[] }>, citations: Citation[]): DiscoverCandidate['signals'] {
   return signals.flatMap((s) => {
-    const pages = s.passages.flatMap((n) => citations[n - 1]?.pages ?? []).filter((u) => signalSourceSchema.safeParse(u).success)
-    const sourceUrls = [...new Set(pages)].slice(0, SIGNAL_MAX_SOURCES)
+    const sourceUrls = passageUrls(s.passages, citations)
     return sourceUrls.length > 0 ? [{ text: s.text, sourceUrls }] : []
   })
 }
@@ -265,6 +271,7 @@ export async function runDiscover(
         industry: industries.includes(c.industry) ? c.industry : 'Other',
         priority: c.priority as DiscoverCandidate['priority'],
         discoveryStrategy: entry.slug,
+        matchSourceUrls: passageUrls(c.matchPassages, search.citations),
         signals: sourcedSignals(c.signals, search.citations),
       }))
       .slice(0, Math.ceil(entry.count * 1.5))

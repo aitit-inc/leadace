@@ -13,7 +13,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { extractionPrompt, extractionSchema, searchPrompt, sourcedSignals } from '../src/services/pipeline/discover'
+import { extractionPrompt, extractionSchema, passageUrls, searchPrompt, sourcedSignals } from '../src/services/pipeline/discover'
 import { enrichCandidate } from '../src/services/pipeline/enrich'
 import { callGeminiGroundedText, callGeminiJson, GeminiError, HOSTED_MODEL, withLlmScope } from '../src/services/gemini'
 import { apexDomainOf, parseIndustryVocabulary, type HostedEnv } from '../src/services/pipeline/context'
@@ -205,7 +205,7 @@ async function precheck(siteUrl: string): Promise<Precheck> {
 
 // ---- the full read, as production runs it ---------------------------------
 
-type ReadOutcome = 'email' | 'email_refused' | 'form' | 'form_refused' | 'sns_only' | 'no_contact_found' | 'site_unreadable' | 'read_failed'
+type ReadOutcome = 'email' | 'email_refused' | 'form' | 'form_refused' | 'sns_only' | 'no_contact_found' | 'site_unreadable' | 'read_failed' | 'prereq_uncited' | 'prereq_unverified'
 
 function outcomeOf(e: Awaited<ReturnType<typeof enrichCandidate>>): ReadOutcome {
   if (e.skip) return e.skip
@@ -256,6 +256,7 @@ async function discover(plan: (typeof strategies)[number], count: number): Promi
       industry: industries.includes(c.industry) ? c.industry : 'Other',
       priority: c.priority as DiscoverCandidate['priority'],
       discoveryStrategy: plan.slug,
+      matchSourceUrls: passageUrls(c.matchPassages, search.citations),
       signals: sourcedSignals(c.signals, search.citations),
     }))
     .slice(0, Math.ceil(count * 1.5))
@@ -324,7 +325,7 @@ function report(all: Row[], discoverCost: number, queries: number): void {
   log(`per prospect with a usable email: enrich $${perEmail(enrichCost)} | discover+grounding $${perEmail(discoverCost + grounding)} | total $${perEmail(enrichCost + discoverCost + grounding)}`)
 
   log('\n== read outcome by pre-check verdict (rows = pre-check, cols = full read)')
-  const outcomes: ReadOutcome[] = ['email', 'email_refused', 'form', 'form_refused', 'sns_only', 'no_contact_found', 'site_unreadable', 'read_failed']
+  const outcomes: ReadOutcome[] = ['email', 'email_refused', 'form', 'form_refused', 'sns_only', 'no_contact_found', 'site_unreadable', 'read_failed', 'prereq_uncited', 'prereq_unverified']
   const verdicts: PrecheckVerdict[] = ['email', 'form', 'none', 'unreachable']
   log(`  ${'precheck'.padEnd(12)}${outcomes.map((o) => o.padStart(17)).join('')}   total`)
   for (const v of verdicts) {
