@@ -17,7 +17,7 @@
 		"@sveltejs/adapter-auto": "^7.0.1",
 		"@sveltejs/kit": "^2.69.2",
 		"@sveltejs/vite-plugin-svelte": "^7.2.0",
-		"@types/node": "^22.20.1",
+		"@types/node": "^24.13.5",
 		"playwright-core": "^1.63.0",
 		"svelte": "^5.56.4",
 		"svelte-check": "^4.7.2",

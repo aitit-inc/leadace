@@ -326,6 +326,266 @@ function seedThread(ctx, { projectId, title, userText, modelText, toolName, args
   return threadId;
 }
 
+// A dashboard with a month of history behind it. The figures are the real ones
+// from one of our own projects; the institutions are invented. Everything here
+// is written straight to the tables the dashboard reads, because reaching this
+// state through the API would mean a month of cycles.
+//
+// What the numbers have to satisfy (backend/src/services/dashboard.ts):
+//  - KPIs count DISTINCT prospects over a rolling 30 days, and the delta
+//    compares against the 30 days before that, so both windows carry sends.
+//  - The trend buckets by UTC calendar day from midnight of today-29; anchoring
+//    each day at UTC noon keeps every send inside that window and the KPI one.
+//    Only the eight named sends are placed against the wall clock, because the
+//    feed prints them as "27m ago" — so the chart looks the same at any hour.
+//  - Variant stats only count sends older than rewardWindowDays (14) and call an
+//    arm mature at minSamplePerArm (30).
+//  - hot_leads uses a fixed 7-day window, whatever period the page is showing.
+const DASH_PROOF = 'rst_20260715_b';
+const DASH_SINGLE = 'rst_20260715_d';
+const DASH_SUBJECT = 'Three minutes a day: AI practice that makes you clearer';
+// Days 0..27 of the 30-day window; the last two days are the named sends below.
+const DASH_BY_DAY = [8, 9, 9, 8, 0, 0, 0, 7, 8, 7, 6, 8, 9, 14, 3, 0, 0, 0, 5, 7, 7, 0, 0, 0, 9, 6, 0, 0];
+const DASH_PREV_TOTAL = 133;
+const DASH_NAMED = [
+  { name: "Westbrook Girls' High School", domain: 'westbrook-girls.example', minsAgo: 27 },
+  { name: 'Rivermead County Board of Education', domain: 'rivermead-boe.example', minsAgo: 29 },
+  { name: 'Springfield Online Academy', domain: 'springfield-online.example', minsAgo: 30 },
+  { name: 'Medway Medical Prep', domain: 'medway-medical.example', minsAgo: 31 },
+  { name: 'Aimes Medical Entrance Academy', domain: 'aimes-entrance.example', minsAgo: 32 },
+  { name: 'Summit Medical Prep', domain: 'summit-medical.example', minsAgo: 1440 },
+  { name: 'Northgate University', domain: 'northgate-university.example', minsAgo: 1442 },
+  { name: "Fairhaven Women's University", domain: 'fairhaven-womens.example', minsAgo: 1444 },
+];
+const DASH_LEARNINGS = [
+  `[body] [D-0] Proof-led (${DASH_PROOF}) is driving reply rate and meetings by a wide margin — evidence: metric=variantResponseRate ${DASH_PROOF} 8.8% n=114 vs the other 3 angles 3.1-3.3% n=30-32 (meanReward 0.118 vs 0-0.067)`,
+  `[targeting] [D-1] Prospects carrying a why-now signal at send time reply about 4x more often — evidence: metric=freshSignalResponseRate withSignal 13.1% n=61 / withoutSignal 3.3% n=211`,
+  `[targeting] [D-2] Higher-education institutions with a standalone career-support department are the best meeting-generating segment — evidence: metric=discoveryStrategyResponseRate school-directory-nationwide 10.5% n=76 / 8 meeting enquiries`,
+  `[channel] [D-3] No human reply has ever come through a contact form (all of them auto-replies); only email has produced meetings — evidence: metric=channelResponseRate email 6.2% n=241 / form 0.0% n=31`,
+  `[body] [D-4] Only copy that quotes the recipient's own course or programme name draws a positive reply — evidence: metric=respondedMessages all 6 positive replies carried a proper-noun hook, n=198 sends`,
+  `[body] [D-5] A low-cost CTA that spells out an exit ("wrong person", "another time") is producing meeting enquiries — evidence: metric=sentimentBreakdown meeting_request=6 / positive reply=8, n=179 emails`,
+  `[timing] [D-12] Tuesday and Wednesday morning sends draw the most replies — evidence: metric=dayOfWeekResponseRate Tue 8.1% / Wed 7.6% / Fri 2.2%, n=241`,
+  `[discovery] [D-14] Nationwide school directories yield more reachable addresses than association member lists — evidence: metric=contactYield directory 62% n=180 / association 28% n=94`,
+  `[channel] [D-17] Follow-ups on the same thread outperform a fresh thread — evidence: metric=threadedResponseRate threaded 7.4% n=136 / fresh 2.1% n=95`,
+  `[targeting] [D-19] Institutions above 200 staff answer far less often — evidence: metric=employeeBandResponseRate 11-50 9.2% n=120 / 201+ 1.9% n=53`,
+];
+
+function seedDashboardFixture(ctx, projectId) {
+  const tenant = ctx.persona.tenantId;
+  const MIN = 60 * 1000;
+  const DAY = 24 * 60 * MIN;
+  const now = Date.now();
+  const iso = (ms) => new Date(ms).toISOString();
+  const ymd = (ms) => new Date(ms).toISOString().slice(0, 10);
+  const today = new Date(now);
+  const trendFloor = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()) - 29 * DAY;
+
+  const sends = [];
+  for (let day = 0; day < 30; day++) {
+    for (let i = 0; i < DASH_BY_DAY[day]; i++) {
+      sends.push({ window: 'cur', day, sentAt: trendFloor + day * DAY + 12 * 60 * MIN + i * 7 * MIN });
+    }
+  }
+  for (let i = 0; i < DASH_PREV_TOTAL; i++) {
+    const day = 30 + (i % 30);
+    sends.push({ window: 'prev', day, sentAt: now - day * DAY - 5 * 60 * MIN - i * 3 * MIN });
+  }
+
+  // The named eight are the newest rows in Recent activity and the only sends
+  // measured from the wall clock, since the feed prints them as "27m ago" and
+  // "1d ago". Subtracting a whole day always lands on the previous UTC day; the
+  // minutes-ago five are clamped so a run just after midnight cannot push them
+  // into yesterday's trend bucket.
+  const startOfTodayUtc = trendFloor + 29 * DAY;
+  DASH_NAMED.forEach((n) => {
+    const sameDay = n.minsAgo < DAY / MIN;
+    const at = now - n.minsAgo * MIN;
+    sends.push({
+      window: 'cur',
+      day: sameDay ? 29 : 28,
+      isNamed: true,
+      named: n,
+      sentAt: sameDay ? Math.max(startOfTodayUtc + MIN, at) : at,
+    });
+  });
+  sends.forEach((s, i) => {
+    if (!s.named) s.named = { name: `Prospect ${i + 1}`, domain: `org-${i + 1}.example` };
+  });
+
+  const curMature = sends
+    .filter((s) => s.window === 'cur' && s.day <= 15)
+    .sort((a, b) => a.sentAt - b.sentAt);
+  const prevSends = sends.filter((s) => s.window === 'prev');
+  prevSends.forEach((s) => (s.variant = DASH_PROOF));
+  curMature.slice(0, 19).forEach((s) => (s.variant = DASH_PROOF));
+  curMature.slice(19, 53).forEach((s) => (s.variant = DASH_SINGLE));
+
+  const responses = [];
+  const add = (send, type, sentiment, receivedAt, content, feedback = null) =>
+    responses.push({ send, type, sentiment, receivedAt, content, feedback });
+  const prevSorted = [...prevSends].sort((a, b) => a.sentAt - b.sentAt);
+  add(prevSorted[0], 'meeting_request', 'positive', prevSorted[0].sentAt + 2 * DAY, 'Happy to find a time next week.');
+  add(prevSorted[1], 'meeting_request', 'positive', prevSorted[1].sentAt + 2 * DAY, 'Could we set up a short call?');
+  for (let i = 0; i < 4; i++) {
+    add(prevSorted[2 + i], 'reply', 'neutral', prevSorted[2 + i].sentAt + 2 * DAY, 'Thanks for reaching out.');
+  }
+  add(prevSorted[10], 'bounce', 'neutral', prevSorted[10].sentAt + 60 * MIN, 'Address not found.');
+  for (let i = 0; i < 6; i++) {
+    add(curMature[i], 'reply', 'neutral', curMature[i].sentAt + 2 * DAY, 'Thanks — sending this to our team.');
+  }
+  add(curMature[19], 'reply', 'neutral', curMature[19].sentAt + 2 * DAY, 'Interesting, tell me more.');
+  // Slots run oldest-first and take one response each: the KPIs count distinct
+  // prospects, and a reply has to land after its own send.
+  const slots = sends
+    .filter((s) => s.window === 'cur' && s.day > 15 && !s.isNamed)
+    .sort((a, b) => a.sentAt - b.sentAt);
+  const unsubscribe = { primary_reason: 'unsubscribe_request', free_text: '', preferred_recontact_window: 'never' };
+  // Every reply is dated from its own send, so none can predate it and the
+  // hot-leads window lands the same way at any hour: slots 19 and 28 are days 24
+  // and 25, which put two meeting requests inside the fixed seven days, and slot
+  // 0 is day 18, which keeps the third one outside.
+  add(slots[0], 'meeting_request', 'positive', slots[0].sentAt + DAY, 'We would like a walkthrough.');
+  add(slots[19], 'meeting_request', 'positive', slots[19].sentAt + DAY, 'Can you do Thursday afternoon?');
+  add(slots[28], 'meeting_request', 'positive', slots[28].sentAt + DAY, 'Please send over a calendar link.');
+  add(slots[5], 'rejection', 'negative', slots[5].sentAt + DAY, 'Please remove me from this list.', unsubscribe);
+  add(slots[6], 'rejection', 'negative', slots[6].sentAt + DAY, 'Unsubscribe.', unsubscribe);
+  add(slots[7], 'reply', 'neutral', slots[7].sentAt + DAY, 'Noted, thank you.');
+  add(slots[1], 'bounce', 'neutral', slots[1].sentAt + 60 * MIN, 'Mailbox unavailable.');
+  add(slots[2], 'bounce', 'neutral', slots[2].sentAt + 60 * MIN, 'Mailbox unavailable.');
+  add(slots[3], 'bounce', 'neutral', slots[3].sentAt + 60 * MIN, 'Mailbox unavailable.');
+
+  const chunk = (arr, n) => Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, i * n + n));
+  const body = 'Hi there,\n\nA short note about speaking practice.\n\nSam Rivera\nNorthwind Labs';
+
+  for (const part of chunk(sends, 60)) {
+    psql(
+      `INSERT INTO organizations (tenant_id, domain, name, website_url, country, country_source, employee_band) VALUES ` +
+        part
+          .map((s) => `(${q(tenant)}, ${q(s.named.domain)}, ${q(s.named.name)}, ${q(`https://${s.named.domain}`)}, 'US', 'manual', '11-50')`)
+          .join(',') +
+        ` ON CONFLICT DO NOTHING;`,
+    );
+  }
+  for (const part of chunk(sends, 60)) {
+    psql(
+      `INSERT INTO prospects (tenant_id, name, organization_id, overview, website_url, email, country, country_source, origin) ` +
+        `SELECT ${q(tenant)}, v.name, o.id, v.name || ' — career services contact.', 'https://' || v.domain, 'contact@' || v.domain, 'US', 'manual', 'found' ` +
+        `FROM (VALUES ` +
+        part.map((s) => `(${q(s.named.name)}, ${q(s.named.domain)})`).join(',') +
+        `) AS v(name, domain) JOIN organizations o ON o.domain = v.domain AND o.tenant_id = ${q(tenant)};`,
+    );
+  }
+  psql(
+    `INSERT INTO project_prospects (tenant_id, project_id, prospect_id, match_reason, status)
+     SELECT ${q(tenant)}, ${q(projectId)}, p.id, 'Runs its own career-support desk.', 'contacted'
+     FROM prospects p WHERE p.tenant_id = ${q(tenant)};`,
+  );
+  for (const part of chunk(sends, 40)) {
+    psql(
+      `INSERT INTO outreach_logs (tenant_id, project_id, prospect_id, channel, subject, body, status, sent_at, variant_id) ` +
+        `SELECT ${q(tenant)}, ${q(projectId)}, p.id, 'email', v.subject, v.body, 'sent', v.sent_at::timestamptz, v.variant ` +
+        `FROM (VALUES ` +
+        part
+          .map(
+            (s) =>
+              `(${q(s.named.domain)}, ${q(DASH_SUBJECT)}, ${q(body)}, ${q(iso(s.sentAt))}, ${s.variant ? q(s.variant) : 'NULL'})`,
+          )
+          .join(',') +
+        `) AS v(domain, subject, body, sent_at, variant) ` +
+        `JOIN organizations o ON o.domain = v.domain AND o.tenant_id = ${q(tenant)} ` +
+        `JOIN prospects p ON p.organization_id = o.id AND p.tenant_id = ${q(tenant)};`,
+    );
+  }
+  for (const part of chunk(responses, 30)) {
+    psql(
+      `INSERT INTO responses (tenant_id, outreach_log_id, channel, content, sentiment, response_type, received_at, rejection_feedback) ` +
+        `SELECT ${q(tenant)}, ol.id, 'email', v.content, v.sentiment::sentiment, v.rtype::response_type, v.received_at::timestamptz, v.feedback::jsonb ` +
+        `FROM (VALUES ` +
+        part
+          .map(
+            (r) =>
+              `(${q(r.send.named.domain)}, ${q(r.content)}, ${q(r.sentiment)}, ${q(r.type)}, ${q(iso(r.receivedAt))}, ${r.feedback ? q(JSON.stringify(r.feedback)) : 'NULL'})`,
+          )
+          .join(',') +
+        `) AS v(domain, content, sentiment, rtype, received_at, feedback) ` +
+        `JOIN organizations o ON o.domain = v.domain AND o.tenant_id = ${q(tenant)} ` +
+        `JOIN prospects p ON p.organization_id = o.id AND p.tenant_id = ${q(tenant)} ` +
+        `JOIN outreach_logs ol ON ol.prospect_id = p.id AND ol.project_id = ${q(projectId)};`,
+    );
+  }
+
+  // Every variant predates the 30-day journal window, so the only entries are
+  // the two the retirement cycle archived — a newer created_at would add
+  // "started testing a new angle" lines the screenshot does not have.
+  const born = iso(now - 70 * DAY);
+  const retiredAt = iso(now - 7 * DAY);
+  psql(
+    `INSERT INTO message_variants (tenant_id, project_id, variant_id, subject_pattern, label, body_approach, created_at, updated_at, archived_at) VALUES
+     (${q(tenant)}, ${q(projectId)}, ${q(DASH_PROOF)}, ${q(DASH_SUBJECT)}, 'Proof-led', 'Lead with a measured result.', ${q(born)}, ${q(born)}, NULL),
+     (${q(tenant)}, ${q(projectId)}, ${q(DASH_SINGLE)}, ${q('One question about your speaking programme')}, 'Single-question', 'Ask one question, nothing else.', ${q(born)}, ${q(born)}, NULL),
+     (${q(tenant)}, ${q(projectId)}, 'rst_20260715_a', ${q('The gap in most speaking programmes')}, 'Problem-direct', 'Name the problem first.', ${q(born)}, ${q(retiredAt)}, ${q(retiredAt)}),
+     (${q(tenant)}, ${q(projectId)}, 'rst_20260715_c', ${q('Something we learned about speaking practice')}, 'Casual peer', 'Peer-to-peer tone.', ${q(born)}, ${q(retiredAt)}, ${q(retiredAt)});`,
+  );
+  psql(
+    `INSERT INTO lever_state (project_id, tenant_id, variant_weights, updated_at)
+     VALUES (${q(projectId)}, ${q(tenant)}, ${q(JSON.stringify({ [DASH_PROOF]: 0.72, [DASH_SINGLE]: 0.28 }))}::jsonb, NOW());`,
+  );
+  // getLeverDecisionsHistory reads decision.subject.{weights,archived,samples}
+  // unguarded, so every row carries the whole block. `vitals` stays out: a
+  // 'futile' verdict would raise the futility attention item.
+  const sample = (variantId, total, replies, rewardSum) => ({ variantId, total, responses: replies, rewardSum });
+  const cycleRetire = {
+    subject: {
+      weights: { [DASH_PROOF]: 0.55, [DASH_SINGLE]: 0.2, rst_20260715_a: 0.13, rst_20260715_c: 0.12 },
+      archived: [
+        { variantId: 'rst_20260715_a', pBest: 0.02, n: 30 },
+        { variantId: 'rst_20260715_c', pBest: 0.01, n: 32 },
+      ],
+      // rewardSum is a sum over the arm's replies, not a rate.
+      samples: [
+        sample(DASH_PROOF, 114, 10, 6.5),
+        sample(DASH_SINGLE, 30, 1, 0.5),
+        sample('rst_20260715_a', 30, 1, 0.5),
+        sample('rst_20260715_c', 32, 1, 0.5),
+      ],
+    },
+  };
+  const cycleToday = {
+    subject: {
+      weights: { [DASH_PROOF]: 0.72, [DASH_SINGLE]: 0.28 },
+      archived: [],
+      samples: [sample(DASH_PROOF, 152, 12, 7), sample(DASH_SINGLE, 34, 1, 0.5)],
+    },
+  };
+  psql(
+    `INSERT INTO lever_decisions (tenant_id, project_id, cycle_date, decision) VALUES
+     (${q(tenant)}, ${q(projectId)}, ${q(ymd(now - 7 * DAY))}, ${q(JSON.stringify(cycleRetire))}::jsonb),
+     (${q(tenant)}, ${q(projectId)}, ${q(ymd(now))}, ${q(JSON.stringify(cycleToday))}::jsonb);`,
+  );
+  const learnings = DASH_LEARNINGS.map((line) =>
+    line.replace(/\[D-(\d+)\]/, (_, d) => `[${ymd(now - Number(d) * DAY)}]`),
+  );
+  psql(
+    `INSERT INTO project_documents (tenant_id, project_id, slug, content, created_at, approved_at)
+     VALUES (${q(tenant)}, ${q(projectId)}, 'learnings', ${q(`# Learnings\n\n${learnings.join('\n')}\n`)}, NOW(), NOW());`,
+  );
+  // Without a connected mailbox the page leads with "Gmail disconnected".
+  // chk_sending_identities_secret_owner is why a non-alias identity has to
+  // carry secret bytes.
+  psql(
+    `INSERT INTO sending_identities (tenant_id, identity_id, user_id, provider, from_email, scope, secret, sign_in_account, granted_at, updated_at)
+     VALUES (${q(tenant)}, 'ui-dashboard-identity', ${q(ctx.persona.userId)}, 'gmail_oauth', 'sam@northwind-labs.example',
+             'https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly',
+             decode('00', 'hex'), true, NOW(), NOW());`,
+  );
+  // On the free plan this many contacted prospects trip the quota item and
+  // flip the header to "Paused".
+  psql(
+    `INSERT INTO tenant_plans (tenant_id, plan) VALUES (${q(tenant)}, 'unlimited')
+     ON CONFLICT (tenant_id) DO UPDATE SET plan = 'unlimited';`,
+  );
+}
+
 // ─── scenarios ──────────────────────────────────────────────────────────────
 
 const SCENARIOS = [
@@ -495,6 +755,22 @@ const SCENARIOS = [
       const prospects = await seedProspects(ctx, projectId, 8);
       await recordSent(ctx, projectId, prospects);
       return [{ name: 'page', path: '/plans', expect: ['Prepaid credits', '$25.00', '8 / 100'] }];
+    },
+  },
+  {
+    name: 'dashboard',
+    summary: 'The dashboard of a project with a month of outreach behind it',
+    stack: 'self-host',
+    setup: async (ctx) => {
+      const projectId = await seedProject(ctx, { name: 'SpeechMonster', settings: { outboundMode: 'send' } });
+      seedDashboardFixture(ctx, projectId);
+      return [
+        {
+          name: 'page',
+          path: '/dashboard',
+          expect: ['2 meeting requests waiting', 'Optimizing across 2 message angles', 'Three minutes a day'],
+        },
+      ];
     },
   },
 ];

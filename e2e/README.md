@@ -481,9 +481,10 @@ informational only.
 
 Some screens never show up in a developer's own local workspace: the
 sign-in page (you are already signed in), the first chat of a workspace
-with no project, a tool call waiting for approval, the billing screens
-(self-host hides them), account deletion, and the `/q` page a recipient
-sees. `frontend/scripts/ui-scenarios.mjs` seeds that state and opens it.
+with no project, a tool call waiting for approval, a dashboard with a
+month of outreach behind it, the billing screens (self-host hides them),
+account deletion, and the `/q` page a recipient sees.
+`frontend/scripts/ui-scenarios.mjs` seeds that state and opens it.
 
 ```bash
 cd frontend

@@ -434,7 +434,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: '22' }
+        with: { node-version: '24' }
       # Migrate (Session Pooler URL, port 5432)
       - run: cd backend && npm ci && npm run db:migrate
         env:

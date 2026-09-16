@@ -253,7 +253,7 @@ PR), regenerate the lockfile under the repo's pinned toolchain — **not** in
 Docker:
 
 ```bash
-nvm use                 # node 22 (repo .nvmrc) — matches CI
+nvm use                 # node 24 (repo .nvmrc) — matches CI
 cd backend              # or cd frontend
 rm -rf node_modules     # removing this first is what avoids the prune
 npm install --no-audit --no-fund

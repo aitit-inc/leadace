@@ -33,11 +33,11 @@ lock file`. This is an npm-version / stale-`node_modules` issue, not a
 macOS-vs-Linux one.
 
 **Only when you change `package.json` or `package-lock.json`**, regenerate the
-lockfile under the repo's pinned toolchain (node 22 via `.nvmrc`, matching CI):
+lockfile under the repo's pinned toolchain (node 24 via `.nvmrc`, matching CI):
 
 ```sh
 # from frontend/
-nvm use                    # node 22 (repo .nvmrc) — matches CI
+nvm use                    # node 24 (repo .nvmrc) — matches CI
 rm -rf node_modules        # removing this first is what avoids the prune
 npm install --no-audit --no-fund
 ```
