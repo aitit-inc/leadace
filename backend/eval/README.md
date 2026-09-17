@@ -46,7 +46,8 @@ means anything is fresh ∩ fit.
 The subjects under test are the production prompts in
 `src/services/pipeline/discover.ts`, imported directly. Non-deploy asset like
 `sim/` and `scripts/probe-*.ts`: outside the Worker bundle and the main `tsc`
-project, run by hand.
+project. CI compiles `eval/` and `sim/` but never runs them — every run here
+is by hand.
 
 ## Running
 

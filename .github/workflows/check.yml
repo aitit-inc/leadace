@@ -22,6 +22,9 @@ jobs:
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
       - run: npm run typecheck
+      # Compiled so a rename in src/ cannot break sim/ and eval/ unnoticed.
+      - run: npx tsc --noEmit -p sim
+      - run: npx tsc --noEmit -p eval
       - run: npm test
 
   frontend:

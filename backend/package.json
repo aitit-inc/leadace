@@ -30,6 +30,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260815.1",
     "@hono/zod-validator": "^0.8.0",
+    "@types/node": "^24.13.5",
     "drizzle-kit": "^0.31.10",
     "drizzle-zod": "^0.8.3",
     "tsx": "^4.23.0",

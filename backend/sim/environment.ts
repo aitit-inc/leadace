@@ -299,7 +299,7 @@ export function runScenario(scenario: Scenario, seed: number, params: SimParams)
       }
     }
     const vitals = assessVitals(
-      { sends: vitalsSends, replies: vitalsReplies },
+      { sends: vitalsSends, engaged: vitalsReplies },
       config,
       seededRng(`vitals:${seed}`),
       mcSamples,

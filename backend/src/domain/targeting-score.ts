@@ -26,13 +26,17 @@ export const PRIORITY_MULTIPLIERS: Readonly<Record<1 | 2 | 3 | 4 | 5, number>> =
 
 const clampLift = (v: number): number => Math.min(LIFT_MAX, Math.max(LIFT_MIN, v))
 
-// Add-one smoothing keeps r0 > 0 and stable at tiny n.
+// rewardSum sums per-signal rewards, so one send drawing several exceeds total.
+const clampReward = (rewardSum: number, total: number): number => Math.min(Math.max(rewardSum, 0), total)
+
+// Add-one smoothing keeps r0 > 0 and stable at tiny n. Clamped per bucket, or
+// the baseline lands above the rate any bucket can reach.
 export function overallMeanReward(stats: TargetingAxisStat[]): number {
   let total = 0
   let reward = 0
   for (const s of stats) {
     total += s.total
-    reward += s.rewardSum
+    reward += clampReward(s.rewardSum, s.total)
   }
   return (reward + 1) / (total + 2)
 }
@@ -45,7 +49,7 @@ export function computeAxisLifts(
 ): TargetingAxisLift[] {
   return stats.map(({ value, total, rewardSum }) => {
     if (total === 0) return { value, lift: 1.0 }
-    const posterior = (priorStrength * r0 + rewardSum) / (priorStrength + total)
+    const posterior = (priorStrength * r0 + clampReward(rewardSum, total)) / (priorStrength + total)
     return { value, lift: clampLift(posterior / r0) }
   })
 }

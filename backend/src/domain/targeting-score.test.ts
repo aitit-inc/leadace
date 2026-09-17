@@ -24,6 +24,11 @@ describe('overallMeanReward', () => {
     expect(overallMeanReward([])).toBeCloseTo(0.5, 10)
     expect(overallMeanReward([stat('a', 100, 0)])).toBeGreaterThan(0)
   })
+
+  it('caps each bucket before summing, so the baseline stays a rate a bucket can reach', () => {
+    // Every send engaged, so the rate is 1; unclamped the sum reads 15/14.
+    expect(overallMeanReward([stat('a', 2, 4), stat('b', 10, 10)])).toBeCloseTo(13 / 14, 10)
+  })
 })
 
 describe('computeAxisLifts', () => {
@@ -49,6 +54,22 @@ describe('computeAxisLifts', () => {
   it('keeps unseen buckets exactly neutral (R5: no data moves nothing)', () => {
     const lifts = computeAxisLifts([stat('unseen', 0, 0), stat(null, 0, 0)], r0, 25)
     expect(lifts.map((l) => l.lift)).toEqual([1.0, 1.0])
+  })
+
+  it('caps rewardSum at total (one send can draw several signals)', () => {
+    // r0 = 1 keeps both arms clear of the [0.5, 2.0] clamp; at a realistic r0
+    // it pins both at LIFT_MAX and hides the difference.
+    const [over] = computeAxisLifts([stat('over', 2, 3)], 1, 25)
+    const [full] = computeAxisLifts([stat('full', 2, 2)], 1, 25)
+    expect(full!.lift).toBeCloseTo(1.0, 10)
+    expect(over!.lift).toBe(full!.lift)
+  })
+
+  it('ranks the better-evidenced bucket higher when both fully engaged', () => {
+    // r0 through overallMeanReward, not hand-picked: uncapped it inverts these.
+    const stats = [stat('small', 2, 4), stat('large', 10, 10)]
+    const [small, large] = computeAxisLifts(stats, overallMeanReward(stats), 25)
+    expect(large!.lift).toBeGreaterThan(small!.lift)
   })
 
   it('preserves the null bucket as its own value', () => {

@@ -8,8 +8,9 @@ calibrated to measured production values. Latest sweep results and the
 defaults recommendations: [REPORT.md](./REPORT.md).
 
 Non-deploy asset, like `scripts/probe-*.ts`: outside the Worker bundle and
-the main `tsc` project. Nothing runs it automatically — it is executed by
-hand when a calibration question comes up.
+the main `tsc` project. CI compiles it so a rename in `src/` cannot break it
+unnoticed, but never runs it — sweeps happen by hand when a calibration
+question comes up.
 
 ## Running
 
