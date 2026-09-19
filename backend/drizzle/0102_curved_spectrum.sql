@@ -1,0 +1,1 @@
+DROP TABLE "grounding_usage" CASCADE;

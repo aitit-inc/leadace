@@ -1285,13 +1285,6 @@ export const masterDocuments = pgTable('master_documents', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 })
 
-// Grounding queries per UTC month across every tenant: Google's free quota
-// is per API project. Not tenant-scoped, no RLS (like master_documents).
-export const groundingUsage = pgTable('grounding_usage', {
-  month: text('month').primaryKey(),
-  searchQueries: integer('search_queries').notNull(),
-})
-
 // Reviewed out-of-band by the maintainer — no admin UI yet.
 export const BUG_REPORT_CATEGORIES = ['bug', 'feedback', 'idea'] as const
 export type BugReportCategory = (typeof BUG_REPORT_CATEGORIES)[number]

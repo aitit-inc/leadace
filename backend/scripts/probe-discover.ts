@@ -77,8 +77,6 @@ console.log = (o: unknown) => {
 }
 // 2026 list prices per MTok by model; the flex tier is billed at half.
 const PRICES: Record<string, { input: number; cached: number; output: number }> = {
-  'gemini-3.8-flash': { input: 0.75, cached: 0.075, output: 3.75 },
-  'gemini-3.1-flash-lite': { input: 0.1, cached: 0.01, output: 0.4 },
   'gpt-5.6-luna': { input: 0.2, cached: 0.02, output: 1.2 },
   'gpt-5.6-terra': { input: 2, cached: 0.2, output: 12 },
 }

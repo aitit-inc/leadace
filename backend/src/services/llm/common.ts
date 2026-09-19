@@ -40,6 +40,6 @@ export type LlmUsage = {
   searchCalls: number
 }
 
-export function logUsage(call: { op: string; model: string; tier: string }, usage: LlmUsage): void {
-  console.log({ message: `[llm] ${call.op}`, ...llmScope.getStore(), op: call.op, model: call.model, tier: call.tier, ...usage })
+export function logUsage(call: { op: string; model: string; tier: string; elapsedMs: number }, usage: LlmUsage): void {
+  console.log({ message: `[llm] ${call.op}`, ...llmScope.getStore(), op: call.op, model: call.model, tier: call.tier, elapsedMs: call.elapsedMs, ...usage })
 }

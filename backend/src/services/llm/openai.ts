@@ -29,30 +29,30 @@ function clientOf(call: OpenAICall): OpenAI {
   return new OpenAI({ apiKey: call.apiKey, maxRetries: 0 })
 }
 
-function toLlmError(e: unknown, call: OpenAICall, tier: Tier, timeoutMs: number, deadline: AbortSignal): LlmError {
+function toLlmError(e: unknown, call: OpenAICall, tier: Tier, timeoutMs: number, deadline: AbortSignal, elapsedMs: number): LlmError {
   if (deadline.aborted || e instanceof OpenAI.APIConnectionTimeoutError) {
-    console.error('OpenAI request timed out', { op: call.op, tier, timeoutMs })
+    console.error('OpenAI request timed out', { op: call.op, tier, timeoutMs, elapsedMs })
     return new LlmError(`upstream LLM request timed out after ${timeoutMs}ms`, 504)
   }
   // An error event inside a stream arrives as an APIError with no status.
   if (e instanceof OpenAI.APIError) {
-    if (tier === 'flex' && e.status === FLEX_SHED_STATUS) console.warn('OpenAI flex shed', { op: call.op })
+    if (tier === 'flex' && e.status === FLEX_SHED_STATUS) console.warn('OpenAI flex shed', { op: call.op, elapsedMs })
     // Upstream detail can carry prompt fragments — log, never surface.
-    else console.error('OpenAI request non-2xx', { op: call.op, tier, status: e.status, detail: e.message })
+    else console.error('OpenAI request non-2xx', { op: call.op, tier, status: e.status, elapsedMs, detail: e.message })
     return new LlmError('upstream LLM request failed', e.status ?? 502)
   }
   if (e instanceof OpenAI.APIConnectionError) {
-    console.error('OpenAI request failed', { op: call.op, tier, detail: e.message })
+    console.error('OpenAI request failed', { op: call.op, tier, elapsedMs, detail: e.message })
     return new LlmError('upstream LLM request failed', 502)
   }
   // With an API key the SDK rethrows a failed body read as it came from fetch.
   if (e instanceof TypeError) {
-    console.error('OpenAI response body failed', { op: call.op, tier, detail: e.message })
+    console.error('OpenAI response body failed', { op: call.op, tier, elapsedMs, detail: e.message })
     return new LlmError('upstream LLM request failed', 502)
   }
   // responses.parse runs JSON.parse and the zod schema on the answer.
   if (e instanceof SyntaxError || e instanceof z.ZodError) {
-    console.error('OpenAI structured output did not parse', { op: call.op, detail: e.message.slice(0, 300) })
+    console.error('OpenAI structured output did not parse', { op: call.op, elapsedMs, detail: e.message.slice(0, 300) })
     return new LlmError('upstream LLM output did not match the schema', 502)
   }
   throw e
@@ -64,13 +64,14 @@ type Send<R> = (tier: Tier, deadline: AbortSignal) => Promise<R>
 // covering the call once headers arrive — an error body can stall past it.
 async function attempt<R extends Response>(call: OpenAICall, tier: Tier, timeoutMs: number, send: Send<R>): Promise<R> {
   const deadline = AbortSignal.timeout(timeoutMs)
+  const startedAt = Date.now()
   let response: R
   try {
     response = await send(tier, deadline)
   } catch (e) {
-    throw toLlmError(e, call, tier, timeoutMs, deadline)
+    throw toLlmError(e, call, tier, timeoutMs, deadline, Date.now() - startedAt)
   }
-  logOpenAIUsage(call, response, tier)
+  logOpenAIUsage(call, response, tier, Date.now() - startedAt)
   if (response.status !== 'completed') {
     console.error('OpenAI response incomplete', { op: call.op, status: response.status, reason: response.incomplete_details?.reason })
     throw new LlmError(`upstream LLM response ${response.status ?? 'without status'}`, 502)
@@ -88,7 +89,7 @@ async function withTier<R extends Response>(call: OpenAICall, send: Send<R>): Pr
   }
 }
 
-function logOpenAIUsage(call: OpenAICall, response: Response, tier: Tier): void {
+function logOpenAIUsage(call: OpenAICall, response: Response, tier: Tier, elapsedMs: number): void {
   const u = response.usage
   // Each web_search_call item bills as one call, whatever its action (matched
   // the Usage dashboard when measured).
@@ -96,7 +97,7 @@ function logOpenAIUsage(call: OpenAICall, response: Response, tier: Tier): void 
   const queries = searches.flatMap((o) => (o.action?.type === 'search' ? (o.action.queries ?? (o.action.query === undefined ? [] : [o.action.query])) : []))
   const reasoning = u?.output_tokens_details.reasoning_tokens ?? 0
   logUsage(
-    { op: call.op, model: call.model, tier: response.service_tier ?? tier },
+    { op: call.op, model: call.model, tier: response.service_tier ?? tier, elapsedMs },
     {
       input: u?.input_tokens ?? 0,
       cachedInput: u?.input_tokens_details.cached_tokens ?? 0,
@@ -130,9 +131,8 @@ export function withoutOpenAITag(url: string): string {
 }
 
 // A `url_citation` span is the citation marker in the text, not the sentence
-// it supports (unlike Gemini's grounding supports), so a passage names a page
-// rather than stating a claim. Offsets are part-local: each slice comes from
-// its own part's text.
+// it supports, so a passage names a page rather than stating a claim. Offsets
+// are part-local: each slice comes from its own part's text.
 export function citationsOf(parts: TextPart[]): Citation[] {
   const byPassage = new Map<string, Set<string>>()
   for (const part of parts) {
@@ -268,6 +268,7 @@ export async function* streamOpenAIChat(args: OpenAICall & ChatRequest): AsyncGe
   if (args.signal.aborted) return
   const client = clientOf(args)
   const deadline = AbortSignal.timeout(args.timeoutMs)
+  const startedAt = Date.now()
   try {
     const stream = await client.responses.create(
       {
@@ -292,17 +293,17 @@ export async function* streamOpenAIChat(args: OpenAICall & ChatRequest): AsyncGe
           yield { type: 'text', text: event.delta }
           break
         case 'response.completed':
-          logOpenAIUsage(args, event.response, 'default')
+          logOpenAIUsage(args, event.response, 'default', Date.now() - startedAt)
           yield { type: 'completed', responseId: event.response.id, calls: callsOf(args, event.response) }
           return
         // Cut off (the output cap): the person has read the text, so it stands
         // like a stopped answer; the response is not continued.
         case 'response.incomplete':
-          logOpenAIUsage(args, event.response, 'default')
+          logOpenAIUsage(args, event.response, 'default', Date.now() - startedAt)
           console.warn('OpenAI response incomplete', { op: args.op, reason: event.response.incomplete_details?.reason })
           return
         case 'response.failed':
-          logOpenAIUsage(args, event.response, 'default')
+          logOpenAIUsage(args, event.response, 'default', Date.now() - startedAt)
           console.error('OpenAI response failed', { op: args.op, code: event.response.error?.code, detail: event.response.error?.message })
           throw new LlmError('upstream LLM response failed', 502)
       }
@@ -314,6 +315,6 @@ export async function* streamOpenAIChat(args: OpenAICall & ChatRequest): AsyncGe
   } catch (e) {
     if (args.signal.aborted) return
     if (e instanceof LlmError) throw e
-    throw toLlmError(e, args, 'default', args.timeoutMs, deadline)
+    throw toLlmError(e, args, 'default', args.timeoutMs, deadline, Date.now() - startedAt)
   }
 }

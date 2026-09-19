@@ -22,7 +22,9 @@
  *
  * Usage (from backend/, OPENAI_API_KEY in .dev.vars). Every
  * command takes `--provider gemini|openai`, default openai; collect runs only
- * what production runs, which is openai:
+ * what production runs, which is openai. `--extractor <model>` extracts with
+ * that model instead of the production route's; collect takes a comma list and
+ * extracts every model from the same search:
  *   npx tsx eval/run.ts collect  <target>   # run production discover, write candidates.json
  *   npx tsx eval/run.ts snapshot <target>   # freeze page text for candidates + reference
  *   npx tsx eval/run.ts hits     <target>   # qualifying-term hits per snapshot, for the adjudicator
@@ -34,7 +36,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { z } from 'zod'
 import { extractionPrompt, extractionSchema, searchPrompt, shapeCandidates } from '../src/services/pipeline/discover'
-import { callLlmFollowUpJson, callLlmGroundedText, LlmError, type GroundedText, type LlmEnv } from '../src/services/llm'
+import { callLlmGroundedText, LlmError, type GroundedText, type LlmEnv } from '../src/services/llm'
+import { callOpenAIFollowUpJson } from '../src/services/llm/openai'
+import { OPENAI_ROUTES } from '../src/services/llm/routes'
 import { apexDomainOf, parseIndustryVocabulary } from '../src/services/pipeline/context'
 import { utcDateKey } from '../src/domain/time'
 import { discoverCandidateSchema } from '../src/domain/jobs'
@@ -45,6 +49,10 @@ const DATA = resolve(__dirname, 'data.local')
 // the switch, which still score against the same labels.
 const PROVIDERS = ['gemini', 'openai'] as const
 type Provider = (typeof PROVIDERS)[number]
+
+// Which collection a command reads or writes. extractor null: the production
+// route's model, under the names runs had before extractors could differ.
+type Run = { provider: Provider; extractor: string | null }
 
 // What a pass cost, in the units the `[llm]` log records.
 const usageSchema = z.object({
@@ -137,12 +145,16 @@ function legacyCostOf(provider: Provider, usage: Usage): number {
 // Each provider writes beside the other, so both score against one label set.
 // Gemini keeps the unsuffixed names, so a run collected before `--provider`
 // existed still scores.
-function passesDir(dir: string, provider: Provider): string {
-  return resolve(dir, provider === 'gemini' ? 'passes' : `passes.${provider}`)
+function runName({ provider, extractor }: Run): string {
+  return extractor === null ? provider : `${provider}.${extractor}`
 }
 
-function candidatesPath(dir: string, provider: Provider): string {
-  return resolve(dir, provider === 'gemini' ? 'candidates.json' : `candidates.${provider}.json`)
+function passesDir(dir: string, run: Run): string {
+  return resolve(dir, run.provider === 'gemini' ? 'passes' : `passes.${runName(run)}`)
+}
+
+function candidatesPath(dir: string, run: Run): string {
+  return resolve(dir, run.provider === 'gemini' ? 'candidates.json' : `candidates.${runName(run)}.json`)
 }
 
 // Verdict meanings: README.md. `unreachable` is a fit with no contact channel,
@@ -206,6 +218,7 @@ const candidatesSchema = z.object({
   collectedAt: z.string().min(1),
   specFrozenAt: z.string().min(1),
   provider: z.enum(PROVIDERS).default('gemini'),
+  extractor: z.string().nullable().default(null),
   passes: z.array(
     z.object({
       strategy: z.string().min(1),
@@ -263,8 +276,14 @@ async function onceMore<T>(label: string, call: () => Promise<T>): Promise<T> {
   }
 }
 
-async function collect(target: string, provider: Provider): Promise<void> {
+function extract(env: LlmEnv, extractor: string | null, args: { after: GroundedText; prompt: string }): Promise<z.infer<typeof extractionSchema>> {
+  const route = OPENAI_ROUTES['discover.extract']
+  return callOpenAIFollowUpJson({ op: 'discover.extract', apiKey: env.OPENAI_API_KEY, ...route, model: extractor ?? route.model, ...args, schema: extractionSchema })
+}
+
+async function collect(target: string, provider: Provider, extractors: (string | null)[]): Promise<void> {
   if (provider !== 'openai') throw new Error('collect runs production discover, which runs on openai; gemini runs can only be scored')
+  const runs = extractors.map((extractor) => ({ provider, extractor }))
   const dir = targetDir(target)
   const spec = readJson(resolve(dir, 'spec.json'), specSchema)
   const env: LlmEnv = { OPENAI_API_KEY: envKey('OPENAI_API_KEY') }
@@ -274,13 +293,15 @@ async function collect(target: string, provider: Provider): Promise<void> {
   // Serial and with searchNotes null: every pass must face the same blank
   // slate, or a later pass is scored on knowledge the earlier one bought.
   // Each pass lands on disk before the next starts, because a search is paid
-  // for per call — delete a pass file to re-buy just that one.
-  mkdirSync(passesDir(dir, provider), { recursive: true })
+  // for per call — delete a pass file to re-buy just that one. Extractors
+  // compared on one search are rewritten together, so a pair never mixes two
+  // searches.
+  for (const run of runs) mkdirSync(passesDir(dir, run), { recursive: true })
   const passSchema = candidatesSchema.shape.passes.element
   const unfinished: string[] = []
   for (const entry of spec.strategies) {
-    const passPath = resolve(passesDir(dir, provider), `${entry.slug}.json`)
-    if (existsSync(passPath)) {
+    const passPaths = runs.map((run) => resolve(passesDir(dir, run), `${entry.slug}.json`))
+    if (passPaths.every((p) => existsSync(p))) {
       process.stderr.write(`[collect] ${entry.slug} — already collected, skipping\n`)
       continue
     }
@@ -295,13 +316,13 @@ async function collect(target: string, provider: Provider): Promise<void> {
       today,
     })
     let search: GroundedText
-    let usage: Usage
-    let cost: number
+    let searchUsage: Usage
+    let searchCost: number
     try {
       const searched = await onceMore(`${entry.slug} search`, () => withUsage(() => callLlmGroundedText(env, 'discover.search', { prompt })))
       search = searched.value
-      usage = searched.usage
-      cost = searched.cost
+      searchUsage = searched.usage
+      searchCost = searched.cost
     } catch (e) {
       // No pass file: the search never landed, so a rerun re-buys only this one.
       if (!(e instanceof LlmError)) throw e
@@ -310,42 +331,47 @@ async function collect(target: string, provider: Provider): Promise<void> {
       continue
     }
 
-    let extracted: z.infer<typeof extractionSchema> | null = null
-    let extractionFailed: string | null = null
     const extractPrompt = extractionPrompt({ search, industries, priorNotes: null, today, strategySlug: entry.slug })
-    try {
-      const result = await onceMore(`${entry.slug} extraction`, () =>
-        withUsage(() => callLlmFollowUpJson(env, 'discover.extract', { after: search, prompt: extractPrompt, schema: extractionSchema })),
-      )
-      extracted = result.value
-      usage = addUsage(usage, result.usage)
-      cost += result.cost
-    } catch (e) {
-      if (!(e instanceof LlmError)) throw e
-      extractionFailed = e.message
+    // Each pass carries the search's cost too, so it reads as one production pass.
+    for (const [i, run] of runs.entries()) {
+      let extracted: z.infer<typeof extractionSchema> | null = null
+      let extractionFailed: string | null = null
+      let usage = searchUsage
+      let cost = searchCost
+      try {
+        const result = await onceMore(`${entry.slug} extraction (${runName(run)})`, () => withUsage(() => extract(env, run.extractor, { after: search, prompt: extractPrompt })))
+        extracted = result.value
+        usage = addUsage(usage, result.usage)
+        cost += result.cost
+      } catch (e) {
+        if (!(e instanceof LlmError)) throw e
+        extractionFailed = e.message
+      }
+      const candidates = shapeCandidates(extracted?.candidates ?? [], entry, industries, search.citations)
+      writeJson(passPaths[i]!, {
+        strategy: entry.slug,
+        searchQueries: usage.searchQueries,
+        searchText: search.text,
+        candidates,
+        extractionFailed,
+        usage,
+        cost,
+      })
     }
-    const candidates = shapeCandidates(extracted?.candidates ?? [], entry, industries, search.citations)
-    writeJson(passPath, {
-      strategy: entry.slug,
-      searchQueries: usage.searchQueries,
-      searchText: search.text,
-      candidates,
-      extractionFailed,
-      usage,
-      cost,
-    })
   }
 
-  const passes = spec.strategies.flatMap((s) => {
-    const passPath = resolve(passesDir(dir, provider), `${s.slug}.json`)
-    return existsSync(passPath) ? [readJson(passPath, passSchema)] : []
-  })
-  const out = candidatesPath(dir, provider)
-  writeJson(out, { collectedAt: new Date().toISOString(), specFrozenAt: spec.frozenAt, provider, passes })
-  const total = passes.reduce((n, p) => n + p.candidates.length, 0)
-  const queries = passes.reduce((n, p) => n + p.searchQueries, 0)
-  console.log(`collected ${total} candidates over ${passes.length}/${spec.strategies.length} strategies, ${queries} search queries → ${out}`)
-  for (const p of passes.filter((x) => x.extractionFailed !== null)) console.log(`  extraction failed after a retry: ${p.strategy} — ${p.extractionFailed ?? ''}`)
+  for (const run of runs) {
+    const passes = spec.strategies.flatMap((s) => {
+      const passPath = resolve(passesDir(dir, run), `${s.slug}.json`)
+      return existsSync(passPath) ? [readJson(passPath, passSchema)] : []
+    })
+    const out = candidatesPath(dir, run)
+    writeJson(out, { collectedAt: new Date().toISOString(), specFrozenAt: spec.frozenAt, provider, extractor: run.extractor, passes })
+    const total = passes.reduce((n, p) => n + p.candidates.length, 0)
+    const queries = passes.reduce((n, p) => n + p.searchQueries, 0)
+    console.log(`collected ${total} candidates over ${passes.length}/${spec.strategies.length} strategies, ${queries} search queries → ${out}`)
+    for (const p of passes.filter((x) => x.extractionFailed !== null)) console.log(`  extraction failed after a retry: ${p.strategy} — ${p.extractionFailed ?? ''}`)
+  }
   for (const slug of unfinished) console.log(`  search never landed, rerun to re-buy: ${slug}`)
 }
 
@@ -433,12 +459,12 @@ async function snapshotSite(url: string): Promise<string> {
   return `${parts.join('\n\n')}\n`
 }
 
-async function snapshot(target: string, provider: Provider): Promise<void> {
+async function snapshot(target: string, run: Run): Promise<void> {
   const dir = targetDir(target)
   const out = resolve(dir, 'snapshots')
   mkdirSync(out, { recursive: true })
   const sites = new Map<string, string>()
-  for (const p of readJson(candidatesPath(dir, provider), candidatesSchema).passes) {
+  for (const p of readJson(candidatesPath(dir, run), candidatesSchema).passes) {
     for (const c of p.candidates) {
       const domain = apexDomainOf(c.websiteUrl)
       if (domain !== null && !sites.has(domain)) sites.set(domain, c.websiteUrl)
@@ -468,13 +494,13 @@ async function snapshot(target: string, provider: Provider): Promise<void> {
 
 // --- score -----------------------------------------------------------------
 
-function score(target: string, provider: Provider): void {
+function score(target: string, run: Run): void {
   const dir = targetDir(target)
-  const collected = readJson(candidatesPath(dir, provider), candidatesSchema)
+  const collected = readJson(candidatesPath(dir, run), candidatesSchema)
   const labels = readJson(resolve(dir, 'labels.json'), labelsSchema)
   const domainsOf = (urls: string[]): string[] => [...new Set(urls.flatMap((u) => apexDomainOf(u) ?? []))]
 
-  console.log(`\n== ${target} — ${collected.provider} (collected ${collected.collectedAt.slice(0, 10)}, spec frozen ${collected.specFrozenAt})`)
+  console.log(`\n== ${target} — ${runName(collected)} (collected ${collected.collectedAt.slice(0, 10)}, spec frozen ${collected.specFrozenAt})`)
 
   // A pass with zero search queries answered from the model's memory, which
   // the design forbids as a source of candidates. The OpenAI API can omit a
@@ -593,9 +619,9 @@ function termHits(body: string, term: string): { count: number; excerpts: string
 
 // A command of its own because the order is the point: the counts have to be in
 // front of the adjudicator before a verdict is written (README.md).
-function hits(target: string, provider: Provider): void {
+function hits(target: string, run: Run): void {
   const dir = targetDir(target)
-  const collected = readJson(candidatesPath(dir, provider), candidatesSchema)
+  const collected = readJson(candidatesPath(dir, run), candidatesSchema)
   const { terms } = readJson(resolve(dir, 'signals.json'), signalsSchema)
   const snapshots = resolve(dir, 'snapshots')
 
@@ -645,16 +671,30 @@ function hits(target: string, provider: Provider): void {
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2)
-  const flag = args.indexOf('--provider')
-  const named = flag === -1 ? 'openai' : (args[flag + 1] ?? '')
+  const option = (name: string): string | null => {
+    const at = args.indexOf(name)
+    if (at === -1) return null
+    const value = args[at + 1] ?? ''
+    args.splice(at, 2)
+    return value
+  }
+  const named = option('--provider') ?? 'openai'
   const provider = PROVIDERS.find((p) => p === named)
   if (provider === undefined) throw new Error(`unknown provider "${named}" — expected ${PROVIDERS.join(' or ')}`)
-  const [command, target] = flag === -1 ? args : [...args.slice(0, flag), ...args.slice(flag + 2)]
-  if (target === undefined) throw new Error('usage: run.ts <collect|snapshot|hits|score> <target> [--provider gemini|openai]')
-  if (command === 'collect') return collect(target, provider)
-  if (command === 'snapshot') return snapshot(target, provider)
-  if (command === 'hits') return hits(target, provider)
-  if (command === 'score') return score(target, provider)
+  const extractors = option('--extractor')?.split(',') ?? [null]
+  // Checked before collect buys a search it could not price or file.
+  for (const m of extractors) if (m !== null && MODEL_PRICES[m] === undefined) throw new Error(`no price for extractor "${m}" — expected one of ${Object.keys(MODEL_PRICES).join(', ')}`)
+  if (new Set(extractors).size < extractors.length) throw new Error('an extractor is named twice')
+  if (provider === 'gemini' && extractors[0] !== null) throw new Error('--extractor names OpenAI runs only')
+  const [command, target] = args
+  if (target === undefined) throw new Error('usage: run.ts <collect|snapshot|hits|score> <target> [--provider gemini|openai] [--extractor <model>[,<model>…]]')
+  if (command === 'collect') return collect(target, provider, extractors)
+  const [extractor, ...more] = extractors
+  if (extractor === undefined || more.length > 0) throw new Error(`${command ?? ''} reads one run — pass one --extractor`)
+  const run = { provider, extractor }
+  if (command === 'snapshot') return snapshot(target, run)
+  if (command === 'hits') return hits(target, run)
+  if (command === 'score') return score(target, run)
   throw new Error(`unknown command "${command ?? ''}" — expected collect, snapshot, hits or score`)
 }
 

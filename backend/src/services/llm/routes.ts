@@ -7,11 +7,13 @@ export type FollowUpJsonOp = 'discover.extract'
 
 // Search skips flex: its bill is mostly per call, which flex does not halve,
 // and flex ran past 120 s where standard answered in about 65 s (2026-09-19).
-// Extraction judges each candidate's fit, so it runs on the stronger model;
-// flex answered it in 25–42 s.
+// Extraction picks from what the search found: on the same search, Luna
+// chose the same organizations as Terra across 13 eval passes at a tenth of
+// the cost (2026-09-19). Production inputs of up to 136k tokens ran past
+// standard's 120 s.
 export const OPENAI_ROUTES: Record<JsonOp | PagesJsonOp | GroundedTextOp | FollowUpJsonOp | 'chat', OpenAIRoute> = {
   'discover.search': { model: 'gpt-5.6-luna', timeoutMs: 180_000, flexTimeoutMs: null, maxOutputTokens: 24_576 },
-  'discover.extract': { model: 'gpt-5.6-terra', timeoutMs: 120_000, flexTimeoutMs: 60_000, maxOutputTokens: 49_152 },
+  'discover.extract': { model: 'gpt-5.6-luna', timeoutMs: 180_000, flexTimeoutMs: 60_000, maxOutputTokens: 49_152 },
   draft: { model: 'gpt-5.6-luna', timeoutMs: 120_000, flexTimeoutMs: 60_000, maxOutputTokens: 8_192 },
   // Flex answered in 85–104 s with the strategy rewritten (2026-09-19).
   evaluate: { model: 'gpt-5.6-luna', timeoutMs: 240_000, flexTimeoutMs: 180_000, maxOutputTokens: 32_768 },

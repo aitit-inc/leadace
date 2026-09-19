@@ -77,10 +77,16 @@ only runs `openai`, what production runs; `gemini` names the runs collected
 before the switch, which `snapshot`, `hits` and `score` still read. Each writes
 beside the other (`passes/` + `candidates.json` for Gemini, `passes.openai/` +
 `candidates.openai.json` for OpenAI), so both score against one set of labels.
+`--extractor <model>` extracts with that model instead of the route's and
+writes `passes.openai.<model>/` + `candidates.openai.<model>.json`. `collect`
+takes a comma list (`--extractor gpt-5.6-terra,gpt-5.6-luna`) and extracts
+every model from the same search, so the difference is the model's alone —
+only for passes collected in that one call, since an existing pass is skipped.
 Snapshots and `labels.json` are keyed by domain and shared: a verdict is about
-the organization, not about which provider surfaced it. The OpenAI runs from
-before the switch extracted with Luna; delete `passes.openai/` to collect
-afresh.
+the organization, not about which provider surfaced it. `passes.openai/`
+records no extractor model: it holds whatever the route used when each pass
+was collected (Luna for the passes of 2026-09-17). Pass `--extractor` to pin
+the model.
 
 `collect` records the tokens, cached tokens, reasoning tokens, search calls and
 unique queries each call reported, and the pass's list-price cost by model;

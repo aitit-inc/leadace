@@ -715,6 +715,13 @@
       "when": 1789570644212,
       "tag": "0101_vitals_engaged",
       "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "7",
+      "when": 1789792921931,
+      "tag": "0102_curved_spectrum",
+      "breakpoints": true
     }
   ]
 }
