@@ -1,9 +1,9 @@
 ---
 name: quick-refactor
-description: "Cleanup pass on a change once its PR is open, before the Codex review. Triggers: 'quick refactor', 'quick-refactor', 'リファクタリング', 'refactor what we just did'. Forked Opus subagent at xhigh effort."
+description: "Cleanup pass on a change once its PR is open, before the Codex review. Triggers: 'quick refactor', 'quick-refactor', 'リファクタリング', 'refactor what we just did'. Forked Opus subagent at high effort."
 context: fork
 model: opus
-effort: xhigh
+effort: high
 ---
 
 # Quick refactor

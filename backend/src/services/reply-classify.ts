@@ -1,6 +1,5 @@
-import { Type, type Schema } from '@google/genai'
 import { z } from 'zod'
-import { callGeminiStructured } from './gemini'
+import { callLlmJson, type LlmEnv } from './llm'
 
 // LLM classification of a genuine human reply; bounce / auto_reply are settled
 // deterministically upstream (domain/reply-classify) and never come from here.
@@ -9,23 +8,12 @@ export type ReplyClassification = {
   responseType: 'reply' | 'meeting_request' | 'rejection' | 'unsubscribe'
 }
 
-const GEMINI_CLASSIFY_MODEL = 'gemini-3.1-flash-lite'
-
 const RESPONSE_TYPES = ['reply', 'meeting_request', 'rejection', 'unsubscribe'] as const
 
 const classificationSchema = z.object({
   sentiment: z.enum(['positive', 'neutral', 'negative']),
   responseType: z.enum(RESPONSE_TYPES),
 })
-
-const RESPONSE_SCHEMA: Schema = {
-  type: Type.OBJECT,
-  properties: {
-    sentiment: { type: Type.STRING, enum: ['positive', 'neutral', 'negative'] },
-    responseType: { type: Type.STRING, enum: [...RESPONSE_TYPES] },
-  },
-  required: ['sentiment', 'responseType'],
-}
 
 function prompt(subject: string | null, bodyText: string): string {
   return [
@@ -44,22 +32,11 @@ function prompt(subject: string | null, bodyText: string): string {
 // Every failure mode (upstream error, empty/non-JSON, off-schema) collapses to
 // null; the caller falls back to a neutral 'reply' so a hiccup never drops a reply.
 export async function classifyReply(
-  env: { GEMINI_API_KEY: string },
+  env: LlmEnv,
   args: { subject: string | null; bodyText: string },
 ): Promise<ReplyClassification | null> {
   try {
-    const raw = await callGeminiStructured({
-      op: 'reply-classify',
-      apiKey: env.GEMINI_API_KEY,
-      model: GEMINI_CLASSIFY_MODEL,
-      timeoutMs: 60_000,
-      prompt: prompt(args.subject, args.bodyText),
-      responseSchema: RESPONSE_SCHEMA,
-      temperature: 0,
-      maxOutputTokens: 200,
-    })
-    const parsed = classificationSchema.safeParse(JSON.parse(raw))
-    return parsed.success ? parsed.data : null
+    return await callLlmJson(env, 'reply-classify', { prompt: prompt(args.subject, args.bodyText), schema: classificationSchema })
   } catch {
     return null
   }
@@ -74,15 +51,6 @@ export type SentEmail = {
 }
 
 const domainMatchSchema = z.object({ outreachLogId: z.number().int(), reason: z.string() })
-
-const DOMAIN_MATCH_SCHEMA: Schema = {
-  type: Type.OBJECT,
-  properties: {
-    outreachLogId: { type: Type.INTEGER },
-    reason: { type: Type.STRING },
-  },
-  required: ['outreachLogId', 'reason'],
-}
 
 function domainMatchPrompt(reply: { fromEmail: string; subject: string | null; bodyText: string }, sent: SentEmail[]): string {
   return [
@@ -107,24 +75,13 @@ function domainMatchPrompt(reply: { fromEmail: string; subject: string | null; b
 
 // Any failure is no match; the next poll judges the reply again.
 export async function matchSameDomainReply(
-  env: { GEMINI_API_KEY: string },
+  env: LlmEnv,
   reply: { fromEmail: string; subject: string | null; bodyText: string },
   sent: SentEmail[],
 ): Promise<{ outreachLogId: number; reason: string } | null> {
   try {
-    const raw = await callGeminiStructured({
-      op: 'reply-domain-match',
-      apiKey: env.GEMINI_API_KEY,
-      model: GEMINI_CLASSIFY_MODEL,
-      timeoutMs: 60_000,
-      prompt: domainMatchPrompt(reply, sent),
-      responseSchema: DOMAIN_MATCH_SCHEMA,
-      temperature: 0,
-      maxOutputTokens: 300,
-    })
-    const parsed = domainMatchSchema.safeParse(JSON.parse(raw))
-    if (!parsed.success || !sent.some((s) => s.outreachLogId === parsed.data.outreachLogId)) return null
-    return parsed.data
+    const match = await callLlmJson(env, 'reply-domain-match', { prompt: domainMatchPrompt(reply, sent), schema: domainMatchSchema })
+    return sent.some((s) => s.outreachLogId === match.outreachLogId) ? match : null
   } catch {
     return null
   }

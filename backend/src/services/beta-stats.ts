@@ -1,7 +1,6 @@
 import { sql, count } from 'drizzle-orm'
 import { planEnum, tenantPlans } from '../db/schema'
 import type { Db } from '../db/connection'
-import { GROUNDING_FREE_QUERIES_PER_MONTH, groundingQuotaWarning, readGroundingQueries } from './grounding-usage'
 
 type Plan = (typeof planEnum.enumValues)[number]
 
@@ -32,7 +31,6 @@ export type BetaStats = {
   }
   bugs: number
   plans: Partial<Record<Plan, number>>
-  groundingQueries: number
 }
 
 // Through the prod transaction pooler (Supavisor, prepare:false) postgres-js
@@ -58,7 +56,7 @@ type SnapshotRow = {
   bugs: string | number
 }
 
-export async function collectBetaStats(db: Db, now: Date): Promise<BetaStats> {
+export async function collectBetaStats(db: Db): Promise<BetaStats> {
   // One round-trip for all counts. tenants stands in for signups: the
   // auth.users trigger creates a tenant with every account. The inquiry /
   // reply breakdowns are FILTER aggregates inside a single per-table scan
@@ -101,7 +99,6 @@ export async function collectBetaStats(db: Db, now: Date): Promise<BetaStats> {
     .groupBy(tenantPlans.plan)
   const plans: Partial<Record<Plan, number>> = {}
   for (const r of planRows) plans[r.plan] = r.n
-  const groundingQueries = await readGroundingQueries(db, now)
 
   return {
     usersDay: Number(snap.users_day),
@@ -125,7 +122,6 @@ export async function collectBetaStats(db: Db, now: Date): Promise<BetaStats> {
     },
     bugs: Number(snap.bugs),
     plans,
-    groundingQueries,
   }
 }
 
@@ -157,7 +153,6 @@ export function formatBetaStats(stats: BetaStats, now: Date): string {
     )
   }
   lines.push(`💳 ${planLine}`)
-  lines.push(`🔎 Grounding ${stats.groundingQueries} / ${GROUNDING_FREE_QUERIES_PER_MONTH} queries this month${groundingQuotaWarning(stats.groundingQueries)}`)
   return lines.join('\n')
 }
 
@@ -169,7 +164,7 @@ export async function runDailyBetaStats(
   if (!webhookUrl) return // cloud-only; no-op on self-host / local
 
   const now = new Date()
-  const stats = await collectBetaStats(db, now)
+  const stats = await collectBetaStats(db)
   const text = formatBetaStats(stats, now)
 
   const res = await fetch(webhookUrl, {

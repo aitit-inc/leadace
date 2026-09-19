@@ -11,7 +11,7 @@ A target is `BLOCKED` when its membership is not `owner`, when the tenant has ot
 
 ## Procedure (production)
 
-Production requires user approval for every DB operation, dry-run included (`docs/tasks.local.md` §prod DB). Two approvals, one per command:
+Production requires user approval for every DB operation, dry-run included. Two approvals, one per command:
 
 1. Inventory (read only) — present the command, get OK, run:
    ```bash

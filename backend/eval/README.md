@@ -55,6 +55,7 @@ is by hand.
 cd backend
 npx tsx eval/run.ts collect  <target>   # production discover → candidates.json
 npx tsx eval/run.ts snapshot <target>   # freeze page text for candidates + reference
+npx tsx eval/run.ts hits     <target>   # qualifying-term hits per snapshot, read before labelling
 npx tsx eval/run.ts score    <target>   # precision, coverage, verdict counts
 npx tsc --noEmit -p eval
 
@@ -67,7 +68,26 @@ npx tsx --env-file=.env.production eval/learning.ts --tenant <id> [--project <id
 counts every signal a send came back with, including the ones the reward
 function weights at zero.
 
-`collect` spends grounding queries — the same ones a production cycle spends.
+`collect` runs the production discover calls (`discover.search` and
+`discover.extract` as `services/llm/routes.ts` configures them) and spends what
+a production cycle spends.
+
+Every command takes `--provider gemini|openai` (default `openai`). `collect`
+only runs `openai`, what production runs; `gemini` names the runs collected
+before the switch, which `snapshot`, `hits` and `score` still read. Each writes
+beside the other (`passes/` + `candidates.json` for Gemini, `passes.openai/` +
+`candidates.openai.json` for OpenAI), so both score against one set of labels.
+Snapshots and `labels.json` are keyed by domain and shared: a verdict is about
+the organization, not about which provider surfaced it. The OpenAI runs from
+before the switch extracted with Luna; delete `passes.openai/` to collect
+afresh.
+
+`collect` records the tokens, cached tokens, reasoning tokens, search calls and
+unique queries each call reported, and the pass's list-price cost by model;
+`score` sums them. The two search bills are not the same unit: Gemini charged
+per unique grounded query, OpenAI per `web_search` call with the retrieved
+content billed as input tokens, so `score` prints both counts beside the
+money.
 
 ## Target data
 
@@ -80,6 +100,7 @@ page text stay on the machine that built them.
 | `candidates.json` | `collect` | What discover returned per strategy, with the search text and query count behind it |
 | `snapshots/<domain>.md` | `snapshot` | Front page plus up to 3 linked about / news / careers pages, decoded by the declared charset |
 | `reference.json` | hand | The reference list, each entry carrying `why` it qualifies and `foundVia` which source |
+| `signals.json` | hand | `{ "terms": [...] }` — the qualifying observables of the spec, what `hits` counts |
 | `labels.json` | hand | `{ "<apex-domain>": { verdict, basis, reason, evidenceUrl, quote, by } }` |
 
 A verdict judges the candidate against the frozen spec, on the frozen snapshot:
@@ -99,8 +120,8 @@ A verdict judges the candidate against the frozen spec, on the frozen snapshot:
 The line between the last two carries no discretion: a page that froze with
 real body text and no qualifying signal is `prereq_unmet`, never `unknown`.
 `unknown` names a failure of this harness's fetch layer, not a property of the
-candidate. Write the verdict with the signal hits in front of you — an audit of
-this harness's own labels found three that asserted an absence the frozen page
+candidate. Run `hits` first and label from its output: an audit of this
+harness's own labels found three that asserted an absence the frozen page
 contradicted, the same mistake the `fabricated_reason` verdict exists to catch.
 
 `basis` records how much of a verdict is opinion: `page-fact` when the frozen
@@ -113,6 +134,13 @@ points an audit at the rows worth re-reading.
 Coverage counts only reference entries labelled `fit` or `unreachable`: an entry
 the adjudication rejected was our own mistake, not a miss.
 
+What `hits` counts, so a number in its output is read for what it is: literal,
+case-insensitive substring matches, non-overlapping per term but counted per
+term, so `mcp` and `.mcp.json` both score the same text; three excerpts at most;
+a term broken across a line break does not match; and the URLs `snapshot` writes
+as page headings are excluded, because they are this harness's text rather than
+the page's.
+
 ## Adding a target
 
 1. Write `spec.json`. For a real project, freeze what its `business` and
@@ -122,5 +150,7 @@ the adjudication rejected was our own mistake, not a miss.
 3. Build `reference.json` by hand against the same spec, researching sources
    properly rather than repeating the pipeline's searches. Snapshot again to
    freeze the entries discover missed.
-4. Label every domain, reading the snapshot rather than the live site.
+4. Write `signals.json`: the spec's qualifying observables, as terms a page
+   states. Run `hits` and label every domain from its output, reading the
+   snapshot rather than the live site.
 5. `score`.

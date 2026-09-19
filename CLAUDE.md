@@ -61,7 +61,10 @@ scenarios (e2e/README.md → UI scenarios).
   filters on it, and RLS enforces it at the DB level.
 - Compliance: `gmail.readonly` is a Google Restricted scope — the CASA AL1
   assessment must be renewed annually or reply-reading breaks. Runbook:
-  [docs/casa.md](docs/casa.md).
+  [docs/casa.md](docs/casa.md). Do not add `gmail.modify` or `gmail.compose`.
+- Collect only published email addresses. No pattern-guessing finders
+  (Hunter etc.): a guessed address is not a published one under Japan's
+  anti-spam act.
 
 ## Design Principles
 
@@ -85,7 +88,9 @@ scenarios (e2e/README.md → UI scenarios).
   so the plugin calls one self-contained tool — never a fixed multi-tool
   sequence (canonical: `send_email_and_record`). MCP surface: liberal with
   read tools, conservative with write tools; a destructive tool needs a read
-  counterpart (`list_drafts` → `discard_drafts`).
+  counterpart (`list_drafts` → `discard_drafts`). Never give the agent a
+  tool that loosens its own guardrails (mailbox caps, pauses) except behind a
+  user-approved card.
 - **MCP tool descriptions**: terse — they ship as context on every turn. An
   MCP tool answers with a text block, never JSON: describe what the emitted
   string carries, never a JSON shape, and never name a value the string

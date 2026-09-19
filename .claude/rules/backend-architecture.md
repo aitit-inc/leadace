@@ -17,7 +17,7 @@ before adding an endpoint.
 routes/    HTTP adapter: bind URL → service, validate input, map result to HTTP
 services/  Orchestration + DB I/O + external APIs
   pipeline/  Hosted-agent stages (discover / enrich / draft / evaluate / journal / strategy-draft): LLM calls + existing services
-  chat/      Hosted chat agent: thread store, system prompt, the Gemini function-calling loop
+  chat/      Hosted chat agent: thread store, system prompt, the OpenAI function-calling loop
 domain/    Branded types, state machines, pure rules. No I/O.
 db/        drizzle schema (single source of truth). No repository layer.
 tools/     The agent tool surface shared by the MCP worker and the chat agent; each tool calls the API through an injected callApi
@@ -34,7 +34,7 @@ jobs/      Cloudflare Workflow entrypoint + stage runners: puts pipeline stages 
 | `jobs/` | `services/`, `db/connection`, `db/rls`, `domain/`, `api/types` (types only), `cloudflare:workers` / `cloudflare:workflows` | `routes/`, `api/*` runtime, `hono` |
 
 Hosted-agent specifics:
-- A stage in `services/pipeline/` is a service: `(db, tenantId, env, projectId, …)` → `ServiceResult`. It never knows whether a Workflow step or a chat turn invoked it. Every LLM call goes through `services/gemini.ts` with a zod schema as the response constraint (`callGeminiJson` / `callGeminiUrlContextJson`); a stage that reads pages treats an empty `retrievedUrls` as "nothing was read". The one exception is search grounding, which the API will not let carry a schema: `callGeminiGroundedText` answers text, and the extraction call after it carries the schema.
+- A stage in `services/pipeline/` is a service: `(db, tenantId, env, projectId, …)` → `ServiceResult`. It never knows whether a Workflow step or a chat turn invoked it. Every LLM call goes through `services/llm` by op name with a zod schema as the response constraint (`callLlmJson` / `callLlmPagesJson`); the op's model, tier, timeout and token budget live in `services/llm/routes.ts`, never at the call site. A stage that reads pages treats an empty `retrievedUrls` as "nothing was read". The one exception is search grounding, which answers text: `callLlmGroundedText` returns it, and `callLlmFollowUpJson` continues from that search with the schema.
 - `jobs/` wraps stages in `step.do` — all side effects inside a step, step results serializable, one step per prospect where sends happen (`step.sleep` spaces them). The job path has no request transaction: a DB-only step body runs inside `tenantTx` (= `withTenantConnection`), and a pipeline stage that interleaves model calls with writes wraps each mutating service call in `runWithRls` on its own — one call, one transaction, RLS on — never the model call. `strategy-draft.ts` is request-served and must not (its caller's transaction is already open).
 - `Variables.caller` is `'browser' | 'agent'`: an MCP token or the chat's in-process dispatch (marked with the per-isolate token in `api/internal-dispatch.ts`, which no outside client can present) is an agent and only ever loses privileges (approved playbooks only, UI-only settings and workspace identity refused). `Variables.origin` (`ui | mcp | chat`) is the jobs ledger's `started_by`.
 - Chat turns run in `api/thread-runner.ts`, one Durable Object per thread: it takes a turn whenever the thread holds something unanswered (`hasUnanswered`) or an approval comes in, one at a time, and streams it to the thread's viewers over a WebSocket. Its routes (message / confirm / stop / live) run outside `rlsMiddleware` so a message commits before the runner is woken; the agent's tool calls re-enter the app via the injected dispatch and go through the normal auth + RLS stack.
@@ -86,6 +86,10 @@ Enforced by review (no lint rule yet).
   routes sit outside `rlsMiddleware`.
 - Prospect registration requires ≥1 contact channel (email, contactFormUrl,
   or snsAccounts) — enforced in the service layer.
+- Raw `db.execute` bypasses drizzle's mappers: over the pooler
+  (`prepare: false`) numbers and timestamps can come back as strings. Use the
+  typed builder; for SQL it cannot express, convert at the boundary
+  (`Number()`, `new Date()`) and type the row honestly (`string | Date`).
 
 ## Validation and IDs
 
@@ -145,6 +149,10 @@ npm run db:migrate                  # apply locally; commit schema.ts + drizzle/
   (local, staging, or prod) — generate a new migration instead. Edited files
   drift from actual DB state and break the drizzle hash ledger; recovery is
   manual SQL surgery on prod.
+- The one exception to hand-written SQL: if `db:generate` crashes on a table
+  rename, run `npm run db:generate -- --custom`, write the `RENAME` SQL, fix
+  the snapshot JSON by hand, then confirm `db:generate` shows no diff
+  (precedent: 0062).
 - When a migration adds a tenant-scoped table, append
   `GRANT SELECT, INSERT, UPDATE, DELETE ON <table> TO app_rls;` to the
   generated SQL. The `ALTER DEFAULT PRIVILEGES` from `0001_rls_policies.sql`

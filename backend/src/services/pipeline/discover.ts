@@ -16,7 +16,7 @@ import {
   type JobResult,
 } from '../../domain/jobs'
 import { ok, err, type ServiceResult } from '../result'
-import { callGeminiGroundedText, callGeminiJson, GeminiError, HOSTED_MODEL, type Citation, type GroundedText } from '../gemini'
+import { callLlmFollowUpJson, callLlmGroundedText, LlmError, type Citation, type GroundedText } from '../llm'
 import { getLeverStateById } from '../levers'
 import { loadProjectOutboundAllowlist } from '../project-settings'
 import { checkProspectDedup } from '../prospect-import'
@@ -24,7 +24,6 @@ import { discoveryPausedReason, getRemainingProspectQuota } from '../plan-limits
 import { saveDocument } from '../documents'
 import { utcDateKey } from '../../domain/time'
 import { runWithRls } from '../../db/rls'
-import { recordGroundingQueries } from '../grounding-usage'
 import {
   apexDomainOf,
   editionOf,
@@ -45,22 +44,31 @@ export type DiscoverOutput = {
 
 type PlanEntry = { slug: string; approach: string; count: number; planned: number }
 
-// Grounding bills per query, and a search spends 12–40 queries whether it is
-// asked for 3 candidates or 30 (probe 2026-09-13); the surplus registers as
+// A search costs about the same whether it is asked for 3 candidates or 30
+// (probe 2026-09-13: 12–40 queries either way); the surplus registers as
 // prospects later cycles draw on instead of searching again.
 export const CYCLE_MIN_CANDIDATES_PER_SEARCH = 10
 
+// Structured Outputs requires every field (absent = null) and rejects the
+// `uri` format, so shapeCandidates checks the URL.
 export const extractionSchema = z.object({
   candidates: z.array(
-    discoverCandidateSchema.omit({ discoveryStrategy: true, priority: true, matchSourceUrls: true }).extend({
-      priority: z.number().int().min(1).max(5),
-      matchPassages: z.array(z.number().int()).max(SIGNAL_MAX_SOURCES).default([]),
-      signals: z.array(z.object({ text: z.string().max(300), passages: z.array(z.number().int()) })).max(5).default([]),
-    }),
+    discoverCandidateSchema
+      .omit({ discoveryStrategy: true, priority: true, matchSourceUrls: true, websiteUrl: true, country: true, employeeBand: true, signals: true })
+      .extend({
+        websiteUrl: z.string().max(500),
+        country: discoverCandidateSchema.shape.country.unwrap().nullable(),
+        employeeBand: discoverCandidateSchema.shape.employeeBand.unwrap().nullable(),
+        priority: z.number().int().min(1).max(5),
+        matchPassages: z.array(z.number().int()).max(SIGNAL_MAX_SOURCES),
+        signals: z.array(z.object({ text: z.string().max(300), passages: z.array(z.number().int()) })).max(5),
+      }),
   ),
   // The whole search_notes document after this pass, merged with the prior one.
   searchNotes: z.string(),
 })
+
+type Extraction = z.infer<typeof extractionSchema>
 
 export function searchPrompt(args: {
   plan: Pick<PlanEntry, 'slug' | 'approach' | 'count'>
@@ -72,7 +80,7 @@ export function searchPrompt(args: {
   today: string
 }): string {
   const { plan } = args
-  return `You are Ace, LeadAce's prospect researcher. Today is ${args.today}. Find about ${Math.ceil(plan.count * 1.5)} candidate organizations for one discovery strategy, using Google Search and by opening the pages you find.
+  return `You are Ace, LeadAce's prospect researcher. Today is ${args.today}. Find about ${Math.ceil(plan.count * 1.5)} candidate organizations for one discovery strategy, using web search and by opening the pages you find.
 
 ## Discovery strategy "${plan.slug}"
 ${plan.approach}
@@ -162,6 +170,27 @@ export function sourcedSignals(signals: Array<{ text: string; passages: number[]
   })
 }
 
+export function shapeCandidates(
+  extracted: Extraction['candidates'],
+  plan: { slug: string; count: number },
+  industries: string[],
+  citations: Citation[],
+): DiscoverCandidate[] {
+  return extracted
+    .filter((c) => discoverCandidateSchema.shape.websiteUrl.safeParse(c.websiteUrl).success)
+    .map(({ matchPassages, country, employeeBand, signals, ...c }): DiscoverCandidate => ({
+      ...c,
+      ...(country !== null && { country }),
+      ...(employeeBand !== null && { employeeBand }),
+      industry: industries.includes(c.industry) ? c.industry : 'Other',
+      priority: c.priority as DiscoverCandidate['priority'],
+      discoveryStrategy: plan.slug,
+      matchSourceUrls: passageUrls(matchPassages, citations),
+      signals: sourcedSignals(signals, citations),
+    }))
+    .slice(0, Math.ceil(plan.count * 1.5))
+}
+
 export async function runDiscover(
   db: Db,
   tenantId: TenantId,
@@ -214,12 +243,7 @@ export async function runDiscover(
   const settled = await Promise.allSettled(
     plan.map(async (entry) => ({
       entry,
-      search: await callGeminiGroundedText({
-        op: 'discover.search',
-        tier: 'flex',
-        apiKey: env.GEMINI_API_KEY,
-        model: HOSTED_MODEL,
-        timeoutMs: 180_000,
+      search: await callLlmGroundedText(env, 'discover.search', {
         prompt: searchPrompt({
           plan: entry,
           business: docs.value.business,
@@ -229,19 +253,16 @@ export async function runDiscover(
           targetCountries: allowlist.targetCountries,
           today,
         }),
-        maxOutputTokens: 8192,
       }),
     })),
   )
   const searches = settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : []))
-  // Queries are spent whether or not every pass answered: count before failing.
-  await recordGroundingQueries(db, searches.reduce((n, s) => n + s.search.searchQueries, 0), new Date())
   // A pass upstream shed is that strategy's loss, not the batch's: a step retry
   // re-buys every search to recover one. Anything else is a bug and rejects.
   const shed = settled.flatMap((s, i) => {
     if (s.status === 'fulfilled') return []
     const reason: unknown = s.reason
-    if (!(reason instanceof GeminiError)) throw reason
+    if (!(reason instanceof LlmError)) throw reason
     return [{ slug: plan[i]!.slug, message: reason.message }]
   })
   const unavailable = shed.map((s) => s.slug)
@@ -253,38 +274,23 @@ export async function runDiscover(
   const found: DiscoverCandidate[] = []
   const planCompliance: Array<{ slug: string; planned: number; found: number }> = []
   let notes = searchNotes
-  let extractionShed: GeminiError | null = null
+  let extractionShed: LlmError | null = null
   for (const [i, { entry, search }] of searches.entries()) {
     await progress(`extracting: ${entry.slug}`, i, plan.length)
-    let extracted: z.infer<typeof extractionSchema>
+    let extracted: Extraction
     try {
-      extracted = await callGeminiJson({
-        op: 'discover.extract',
-        tier: 'flex',
-        apiKey: env.GEMINI_API_KEY,
-        model: HOSTED_MODEL,
-        timeoutMs: 120_000,
+      extracted = await callLlmFollowUpJson(env, 'discover.extract', {
+        after: search,
         prompt: extractionPrompt({ search, industries, priorNotes: notes, today, strategySlug: entry.slug }),
         schema: extractionSchema,
-        maxOutputTokens: 16384,
       })
     } catch (e) {
-      if (!(e instanceof GeminiError)) throw e
+      if (!(e instanceof LlmError)) throw e
       extractionShed ??= e
       unavailable.push(entry.slug)
       continue
     }
-    const withStrategy = extracted.candidates
-      .filter((c) => apexDomainOf(c.websiteUrl) !== null)
-      .map((c): DiscoverCandidate => ({
-        ...c,
-        industry: industries.includes(c.industry) ? c.industry : 'Other',
-        priority: c.priority as DiscoverCandidate['priority'],
-        discoveryStrategy: entry.slug,
-        matchSourceUrls: passageUrls(c.matchPassages, search.citations),
-        signals: sourcedSignals(c.signals, search.citations),
-      }))
-      .slice(0, Math.ceil(entry.count * 1.5))
+    const withStrategy = shapeCandidates(extracted.candidates, entry, industries, search.citations)
     planCompliance.push({ slug: entry.slug, planned: entry.planned, found: withStrategy.length })
     found.push(...withStrategy)
     notes = extracted.searchNotes

@@ -8,7 +8,7 @@ import type { Channel, OutboundChannel, OutboundMode } from '../../db/schema'
 import type { ProjectId, TenantId } from '../../domain/ids'
 import type { JobLogEntry, JobParamsOf, JobResult } from '../../domain/jobs'
 import { ok, type ServiceResult } from '../result'
-import { callGeminiJson, GeminiError, HOSTED_MODEL } from '../gemini'
+import { callLlmJson, LlmError } from '../llm'
 import { listReachable, recordSiteRead, type ReachableProspect, type ReachableQuery } from '../prospects'
 import { pickMessageVariant, type PickedVariant } from '../message-variants'
 import { getOutboundMode, getProjectSettings, type ProjectSettingsRow } from '../project-settings'
@@ -306,20 +306,13 @@ export async function draftOne(
   let composed: Composition | null
   try {
     composed = toComposition(
-      await callGeminiJson({
-        op: 'draft',
-        tier: 'flex',
-        apiKey: env.GEMINI_API_KEY,
-        model: HOSTED_MODEL,
-        timeoutMs: 90_000,
+      await callLlmJson(env, 'draft', {
         prompt: compositionPrompt({ p, channel, variant, ctx, today: utcDateKey(now) }),
         schema: compositionSchema,
-        thinking: 'LOW',
-        maxOutputTokens: 8192,
       }),
     )
   } catch (e) {
-    if (e instanceof GeminiError) return { kind: 'failed', error: `composition failed: ${e.message}`, at: 'model' }
+    if (e instanceof LlmError) return { kind: 'failed', error: `composition failed: ${e.message}`, at: 'model' }
     throw e
   }
   if (!composed) return { kind: 'failed', error: 'composition failed: the model answered without a usable subject and body', at: 'model' }

@@ -10,7 +10,7 @@ export const NOTIFICATIONS_PER_TENANT_PER_DAY = 100
 // Hosted chat agent turns (one person message = one slot); the tool calls a
 // turn makes are bounded separately by the agent loop.
 export const MAIN_CHAT_TURNS_PER_TENANT_PER_DAY = 300
-// URL → strategy drafts (onboarding); each reads a site through Gemini.
+// URL → strategy drafts (onboarding); each reads a site.
 export const STRATEGY_DRAFTS_PER_TENANT_PER_DAY = 10
 
 const LIMITS: Record<ChatRateScope, number> = {

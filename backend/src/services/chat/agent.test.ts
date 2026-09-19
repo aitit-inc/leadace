@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { inReadingOrder, termsChanged, toContents } from './agent'
+import type { ResponseInputItem } from 'openai/resources/responses/responses'
+import { contextOf, inReadingOrder, termsChanged, toItems } from './agent'
 import type { MessageView } from './threads'
 
 let nextId = 1
@@ -7,47 +8,85 @@ const msg = (content: MessageView['content'], readAfter: number | null = 0): Mes
 const call = (id: string) => ({ functionCall: { id, name: 'list_projects', args: {} } })
 const answer = (id: string) => ({ functionResponse: { id, name: 'list_projects', response: { result: 'ok' } } })
 
-describe('toContents', () => {
+function shape(item: ResponseInputItem): string {
+  if ('type' in item && item.type === 'function_call') return `call ${item.call_id}`
+  if ('type' in item && item.type === 'function_call_output') return `output ${item.call_id}`
+  if ('role' in item) return item.role
+  return 'other'
+}
+const outputOf = (items: ResponseInputItem[], callId: string) =>
+  items.flatMap((i) => ('type' in i && i.type === 'function_call_output' && i.call_id === callId ? [JSON.parse(i.output as string) as Record<string, unknown>] : []))[0]
+
+describe('toItems', () => {
   it('keeps an answered exchange verbatim', () => {
-    const contents = toContents([
+    const items = toItems([
       msg({ role: 'user', parts: [{ text: 'hi' }] }),
-      msg({ role: 'model', parts: [call('c1')] }),
+      msg({ role: 'model', parts: [{ text: 'Looking.' }, call('c1')] }),
       msg({ role: 'tool', parts: [answer('c1')] }),
     ])
-    expect(contents.map((c) => c.role)).toEqual(['user', 'model', 'user'])
-    expect(contents[2]?.parts).toEqual([answer('c1')])
+    expect(items.map(shape)).toEqual(['user', 'assistant', 'call c1', 'output c1'])
+    expect(outputOf(items, 'c1')).toEqual({ result: 'ok' })
   })
 
-  it('answers a call the turn never completed with an error response', () => {
-    const contents = toContents([
-      msg({ role: 'model', parts: [call('c1'), call('c2')] }),
-      msg({ role: 'user', parts: [{ text: 'still there?' }] }),
-    ])
-    expect(contents.map((c) => c.role)).toEqual(['model', 'user', 'user'])
-    expect(contents[1]?.parts?.map((p) => p.functionResponse?.id)).toEqual(['c1', 'c2'])
-    expect(contents[1]?.parts?.[0]?.functionResponse?.response).toHaveProperty('error')
+  it('answers a call the turn never completed with an error output', () => {
+    const items = toItems([msg({ role: 'model', parts: [call('c1'), call('c2')] }), msg({ role: 'user', parts: [{ text: 'still there?' }] })])
+    expect(items.map(shape)).toEqual(['call c1', 'call c2', 'output c1', 'output c2', 'user'])
+    expect(outputOf(items, 'c1')).toHaveProperty('error')
   })
 
   it('fills in only the calls a partial tool message left out', () => {
-    const contents = toContents([msg({ role: 'model', parts: [call('c1'), call('c2')] }), msg({ role: 'tool', parts: [answer('c2')] })])
-    expect(contents[1]?.parts?.map((p) => p.functionResponse?.id)).toEqual(['c2', 'c1'])
+    const items = toItems([msg({ role: 'model', parts: [call('c1'), call('c2')] }), msg({ role: 'tool', parts: [answer('c2')] })])
+    expect(items.map(shape)).toEqual(['call c1', 'call c2', 'output c2', 'output c1'])
   })
 
   it('moves a job notice that landed between a call and its answer after the answer', () => {
-    const contents = toContents([
+    const items = toItems([
       msg({ role: 'model', parts: [call('c1')] }),
       msg({ role: 'job', jobId: 'j1', kind: 'draft', status: 'succeeded', summary: 'done' }),
       msg({ role: 'tool', parts: [answer('c1')] }),
     ])
-    expect(contents.map((c) => c.role)).toEqual(['model', 'user', 'user'])
-    expect(contents[1]?.parts).toEqual([answer('c1')])
-    expect(contents[2]?.parts?.[0]?.text).toContain('Job draft j1')
+    expect(items.map(shape)).toEqual(['call c1', 'output c1', 'user'])
+    expect(outputOf(items, 'c1')).toEqual({ result: 'ok' })
   })
 
   it('answers a call cut off by the end of the window', () => {
-    const contents = toContents([msg({ role: 'model', parts: [call('c1')] })])
-    expect(contents).toHaveLength(2)
-    expect(contents[1]?.parts?.[0]?.functionResponse?.id).toBe('c1')
+    expect(toItems([msg({ role: 'model', parts: [call('c1')] })]).map(shape)).toEqual(['call c1', 'output c1'])
+  })
+})
+
+describe('contextOf', () => {
+  it('sends the whole thread when no stored response holds it', () => {
+    const context = contextOf([msg({ role: 'user', parts: [{ text: 'hi' }] }), msg({ role: 'model', parts: [{ text: 'Hello.' }] })])
+    expect(context.previousResponseId).toBeNull()
+    expect(context.input.map(shape)).toEqual(['user', 'assistant'])
+  })
+
+  it('continues the last stored response with only what came after it', () => {
+    const context = contextOf([
+      msg({ role: 'user', parts: [{ text: 'hi' }] }),
+      msg({ role: 'model', parts: [{ text: 'Hello.' }], responseId: 'resp_1' }),
+      msg({ role: 'user', parts: [{ text: 'list projects' }] }),
+      msg({ role: 'model', parts: [call('c1')], responseId: 'resp_2' }),
+      msg({ role: 'tool', parts: [answer('c1')] }),
+    ])
+    expect(context.previousResponseId).toBe('resp_2')
+    expect(context.input.map(shape)).toEqual(['output c1'])
+  })
+
+  it('answers the continued response\'s calls the person declined by moving on', () => {
+    const context = contextOf([msg({ role: 'model', parts: [call('c1')], responseId: 'resp_1' }), msg({ role: 'user', parts: [{ text: 'never mind' }] })])
+    expect(context.input.map(shape)).toEqual(['output c1', 'user'])
+  })
+
+  it('keeps an answer stopped mid-stream, which no stored response holds', () => {
+    const context = contextOf([
+      msg({ role: 'model', parts: [{ text: 'Hello.' }], responseId: 'resp_1' }),
+      msg({ role: 'user', parts: [{ text: 'tell me more' }] }),
+      msg({ role: 'model', parts: [{ text: 'Well, fir' }] }),
+      msg({ role: 'user', parts: [{ text: 'stop, shorter' }] }),
+    ])
+    expect(context.previousResponseId).toBe('resp_1')
+    expect(context.input.map(shape)).toEqual(['user', 'assistant', 'user'])
   })
 })
 
@@ -61,7 +100,7 @@ describe('inReadingOrder', () => {
     const firstReply = reply('Here they are.')
     const ordered = inReadingOrder([first, second, firstReply])
     expect(ordered).toEqual([first, firstReply, second])
-    expect(toContents(ordered).at(-1)?.parts).toEqual([{ text: 'and the drafts?' }])
+    expect(toItems(ordered).at(-1)).toEqual({ role: 'user', content: [{ type: 'input_text', text: 'and the drafts?' }] })
   })
 
   it('keeps that message where it was read in every later turn', () => {
@@ -72,8 +111,8 @@ describe('inReadingOrder', () => {
     const answered = msg({ role: 'tool', parts: [answer('c2')] })
     const secondReply = reply('Two drafts are waiting.')
     second.readAfter = firstReply.id
-    const contents = toContents(inReadingOrder([first, second, firstReply, asked, answered, secondReply]))
-    expect(contents.map((c) => c.role)).toEqual(['user', 'model', 'user', 'model', 'user', 'model'])
+    const items = toItems(inReadingOrder([first, second, firstReply, asked, answered, secondReply]))
+    expect(items.map(shape)).toEqual(['user', 'assistant', 'user', 'call c2', 'output c2', 'assistant'])
   })
 
   it('leaves rows read where they landed in place', () => {

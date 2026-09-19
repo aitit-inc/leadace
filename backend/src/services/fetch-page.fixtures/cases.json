@@ -1,0 +1,177 @@
+[
+ {
+  "name": "mailto link, URL-encoded, with a query",
+  "file": "mailto.html",
+  "source": "common on small-business sites",
+  "usable": true,
+  "contains": [
+   "sales@example.jp",
+   "info@example.jp"
+  ],
+  "absent": [
+   "mailto:",
+   "subject=Hello"
+  ]
+ },
+ {
+  "name": "Cloudflare email obfuscation on <a>, <span> and a protection link",
+  "file": "cf-email.html",
+  "source": "US startup site behind Cloudflare",
+  "usable": true,
+  "contains": [
+   "hello@example.jp",
+   "press@example.jp",
+   "jobs@example.jp"
+  ],
+  "absent": [
+   "protected]",
+   "email-protection"
+  ]
+ },
+ {
+  "name": "emails written with character references or [at]",
+  "file": "entities.html",
+  "source": "obfuscated contact lines",
+  "usable": true,
+  "contains": [
+   "info@example.jp",
+   "sales@example.jp",
+   "contact [at] example.jp"
+  ]
+ },
+ {
+  "name": "scripts, styles, comments, noscript and svg are dropped",
+  "file": "noise.html",
+  "source": "every CMS page",
+  "usable": true,
+  "contains": [
+   "Example Co. builds"
+  ],
+  "absent": [
+   "var gtag",
+   "color:red",
+   "old@example.jp",
+   "Enable JavaScript",
+   "logo"
+  ]
+ },
+ {
+  "name": "an unclosed script drops the rest and keeps what came before",
+  "file": "unclosed-script.html",
+  "source": "truncated or broken markup",
+  "usable": true,
+  "contains": [
+   "kept@example.jp"
+  ],
+  "absent": [
+   "tracker"
+  ]
+ },
+ {
+  "name": "Shift_JIS declared only in <meta>",
+  "file": "shift-jis.html",
+  "source": "JP public-sector and older company sites",
+  "contentType": "text/html",
+  "usable": true,
+  "contains": [
+   "株式会社サンプル",
+   "お問い合わせ：info@example.jp"
+  ]
+ },
+ {
+  "name": "Contact Form 7 form",
+  "file": "cf7-form.html",
+  "source": "WordPress company sites",
+  "usable": true,
+  "contains": [
+   "[form wordpress_cf7 action=\"/contact/#wpcf7-f12-o1\"]"
+  ]
+ },
+ {
+  "name": "Google Forms embedded and linked",
+  "file": "google-forms.html",
+  "source": "JP small businesses",
+  "usable": true,
+  "contains": [
+   "[iframe src=\"https://docs.google.com/forms/d/e/1FAIpQLSe_example/viewform?embedded=true\"]",
+   "お問い合わせフォーム https://forms.gle/Example123"
+  ]
+ },
+ {
+  "name": "reCAPTCHA script and Turnstile widget",
+  "file": "captcha.html",
+  "source": "inquiry pages",
+  "usable": true,
+  "contains": [
+   "[captcha]",
+   "[form action=\"/inquiry\"]"
+  ]
+ },
+ {
+  "name": "link list: JP labels, SNS, dedup, fragment dropped, no tel/javascript/mailto",
+  "file": "links.html",
+  "source": "JP company navigation and footer",
+  "usable": true,
+  "contains": [
+   "お問い合わせ https://example.jp/contact/",
+   "会社概要 https://example.jp/company.html",
+   "X https://x.com/example_jp",
+   "LinkedIn https://www.linkedin.com/company/example-jp/",
+   "ニュース https://example.jp/news?page=1&cat=2",
+   "チーム https://example.jp/about"
+  ],
+  "absent": [
+   "お問い合わせ（再掲） https://",
+   "#top",
+   "tel:",
+   "javascript:",
+   "mail https://",
+   "mailto:",
+   "#team"
+  ]
+ },
+ {
+  "name": "JS shell with almost no text",
+  "file": "js-shell.html",
+  "source": "Next.js / Shopify storefronts",
+  "usable": false
+ },
+ {
+  "name": "bot wall",
+  "file": "bot-wall.html",
+  "source": "US D2C sites behind Cloudflare",
+  "status": 403,
+  "usable": false
+ },
+ {
+  "name": "rate limited",
+  "file": "rate-limited.html",
+  "source": "Vercel-hosted storefront",
+  "status": 429,
+  "usable": false
+ },
+ {
+  "name": "PDF",
+  "file": "document.pdf",
+  "source": "claim pages that are reports",
+  "contentType": "application/pdf",
+  "usable": false
+ },
+ {
+  "name": "network failure (DNS, TLS, timeout)",
+  "source": "expired domains, mismatched certificates",
+  "fetchError": true,
+  "usable": false
+ },
+ {
+  "name": "redirect: the final URL is recorded and links resolve against it",
+  "file": "redirect.html",
+  "source": "apex to www / language path",
+  "finalUrl": "https://www.example.jp/ja/",
+  "usable": true,
+  "url": "https://www.example.jp/ja/",
+  "contains": [
+   "About https://www.example.jp/ja/about"
+  ]
+ }
+]

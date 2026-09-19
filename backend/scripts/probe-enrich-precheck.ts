@@ -7,16 +7,16 @@
  * so before / after are comparable; the pre-check is script-local until the
  * numbers say it should ship.
  *
- * Usage (from backend/, GEMINI_API_KEY in .dev.vars):
+ * Usage (from backend/, OPENAI_API_KEY in .dev.vars):
  *   npx tsx scripts/probe-enrich-precheck.ts [strategy-slug] [--count=N] [--out=path.json]
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { extractionPrompt, extractionSchema, passageUrls, searchPrompt, sourcedSignals } from '../src/services/pipeline/discover'
+import { extractionPrompt, extractionSchema, searchPrompt, shapeCandidates } from '../src/services/pipeline/discover'
 import { enrichCandidate } from '../src/services/pipeline/enrich'
-import { callGeminiGroundedText, callGeminiJson, GeminiError, HOSTED_MODEL, withLlmScope } from '../src/services/gemini'
-import { apexDomainOf, parseIndustryVocabulary, type HostedEnv } from '../src/services/pipeline/context'
+import { callLlmFollowUpJson, callLlmGroundedText, LlmError, withLlmScope } from '../src/services/llm'
+import { parseIndustryVocabulary, type HostedEnv } from '../src/services/pipeline/context'
 import { utcDateKey } from '../src/domain/time'
 import type { DiscoverCandidate } from '../src/domain/jobs'
 
@@ -30,9 +30,8 @@ const vars = Object.fromEntries(
       return m ? [[m[1], m[2]]] : []
     }),
 )
-const apiKey = vars['GEMINI_API_KEY']
-if (!apiKey) throw new Error('GEMINI_API_KEY missing from backend/.dev.vars')
-const env = { GEMINI_API_KEY: apiKey } as HostedEnv
+if (!vars['OPENAI_API_KEY']) throw new Error('OPENAI_API_KEY missing from backend/.dev.vars')
+const env = { OPENAI_API_KEY: vars['OPENAI_API_KEY'] } as HostedEnv
 
 const args = process.argv.slice(2)
 const only = args.find((a) => !a.startsWith('--'))
@@ -109,16 +108,27 @@ const strategies: Array<{ slug: string; approach: string; offer: Offer }> = [
 const industries = parseIndustryVocabulary(readFileSync(resolve(__dirname, '../seed-content/tpl_industries.md'), 'utf8'))
 const procedure = readFileSync(resolve(__dirname, '../seed-content/tpl_enrich_contacts.md'), 'utf8')
 
-type Usage = { jobId?: string; op: string; input: number; cachedInput: number; toolInput: number; output: number; thoughts: number; tier: string; searchQueries: number }
+type Usage = { jobId?: string; op: string; model: string; input: number; cachedInput: number; toolInput: number; output: number; thoughts: number; tier: string; searchCalls: number }
 const usages: Usage[] = []
 const log = console.log
 console.log = (o: unknown) => {
   if (o && typeof o === 'object' && 'op' in o) usages.push(o as Usage)
 }
-// 2026 list prices per MTok; the flex tier is billed at half.
+// 2026 list prices per MTok by model; the flex tier is billed at half.
+const PRICES: Record<string, { input: number; cached: number; output: number }> = {
+  'gemini-3.8-flash': { input: 0.75, cached: 0.075, output: 3.75 },
+  'gemini-3.1-flash-lite': { input: 0.1, cached: 0.01, output: 0.4 },
+  'gpt-5.6-luna': { input: 0.2, cached: 0.02, output: 1.2 },
+  'gpt-5.6-terra': { input: 2, cached: 0.2, output: 12 },
+}
 const tokenCost = (u: Usage[]) =>
-  u.reduce((a, x) => a + (((x.input + x.toolInput - x.cachedInput) * 0.75 + x.cachedInput * 0.075 + (x.output + x.thoughts) * 3.75) / 1e6) * (x.tier === 'flex' ? 0.5 : 1), 0)
-const GROUNDING_PER_QUERY = 0.014
+  u.reduce((a, x) => {
+    const p = PRICES[x.model]
+    if (!p) throw new Error(`no price for ${x.model}`)
+    return a + (((x.input + x.toolInput - x.cachedInput) * p.input + x.cachedInput * p.cached + (x.output + x.thoughts) * p.output) / 1e6) * (x.tier === 'flex' ? 0.5 : 1)
+  }, 0)
+// Web search bills per call.
+const SEARCH_PER_CALL = 0.01
 
 // ---- the cheap pre-check under test: static HTML, no model -----------------
 
@@ -230,55 +240,34 @@ type Row = {
 
 async function discover(plan: (typeof strategies)[number], count: number): Promise<DiscoverCandidate[]> {
   const today = utcDateKey()
-  const search = await callGeminiGroundedText({
-    op: 'bench.search',
-    tier: 'flex',
-    apiKey,
-    model: HOSTED_MODEL,
-    timeoutMs: 180_000,
+  const search = await callLlmGroundedText(env, 'discover.search', {
     prompt: searchPrompt({ plan: { slug: plan.slug, approach: plan.approach, count }, ...plan.offer, searchNotes: null, learnings: null, targetCountries: [], today }),
-    maxOutputTokens: 8192,
   })
-  const extracted = await callGeminiJson({
-    op: 'bench.extract',
-    tier: 'flex',
-    apiKey,
-    model: HOSTED_MODEL,
-    timeoutMs: 120_000,
+  const extracted = await callLlmFollowUpJson(env, 'discover.extract', {
+    after: search,
     prompt: extractionPrompt({ search, industries, priorNotes: null, today, strategySlug: plan.slug }),
     schema: extractionSchema,
-    maxOutputTokens: 16384,
   })
-  return extracted.candidates
-    .filter((c) => apexDomainOf(c.websiteUrl) !== null)
-    .map((c) => ({
-      ...c,
-      industry: industries.includes(c.industry) ? c.industry : 'Other',
-      priority: c.priority as DiscoverCandidate['priority'],
-      discoveryStrategy: plan.slug,
-      matchSourceUrls: passageUrls(c.matchPassages, search.citations),
-      signals: sourcedSignals(c.signals, search.citations),
-    }))
-    .slice(0, Math.ceil(count * 1.5))
+  return shapeCandidates(extracted.candidates, { slug: plan.slug, count }, industries, search.citations)
 }
 
 // A failed attempt is billed too, so the accounting spans both.
-async function discoverWithRetry(plan: (typeof strategies)[number], count: number): Promise<{ candidates: DiscoverCandidate[]; cost: number; queries: number }> {
+async function discoverWithRetry(plan: (typeof strategies)[number], count: number): Promise<{ candidates: DiscoverCandidate[]; cost: number; searches: number }> {
   const before = usages.length
   let candidates: DiscoverCandidate[]
   try {
     candidates = await discover(plan, count)
   } catch (e) {
-    if (!(e instanceof GeminiError)) throw e
+    if (!(e instanceof LlmError)) throw e
     log(`== ${plan.slug}: ${e.message} — retrying once`)
     candidates = await discover(plan, count)
   }
   const spent = usages.slice(before)
-  return { candidates, cost: tokenCost(spent), queries: spent.reduce((a, u) => a + u.searchQueries, 0) }
+  return { candidates, cost: tokenCost(spent), searches: spent.reduce((a, u) => a + u.searchCalls, 0) }
 }
 
-async function measure(plan: (typeof strategies)[number]): Promise<{ rows: Row[]; discoverCost: number; queries: number }> {
-  const { candidates, cost: discoverCost, queries } = await discoverWithRetry(plan, countArg)
+async function measure(plan: (typeof strategies)[number]): Promise<{ rows: Row[]; discoverCost: number; searches: number }> {
+  const { candidates, cost: discoverCost, searches } = await discoverWithRetry(plan, countArg)
   const offer = plan.offer.business.split('\n').slice(0, 20).join('\n')
   const rows: Row[] = []
   // Four at a time, as runEnrich does; the scope's jobId attributes each usage line to its candidate.
@@ -303,26 +292,26 @@ async function measure(plan: (typeof strategies)[number]): Promise<{ rows: Row[]
     )
     rows.push(...results)
   }
-  return { rows, discoverCost, queries }
+  return { rows, discoverCost, searches }
 }
 
 function pct(n: number, d: number): string {
   return d === 0 ? '—' : `${((100 * n) / d).toFixed(0)}%`
 }
 
-function report(all: Row[], discoverCost: number, queries: number): void {
+function report(all: Row[], discoverCost: number, searches: number): void {
   const n = all.length
   const registered = all.filter((r) => REGISTERS.includes(r.outcome))
   const withEmail = all.filter((r) => r.outcome === 'email')
   const enrichCost = all.reduce((a, r) => a + r.cost, 0)
   const wasted = all.filter((r) => !REGISTERS.includes(r.outcome))
   const wastedCost = wasted.reduce((a, r) => a + r.cost, 0)
-  const grounding = queries * GROUNDING_PER_QUERY
+  const searchCost = searches * SEARCH_PER_CALL
 
   log(`\n== all strategies: candidates ${n} | registered ${registered.length} (${pct(registered.length, n)}) | with a usable email ${withEmail.length} (${pct(withEmail.length, n)})`)
-  log(`discover token $${discoverCost.toFixed(3)} + grounding $${grounding.toFixed(2)} (${queries} queries, billed rate) | enrich $${enrichCost.toFixed(3)} (${(enrichCost / n).toFixed(4)} / read) | wasted on unregistrable reads $${wastedCost.toFixed(3)} (${pct(wasted.length, n)} of reads, ${pct(wastedCost, enrichCost)} of enrich $)`)
+  log(`discover token $${discoverCost.toFixed(3)} + search $${searchCost.toFixed(2)} (${searches} calls) | enrich $${enrichCost.toFixed(3)} (${(enrichCost / n).toFixed(4)} / read) | wasted on unregistrable reads $${wastedCost.toFixed(3)} (${pct(wasted.length, n)} of reads, ${pct(wastedCost, enrichCost)} of enrich $)`)
   const perEmail = (c: number) => (withEmail.length === 0 ? '—' : (c / withEmail.length).toFixed(3))
-  log(`per prospect with a usable email: enrich $${perEmail(enrichCost)} | discover+grounding $${perEmail(discoverCost + grounding)} | total $${perEmail(enrichCost + discoverCost + grounding)}`)
+  log(`per prospect with a usable email: enrich $${perEmail(enrichCost)} | discover+search $${perEmail(discoverCost + searchCost)} | total $${perEmail(enrichCost + discoverCost + searchCost)}`)
 
   log('\n== read outcome by pre-check verdict (rows = pre-check, cols = full read)')
   const outcomes: ReadOutcome[] = ['email', 'email_refused', 'form', 'form_refused', 'sns_only', 'no_contact_found', 'site_unreadable', 'read_failed', 'prereq_uncited', 'prereq_unverified']
@@ -366,18 +355,18 @@ function median(xs: number[]): number {
 async function main(): Promise<void> {
   const all: Row[] = []
   let discoverCost = 0
-  let queries = 0
+  let searches = 0
   for (const plan of strategies) {
     if (only && plan.slug !== only) continue
     const t0 = Date.now()
     const m = await measure(plan)
     all.push(...m.rows)
     discoverCost += m.discoverCost
-    queries += m.queries
+    searches += m.searches
     log(`== ${plan.slug}: ${m.rows.length} candidates, ${Math.round((Date.now() - t0) / 1000)} s`)
   }
-  report(all, discoverCost, queries)
-  if (outPath) writeFileSync(outPath, JSON.stringify({ date: utcDateKey(), count: countArg, discoverCost, queries, rows: all }, null, 2))
+  report(all, discoverCost, searches)
+  if (outPath) writeFileSync(outPath, JSON.stringify({ date: utcDateKey(), count: countArg, discoverCost, searches, rows: all }, null, 2))
 }
 
 main()

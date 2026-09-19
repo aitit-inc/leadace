@@ -18,14 +18,13 @@ import { getGmailAccessToken } from '../auth/google'
 import { pollGmailInbox } from './gmail-poll'
 import { pollImapInbox } from './imap-poll'
 import { classifyReply, matchSameDomainReply, type ReplyClassification } from './reply-classify'
-import { withLlmScope } from './gemini'
+import { withLlmScope, type LlmEnv } from './llm'
 import { recordResponse, type RecordResponseInput } from './responses'
 
-type ReplyIngestEnv = {
+type ReplyIngestEnv = LlmEnv & {
   GMAIL_TOKEN_ENCRYPTION_KEY: string
   GOOGLE_CLIENT_ID: string
   GOOGLE_CLIENT_SECRET: string
-  GEMINI_API_KEY: string
 }
 
 // A fixed lookback re-polled every run + dedup by source_message_id, NOT a

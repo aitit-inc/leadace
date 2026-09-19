@@ -20,9 +20,12 @@
  * Non-deploy asset, like `sim/` and `scripts/probe-*.ts`. Target data lives in
  * `eval/data.local/<target>/` and never leaves this machine.
  *
- * Usage (from backend/, GEMINI_API_KEY in .dev.vars):
+ * Usage (from backend/, OPENAI_API_KEY in .dev.vars). Every
+ * command takes `--provider gemini|openai`, default openai; collect runs only
+ * what production runs, which is openai:
  *   npx tsx eval/run.ts collect  <target>   # run production discover, write candidates.json
  *   npx tsx eval/run.ts snapshot <target>   # freeze page text for candidates + reference
+ *   npx tsx eval/run.ts hits     <target>   # qualifying-term hits per snapshot, for the adjudicator
  *   npx tsx eval/run.ts score    <target>   # precision, coverage, verdict counts
  *   npx tsc --noEmit -p eval
  */
@@ -30,13 +33,117 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { z } from 'zod'
-import { extractionPrompt, extractionSchema, passageUrls, searchPrompt, sourcedSignals } from '../src/services/pipeline/discover'
-import { callGeminiGroundedText, callGeminiJson, GeminiError, HOSTED_MODEL, type GroundedText } from '../src/services/gemini'
+import { extractionPrompt, extractionSchema, searchPrompt, shapeCandidates } from '../src/services/pipeline/discover'
+import { callLlmFollowUpJson, callLlmGroundedText, LlmError, type GroundedText, type LlmEnv } from '../src/services/llm'
 import { apexDomainOf, parseIndustryVocabulary } from '../src/services/pipeline/context'
 import { utcDateKey } from '../src/domain/time'
-import { discoverCandidateSchema, type DiscoverCandidate } from '../src/domain/jobs'
+import { discoverCandidateSchema } from '../src/domain/jobs'
 
 const DATA = resolve(__dirname, 'data.local')
+
+// Production discover runs on OpenAI. `gemini` names the runs collected before
+// the switch, which still score against the same labels.
+const PROVIDERS = ['gemini', 'openai'] as const
+type Provider = (typeof PROVIDERS)[number]
+
+// What a pass cost, in the units the `[llm]` log records.
+const usageSchema = z.object({
+  input: z.number(),
+  cached: z.number(),
+  output: z.number(),
+  reasoning: z.number(),
+  searchCalls: z.number(),
+  searchQueries: z.number(),
+})
+
+type Usage = z.infer<typeof usageSchema>
+
+const ZERO_USAGE: Usage = { input: 0, cached: 0, output: 0, reasoning: 0, searchCalls: 0, searchQueries: 0 }
+
+function addUsage(a: Usage, b: Usage): Usage {
+  return {
+    input: a.input + b.input,
+    cached: a.cached + b.cached,
+    output: a.output + b.output,
+    reasoning: a.reasoning + b.reasoning,
+    searchCalls: a.searchCalls + b.searchCalls,
+    searchQueries: a.searchQueries + b.searchQueries,
+  }
+}
+
+// USD per 1M tokens by model, at list (standard-tier) price. Search bills per
+// web_search call; Gemini billed grounding per unique query instead, so its
+// runs price by queries.
+const MODEL_PRICES: Record<string, { input: number; cached: number; output: number }> = {
+  'gemini-3.8-flash': { input: 0.75, cached: 0.075, output: 3.75 },
+  'gpt-5.6-luna': { input: 0.2, cached: 0.02, output: 1.2 },
+  'gpt-5.6-terra': { input: 2, cached: 0.2, output: 12 },
+}
+const SEARCH_PER_CALL = 0.01
+const GROUNDING_PER_QUERY = 0.014
+
+// Both providers report cached tokens inside input and bill them at the
+// cached rate instead of the input rate, not on top of it.
+function tokenCostOf(model: string, usage: Usage): number {
+  const p = MODEL_PRICES[model]
+  if (p === undefined) throw new Error(`no price for ${model}`)
+  return (
+    ((usage.input - usage.cached) / 1_000_000) * p.input +
+    (usage.cached / 1_000_000) * p.cached +
+    ((usage.output + usage.reasoning) / 1_000_000) * p.output
+  )
+}
+
+// The harness runs in node, where `logUsage` writes its record to stdout, so a
+// call's tokens and model can be read back without production returning them.
+async function withUsage<T>(call: () => Promise<T>): Promise<{ value: T; usage: Usage; cost: number }> {
+  const log = console.log
+  let usage = ZERO_USAGE
+  let cost = 0
+  console.log = (...args: unknown[]): void => {
+    const record = args[0]
+    if (typeof record === 'object' && record !== null && String((record as { message?: unknown }).message ?? '').startsWith('[llm]')) {
+      const r = record as Record<string, number>
+      const call: Usage = {
+        // Billed input is input + toolInput, per `LlmUsage` in services/llm/common.
+        input: (r['input'] ?? 0) + (r['toolInput'] ?? 0),
+        cached: r['cachedInput'] ?? 0,
+        output: r['output'] ?? 0,
+        reasoning: r['thoughts'] ?? 0,
+        searchCalls: r['searchCalls'] ?? 0,
+        searchQueries: r['searchQueries'] ?? 0,
+      }
+      usage = addUsage(usage, call)
+      cost += tokenCostOf(String((record as { model?: unknown }).model), call) + call.searchCalls * SEARCH_PER_CALL
+      return
+    }
+    log(...args)
+  }
+  try {
+    return { value: await call(), usage, cost }
+  } finally {
+    console.log = log
+  }
+}
+
+// A run collected before each pass recorded its own cost: one model per
+// provider served both stages then.
+function legacyCostOf(provider: Provider, usage: Usage): number {
+  return provider === 'gemini'
+    ? tokenCostOf('gemini-3.8-flash', usage) + usage.searchQueries * GROUNDING_PER_QUERY
+    : tokenCostOf('gpt-5.6-luna', usage) + usage.searchCalls * SEARCH_PER_CALL
+}
+
+// Each provider writes beside the other, so both score against one label set.
+// Gemini keeps the unsuffixed names, so a run collected before `--provider`
+// existed still scores.
+function passesDir(dir: string, provider: Provider): string {
+  return resolve(dir, provider === 'gemini' ? 'passes' : `passes.${provider}`)
+}
+
+function candidatesPath(dir: string, provider: Provider): string {
+  return resolve(dir, provider === 'gemini' ? 'candidates.json' : `candidates.${provider}.json`)
+}
 
 // Verdict meanings: README.md. `unreachable` is a fit with no contact channel,
 // a loss of the enrich stage, counted apart so it never flatters precision.
@@ -98,6 +205,7 @@ const labelsSchema = z.record(
 const candidatesSchema = z.object({
   collectedAt: z.string().min(1),
   specFrozenAt: z.string().min(1),
+  provider: z.enum(PROVIDERS).default('gemini'),
   passes: z.array(
     z.object({
       strategy: z.string().min(1),
@@ -105,6 +213,8 @@ const candidatesSchema = z.object({
       searchText: z.string(),
       candidates: z.array(discoverCandidateSchema),
       extractionFailed: z.string().nullable().default(null),
+      usage: usageSchema.nullable().default(null),
+      cost: z.number().nullable().default(null),
     }),
   ),
 })
@@ -124,16 +234,17 @@ function writeJson(path: string, value: unknown): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`)
 }
 
-function geminiKey(): string {
+function envKey(name: string): string {
   const devVars = resolve(__dirname, '../.dev.vars')
   if (!existsSync(devVars)) throw new Error(`${devVars} not found — run from backend/ with a .dev.vars`)
+  const pattern = new RegExp(`^${name}\\s*=\\s*"?([^"\n]*?)"?\\s*$`)
   const key = readFileSync(devVars, 'utf8')
     .split('\n')
     .flatMap((l) => {
-      const m = l.match(/^GEMINI_API_KEY\s*=\s*"?([^"\n]*?)"?\s*$/)
+      const m = l.match(pattern)
       return m?.[1] ? [m[1]] : []
     })[0]
-  if (!key) throw new Error('GEMINI_API_KEY missing from backend/.dev.vars')
+  if (!key) throw new Error(`${name} missing from backend/.dev.vars`)
   return key
 }
 
@@ -146,58 +257,54 @@ async function onceMore<T>(label: string, call: () => Promise<T>): Promise<T> {
   try {
     return await call()
   } catch (e) {
-    if (!(e instanceof GeminiError)) throw e
+    if (!(e instanceof LlmError)) throw e
     process.stderr.write(`[collect] ${label} failed (${e.message}) — retrying once\n`)
     return call()
   }
 }
 
-async function collect(target: string): Promise<void> {
+async function collect(target: string, provider: Provider): Promise<void> {
+  if (provider !== 'openai') throw new Error('collect runs production discover, which runs on openai; gemini runs can only be scored')
   const dir = targetDir(target)
   const spec = readJson(resolve(dir, 'spec.json'), specSchema)
-  const apiKey = geminiKey()
+  const env: LlmEnv = { OPENAI_API_KEY: envKey('OPENAI_API_KEY') }
   const industries = parseIndustryVocabulary(readFileSync(resolve(__dirname, '../seed-content/tpl_industries.md'), 'utf8'))
   const today = utcDateKey()
 
   // Serial and with searchNotes null: every pass must face the same blank
   // slate, or a later pass is scored on knowledge the earlier one bought.
   // Each pass lands on disk before the next starts, because a search is paid
-  // for in grounding queries — delete a pass file to re-buy just that one.
-  const passDir = resolve(dir, 'passes')
-  mkdirSync(passDir, { recursive: true })
+  // for per call — delete a pass file to re-buy just that one.
+  mkdirSync(passesDir(dir, provider), { recursive: true })
   const passSchema = candidatesSchema.shape.passes.element
   const unfinished: string[] = []
   for (const entry of spec.strategies) {
-    const passPath = resolve(passDir, `${entry.slug}.json`)
+    const passPath = resolve(passesDir(dir, provider), `${entry.slug}.json`)
     if (existsSync(passPath)) {
       process.stderr.write(`[collect] ${entry.slug} — already collected, skipping\n`)
       continue
     }
     process.stderr.write(`[collect] ${entry.slug}\n`)
+    const prompt = searchPrompt({
+      plan: entry,
+      business: spec.business,
+      salesStrategy: spec.salesStrategy,
+      searchNotes: null,
+      learnings: null,
+      targetCountries: spec.targetCountries,
+      today,
+    })
     let search: GroundedText
+    let usage: Usage
+    let cost: number
     try {
-      search = await onceMore(`${entry.slug} search`, () =>
-        callGeminiGroundedText({
-          op: 'eval.search',
-          tier: 'flex',
-          apiKey,
-          model: HOSTED_MODEL,
-          timeoutMs: 180_000,
-          prompt: searchPrompt({
-            plan: entry,
-            business: spec.business,
-            salesStrategy: spec.salesStrategy,
-            searchNotes: null,
-            learnings: null,
-            targetCountries: spec.targetCountries,
-            today,
-          }),
-          maxOutputTokens: 8192,
-        }),
-      )
+      const searched = await onceMore(`${entry.slug} search`, () => withUsage(() => callLlmGroundedText(env, 'discover.search', { prompt })))
+      search = searched.value
+      usage = searched.usage
+      cost = searched.cost
     } catch (e) {
       // No pass file: the search never landed, so a rerun re-buys only this one.
-      if (!(e instanceof GeminiError)) throw e
+      if (!(e instanceof LlmError)) throw e
       process.stderr.write(`[collect] ${entry.slug} — search unavailable (${e.message}), moving on\n`)
       unfinished.push(entry.slug)
       continue
@@ -205,46 +312,39 @@ async function collect(target: string): Promise<void> {
 
     let extracted: z.infer<typeof extractionSchema> | null = null
     let extractionFailed: string | null = null
+    const extractPrompt = extractionPrompt({ search, industries, priorNotes: null, today, strategySlug: entry.slug })
     try {
-      extracted = await onceMore(`${entry.slug} extraction`, () =>
-        callGeminiJson({
-          op: 'eval.extract',
-          tier: 'flex',
-          apiKey,
-          model: HOSTED_MODEL,
-          timeoutMs: 120_000,
-          prompt: extractionPrompt({ search, industries, priorNotes: null, today, strategySlug: entry.slug }),
-          schema: extractionSchema,
-          maxOutputTokens: 16384,
-        }),
+      const result = await onceMore(`${entry.slug} extraction`, () =>
+        withUsage(() => callLlmFollowUpJson(env, 'discover.extract', { after: search, prompt: extractPrompt, schema: extractionSchema })),
       )
+      extracted = result.value
+      usage = addUsage(usage, result.usage)
+      cost += result.cost
     } catch (e) {
-      if (!(e instanceof GeminiError)) throw e
+      if (!(e instanceof LlmError)) throw e
       extractionFailed = e.message
     }
-    // The shaping runDiscover applies before enrich sees a candidate.
-    const candidates: DiscoverCandidate[] = (extracted?.candidates ?? [])
-      .filter((c) => apexDomainOf(c.websiteUrl) !== null)
-      .map((c) => ({
-        ...c,
-        industry: industries.includes(c.industry) ? c.industry : 'Other',
-        priority: c.priority as DiscoverCandidate['priority'],
-        discoveryStrategy: entry.slug,
-        matchSourceUrls: passageUrls(c.matchPassages, search.citations),
-        signals: sourcedSignals(c.signals, search.citations),
-      }))
-      .slice(0, Math.ceil(entry.count * 1.5))
-    writeJson(passPath, { strategy: entry.slug, searchQueries: search.searchQueries, searchText: search.text, candidates, extractionFailed })
+    const candidates = shapeCandidates(extracted?.candidates ?? [], entry, industries, search.citations)
+    writeJson(passPath, {
+      strategy: entry.slug,
+      searchQueries: usage.searchQueries,
+      searchText: search.text,
+      candidates,
+      extractionFailed,
+      usage,
+      cost,
+    })
   }
 
   const passes = spec.strategies.flatMap((s) => {
-    const passPath = resolve(passDir, `${s.slug}.json`)
+    const passPath = resolve(passesDir(dir, provider), `${s.slug}.json`)
     return existsSync(passPath) ? [readJson(passPath, passSchema)] : []
   })
-  writeJson(resolve(dir, 'candidates.json'), { collectedAt: new Date().toISOString(), specFrozenAt: spec.frozenAt, passes })
+  const out = candidatesPath(dir, provider)
+  writeJson(out, { collectedAt: new Date().toISOString(), specFrozenAt: spec.frozenAt, provider, passes })
   const total = passes.reduce((n, p) => n + p.candidates.length, 0)
   const queries = passes.reduce((n, p) => n + p.searchQueries, 0)
-  console.log(`collected ${total} candidates over ${passes.length}/${spec.strategies.length} strategies, ${queries} search queries → ${resolve(dir, 'candidates.json')}`)
+  console.log(`collected ${total} candidates over ${passes.length}/${spec.strategies.length} strategies, ${queries} search queries → ${out}`)
   for (const p of passes.filter((x) => x.extractionFailed !== null)) console.log(`  extraction failed after a retry: ${p.strategy} — ${p.extractionFailed ?? ''}`)
   for (const slug of unfinished) console.log(`  search never landed, rerun to re-buy: ${slug}`)
 }
@@ -333,12 +433,12 @@ async function snapshotSite(url: string): Promise<string> {
   return `${parts.join('\n\n')}\n`
 }
 
-async function snapshot(target: string): Promise<void> {
+async function snapshot(target: string, provider: Provider): Promise<void> {
   const dir = targetDir(target)
   const out = resolve(dir, 'snapshots')
   mkdirSync(out, { recursive: true })
   const sites = new Map<string, string>()
-  for (const p of readJson(resolve(dir, 'candidates.json'), candidatesSchema).passes) {
+  for (const p of readJson(candidatesPath(dir, provider), candidatesSchema).passes) {
     for (const c of p.candidates) {
       const domain = apexDomainOf(c.websiteUrl)
       if (domain !== null && !sites.has(domain)) sites.set(domain, c.websiteUrl)
@@ -368,22 +468,25 @@ async function snapshot(target: string): Promise<void> {
 
 // --- score -----------------------------------------------------------------
 
-function score(target: string): void {
+function score(target: string, provider: Provider): void {
   const dir = targetDir(target)
-  const collected = readJson(resolve(dir, 'candidates.json'), candidatesSchema)
+  const collected = readJson(candidatesPath(dir, provider), candidatesSchema)
   const labels = readJson(resolve(dir, 'labels.json'), labelsSchema)
   const domainsOf = (urls: string[]): string[] => [...new Set(urls.flatMap((u) => apexDomainOf(u) ?? []))]
 
-  console.log(`\n== ${target} (collected ${collected.collectedAt.slice(0, 10)}, spec frozen ${collected.specFrozenAt})`)
+  console.log(`\n== ${target} — ${collected.provider} (collected ${collected.collectedAt.slice(0, 10)}, spec frozen ${collected.specFrozenAt})`)
 
   // A pass with zero search queries answered from the model's memory, which
-  // the design forbids as a source of candidates.
+  // the design forbids as a source of candidates. The OpenAI API can omit a
+  // completed search's query metadata, so a pass with recorded calls is not
+  // memory-only however its query count reads.
   const perStrategy = collected.passes.map((pass) => {
     const domains = domainsOf(pass.candidates.map((c) => c.websiteUrl))
     const labelled = domains.flatMap((d) => labels[d] ?? [])
     return {
       slug: pass.strategy,
       searchQueries: pass.searchQueries,
+      searched: pass.searchQueries > 0 || (pass.usage?.searchCalls ?? 0) > 0,
       candidates: pass.candidates.length,
       domains: domains.length,
       judged: labelled.filter((l) => l.verdict !== 'unknown').length,
@@ -395,8 +498,20 @@ function score(target: string): void {
     const rate = s.judged === 0 ? 'n/a' : `${((s.fit / s.judged) * 100).toFixed(0)}%`
     console.log(
       `  ${s.slug.padEnd(32)} queries ${String(s.searchQueries).padStart(3)}  candidates ${String(s.candidates).padStart(3)}  fit ${s.fit}/${s.judged} (${rate})` +
-        `${s.searchQueries === 0 ? '  ← no search ran: answered from model memory' : ''}${s.extractionFailed !== null ? `  ← extraction failed: ${s.extractionFailed}` : ''}`,
+        `${s.searched ? '' : '  ← no search ran: answered from model memory'}${s.extractionFailed !== null ? `  ← extraction failed: ${s.extractionFailed}` : ''}`,
     )
+  }
+
+  // What the run cost at list price, over the passes that reported tokens.
+  const measured = collected.passes.flatMap((p) => (p.usage === null ? [] : [{ usage: p.usage, cost: p.cost }]))
+  if (measured.length > 0) {
+    const total = measured.map((m) => m.usage).reduce(addUsage, ZERO_USAGE)
+    const cost = measured.reduce((n, m) => n + (m.cost ?? legacyCostOf(collected.provider, m.usage)), 0)
+    console.log(
+      `\ntokens in ${total.input.toLocaleString()} (cached ${total.cached.toLocaleString()}) out ${(total.output + total.reasoning).toLocaleString()}` +
+        `  search ${total.searchCalls} calls / ${total.searchQueries} queries`,
+    )
+    console.log(`list-price cost $${cost.toFixed(3)} for ${measured.length} passes ($${(cost / measured.length).toFixed(3)} per pass)`)
   }
 
   // Overall precision is over unique domains: runDiscover dedups by domain
@@ -456,20 +571,96 @@ function score(target: string): void {
   if (hit.length > 0) console.log(`  reached: ${hit.join(', ')}`)
 }
 
+// --- hits ------------------------------------------------------------------
+
+const signalsSchema = z.object({ terms: z.array(z.string().min(1)).min(1) })
+
+// The URLs `snapshot` writes as headings are this harness's own text, not the
+// page's: `mcpjam.com` reads as two hits for "mcp" with nothing in the body.
+function pageText(snapshot: string): string {
+  return snapshot.replace(/^#{1,2} https?:\/\/\S+.*$/gm, '')
+}
+
+// Literal, case-insensitive, non-overlapping; the first three excerpts only.
+// Matched on the original text, because lowercasing moves offsets (`İ` grows).
+function termHits(body: string, term: string): { count: number; excerpts: string[] } {
+  const at = [...body.matchAll(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'))].map((m) => m.index)
+  return {
+    count: at.length,
+    excerpts: at.slice(0, 3).map((i) => body.slice(Math.max(0, i - 100), i + term.length + 100).replace(/\s+/g, ' ').trim()),
+  }
+}
+
+// A command of its own because the order is the point: the counts have to be in
+// front of the adjudicator before a verdict is written (README.md).
+function hits(target: string, provider: Provider): void {
+  const dir = targetDir(target)
+  const collected = readJson(candidatesPath(dir, provider), candidatesSchema)
+  const { terms } = readJson(resolve(dir, 'signals.json'), signalsSchema)
+  const snapshots = resolve(dir, 'snapshots')
+
+  // Reference entries too: coverage counts them, so they carry verdicts, so
+  // they need the same evidence in front of the adjudicator.
+  const rows = new Map<string, { title: string; claim: string }>()
+  for (const pass of collected.passes) {
+    for (const c of pass.candidates) {
+      const domain = apexDomainOf(c.websiteUrl)
+      if (domain !== null && !rows.has(domain)) rows.set(domain, { title: `${c.name} [${pass.strategy}]`, claim: c.matchReason })
+    }
+  }
+  const refPath = resolve(dir, 'reference.json')
+  if (existsSync(refPath)) {
+    for (const e of readJson(refPath, referenceSchema).entries) {
+      const domain = apexDomainOf(e.websiteUrl)
+      if (domain !== null && !rows.has(domain)) rows.set(domain, { title: `${e.name} [reference]`, claim: e.why })
+    }
+  }
+
+  console.log(`# ${target} — qualifying signal hits (spec frozen ${collected.specFrozenAt})\n`)
+  console.log(`terms: ${terms.join(' | ')}\n`)
+  for (const [domain, { title, claim }] of rows) {
+    console.log(`## ${domain} — ${title}`)
+    console.log(`claim: ${claim}`)
+    const path = resolve(snapshots, `${domain}.md`)
+    if (!existsSync(path)) {
+      console.log('snapshot: missing — run `snapshot` first\n')
+      continue
+    }
+    const snapshot = readFileSync(path, 'utf8')
+    const failed = (snapshot.match(/FETCH FAILED/g) ?? []).length
+    console.log(`snapshot: ${snapshot.length} chars${failed > 0 ? `, ${failed} page(s) FETCH FAILED` : ''}`)
+    const body = pageText(snapshot)
+    const counted = terms.map((term) => ({ term, ...termHits(body, term) }))
+    for (const row of counted.filter((r) => r.count > 0)) {
+      console.log(`  ${row.term} — ${row.count}`)
+      for (const e of row.excerpts) console.log(`      …${e}…`)
+    }
+    const absent = counted.filter((r) => r.count === 0).map((r) => r.term)
+    if (absent.length > 0) console.log(`  absent: ${absent.join(' | ')}`)
+    console.log(`  total ${counted.reduce((n, r) => n + r.count, 0)}\n`)
+  }
+}
+
 // --- main ------------------------------------------------------------------
 
 async function main(): Promise<void> {
-  const [command, target] = process.argv.slice(2)
-  if (target === undefined) throw new Error('usage: run.ts <collect|snapshot|score> <target>')
-  if (command === 'collect') return collect(target)
-  if (command === 'snapshot') return snapshot(target)
-  if (command === 'score') return score(target)
-  throw new Error(`unknown command "${command ?? ''}" — expected collect, snapshot or score`)
+  const args = process.argv.slice(2)
+  const flag = args.indexOf('--provider')
+  const named = flag === -1 ? 'openai' : (args[flag + 1] ?? '')
+  const provider = PROVIDERS.find((p) => p === named)
+  if (provider === undefined) throw new Error(`unknown provider "${named}" — expected ${PROVIDERS.join(' or ')}`)
+  const [command, target] = flag === -1 ? args : [...args.slice(0, flag), ...args.slice(flag + 2)]
+  if (target === undefined) throw new Error('usage: run.ts <collect|snapshot|hits|score> <target> [--provider gemini|openai]')
+  if (command === 'collect') return collect(target, provider)
+  if (command === 'snapshot') return snapshot(target, provider)
+  if (command === 'hits') return hits(target, provider)
+  if (command === 'score') return score(target, provider)
+  throw new Error(`unknown command "${command ?? ''}" — expected collect, snapshot, hits or score`)
 }
 
 main()
   .then(() => process.exit(0))
   .catch((e: unknown) => {
-    console.error(e instanceof GeminiError ? `Gemini: ${e.message}` : e)
+    console.error(e instanceof LlmError ? `${e.name}: ${e.message}` : e)
     process.exit(1)
   })

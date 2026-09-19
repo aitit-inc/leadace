@@ -6,7 +6,7 @@ import {
   strategyDraftInputSchema,
   applyStrategyDraftSchema,
 } from '../../services/pipeline/strategy-draft'
-import { withLlmScope } from '../../services/gemini'
+import { withLlmScope } from '../../services/llm'
 import { projectRefParamSchema } from '../../services/projects'
 import { respondWithError } from '../respond'
 import type { Env, Variables } from '../types'

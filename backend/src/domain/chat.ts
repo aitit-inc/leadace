@@ -1,7 +1,7 @@
-// Conversation storage for the hosted chat agent. A message body is stored as
-// the Gemini `Content` parts it was exchanged as, so a thread replays into the
-// model verbatim; `job` rows are the server's own notices (a job finished) and
-// are rendered to the model as text on the next turn.
+// Conversation storage for the hosted chat agent. The thread is the record:
+// services/chat/agent.ts replays it into the model's input items. `job` rows
+// are the server's own notices (a job finished) and are rendered to the model
+// as text on the next turn.
 import { z } from 'zod'
 
 export const CHAT_ROLES = ['user', 'model', 'tool', 'job'] as const
@@ -13,9 +13,8 @@ const functionCallPartSchema = z.object({
     name: z.string().min(1),
     args: z.record(z.string(), z.unknown()),
   }),
-  thoughtSignature: z.string().optional(),
 })
-const textPartSchema = z.object({ text: z.string(), thoughtSignature: z.string().optional() })
+const textPartSchema = z.object({ text: z.string() })
 const functionResponsePartSchema = z.object({
   functionResponse: z.object({
     id: z.string().min(1),
@@ -26,7 +25,14 @@ const functionResponsePartSchema = z.object({
 
 export const chatContentSchema = z.discriminatedUnion('role', [
   z.object({ role: z.literal('user'), parts: z.array(textPartSchema).min(1) }),
-  z.object({ role: z.literal('model'), parts: z.array(z.union([textPartSchema, functionCallPartSchema])).min(1) }),
+  z.object({
+    role: z.literal('model'),
+    parts: z.array(z.union([textPartSchema, functionCallPartSchema])).min(1),
+    // The stored response these parts came from, which the next turn
+    // continues. Absent when the answer was stopped, or the turn read less
+    // than the whole thread (a scheduled run).
+    responseId: z.string().optional(),
+  }),
   z.object({ role: z.literal('tool'), parts: z.array(functionResponsePartSchema).min(1) }),
   z.object({
     role: z.literal('job'),

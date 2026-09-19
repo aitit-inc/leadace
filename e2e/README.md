@@ -566,13 +566,12 @@ At [claude.ai/code](https://claude.ai/code), open the environment selector →
   boot without a multi-GB pull.
 - **Network access**: `Custom`, with the default package-manager list included,
   plus `dns.google` — the deliverability check resolves MX records over
-  DNS-over-HTTPS and nothing in the default list covers it. Gemini and Gmail
-  are already covered by `*.googleapis.com`.
-- **Environment variables** (`.env` format, optional): `GEMINI_API_KEY`,
-  `OPENAI_API_KEY`, `EMAILABLE_API_KEY`. The curl suites need none of them; the
-  hosted pipeline stages need Gemini. Anyone who uses the environment can read
-  these, so keep production keys out — on Pro/Max an API credential scoped to
-  `generativelanguage.googleapis.com` keeps the key out of the VM entirely.
+  DNS-over-HTTPS and nothing in the default list covers it. Gmail is already
+  covered by `*.googleapis.com`.
+- **Environment variables** (`.env` format, optional): `OPENAI_API_KEY`,
+  `EMAILABLE_API_KEY`. The curl suites need neither; the hosted pipeline stages
+  need OpenAI. Anyone who uses the environment can read these, so keep
+  production keys out.
 
 ### Per session
 

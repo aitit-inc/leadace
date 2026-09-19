@@ -5,7 +5,7 @@
 import type { Db } from '../../db/connection'
 import type { ProjectId, TenantId } from '../../domain/ids'
 import { parseEdition, type Edition } from '../../domain/edition'
-import type { GeminiEnv } from '../gemini'
+import type { LlmEnv } from '../llm'
 import type { OpenAIEnv } from '../openai'
 import type { SendContext } from '../outreach'
 import type { GoogleCtx } from '../google-auth'
@@ -13,7 +13,7 @@ import { getDocument } from '../documents'
 import { getMasterDocument } from '../master-documents'
 import { ok, err, type ServiceResult } from '../result'
 
-export type HostedEnv = GeminiEnv &
+export type HostedEnv = LlmEnv &
   OpenAIEnv & {
     DATABASE_URL: string
     APP_URL: string

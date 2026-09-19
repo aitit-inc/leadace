@@ -21,7 +21,7 @@
 #   LEADACE_CLOUD_REGEN=1   rewrite backend/.dev.vars and frontend/.env even
 #                           when they already exist
 #   LEADACE_DEV_EMAIL=...   dev user to provision (default dev@leadace.test)
-#   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GEMINI_API_KEY, OPENAI_API_KEY,
+#   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, OPENAI_API_KEY,
 #   EMAILABLE_API_KEY, E2E_RECIPIENT_OVERRIDE
 #                           copied into backend/.dev.vars when set. Set them on
 #                           the cloud environment, never in the repo.
@@ -118,7 +118,6 @@ GMAIL_TOKEN_ENCRYPTION_KEY="$GMAIL_KEY"
 UNSUBSCRIBE_TOKEN_SECRET="$UNSUBSCRIBE_KEY"
 GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID:-}"
 GOOGLE_CLIENT_SECRET="${GOOGLE_CLIENT_SECRET:-}"
-GEMINI_API_KEY="${GEMINI_API_KEY:-}"
 OPENAI_API_KEY="${OPENAI_API_KEY:-}"
 EMAILABLE_API_KEY="${EMAILABLE_API_KEY:-}"
 E2E_RECIPIENT_OVERRIDE="$E2E_SINK"

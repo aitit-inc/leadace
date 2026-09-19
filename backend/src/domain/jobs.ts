@@ -16,7 +16,7 @@ export const TERMINAL_JOB_STATUSES: readonly JobStatus[] = ['succeeded', 'failed
 export const JOB_ORIGINS = ['cron', 'chat', 'ui', 'mcp'] as const
 export type JobOrigin = (typeof JOB_ORIGINS)[number]
 
-// Five signals × three stays within url_context's 20 URLs per request.
+// Five signals × three bounds the pages one claims read fetches.
 export const SIGNAL_MAX_SOURCES = 3
 export const signalSourceSchema = z.url({ protocol: /^https?$/ }).max(500)
 

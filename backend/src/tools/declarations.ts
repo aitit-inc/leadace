@@ -1,17 +1,19 @@
-// The registry as Gemini sees it. One zod shape per tool is the single
+// The registry as the model sees it. One zod shape per tool is the single
 // definition: it validates arguments at execution and, converted here, tells
 // the model what to send.
-import type { FunctionDeclaration } from '@google/genai'
+import type { FunctionTool } from 'openai/resources/responses/responses'
 import { z } from 'zod'
 import type { ToolDef } from './registry'
 
-export function toFunctionDeclaration(tool: ToolDef): FunctionDeclaration {
+// Not strict: strict mode requires every property, and the schemas have
+// optional ones. parseToolArgs validates what the model sends.
+export function toFunctionDeclaration(tool: ToolDef): FunctionTool {
   const json = z.toJSONSchema(z.object(tool.schema), { target: 'draft-7', io: 'input' }) as Record<string, unknown>
   delete json['$schema']
-  return { name: tool.name, description: tool.description, parametersJsonSchema: json }
+  return { type: 'function', name: tool.name, description: tool.description, parameters: json, strict: false }
 }
 
-export function buildFunctionDeclarations(tools: readonly ToolDef[]): FunctionDeclaration[] {
+export function buildFunctionDeclarations(tools: readonly ToolDef[]): FunctionTool[] {
   return tools.map(toFunctionDeclaration)
 }
 

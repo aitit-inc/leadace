@@ -80,9 +80,9 @@ warm_supabase_images() {
   [ "$budget" -gt 150 ] && budget=150
   mkdir -p /tmp/supabase-warm && cd /tmp/supabase-warm || return 0
   timeout 30 supabase init >/dev/null 2>&1 </dev/null
-  # The generated config reads these; a snapshot outlives the container they
-  # would land in, so warm up without them.
-  if env -u OPENAI_API_KEY -u GEMINI_API_KEY timeout "$budget" supabase start >/dev/null 2>&1; then
+  # The generated config reads this key; a snapshot outlives the container it
+  # would land in, so warm up without it.
+  if env -u OPENAI_API_KEY timeout "$budget" supabase start >/dev/null 2>&1; then
     log "supabase images pulled into the snapshot"
   else
     log "WARN warm pull incomplete — cloud-bootstrap.sh pulls what is missing"

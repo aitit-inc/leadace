@@ -10,7 +10,7 @@ describe('function declarations', () => {
     expect(decls).toHaveLength(registry.length)
     expect(new Set(decls.map((d) => d.name)).size).toBe(registry.length)
     for (const d of decls) {
-      const schema = d.parametersJsonSchema as Record<string, unknown>
+      const schema = d.parameters ?? {}
       expect(schema['type']).toBe('object')
       expect(schema['$schema']).toBeUndefined()
     }

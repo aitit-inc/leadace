@@ -9,7 +9,7 @@ import { outreachLogs, responses } from '../../db/schema'
 import type { ProjectId, TenantId } from '../../domain/ids'
 import type { JobKind, JobResult } from '../../domain/jobs'
 import { ok, type ServiceResult } from '../result'
-import { callGeminiJson, GeminiError, HOSTED_MODEL } from '../gemini'
+import { callLlmJson, LlmError } from '../llm'
 import { getRejectionFeedbackSummaryById } from '../responses'
 import { getProjectSettings } from '../project-settings'
 import { saveDocument } from '../documents'
@@ -73,12 +73,7 @@ export async function runJournal(
   const language = languageNameOf(settings.value.targetLanguage)
 
   const compose = async (objection: string | null) =>
-    callGeminiJson({
-      op: 'journal',
-      tier: 'flex',
-      apiKey: env.GEMINI_API_KEY,
-      model: HOSTED_MODEL,
-      timeoutMs: 90_000,
+    callLlmJson(env, 'journal', {
       prompt: `You are Ace writing today's public journal entry (first person, ${language}) for a live page anyone can read. Today is ${today}.
 
 Counts today: ${counts.sent} emails sent, ${counts.replies} replies (${counts.positive} positive), ${counts.bounces} bounces.
@@ -99,15 +94,13 @@ Use exactly this shape and nothing more:
 
 Rules: numbers exactly as given; anonymize every third party (companies → industry + size, people → role; no emails, domains, URLs, handles); only Ace and the product being sold stay named; never quote or paraphrase a prospect's message; a line with no data says so; never invent.`,
       schema: entrySchema,
-      thinking: 'LOW',
-      maxOutputTokens: 4096,
     })
 
   let entry: string
   try {
     entry = (await compose(null)).entry
   } catch (e) {
-    if (e instanceof GeminiError) return ok({ kind: 'journal', summary: `Journal not written: ${e.message}`, saved: false })
+    if (e instanceof LlmError) return ok({ kind: 'journal', summary: `Journal not written: ${e.message}`, saved: false })
     throw e
   }
   let saved = await runWithRls(db, tenantId, (tx) => saveDocument(tx, tenantId, STAGE_CALLER, env, { id: projectId, slug: 'public_journal' }, { content: entry }))
@@ -116,7 +109,7 @@ Rules: numbers exactly as given; anonymize every third party (companies → indu
       entry = (await compose(typeof saved.detail === 'string' ? saved.detail : saved.error)).entry
       saved = await runWithRls(db, tenantId, (tx) => saveDocument(tx, tenantId, STAGE_CALLER, env, { id: projectId, slug: 'public_journal' }, { content: entry }))
     } catch (e) {
-      if (!(e instanceof GeminiError)) throw e
+      if (!(e instanceof LlmError)) throw e
     }
   }
   return ok(

@@ -8,7 +8,7 @@ import type { ProjectId, TenantId } from '../../domain/ids'
 import { discoveryStrategySchema, variantIdSchema } from '../../domain/ids'
 import type { JobResult } from '../../domain/jobs'
 import { ok, err, type ServiceResult } from '../result'
-import { callGeminiJson, GeminiError, HOSTED_MODEL } from '../gemini'
+import { callLlmJson, LlmError } from '../llm'
 import { getProjectStats } from '../evaluations'
 import { getRejectionFeedbackSummaryById } from '../responses'
 import { getLeverDecisionsHistory, getLeverStateById } from '../levers'
@@ -117,18 +117,9 @@ message variants: ${JSON.stringify(variants.value.variants)}
 
   let out: z.infer<typeof evaluationSchema>
   try {
-    out = await callGeminiJson({
-      op: 'evaluate',
-      tier: 'flex',
-      apiKey: env.GEMINI_API_KEY,
-      model: HOSTED_MODEL,
-      timeoutMs: 120_000,
-      prompt,
-      schema: evaluationSchema,
-      maxOutputTokens: 16384,
-    })
+    out = await callLlmJson(env, 'evaluate', { prompt, schema: evaluationSchema })
   } catch (e) {
-    if (e instanceof GeminiError) return err('BAD_GATEWAY', 'Evaluation failed upstream', e.message)
+    if (e instanceof LlmError) return err('BAD_GATEWAY', 'Evaluation failed upstream', e.message)
     throw e
   }
 

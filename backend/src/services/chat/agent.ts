@@ -4,13 +4,12 @@
 // persisted to the thread as it happens in its own short RLS transaction, so a
 // dropped connection loses nothing, no connection is held across a model call,
 // and a replay sees exactly what the model saw.
-import type { Content, FunctionDeclaration, Part } from '@google/genai'
+import type { FunctionTool, ResponseInputItem } from 'openai/resources/responses/responses'
 import type { Db } from '../../db/connection'
 import { asProjectId, type TenantId } from '../../domain/ids'
 import { utcDateKey } from '../../domain/time'
 import type { ChatModelPart, ConfirmSummary, PendingCall, ToolEffect } from '../../domain/chat'
-import type { GeminiEnv } from '../gemini'
-import { GeminiError, HOSTED_MODEL, streamGeminiChat } from '../gemini'
+import { LlmError, streamLlmChat, type ChatCall, type ChatRequest, type ChatStreamEvent, type LlmEnv } from '../llm'
 import { takeChatRateSlot, MAIN_CHAT_TURNS_PER_TENANT_PER_DAY } from '../chat-rate-limit'
 import { listProjects } from '../projects'
 import { getCredentialsStatus } from '../google-auth'
@@ -28,7 +27,7 @@ import {
 import { buildSystemInstruction } from './system-prompt'
 
 export type ToolExecutor = {
-  declarations: FunctionDeclaration[]
+  declarations: FunctionTool[]
   // The approval card for a call that must not run unattended, or null.
   confirmSummary: (name: string, args: Record<string, unknown>) => Promise<ConfirmSummary | null> | ConfirmSummary | null
   isReadOnly: (name: string) => boolean
@@ -67,14 +66,14 @@ export type ChatTurnDeps = {
   signal: AbortSignal
   tenantId: TenantId
   userId: string
-  env: GeminiEnv & { APP_URL: string }
+  env: LlmEnv & { APP_URL: string }
   tools: ToolExecutor
 }
 
 const MAX_TOOL_ROUNDS = 12
 
 type ToolResult = { ok: boolean; text: string; effect?: ToolEffect }
-type Call = { id: string; name: string; args: Record<string, unknown> }
+type Call = ChatCall
 type ToolResponse = { id: string; name: string; response: Record<string, unknown> }
 type ToolPart = { functionResponse: ToolResponse }
 
@@ -92,22 +91,25 @@ const DECLINED: ToolResult = { ok: false, text: 'The person declined this call.'
 
 const INTERRUPTED: ToolResult = { ok: false, text: 'This call was interrupted before it produced a result.' }
 
-// The history as the model must see it: every functionCall answered by a
-// functionResponse in the very next content. A call left unanswered (a turn
-// that died mid-tool, a job notice landing while a call awaited approval, the
-// history window cutting between the two) gets a synthetic error response,
-// so one bad exchange never makes the thread unusable.
-export function toContents(messages: MessageView[]): Content[] {
-  const contents: Content[] = []
+const outputItem = (r: ToolResponse): ResponseInputItem => ({ type: 'function_call_output', call_id: r.id, output: JSON.stringify(r.response) })
+
+// The thread as the model must see it: every function call answered by its
+// output right after it. A call left unanswered (a turn that died mid-tool, a
+// job notice landing while a call awaited approval, the history window cutting
+// between the two) gets a synthetic error output, so one bad exchange never
+// makes the thread unusable. With `after`, only the items that follow that
+// message's own.
+export function toItems(messages: MessageView[], after: number | null = null): ResponseInputItem[] {
+  const items: ResponseInputItem[] = []
+  let from = 0
   let open: Call[] = []
-  const deferred: Content[] = []
+  const deferred: ResponseInputItem[] = []
   const answerOpen = (answered: ToolPart[]) => {
     const openIds = new Set(open.map((c) => c.id))
-    const matched = answered.filter((p) => openIds.has(p.functionResponse.id))
-    const ids = new Set(matched.map((p) => p.functionResponse.id))
-    const missing = open.filter((c) => !ids.has(c.id)).map((c) => ({ functionResponse: toolResponse(c, INTERRUPTED) }))
-    contents.push({ role: 'user', parts: [...matched, ...missing] })
-    contents.push(...deferred.splice(0))
+    const matched = answered.filter((p) => openIds.has(p.functionResponse.id)).map((p) => p.functionResponse)
+    const ids = new Set(matched.map((r) => r.id))
+    const missing = open.filter((c) => !ids.has(c.id)).map((c) => toolResponse(c, INTERRUPTED))
+    items.push(...[...matched, ...missing].map(outputItem), ...deferred.splice(0))
     open = []
   }
   for (const m of messages) {
@@ -115,28 +117,45 @@ export function toContents(messages: MessageView[]): Content[] {
     switch (c.role) {
       case 'user':
         if (open.length > 0) answerOpen([])
-        contents.push({ role: 'user', parts: c.parts })
+        items.push({ role: 'user', content: c.parts.map((p) => ({ type: 'input_text', text: p.text })) })
         break
       case 'model':
         if (open.length > 0) answerOpen([])
-        contents.push({ role: 'model', parts: c.parts as Part[] })
-        open = c.parts.flatMap((p) => ('functionCall' in p ? [{ id: p.functionCall.id, name: p.functionCall.name, args: p.functionCall.args }] : []))
+        for (const p of c.parts) {
+          if ('functionCall' in p) {
+            const { id, name, args } = p.functionCall
+            items.push({ type: 'function_call', call_id: id, name, arguments: JSON.stringify(args) })
+            open.push({ id, name, args })
+          } else if (p.text) {
+            items.push({ role: 'assistant', content: p.text })
+          }
+        }
+        if (m.id === after) from = items.length
         break
       case 'tool':
-        // A response with no call to answer (window cut, a turn that raced
+        // An output with no call to answer (window cut, a turn that raced
         // another) has no place in what the model may see.
-        if (open.length > 0) answerOpen(c.parts as ToolPart[])
+        if (open.length > 0) answerOpen(c.parts)
         break
       case 'job': {
-        const notice: Content = { role: 'user', parts: [{ text: `[system] Job ${c.kind} ${c.jobId} ${c.status}: ${c.summary}` }] }
+        const notice: ResponseInputItem = { role: 'user', content: `[system] Job ${c.kind} ${c.jobId} ${c.status}: ${c.summary}` }
         if (open.length > 0) deferred.push(notice)
-        else contents.push(notice)
+        else items.push(notice)
         break
       }
     }
   }
   if (open.length > 0) answerOpen([])
-  return contents
+  return items.slice(from)
+}
+
+// What the next response needs, from the thread in reading order: what came
+// after the last model message whose stored response holds everything before
+// it, or — with none — the whole thread.
+export function contextOf(messages: MessageView[]): Pick<ChatRequest, 'input' | 'previousResponseId'> {
+  const anchor = messages.findLast((m) => m.content.role === 'model' && m.content.responseId !== undefined)
+  if (anchor?.content.role !== 'model' || anchor.content.responseId === undefined) return { previousResponseId: null, input: toItems(messages) }
+  return { previousResponseId: anchor.content.responseId, input: toItems(messages, anchor.id) }
 }
 
 // The order the model reads the thread in. Rows are stored as they land, so a
@@ -261,9 +280,24 @@ async function* settleCalls(
   return [...responses, ...gated.map((c) => toolResponse(c, INTERRUPTED))].map((r) => ({ functionResponse: r }))
 }
 
-async function* persistTool(deps: ChatTurnDeps, threadId: string, parts: ToolPart[]): AsyncGenerator<ChatEvent, void> {
+async function* persistTool(deps: ChatTurnDeps, threadId: string, parts: ToolPart[]): AsyncGenerator<ChatEvent, MessageView> {
   const msg = await deps.run((db) => appendMessage(db, deps.tenantId, threadId, { role: 'tool', parts }))
   yield { type: 'message', message: msg }
+  return msg
+}
+
+// A stored response is kept 30 days; past that, or gone for any other reason,
+// the thread replays from the database, which is the record.
+async function* streamRound(deps: ChatTurnDeps, instructions: string, messages: MessageView[]): AsyncGenerator<ChatStreamEvent> {
+  const request = { instructions, tools: deps.tools.declarations, signal: deps.signal }
+  const context = contextOf(messages)
+  try {
+    yield* streamLlmChat(deps.env, { ...request, ...context })
+  } catch (e) {
+    if (context.previousResponseId === null || !(e instanceof LlmError) || (e.status !== 400 && e.status !== 404)) throw e
+    console.warn('[chat] stored response unavailable, replaying the thread', { status: e.status })
+    yield* streamLlmChat(deps.env, { ...request, previousResponseId: null, input: toItems(messages) })
+  }
 }
 
 async function* holdPending(deps: ChatTurnDeps, threadId: string, pending: PendingCall): AsyncGenerator<ChatEvent, void> {
@@ -317,9 +351,9 @@ export async function* runChatTurn(deps: ChatTurnDeps, threadId: string, input: 
   }
 
   if (deps.signal.aborted) return
-  let contents: Content[]
+  let messages: MessageView[]
   if (input.kind === 'instruction') {
-    contents = toContents([input.message])
+    messages = [input.message]
   } else {
     const history = await deps.run((db) => listMessages(db, deps.tenantId, threadId))
     if (!history.ok) {
@@ -328,10 +362,9 @@ export async function* runChatTurn(deps: ChatTurnDeps, threadId: string, input: 
     }
     // A message sent after Stop is not the stopped turn's to read.
     if (deps.signal.aborted) return
-    const { messages } = history.value
     // Read once: a turn that fails from here on is not retried until something new arrives.
-    await deps.run((db) => markRead(db, deps.tenantId, threadId, messages))
-    contents = toContents(inReadingOrder(messages))
+    await deps.run((db) => markRead(db, deps.tenantId, threadId, history.value.messages))
+    messages = inReadingOrder(history.value.messages)
   }
   if (input.kind !== 'confirm') {
     const slot = await deps.run((db) => takeChatRateSlot(db, deps.tenantId, 'main_chat', deps.tenantId))
@@ -340,58 +373,40 @@ export async function* runChatTurn(deps: ChatTurnDeps, threadId: string, input: 
       return
     }
   }
-  const systemInstruction = await buildContext(deps, thread.value.projectId, input.kind === 'instruction')
+  const instructions = await buildContext(deps, thread.value.projectId, input.kind === 'instruction')
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     let text = ''
-    const calls: Array<Call & { thoughtSignature?: string }> = []
+    let completed: { responseId: string; calls: Call[] } | null = null
     try {
-      for await (const chunk of streamGeminiChat({
-        op: 'chat',
-        apiKey: deps.env.GEMINI_API_KEY,
-        model: HOSTED_MODEL,
-        timeoutMs: 120_000,
-        systemInstruction,
-        contents,
-        functionDeclarations: deps.tools.declarations,
-        thinking: 'LOW',
-        maxOutputTokens: 8192,
-        signal: deps.signal,
-      })) {
-        for (const part of chunk.candidates?.[0]?.content?.parts ?? []) {
-          if (part.thought) continue
-          if (part.text) {
-            text += part.text
-            yield { type: 'text_delta', text: part.text }
-          }
-          if (part.functionCall?.name) {
-            calls.push({
-              // A confirmation is keyed by this id, so it must never repeat across turns.
-              id: part.functionCall.id ?? `call_${crypto.randomUUID()}`,
-              name: part.functionCall.name,
-              args: part.functionCall.args ?? {},
-              ...(part.thoughtSignature ? { thoughtSignature: part.thoughtSignature } : {}),
-            })
-          }
+      for await (const event of streamRound(deps, instructions, messages)) {
+        if (event.type === 'text') {
+          text += event.text
+          yield { type: 'text_delta', text: event.text }
+        } else {
+          completed = event
         }
       }
     } catch (e) {
-      if (!(e instanceof GeminiError)) console.error('[chat] turn failed', e)
+      if (!(e instanceof LlmError)) console.error('[chat] turn failed', e)
       yield {
         type: 'error',
-        message: e instanceof GeminiError ? `The model is unavailable right now (${e.message}). Try again in a moment.` : 'Unexpected error.',
+        message: e instanceof LlmError ? `The model is unavailable right now (${e.message}). Try again in a moment.` : 'Unexpected error.',
       }
       return
     }
 
-    const modelParts: ChatModelPart[] = [
-      ...(text ? [{ text }] : []),
-      ...calls.map(({ thoughtSignature, ...c }) => ({ functionCall: c, ...(thoughtSignature ? { thoughtSignature } : {}) })),
-    ]
-    if (modelParts.length === 0) break
-    const modelMsg = await deps.run((db) => appendMessage(db, deps.tenantId, threadId, { role: 'model', parts: modelParts }))
+    const calls = completed?.calls ?? []
+    const parts: ChatModelPart[] = [...(text ? [{ text }] : []), ...calls.map((c) => ({ functionCall: c }))]
+    if (parts.length === 0) break
+    const content = { role: 'model' as const, parts, ...(completed && { responseId: completed.responseId }) }
+    // A scheduled run's response holds only its instruction, so a later turn
+    // reading the whole thread must not continue from it.
+    const modelMsg = await deps.run((db) =>
+      appendMessage(db, deps.tenantId, threadId, input.kind === 'instruction' ? { role: 'model', parts } : content),
+    )
     yield { type: 'message', message: modelMsg }
-    contents.push({ role: 'model', parts: modelParts as Part[] })
+    messages.push({ ...modelMsg, content })
     if (calls.length === 0) break
 
     const settled = yield* settleCalls(deps, threadId, modelMsg.id, calls)
@@ -399,8 +414,7 @@ export async function* runChatTurn(deps: ChatTurnDeps, threadId: string, input: 
       yield* holdPending(deps, threadId, settled.pending)
       return
     }
-    yield* persistTool(deps, threadId, settled)
-    contents.push({ role: 'user', parts: settled })
+    messages.push(yield* persistTool(deps, threadId, settled))
     if (deps.signal.aborted) return
   }
   yield { type: 'done' }

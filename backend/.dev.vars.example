@@ -55,16 +55,10 @@ GMAIL_TOKEN_ENCRYPTION_KEY=""
 # every prior unsubscribe link.
 UNSUBSCRIBE_TOKEN_SECRET=""
 
-# --- Inquiry chat (optional) ---
-# Powers the inquiry-landing AI chat. Chat is disabled if absent; the rest
-# of the API still works.
+# --- OpenAI (required) ---
+# Powers the hosted agent (every job stage and the chat), onboarding from a
+# URL, and the inquiry-landing AI chat. Without it none of these run.
 OPENAI_API_KEY=""
-
-# --- Gemini (required) ---
-# Google AI Studio key (paid tier — the free tier may train on your data).
-# Powers the hosted agent (discover / enrich / draft / evaluate stages and the
-# chat), which reads company pages and searches via Gemini.
-GEMINI_API_KEY=""
 
 # --- Mailbox verification (optional) ---
 # Emailable key (pay-as-you-go credits). Empty leaves only the free
