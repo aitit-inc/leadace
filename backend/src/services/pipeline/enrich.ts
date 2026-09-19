@@ -15,7 +15,7 @@ import { discoveryPausedReason, getRemainingProspectQuota } from '../plan-limits
 import { getActiveStrategySlugs, listDiscoveryStrategiesById } from '../discovery-strategies'
 import { stampEmailDeliverability } from '../dns-check'
 import { kickAutoTopUp } from '../credits'
-import { apexDomainOf, editionOf, loadDoc, loadMasterDoc, noProgress, type HostedEnv, type ProgressFn } from './context'
+import { apexDomainOf, editionOf, loadDoc, loadMasterDoc, noProgress, type Checkpoint, type HostedEnv, type ProgressFn } from './context'
 import { runWithRls } from '../../db/rls'
 
 const FORM_TYPES = ['google_forms', 'native_html', 'wordpress_cf7', 'iframe_embed', 'with_captcha'] as const
@@ -404,60 +404,71 @@ function skippedLine(name: string, reason: string): JobLogEntry {
   return { kind: 'prospect', name, outcome: 'skipped', reason }
 }
 
+// Documents stay out of step results (a result is capped at 1 MiB, a document
+// is not): each read loads its own.
+async function readContext(db: Db, tenantId: TenantId, projectId: ProjectId) {
+  const [procedure, business, strategies, activeSlugs] = await Promise.all([
+    loadMasterDoc(db, 'tpl_enrich_contacts'),
+    loadDoc(db, tenantId, projectId, 'business'),
+    listDiscoveryStrategiesById(db, projectId),
+    getActiveStrategySlugs(db, projectId),
+  ])
+  return {
+    procedure,
+    offer: business ? business.split('\n').slice(0, 20).join('\n') : '(business document missing)',
+    approaches: strategies.filter((s) => activeSlugs.includes(s.slug)).map((s) => s.approach),
+  }
+}
+
 export async function runEnrich(
   db: Db,
   tenantId: TenantId,
   env: HostedEnv,
   projectId: ProjectId,
   input: DiscoverCandidate[],
+  checkpoint: Checkpoint,
   progress: ProgressFn = noProgress,
 ): Promise<ServiceResult<EnrichOutput>> {
   const { candidates, stale } = parseStored(input)
   const staleLines = stale.map((n) => skippedLine(n, 'stale_shape'))
-  const [procedure, business, strategies, activeSlugs, quota] = await Promise.all([
-    loadMasterDoc(db, 'tpl_enrich_contacts'),
-    loadDoc(db, tenantId, projectId, 'business'),
-    listDiscoveryStrategiesById(db, projectId),
-    getActiveStrategySlugs(db, projectId),
-    getRemainingProspectQuota(db, tenantId, editionOf(env)),
-  ])
   // Site reads are the cost; a chunk that starts after the allowance is spent
   // (mid-run, or a standalone enrich job) reads nothing.
-  const paused = discoveryPausedReason(quota)
+  const paused = await checkpoint('quota', async () => ok(discoveryPausedReason(await getRemainingProspectQuota(db, tenantId, editionOf(env))) !== null))
   if (paused) {
     console.log({ message: '[enrich] read', candidates: 0, stale_shape: stale.length, plan_limit: candidates.length })
     return ok({ log: [...staleLines, ...candidates.map((c) => skippedLine(c.name, 'plan_limit'))], withEmail: 0 })
   }
-  const approaches = strategies.filter((s) => activeSlugs.includes(s.slug)).map((s) => s.approach)
-  const offer = business ? business.split('\n').slice(0, 20).join('\n') : '(business document missing)'
 
   const enriched: Enriched[] = []
   for (let i = 0; i < candidates.length; i += CONCURRENCY) {
     const slice = candidates.slice(i, i + CONCURRENCY)
-    await progress('reading sites', i, candidates.length)
-    enriched.push(...(await Promise.all(slice.map((c) => enrichCandidate(env, c, { procedure, offer, approaches })))))
+    enriched.push(...(await Promise.all(slice.map((c, k) => checkpoint(`read:${i + k}`, async () => {
+      await progress('reading sites', i, candidates.length)
+      return ok(await enrichCandidate(env, c, await readContext(db, tenantId, projectId)))
+    })))))
   }
 
-  await progress('registering', candidates.length, candidates.length)
-  const inputs = enriched.map(toProspectInput)
-  const registrable = inputs.filter((p): p is NonNullable<typeof p> => p !== null)
-  const noChannel = enriched.filter((_, i) => inputs[i] === null).map((e) => ({ name: e.candidate.name, reason: e.skip ?? ('no_contact_found' as const) }))
-  const reasons = { site_unreadable: 0, read_failed: 0, prereq_uncited: 0, prereq_unverified: 0, no_contact_found: 0 }
-  for (const s of noChannel) reasons[s.reason]++
-  console.log({ message: '[enrich] read', candidates: enriched.length, ...reasons, stale_shape: stale.length, no_solicitation: enriched.filter((e) => e.noSolicitation).length })
-  const log = [...staleLines, ...noChannel.map((s) => skippedLine(s.name, s.reason))]
-  const emailsToVerify: string[] = []
-  for (let i = 0; i < registrable.length; i += 100) {
-    const result = await runWithRls(db, tenantId, (tx) => batchRegister(tx, tenantId, editionOf(env), { projectId, prospects: registrable.slice(i, i + 100) }, 'found'))
-    if (!result.ok) return result
-    log.push(
-      ...result.value.registered.map((p): JobLogEntry => ({ kind: 'prospect', name: p.name, outcome: 'registered', prospectId: p.id })),
-      ...result.value.skippedDetails.map((s) => skippedLine(s.name, s.reason)),
-    )
-    emailsToVerify.push(...result.value.emailsToVerify)
-  }
-  await kickAutoTopUp(env, tenantId)
-  if (emailsToVerify.length > 0) await stampEmailDeliverability(env.DATABASE_URL, tenantId, emailsToVerify)
-
-  return ok({ log, withEmail: enriched.filter((e) => e.email !== null && !e.emailNoSolicitation).length })
+  return ok(await checkpoint('register', async (): Promise<ServiceResult<EnrichOutput>> => {
+    await progress('registering', candidates.length, candidates.length)
+    const inputs = enriched.map(toProspectInput)
+    const registrable = inputs.filter((p): p is NonNullable<typeof p> => p !== null)
+    const noChannel = enriched.filter((_, i) => inputs[i] === null).map((e) => ({ name: e.candidate.name, reason: e.skip ?? ('no_contact_found' as const) }))
+    const reasons = { site_unreadable: 0, read_failed: 0, prereq_uncited: 0, prereq_unverified: 0, no_contact_found: 0 }
+    for (const s of noChannel) reasons[s.reason]++
+    console.log({ message: '[enrich] read', candidates: enriched.length, ...reasons, stale_shape: stale.length, no_solicitation: enriched.filter((e) => e.noSolicitation).length })
+    const log = [...staleLines, ...noChannel.map((s) => skippedLine(s.name, s.reason))]
+    const emailsToVerify: string[] = []
+    for (let i = 0; i < registrable.length; i += 100) {
+      const result = await runWithRls(db, tenantId, (tx) => batchRegister(tx, tenantId, editionOf(env), { projectId, prospects: registrable.slice(i, i + 100) }, 'found'))
+      if (!result.ok) return result
+      log.push(
+        ...result.value.registered.map((p): JobLogEntry => ({ kind: 'prospect', name: p.name, outcome: 'registered', prospectId: p.id })),
+        ...result.value.skippedDetails.map((s) => skippedLine(s.name, s.reason)),
+      )
+      emailsToVerify.push(...result.value.emailsToVerify)
+    }
+    await kickAutoTopUp(env, tenantId)
+    if (emailsToVerify.length > 0) await stampEmailDeliverability(env.DATABASE_URL, tenantId, emailsToVerify)
+    return ok({ log, withEmail: enriched.filter((e) => e.email !== null && !e.emailNoSolicitation).length })
+  }))
 }

@@ -33,6 +33,7 @@ import {
   parseIndustryVocabulary,
   requireStrategyDocs,
   STAGE_CALLER,
+  type Checkpoint,
   type HostedEnv,
   type ProgressFn,
 } from './context'
@@ -191,19 +192,22 @@ export function shapeCandidates(
     .slice(0, Math.ceil(plan.count * 1.5))
 }
 
-export async function runDiscover(
+// Documents stay out of step results (a result is capped at 1 MiB, a document
+// is not): each unit reads the ones it needs.
+type DiscoverSetup = { plan: PlanEntry[]; today: string; industries: string[] }
+type SearchPass = { entry: PlanEntry; search: GroundedText } | { entry: PlanEntry; unavailable: string }
+type ExtractPass = { candidates: DiscoverCandidate[]; notes: string } | { unavailable: string }
+
+async function planDiscover(
   db: Db,
   tenantId: TenantId,
   env: HostedEnv,
   projectId: ProjectId,
   params: JobParamsOf<'discover'>,
-  progress: ProgressFn = noProgress,
-): Promise<ServiceResult<DiscoverOutput>> {
+): Promise<ServiceResult<DiscoverSetup>> {
   const docs = await requireStrategyDocs(db, tenantId, projectId)
   if (!docs.ok) return docs
-  const [searchNotes, learnings, industriesDoc, allowlist, lever, quota] = await Promise.all([
-    loadDoc(db, tenantId, projectId, 'search_notes'),
-    loadDoc(db, tenantId, projectId, 'learnings'),
+  const [industriesDoc, allowlist, lever, quota] = await Promise.all([
     loadMasterDoc(db, 'tpl_industries'),
     loadProjectOutboundAllowlist(db, projectId),
     getLeverStateById(db, tenantId, projectId, params.count),
@@ -215,7 +219,6 @@ export async function runDiscover(
   }
   const paused = discoveryPausedReason(quota)
   if (paused) return err('PRECONDITION_FAILED', 'Prospect discovery limit reached', paused)
-  const industries = parseIndustryVocabulary(industriesDoc)
   const active = lever.value.discovery.strategies.filter((s) => s.archivedAt === null)
   if (active.length === 0) {
     return err('PRECONDITION_FAILED', 'No active discovery strategies', 'Register at least one discovery strategy (onboarding does this) before collecting prospects.')
@@ -234,96 +237,124 @@ export async function runDiscover(
         return s ? [{ slug: s.slug, approach: s.approach, count: Math.max(p.count, params.minCandidatesPerSearch ?? 0), planned: p.count }] : []
       })
   }
+  return ok({ plan, today: utcDateKey(), industries: parseIndustryVocabulary(industriesDoc) })
+}
 
-  const today = utcDateKey()
-  await progress(`searching: ${plan.map((p) => p.slug).join(', ')}`, 0, plan.length)
-  // Extraction stays serial — each pass rewrites the search_notes the next one
-  // merges into. allSettled so a rejection does not leave the others in
-  // flight, overlapping the step's retry.
-  const settled = await Promise.allSettled(
-    plan.map(async (entry) => ({
-      entry,
-      search: await callLlmGroundedText(env, 'discover.search', {
-        prompt: searchPrompt({
-          plan: entry,
-          business: docs.value.business,
-          salesStrategy: docs.value.salesStrategy,
-          searchNotes,
-          learnings,
-          targetCountries: allowlist.targetCountries,
-          today,
-        }),
-      }),
-    })),
-  )
-  const searches = settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : []))
-  // A pass upstream shed is that strategy's loss, not the batch's: a step retry
-  // re-buys every search to recover one. Anything else is a bug and rejects.
-  const shed = settled.flatMap((s, i) => {
-    if (s.status === 'fulfilled') return []
-    const reason: unknown = s.reason
-    if (!(reason instanceof LlmError)) throw reason
-    return [{ slug: plan[i]!.slug, message: reason.message }]
+async function searchPromptFor(db: Db, tenantId: TenantId, projectId: ProjectId, entry: PlanEntry, today: string): Promise<ServiceResult<string>> {
+  const docs = await requireStrategyDocs(db, tenantId, projectId)
+  if (!docs.ok) return docs
+  const [searchNotes, learnings, allowlist] = await Promise.all([
+    loadDoc(db, tenantId, projectId, 'search_notes'),
+    loadDoc(db, tenantId, projectId, 'learnings'),
+    loadProjectOutboundAllowlist(db, projectId),
+  ])
+  return ok(searchPrompt({ plan: entry, ...docs.value, searchNotes, learnings, targetCountries: allowlist.targetCountries, today }))
+}
+
+export async function runDiscover(
+  db: Db,
+  tenantId: TenantId,
+  env: HostedEnv,
+  projectId: ProjectId,
+  params: JobParamsOf<'discover'>,
+  checkpoint: Checkpoint,
+  progress: ProgressFn = noProgress,
+): Promise<ServiceResult<DiscoverOutput>> {
+  // Progress is written inside the units: code between them reruns on every
+  // replay of the job.
+  const { plan, today, industries } = await checkpoint('plan', async () => {
+    const planned = await planDiscover(db, tenantId, env, projectId, params)
+    if (planned.ok) await progress(`searching: ${planned.value.plan.map((p) => p.slug).join(', ')}`, 0, planned.value.plan.length)
+    return planned
   })
-  const unavailable = shed.map((s) => s.slug)
+
+  // A pass upstream shed is that strategy's loss, not the batch's. Anything
+  // else is a bug and rejects.
+  const passes = await Promise.all(
+    plan.map((entry) =>
+      checkpoint(`search:${entry.slug}`, async (): Promise<ServiceResult<SearchPass>> => {
+        const prompt = await searchPromptFor(db, tenantId, projectId, entry, today)
+        if (!prompt.ok) return prompt
+        try {
+          return ok({ entry, search: await callLlmGroundedText(env, 'discover.search', { prompt: prompt.value }) })
+        } catch (e) {
+          if (!(e instanceof LlmError)) throw e
+          return ok({ entry, unavailable: e.message })
+        }
+      }),
+    ),
+  )
+  const searches = passes.flatMap((p) => ('search' in p ? [p] : []))
+  const shed = passes.flatMap((p) => ('unavailable' in p ? [p] : []))
+  const unavailable = shed.map((p) => p.entry.slug)
   const first = shed[0]
   if (searches.length === 0 && first !== undefined) {
-    return err('BAD_GATEWAY', 'Search step failed upstream', first.message)
+    return err('BAD_GATEWAY', 'Search step failed upstream', first.unavailable)
   }
 
+  // Extraction stays serial — each pass rewrites the search_notes the next one
+  // merges into. Until one has, the stored notes are the prior ones.
   const found: DiscoverCandidate[] = []
   const planCompliance: Array<{ slug: string; planned: number; found: number }> = []
-  let notes = searchNotes
-  let extractionShed: LlmError | null = null
+  let carried: { notes: string } | null = null
+  let extractionShed: string | null = null
   for (const [i, { entry, search }] of searches.entries()) {
-    await progress(`extracting: ${entry.slug}`, i, plan.length)
-    let extracted: Extraction
-    try {
-      extracted = await callLlmFollowUpJson(env, 'discover.extract', {
-        after: search,
-        prompt: extractionPrompt({ search, industries, priorNotes: notes, today, strategySlug: entry.slug }),
-        schema: extractionSchema,
-      })
-    } catch (e) {
-      if (!(e instanceof LlmError)) throw e
-      extractionShed ??= e
+    const pass = await checkpoint(`extract:${entry.slug}`, async (): Promise<ServiceResult<ExtractPass>> => {
+      await progress(`extracting: ${entry.slug}`, i, plan.length)
+      const priorNotes = carried ? carried.notes : await loadDoc(db, tenantId, projectId, 'search_notes')
+      try {
+        const extracted = await callLlmFollowUpJson(env, 'discover.extract', {
+          after: search,
+          prompt: extractionPrompt({ search, industries, priorNotes, today, strategySlug: entry.slug }),
+          schema: extractionSchema,
+        })
+        return ok({ candidates: shapeCandidates(extracted.candidates, entry, industries, search.citations), notes: extracted.searchNotes })
+      } catch (e) {
+        if (!(e instanceof LlmError)) throw e
+        return ok({ unavailable: e.message })
+      }
+    })
+    if ('unavailable' in pass) {
+      extractionShed ??= pass.unavailable
       unavailable.push(entry.slug)
       continue
     }
-    const withStrategy = shapeCandidates(extracted.candidates, entry, industries, search.citations)
-    planCompliance.push({ slug: entry.slug, planned: entry.planned, found: withStrategy.length })
-    found.push(...withStrategy)
-    notes = extracted.searchNotes
+    planCompliance.push({ slug: entry.slug, planned: entry.planned, found: pass.candidates.length })
+    found.push(...pass.candidates)
+    carried = { notes: pass.notes }
   }
 
   // planCompliance carries one row per extraction that completed, so an empty
-  // one means the stage produced nothing — the case a step retry can still fix.
+  // one means the stage produced nothing.
   if (planCompliance.length === 0 && extractionShed !== null) {
-    return err('BAD_GATEWAY', 'Extraction step failed upstream', extractionShed.message)
+    return err('BAD_GATEWAY', 'Extraction step failed upstream', extractionShed)
   }
 
-  await progress('checking duplicates', plan.length, plan.length)
   const byDomain = new Map<string, DiscoverCandidate>()
   for (const c of found) {
     const domain = apexDomainOf(c.websiteUrl)!
     if (!byDomain.has(domain)) byDomain.set(domain, c)
   }
   const unique = [...byDomain.values()]
-  const fresh: DiscoverCandidate[] = []
-  for (let i = 0; i < unique.length; i += 100) {
-    const chunk = unique.slice(i, i + 100)
-    const dedup = await checkProspectDedup(db, tenantId, {
-      projectId,
-      candidates: chunk.map((c) => ({ organizationDomain: apexDomainOf(c.websiteUrl)! })),
-    })
-    if (!dedup.ok) return dedup
-    fresh.push(...chunk.filter((_, k) => dedup.value.decisions[k]?.kind === 'fresh'))
-  }
-
-  if (notes && notes !== searchNotes) {
-    const saved = await runWithRls(db, tenantId, (tx) => saveDocument(tx, tenantId, STAGE_CALLER, env, { id: projectId, slug: 'search_notes' }, { content: notes }))
-    if (!saved.ok) console.error('[discover] search_notes save failed', saved.error)
-  }
+  const fresh = await checkpoint('dedup', async (): Promise<ServiceResult<DiscoverCandidate[]>> => {
+    await progress('checking duplicates', plan.length, plan.length)
+    const kept: DiscoverCandidate[] = []
+    for (let i = 0; i < unique.length; i += 100) {
+      const chunk = unique.slice(i, i + 100)
+      const dedup = await checkProspectDedup(db, tenantId, {
+        projectId,
+        candidates: chunk.map((c) => ({ organizationDomain: apexDomainOf(c.websiteUrl)! })),
+      })
+      if (!dedup.ok) return dedup
+      kept.push(...chunk.filter((_, k) => dedup.value.decisions[k]?.kind === 'fresh'))
+    }
+    const notes = carried?.notes
+    if (notes && notes !== (await loadDoc(db, tenantId, projectId, 'search_notes'))) {
+      const saved = await runWithRls(db, tenantId, (tx) => saveDocument(tx, tenantId, STAGE_CALLER, env, { id: projectId, slug: 'search_notes' }, { content: notes }))
+      if (!saved.ok) console.error('[discover] search_notes save failed', saved.error)
+    }
+    return ok(kept)
+  })
 
   const ran = plan.length - unavailable.length
   const note = unavailable.length === 0 ? '' : ` Unavailable upstream: ${unavailable.join(', ')}.`
@@ -341,4 +372,3 @@ export async function runDiscover(
     },
   })
 }
-

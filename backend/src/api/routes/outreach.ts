@@ -211,6 +211,7 @@ outreachSendRouter.post(
       c.get('edition'),
       sendContext(c),
       c.req.valid('json'),
+      null,
     )
     if (!result.ok) return respondWithError(c, result)
     scheduleAutoTopUp(c)

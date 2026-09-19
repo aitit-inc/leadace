@@ -7,12 +7,12 @@ import type { Db } from '../../db/connection'
 import type { Channel, OutboundChannel, OutboundMode } from '../../db/schema'
 import type { ProjectId, TenantId } from '../../domain/ids'
 import type { JobLogEntry, JobParamsOf, JobResult } from '../../domain/jobs'
-import { ok, type ServiceResult } from '../result'
+import { ok, type ServiceError, type ServiceResult } from '../result'
 import { callLlmJson, LlmError } from '../llm'
 import { listReachable, recordSiteRead, type ReachableProspect, type ReachableQuery } from '../prospects'
 import { pickMessageVariant, type PickedVariant } from '../message-variants'
 import { getOutboundMode, getProjectSettings, type ProjectSettingsRow } from '../project-settings'
-import { recordOutreachWithInquiry, sendAndRecord, skipProspect } from '../outreach'
+import { claimForJob, lastTouchSince, recordOutreachWithInquiry, sendAndRecord, skipProspect, type PriorTouch } from '../outreach'
 import { kickAutoTopUp } from '../credits'
 import { assertTenantComplianceReady } from '../tenants'
 import { editionOf, loadDoc, loadMasterDoc, requireStrategyDocs, sendContextOf, type HostedEnv } from './context'
@@ -276,6 +276,21 @@ async function refreshSiteRead(db: Db, tenantId: TenantId, env: HostedEnv, p: Re
   return { ...p, overview, hypothesis: { ...p.hypothesis, timingSignals }, siteReadAt: now.toISOString() }
 }
 
+function priorOutcome(t: PriorTouch): DraftOutcome {
+  switch (t.status) {
+    // pre_send: the other run of this step holds the reservation and is sending it.
+    case 'sent':
+    case 'pre_send':
+      return { kind: 'sent', outreachId: t.id, channel: t.channel, variantId: t.variantId, subject: t.subject ?? '' }
+    case 'pending_review':
+      return { kind: 'drafted', outreachId: t.id, channel: t.channel, variantId: t.variantId, subject: t.subject ?? '' }
+    case 'skipped':
+      return { kind: 'skipped', reason: t.skipReason ?? 'skipped' }
+    case 'failed':
+      return { kind: 'failed', error: t.errorMessage ?? 'send failed', at: 'send' }
+  }
+}
+
 export async function draftOne(
   db: Db,
   tenantId: TenantId,
@@ -284,7 +299,21 @@ export async function draftOne(
   target: ReachableProspect,
   batch: Pick<DraftBatch, 'outboundMode'>,
   ctx: CompositionContext,
+  jobStart: Date,
 ): Promise<DraftOutcome> {
+  const touched = () => runWithRls(db, tenantId, (tx) => lastTouchSince(tx, tenantId, projectId, target.prospectId, jobStart))
+  // A write that lost to the other run of this step reports what that run wrote.
+  const claimed = <T>(write: (tx: Db) => Promise<ServiceResult<T>>) =>
+    runWithRls(db, tenantId, async (tx): Promise<ServiceResult<T>> => {
+      const claim = await claimForJob(tx, tenantId, projectId, target.prospectId, jobStart)
+      return claim.ok ? write(tx) : claim
+    })
+  const writeFailed = async (r: ServiceError, error: string): Promise<DraftOutcome> => {
+    const other = r.code === 'CONFLICT' ? await touched() : null
+    return other ? priorOutcome(other) : { kind: 'failed', error, at: 'send' }
+  }
+  const prior = await touched()
+  if (prior) return priorOutcome(prior)
   const channel = pickChannel(target, ctx.settings.outboundChannels, batch.outboundMode)
   if (!channel) return { kind: 'needs_hands' }
   const now = new Date()
@@ -295,10 +324,8 @@ export async function draftOne(
   const p = refreshed ?? target
   if (since && signalsAfter(p.overview, since).length === 0) {
     const note = `nothing new on their site since ${since.slice(0, 10)}`
-    const skipped = await runWithRls(db, tenantId, (tx) =>
-      skipProspect(tx, tenantId, { projectId, prospectId: p.prospectId, channel, reason: 'no_fresh_material', note }),
-    )
-    if (!skipped.ok) return { kind: 'failed', error: `skip not recorded: ${skipped.error}`, at: 'send' }
+    const skipped = await claimed((tx) => skipProspect(tx, tenantId, { projectId, prospectId: p.prospectId, channel, reason: 'no_fresh_material', note }))
+    if (!skipped.ok) return writeFailed(skipped, `skip not recorded: ${skipped.error}`)
     return { kind: 'skipped', reason: `no_fresh_material: ${note}` }
   }
   const picked = await pickMessageVariant(db, tenantId, projectId)
@@ -317,10 +344,8 @@ export async function draftOne(
   }
   if (!composed) return { kind: 'failed', error: 'composition failed: the model answered without a usable subject and body', at: 'model' }
   if (composed.decision === 'skip') {
-    const skipped = await runWithRls(db, tenantId, (tx) =>
-      skipProspect(tx, tenantId, { projectId, prospectId: p.prospectId, channel, reason: composed.reason, note: composed.note }),
-    )
-    if (!skipped.ok) return { kind: 'failed', error: `skip not recorded: ${skipped.error}`, at: 'send' }
+    const skipped = await claimed((tx) => skipProspect(tx, tenantId, { projectId, prospectId: p.prospectId, channel, reason: composed.reason, note: composed.note }))
+    if (!skipped.ok) return writeFailed(skipped, `skip not recorded: ${skipped.error}`)
     return { kind: 'skipped', reason: `${composed.reason}: ${composed.note}` }
   }
   const variantId = variant?.variantId ?? null
@@ -331,14 +356,14 @@ export async function draftOne(
       subject: composed.subject,
       body: composed.body,
       ...(variantId ? { variantId } : {}),
-    })
-    if (!sent.ok) return { kind: 'failed', error: `${sent.error}${sent.detail ? ` — ${typeof sent.detail === 'string' ? sent.detail : JSON.stringify(sent.detail)}` : ''}`, at: 'send' }
+    }, jobStart)
+    if (!sent.ok) return writeFailed(sent, `${sent.error}${sent.detail ? ` — ${typeof sent.detail === 'string' ? sent.detail : JSON.stringify(sent.detail)}` : ''}`)
     await kickAutoTopUp(env, tenantId)
     return { kind: sent.value.mode, outreachId: sent.value.outreachId, channel, variantId, subject: composed.subject }
   }
   // Form / SNS only reach here in draft mode (pickChannel), so the row lands
   // as pending_review with the footer baked in for the person to submit.
-  const recorded = await runWithRls(db, tenantId, (tx) =>
+  const recorded = await claimed((tx) =>
     recordOutreachWithInquiry(tx, tenantId, editionOf(env), sendContextOf(env), {
       projectId,
       prospectId: p.prospectId,
@@ -348,7 +373,7 @@ export async function draftOne(
       ...(variantId && channel === 'form' ? { variantId } : {}),
     }),
   )
-  if (!recorded.ok) return { kind: 'failed', error: `${recorded.error}`, at: 'send' }
+  if (!recorded.ok) return writeFailed(recorded, recorded.error)
   return { kind: 'drafted', outreachId: recorded.value.outreachLogId, channel, variantId, subject: composed.subject }
 }
 

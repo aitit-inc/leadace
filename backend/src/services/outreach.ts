@@ -15,6 +15,7 @@ import {
   IN_FLIGHT_OUTREACH_STATUSES,
   type Channel,
   type OutreachStatus,
+  type SkipReason,
   type SnsAccounts,
 } from '../db/schema'
 import type { Db } from '../db/connection'
@@ -749,14 +750,73 @@ type EmailReservation = {
   message: { to: string; subject: string; body: string; headers: Record<string, string>; senderDisplayName: string | null }
 }
 
+// Workflows can rerun a job step; what the job already wrote for a prospect
+// is that step's outcome, which a rerun reads instead of acting again.
+export type PriorTouch = {
+  id: number
+  channel: Channel
+  status: OutreachStatus
+  subject: string | null
+  variantId: string | null
+  skipReason: SkipReason | null
+  errorMessage: string | null
+}
+
+export async function lastTouchSince(db: Db, tenantId: TenantId, projectId: ProjectId, prospectId: number, since: Date): Promise<PriorTouch | null> {
+  const [row] = await db
+    .select({
+      id: outreachLogs.id,
+      channel: outreachLogs.channel,
+      status: outreachLogs.status,
+      subject: outreachLogs.subject,
+      variantId: outreachLogs.variantId,
+      skipReason: outreachLogs.skipReason,
+      errorMessage: outreachLogs.errorMessage,
+    })
+    .from(outreachLogs)
+    .where(and(
+      eq(outreachLogs.tenantId, tenantId),
+      eq(outreachLogs.projectId, projectId),
+      eq(outreachLogs.prospectId, prospectId),
+      gte(outreachLogs.sentAt, since),
+    ))
+    .orderBy(desc(outreachLogs.id))
+    .limit(1)
+  return row ?? null
+}
+
+// pre_send: the other run of the step holds the reservation and is sending it.
+export async function wasSentSince(db: Db, tenantId: TenantId, id: number, since: Date): Promise<boolean> {
+  const [row] = await db
+    .select({ id: outreachLogs.id })
+    .from(outreachLogs)
+    .where(and(eq(outreachLogs.tenantId, tenantId), eq(outreachLogs.id, id), inArray(outreachLogs.status, ['sent', 'pre_send']), gte(outreachLogs.sentAt, since)))
+    .limit(1)
+  return row !== undefined
+}
+
+// Two runs of one job step can overlap (Workflows does not stop the old run),
+// so every job write to a prospect first takes this lock, held until the
+// caller's transaction commits, and finds the job has not written yet.
+export async function claimForJob(db: Db, tenantId: TenantId, projectId: ProjectId, prospectId: number, jobStart: Date): Promise<ServiceResult<undefined>> {
+  await db
+    .select({ id: projectProspects.id })
+    .from(projectProspects)
+    .where(and(eq(projectProspects.projectId, projectId), eq(projectProspects.prospectId, prospectId)))
+    .for('update')
+  if (await lastTouchSince(db, tenantId, projectId, prospectId, jobStart)) return err('CONFLICT', 'This job already wrote to the prospect')
+  return ok(undefined)
+}
+
 export async function sendAndRecord(
   run: TenantRun,
   tenantId: TenantId,
   edition: Edition,
   ctx: SendContext,
   input: SendAndRecordInput,
+  jobStart: Date | null,
 ): Promise<ServiceResult<SendOutcome>> {
-  const reserved = await run((db) => reserveEmailSend(db, tenantId, edition, ctx, input))
+  const reserved = await run((db) => reserveEmailSend(db, tenantId, edition, ctx, input, jobStart))
   if (!reserved.ok) return reserved
   if (reserved.value.mode === 'drafted') return ok(reserved.value)
   return deliverEmail(run, tenantId, ctx, reserved.value)
@@ -853,12 +913,17 @@ async function reserveEmailSend(
   edition: Edition,
   ctx: SendContext,
   input: SendAndRecordInput,
+  jobStart: Date | null,
 ): Promise<ServiceResult<Extract<SendOutcome, { mode: 'drafted' }> | EmailReservation>> {
   // Gate project existence before loadProjectSendSettings, which asserts the
   // settings row exists — loading it for a missing project would 500 not 404.
   const resolved = await resolveProject(db, tenantId, input.projectId)
   if (!resolved.ok) return resolved
   const projectId = resolved.value
+  if (jobStart) {
+    const claimed = await claimForJob(db, tenantId, projectId, input.prospectId, jobStart)
+    if (!claimed.ok) return claimed
+  }
   const [prospectGuard, sendSettings, complianceResult] = await Promise.all([
     requireProspect(db, tenantId, input.prospectId),
     loadProjectSendSettings(db, projectId),

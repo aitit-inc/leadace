@@ -17,8 +17,8 @@ import { draftLogEntry, draftOne, loadCompositionContext, loadDraftBatch, refill
 import { runEvaluate } from '../services/pipeline/evaluate'
 import { runJournal, type CycleDigest } from '../services/pipeline/journal'
 import { withLlmScope } from '../services/llm'
-import { sendDraft } from '../services/outreach'
-import { editionOf, sendContextOf, type ProgressFn } from '../services/pipeline/context'
+import { sendDraft, wasSentSince } from '../services/outreach'
+import { editionOf, sendContextOf, type Checkpoint, type ProgressFn } from '../services/pipeline/context'
 
 export type StageCtx = {
   env: Env
@@ -32,15 +32,10 @@ function llmScoped<T>(ctx: StageCtx, fn: () => Promise<T>): Promise<T> {
   return withLlmScope({ tenantId: ctx.job.tenantId, jobId: ctx.job.id }, fn)
 }
 
-// 30 minutes: a stage's real bound is the per-call LLM timeout, and discover
-// with every call running to its deadline takes 3 minutes of search plus 3
-// per strategy — 21 at the default six. Workflows charges CPU, not wall clock, so a wider
-// window only delays noticing a stuck step.
+// 30 minutes: well above a step's real bound, the timeouts of the few LLM
+// calls inside it. Workflows charges CPU, not wall clock, so a wider window
+// only delays noticing a stuck step.
 export const STEP_RETRY = { retries: { limit: 2, delay: '20 seconds', backoff: 'exponential' }, timeout: '30 minutes' } as const
-// A step that may hand a message to Gmail has no stable idempotency key across
-// the provider call and the bookkeeping after it — a retry could send twice.
-// sendAndRecord records its own failure; the step runs once.
-export const SEND_STEP = { retries: { limit: 0, delay: '1 second' }, timeout: '10 minutes' } as const
 
 // Upstream flakiness retries; anything the caller must fix does not.
 export function unwrap<T>(r: ServiceResult<T>): T {
@@ -49,6 +44,11 @@ export function unwrap<T>(r: ServiceResult<T>): T {
   const message = `${r.error}${detail}`
   if (r.code === 'BAD_GATEWAY' || r.code === 'INTERNAL_ERROR') throw new Error(message)
   throw new NonRetryableError(message)
+}
+
+// Each unit of a stage is its own step, so a restart redoes one unit.
+function checkpointOf(ctx: StageCtx, prefix: string): Checkpoint {
+  return (name, fn) => ctx.step.do(`${prefix}:${name}`, STEP_RETRY, () => llmScoped(ctx, async () => unwrap(await fn())))
 }
 
 // Progress is advisory: a failed write must not fail the stage it reports on.
@@ -97,10 +97,8 @@ export async function discoverStage(
   namePrefix = 'discover',
 ): Promise<Extract<JobResult, { kind: 'discover' }>> {
   const { tenantId, projectId }: Ids = ctx.job
-  const discovered = await ctx.step.do(namePrefix, STEP_RETRY, () => llmScoped(ctx, async () => {
-    const db = createDb(ctx.env.DATABASE_URL)
-    return unwrap(await runDiscover(db, tenantId, ctx.env, projectId, params, progressWriter(ctx, db, 'discover')))
-  }))
+  const db = createDb(ctx.env.DATABASE_URL)
+  const discovered = unwrap(await runDiscover(db, tenantId, ctx.env, projectId, params, checkpointOf(ctx, namePrefix), progressWriter(ctx, db, 'discover')))
   const enriched = await enrichStage(ctx, discovered.candidates, `${namePrefix}:enrich`)
   return {
     ...discovered.result,
@@ -121,13 +119,10 @@ export async function enrichStage(
   for (let i = 0; i < candidates.length; i += ENRICH_CHUNK) {
     const chunk = candidates.slice(i, i + ENRICH_CHUNK)
     const stepName = `${namePrefix}:${i}`
-    const { log, withEmail } = await ctx.step.do(stepName, STEP_RETRY, () => llmScoped(ctx, async () => {
-      const db = createDb(ctx.env.DATABASE_URL)
-      const progress: ProgressFn = (step, done) => progressWriter(ctx, db, 'enrich')(step, i + done, candidates.length)
-      const enriched = unwrap(await runEnrich(db, tenantId, ctx.env, projectId, chunk, progress))
-      await writeLog(ctx, db, stepName, enriched.log)
-      return enriched
-    }))
+    const db = createDb(ctx.env.DATABASE_URL)
+    const progress: ProgressFn = (step, done) => progressWriter(ctx, db, 'enrich')(step, i + done, candidates.length)
+    const { log, withEmail } = unwrap(await runEnrich(db, tenantId, ctx.env, projectId, chunk, checkpointOf(ctx, stepName), progress))
+    await logStep(ctx, stepName, log)
     const registered = log.filter((l) => l.kind === 'prospect' && l.outcome === 'registered').length
     totals.registered += registered
     totals.skipped += log.length - registered
@@ -169,11 +164,11 @@ export async function draftStage(
       const stepName = `${namePrefix}:${p.prospectId}`
       const done = produced
       attempted.push(p.prospectId)
-      const outcome = await ctx.step.do(stepName, SEND_STEP, () => llmScoped(ctx, async (): Promise<DraftOutcome | null> => {
+      const outcome = await ctx.step.do(stepName, STEP_RETRY, () => llmScoped(ctx, async (): Promise<DraftOutcome | null> => {
         const db = createDb(ctx.env.DATABASE_URL)
         if (await isCancelled(ctx, db)) return null
         await progressWriter(ctx, db, 'draft')(p.name, done, wanted)
-        const drafted = await draftOne(db, tenantId, ctx.env, projectId, p, batch, context)
+        const drafted = await draftOne(db, tenantId, ctx.env, projectId, p, batch, context, new Date(ctx.job.createdAt))
         await writeLog(ctx, db, stepName, [draftLogEntry(p.name, drafted)])
         return drafted
       }))
@@ -203,11 +198,15 @@ export async function sendStage(ctx: StageCtx, params: JobParamsOf<'send'>): Pro
   let failed = 0
   const errors: string[] = []
   for (const [i, id] of params.draftIds.entries()) {
-    const outcome = await ctx.step.do(`send:${id}`, SEND_STEP, async () => {
+    const outcome = await ctx.step.do(`send:${id}`, STEP_RETRY, async () => {
       const db = createDb(ctx.env.DATABASE_URL)
       if (await isCancelled(ctx, db)) return { ok: false as const, cancelled: true as const, error: 'job cancelled' }
       await progressWriter(ctx, db, 'send')(`draft ${id}`, i, params.draftIds.length)
       const r = await sendDraft((fn) => tenantTx(ctx, fn), tenantId, editionOf(ctx.env), sendContextOf(ctx.env), id)
+      // A rerun finds the draft this job already sent.
+      if (!r.ok && r.code === 'CONFLICT' && (await tenantTx(ctx, (tx) => wasSentSince(tx, tenantId, id, new Date(ctx.job.createdAt))))) {
+        return { ok: true as const }
+      }
       if (r.ok) await kickAutoTopUp(ctx.env, tenantId)
       return r.ok ? { ok: true as const } : { ok: false as const, cancelled: false as const, error: r.error }
     })

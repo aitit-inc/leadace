@@ -61,6 +61,11 @@ export function googleCtxOf(env: HostedEnv): GoogleCtx {
 export type ProgressFn = (step: string, done: number, total: number | null) => Promise<void>
 export const noProgress: ProgressFn = async () => {}
 
+// Runs one unit of a stage and keeps its value, so a stage that starts over
+// skips the units that finished (a Workflow step on the job path). Each unit
+// holds at most one paid call. A failed unit throws.
+export type Checkpoint = <T extends Rpc.Serializable<T>>(name: string, fn: () => Promise<ServiceResult<T>>) => Promise<T>
+
 // A missing optional document is an empty string; a missing required one is
 // the stage's precondition failure.
 export async function loadDoc(db: Db, tenantId: TenantId, projectId: ProjectId, slug: string): Promise<string | null> {
