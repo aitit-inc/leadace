@@ -33,9 +33,9 @@ function llmScoped<T>(ctx: StageCtx, fn: () => Promise<T>): Promise<T> {
 }
 
 // 30 minutes: a stage's real bound is the per-call LLM timeout, and discover
-// at six strategies with every extraction timing out on flex then standard
-// takes 27. Workflows charges CPU, not wall clock, so a wider window only
-// delays noticing a stuck step.
+// with every call running to its deadline takes 3 minutes of search plus 3
+// per strategy — 21 at the default six. Workflows charges CPU, not wall clock, so a wider
+// window only delays noticing a stuck step.
 export const STEP_RETRY = { retries: { limit: 2, delay: '20 seconds', backoff: 'exponential' }, timeout: '30 minutes' } as const
 // A step that may hand a message to Gmail has no stable idempotency key across
 // the provider call and the bookkeeping after it — a retry could send twice.

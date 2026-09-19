@@ -263,9 +263,8 @@ function envKey(name: string): string {
 
 // --- collect ---------------------------------------------------------------
 
-// One retry on an upstream stumble, as the production job step has: the flex
-// tier sheds under load (503 / timeout / empty output), and a shed pass is a
-// transport fact, not a measurement.
+// One retry on an upstream stumble (timeout / 5xx / empty output): a failed
+// call is a transport fact, not a measurement.
 async function onceMore<T>(label: string, call: () => Promise<T>): Promise<T> {
   try {
     return await call()
