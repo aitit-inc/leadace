@@ -802,6 +802,23 @@ const SCENARIOS = [
       ];
     },
   },
+  {
+    name: 'project-settings',
+    summary: 'The settings of a project that already sends',
+    stack: 'self-host',
+    setup: async (ctx) => {
+      await seedProject(ctx, { name: 'Northwind outbound', settings: { outboundMode: 'send' } });
+      return [
+        {
+          name: 'follow-up',
+          path: '/project-settings',
+          // The page scrolls in its own pane; the click brings the help text into the shot.
+          click: 'text=Turning this on also picks up',
+          expect: 'Auto follow-up on unanswered emails',
+        },
+      ];
+    },
+  },
 ];
 
 // ─── stack ──────────────────────────────────────────────────────────────────

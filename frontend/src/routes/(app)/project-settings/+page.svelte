@@ -487,7 +487,9 @@
             fresh-angle follow-up on this cadence and stops automatically on any real reply, bounce, or
             unsubscribe (auto-replies don't stop it). Follow-ups don't count against your plan — a
             prospect counts once, when its first email goes out — but an N-email sequence still
-            multiplies your mailbox's daily send volume by N.
+            multiplies your mailbox's daily send volume by N. Turning this on also picks up prospects
+            you emailed recently (within the length of the sequence); older ones wait for the regular
+            re-approach.
           </p>
         </div>
 

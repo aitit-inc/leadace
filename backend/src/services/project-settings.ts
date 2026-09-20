@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { and, eq, isNotNull } from 'drizzle-orm'
+import { and, between, eq, isNotNull, isNull, sql } from 'drizzle-orm'
 import {
   projectSettings,
   projectProspects,
@@ -264,6 +264,61 @@ export async function loadLeverConfig(db: Db, projectId: ProjectId): Promise<Lev
   return leverConfigSchema.parse(assertSettingsRow(row, projectId).leverConfig)
 }
 
+// Only the prospects a sequence running all along would still hold: their
+// latest outreach is a sent email within the sequence's own length. Older ones
+// belong to the months-scale recycle — a "following up on my email" two months
+// late is not a follow-up — and a later failure or skip ended the sequence on
+// purpose. Due where the send would have stamped it, clamped to now, so the
+// daily draw and the mailbox caps drain the backlog.
+async function resumeFollowUps(
+  db: Db,
+  projectId: ProjectId,
+  gapDays: number[],
+  now: Date,
+): Promise<void> {
+  const nowTs = sql`${now.toISOString()}::timestamptz`
+  const gaps = sql`ARRAY[${sql.join(gapDays.map((d) => sql`${d}`), sql`, `)}]::int[]`
+  const sequenceDays = gapDays.reduce((sum, d) => sum + d, 0)
+  const lastSentEmail = sql`(
+    SELECT MAX(ol.sent_at) FROM outreach_logs ol
+    WHERE ol.project_id = project_prospects.project_id
+      AND ol.prospect_id = project_prospects.prospect_id
+      AND ol.status = 'sent'
+      AND ol.channel = 'email'
+  )`
+  await db
+    .update(projectProspects)
+    .set({
+      nextFollowupAfter: sql`GREATEST(${nowTs}, ${lastSentEmail} + make_interval(days => (${gaps})[${projectProspects.followupTouches}]))`,
+      updatedAt: now,
+    })
+    .where(and(
+      eq(projectProspects.projectId, projectId),
+      eq(projectProspects.status, 'contacted'),
+      isNull(projectProspects.nextFollowupAfter),
+      between(projectProspects.followupTouches, 1, gapDays.length),
+      sql`${lastSentEmail} >= ${nowTs} - make_interval(days => ${sequenceDays})`,
+      sql`NOT EXISTS (
+        SELECT 1 FROM outreach_logs later
+        WHERE later.project_id = project_prospects.project_id
+          AND later.prospect_id = project_prospects.prospect_id
+          AND later.sent_at > ${lastSentEmail}
+      )`,
+    ))
+}
+
+// Holds the settings row until the request commits, so two saves cannot both
+// read the state before the other's write and miss the off-to-on transition.
+async function lockFollowUpConfig(db: Db, projectId: ProjectId): Promise<FollowUpSequence> {
+  const [row] = await db
+    .select({ followUpSequence: projectSettings.followUpSequence })
+    .from(projectSettings)
+    .where(eq(projectSettings.projectId, projectId))
+    .limit(1)
+    .for('update')
+  return followUpSequenceSchema.parse(assertSettingsRow(row, projectId).followUpSequence)
+}
+
 export async function loadProjectFollowUpConfig(
   db: Db,
   projectId: ProjectId,
@@ -445,27 +500,31 @@ export async function updateProjectSettings(
     updatedAt: now,
   }
 
+  const followUpWasEnabled =
+    patch.followUpSequence !== undefined && (await lockFollowUpConfig(db, projectId)).enabled
+
   const [row] = await db
     .update(projectSettings)
     .set(updateSet)
     .where(eq(projectSettings.projectId, projectId))
     .returning(settingsCols)
 
-  // Kill-switch: clear in-progress sequences so the follow-up arm stops re-picking
-  // them. Keyed on the EFFECTIVE enabled after the whole-cell replace (a cadence-
-  // only patch omitting `enabled` reads back disabled and must clear too), not an
-  // explicit false.
-  if (
-    patch.followUpSequence !== undefined &&
-    !followUpSequenceSchema.parse(patch.followUpSequence).enabled
-  ) {
-    await db
-      .update(projectProspects)
-      .set({ nextFollowupAfter: null, updatedAt: now })
-      .where(and(
-        eq(projectProspects.projectId, projectId),
-        isNotNull(projectProspects.nextFollowupAfter),
-      ))
+  // followUpSequence is whole-cell replace, so the parsed patch IS the effective
+  // config — a cadence-only patch omitting `enabled` reads back disabled.
+  if (patch.followUpSequence !== undefined) {
+    const followUp = followUpSequenceSchema.parse(patch.followUpSequence)
+    if (!followUp.enabled) {
+      // Kill-switch: the follow-up arm must stop re-picking in-progress sequences.
+      await db
+        .update(projectProspects)
+        .set({ nextFollowupAfter: null, updatedAt: now })
+        .where(and(
+          eq(projectProspects.projectId, projectId),
+          isNotNull(projectProspects.nextFollowupAfter),
+        ))
+    } else if (!followUpWasEnabled) {
+      await resumeFollowUps(db, projectId, followUp.gapDays, now)
+    }
   }
 
   const r = assertSettingsRow(row, projectId)

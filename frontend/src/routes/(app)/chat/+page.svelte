@@ -2,7 +2,7 @@
   import { goto, invalidate } from '$app/navigation';
   import { ArrowUp } from '@lucide/svelte';
   import { ApiError } from '$lib/api';
-  import { ACCEPTED_FILE_TYPES, MAX_ATTACHMENT_BYTES } from '$lib/chat-attachments';
+  import { ACCEPTED_FILE_TYPES, MAX_ATTACHMENT_BYTES, canAttach } from '$lib/chat-attachments';
   import {
     confirmChatCall,
     createThread,
@@ -47,6 +47,9 @@
   // Already uploaded to this thread, waiting to ride the next message.
   let attachments = $state<ChatAttachment[]>([]);
   let uploading = $state<{ key: number; name: string }[]>([]);
+  // Files from a pick whose thread is still being created. They cannot be
+  // listed as uploading before it exists, and Send waits for them all the same.
+  let attaching = $state(0);
   let dictating = $state(false);
   let dropping = $state(false);
   // dragover keeps firing while a drag is over the page; counting enters and
@@ -227,11 +230,20 @@
     }
   }
 
+  // One thread however many callers race for it: `data.thread` only catches up
+  // once the creation has navigated, so attaching a file and pressing Enter
+  // behind it would otherwise make a thread each.
+  let creating: Promise<string> | undefined;
+
   async function ensureThread(): Promise<string> {
     if (data.thread) return data.thread.id;
-    const t = await createThread(data.activeProjectId ? { projectId: data.activeProjectId } : {}, fetch, token);
-    await goto(`/chat?t=${t.id}`, { replaceState: true, keepFocus: true, noScroll: true });
-    return t.id;
+    creating ??= createThread(data.activeProjectId ? { projectId: data.activeProjectId } : {}, fetch, token)
+      .then(async (t) => {
+        await goto(`/chat?t=${t.id}`, { replaceState: true, keepFocus: true, noScroll: true });
+        return t.id;
+      })
+      .finally(() => (creating = undefined));
+    return creating;
   }
 
   // Tool events are not replayed after a reconnect, so a project still being
@@ -259,7 +271,7 @@
     if (!picked || picked.length === 0) return;
     const files = [...picked];
     error = '';
-    if (attachments.length + uploading.length + files.length > MAX_ATTACHMENTS) {
+    if (attachments.length + uploading.length + attaching + files.length > MAX_ATTACHMENTS) {
       error = `Up to ${MAX_ATTACHMENTS} files per message.`;
       return;
     }
@@ -268,12 +280,28 @@
       error = `${tooBig.name} is larger than ${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB.`;
       return;
     }
-    const id = await ensureThread();
+    const unreadable = files.find((f) => !canAttach(f.name));
+    if (unreadable) {
+      error = `Ace cannot read ${unreadable.name}.`;
+      return;
+    }
+    const pickedIn = viewGen;
+    attaching += files.length;
+    let id: string;
+    try {
+      id = await ensureThread();
+    } catch {
+      if (pickedIn === viewGen) error = 'The chat could not be started. Please try again.';
+      return;
+    } finally {
+      attaching -= files.length;
+    }
     const gen = viewGen;
     // The whole pick is shown as pending before the first byte goes up, so a
     // second pick counts against the limit and Send waits for all of them.
     const queued = files.map((file) => ({ key: uploadKey++, file }));
     uploading = [...uploading, ...queued.map(({ key, file }) => ({ key, name: file.name }))];
+    const failed: string[] = [];
     for (const { key, file } of queued) {
       // The view moved on: its own state was reset, and these belong to it.
       if (gen !== viewGen) return;
@@ -281,11 +309,13 @@
         const uploaded = await uploadChatAttachment(id, file, fetch, token);
         if (gen === viewGen) attachments = [...attachments, uploaded];
       } catch (e) {
-        if (gen === viewGen) error = e instanceof ApiError ? e.message : `${file.name} could not be attached.`;
+        failed.push(e instanceof ApiError ? e.message : `${file.name} could not be attached.`);
       } finally {
         if (gen === viewGen) uploading = uploading.filter((u) => u.key !== key);
       }
     }
+    // One message for the pick: several files usually fail for the one reason.
+    if (gen === viewGen && failed.length > 0) error = [...new Set(failed)].join(' ');
   }
 
   function draggingFiles(e: DragEvent) {
@@ -326,7 +356,7 @@
   // A message sent while a turn runs is answered right after it.
   async function send(text: string) {
     const trimmed = text.trim();
-    if ((!trimmed && attachments.length === 0) || sending || stopping || uploading.length > 0) return;
+    if ((!trimmed && attachments.length === 0) || sending || stopping || uploading.length + attaching > 0) return;
     const attachmentIds = attachments.map((a) => a.id);
     input = '';
     attachments = [];
@@ -496,7 +526,7 @@
       {:else}
         <button
           type="submit"
-          disabled={sending || stopping || uploading.length > 0 || (!input.trim() && attachments.length === 0)}
+          disabled={sending || stopping || uploading.length + attaching > 0 || (!input.trim() && attachments.length === 0)}
           aria-label={needsSetup ? 'Start' : 'Send'}
           title={needsSetup ? 'Start' : 'Send'}
           class="btn btn-primary h-10 w-10 shrink-0 p-0"

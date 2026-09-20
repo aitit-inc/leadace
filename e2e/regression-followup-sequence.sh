@@ -20,7 +20,11 @@
 #   6. The enabled=false kill-switch clears an in-progress next_followup_after.
 #   7. A cadence-only PUT that omits `enabled` reads back disabled and ALSO clears
 #      (the effective-disabled fix — not just an explicit false).
-#   8. A disabled project never seeds a sequence (existing-rows-off / no-backfill).
+#   8. A disabled project never seeds a sequence (existing-rows-off).
+#   9. Turning the sequence on resumes a prospect contacted while it was off when
+#      its latest outreach is a sent email within the sequence's length (due at
+#      sentAt + gap[0]). An older send, a send followed by a skip, and a form
+#      send stay out, and a save that keeps it on re-arms nothing.
 #
 # Curl-only, no Claude session / Anthropic budget. Single tenant, one project,
 # cleans up.
@@ -80,6 +84,7 @@ cycle_touch() { echo "$1" | jq -r --argjson id "$2" '.prospects[]? | select(.pro
 touches()   { psql_local "SELECT followup_touches FROM project_prospects WHERE prospect_id=$1 AND project_id='$PROJECT_ID';"; }
 ppstatus()  { psql_local "SELECT status FROM project_prospects WHERE prospect_id=$1 AND project_id='$PROJECT_ID';"; }
 nfa_null()  { psql_local "SELECT (next_followup_after IS NULL) FROM project_prospects WHERE prospect_id=$1 AND project_id='$PROJECT_ID';"; }
+nfa_days()  { psql_local "SELECT ROUND(EXTRACT(EPOCH FROM (next_followup_after - NOW())) / 86400) FROM project_prospects WHERE prospect_id=$1 AND project_id='$PROJECT_ID';"; }
 touchnum()  { psql_local "SELECT touch_number FROM outreach_logs WHERE id=$1;"; }
 rewind_nfa(){ psql_local "UPDATE project_prospects SET next_followup_after = NOW() - INTERVAL '1 minute' WHERE prospect_id=$1 AND project_id='$PROJECT_ID' AND next_followup_after IS NOT NULL;" > /dev/null; }
 
@@ -139,16 +144,17 @@ say "project_id=$PROJECT_ID"
 assert_eq "new project follow-up enabled" \
   "$(api GET "/api/projects/$PROJECT_ID/settings" | jq -r '.followUpSequence.enabled')" "true"
 
-step "seed 4 US prospects (seq / kill / fixb / disabled)"
+step "seed 7 US prospects (seq / kill / fixb / disabled / old / skipped / form)"
 SEED_BODY="$(jq -nc --arg pid "$PROJECT_ID" \
-  --argjson a "$(mkseed seq)" --argjson b "$(mkseed kill)" --argjson c "$(mkseed fixb)" --argjson d "$(mkseed disabled)" \
-  '{projectId:$pid, prospects:[$a,$b,$c,$d]}')"
-assert_eq "seed inserted=4" "$(api POST /api/prospects/batch "$SEED_BODY" | jq -r '.inserted // 0')" "4"
+  --argjson a "$(mkseed seq)" --argjson b "$(mkseed kill)" --argjson c "$(mkseed fixb)" --argjson d "$(mkseed disabled)" --argjson e "$(mkseed old)" \
+  --argjson f "$(mkseed skipped)" --argjson g "$(mkseed form)" \
+  '{projectId:$pid, prospects:[$a,$b,$c,$d,$e,$f,$g]}')"
+assert_eq "seed inserted=7" "$(api POST /api/prospects/batch "$SEED_BODY" | jq -r '.inserted // 0')" "7"
 LIST_RESP="$(api GET "/api/projects/$PROJECT_ID/prospects?limit=200")"
 pid_of() { echo "$LIST_RESP" | jq -r --arg e "contact@$RUN_TAG-$1.example" '.prospects[]? | select(.email==$e) | .prospectId' | head -1; }
-P_SEQ="$(pid_of seq)"; P_KILL="$(pid_of kill)"; P_FIXB="$(pid_of fixb)"; P_DIS="$(pid_of disabled)"
-[[ -n "$P_SEQ" && -n "$P_KILL" && -n "$P_FIXB" && -n "$P_DIS" ]] || { echo "could not resolve prospect ids" >&2; exit 1; }
-say "seq=$P_SEQ kill=$P_KILL fixb=$P_FIXB disabled=$P_DIS"
+P_SEQ="$(pid_of seq)"; P_KILL="$(pid_of kill)"; P_FIXB="$(pid_of fixb)"; P_DIS="$(pid_of disabled)"; P_OLD="$(pid_of old)"; P_SKIP="$(pid_of skipped)"; P_FORM="$(pid_of form)"
+[[ -n "$P_SEQ" && -n "$P_KILL" && -n "$P_FIXB" && -n "$P_DIS" && -n "$P_OLD" && -n "$P_SKIP" && -n "$P_FORM" ]] || { echo "could not resolve prospect ids" >&2; exit 1; }
+say "seq=$P_SEQ kill=$P_KILL fixb=$P_FIXB disabled=$P_DIS old=$P_OLD skipped=$P_SKIP form=$P_FORM"
 
 step "touch 1: a 'sent' outreach seeds the sequence"
 LOG1="$(send_outreach "$P_SEQ")"
@@ -194,11 +200,32 @@ assert_eq "fixb sequence seeded"        "$(nfa_null "$P_FIXB")" "f"
 api PUT "/api/projects/$PROJECT_ID/settings" '{"followUpSequence":{"gapDays":[2,5]}}' > /dev/null
 assert_eq "effective-disabled cleared next_followup_after" "$(nfa_null "$P_FIXB")" "t"
 
-step "disabled project never seeds (existing-rows-off / no-backfill)"
+step "disabled project never seeds (existing-rows-off)"
 api PUT "/api/projects/$PROJECT_ID/settings" '{"followUpSequence":{"enabled":false}}' > /dev/null
 send_outreach "$P_DIS" > /dev/null
 assert_eq "disabled: contacted but no sequence" "$(ppstatus "$P_DIS")" "contacted"
 assert_eq "disabled: next_followup_after stays NULL" "$(nfa_null "$P_DIS")" "t"
+
+step "turning it on resumes recent sends only"
+send_outreach "$P_OLD" > /dev/null
+psql_local "UPDATE outreach_logs SET sent_at = NOW() - INTERVAL '30 days' WHERE prospect_id=$P_OLD AND project_id='$PROJECT_ID';" > /dev/null
+send_outreach "$P_SKIP" > /dev/null
+api POST /api/outreach/skip "$(jq -nc --arg pid "$PROJECT_ID" --argjson prid "$P_SKIP" \
+  '{projectId:$pid, prospectId:$prid, channel:"email", reason:"other"}')" > /dev/null
+api POST /api/outreach "$(jq -nc --arg pid "$PROJECT_ID" --argjson prid "$P_FORM" \
+  '{projectId:$pid, prospectId:$prid, channel:"form", body:"seed", status:"sent"}')" > /dev/null
+assert_eq "form send marked contacted"     "$(ppstatus "$P_FORM")" "contacted"
+api PUT "/api/projects/$PROJECT_ID/settings" '{"followUpSequence":{"enabled":true,"gapDays":[3,7]}}' > /dev/null
+assert_eq "recent send resumed"            "$(nfa_null "$P_DIS")" "f"
+assert_eq "due at sentAt + gap[0]"         "$(nfa_days "$P_DIS")" "3"
+assert_eq "send older than the sequence stays out" "$(nfa_null "$P_OLD")" "t"
+assert_eq "send followed by a skip stays out"      "$(nfa_null "$P_SKIP")" "t"
+assert_eq "form send stays out"                    "$(nfa_null "$P_FORM")" "t"
+
+step "a save that keeps it on re-arms nothing"
+psql_local "UPDATE project_prospects SET next_followup_after = NULL WHERE prospect_id=$P_DIS AND project_id='$PROJECT_ID';" > /dev/null
+api PUT "/api/projects/$PROJECT_ID/settings" '{"followUpSequence":{"enabled":true,"gapDays":[3,7]}}' > /dev/null
+assert_eq "still-on save leaves NULL alone" "$(nfa_null "$P_DIS")" "t"
 
 step "summary"
 echo "  PASS=$PASS  FAIL=$FAIL" >&2
