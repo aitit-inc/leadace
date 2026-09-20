@@ -27,12 +27,14 @@ export type Citation = { passage: string; pages: string[] }
 export type GroundedText = { text: string; citations: Citation[]; responseId: string }
 export type UrlJsonResult<T> = { value: T; retrievedUrls: string[] }
 
-// Billing: input = input + toolInput (cachedInput is the discounted part),
-// output = output + thoughts. Search bills per tool call (searchCalls);
-// searchQueries is the unique queries those calls ran, for reading only.
+// cachedInput and cacheWrite are parts of input, billed at a tenth of the
+// input price and at 1.25x. Output bills as output + thoughts. Search bills
+// per search call (searchCalls); searchQueries is the unique queries those
+// calls ran, for reading only.
 export type LlmUsage = {
   input: number
   cachedInput: number
+  cacheWrite: number
   toolInput: number
   output: number
   thoughts: number

@@ -91,16 +91,17 @@ async function withTier<R extends Response>(call: OpenAICall, send: Send<R>): Pr
 
 function logOpenAIUsage(call: OpenAICall, response: Response, tier: Tier, elapsedMs: number): void {
   const u = response.usage
-  // Each web_search_call item bills as one call, whatever its action (matched
-  // the Usage dashboard when measured).
-  const searches = response.output.flatMap((o) => (o.type === 'web_search_call' ? [o] : []))
-  const queries = searches.flatMap((o) => (o.action?.type === 'search' ? (o.action.queries ?? (o.action.query === undefined ? [] : [o.action.query])) : []))
+  // web_search_call items also cover page opens, which the Usage dashboard
+  // does not bill — counting every item ran 42% high against it (2026-09-20).
+  const searches = response.output.flatMap((o) => (o.type === 'web_search_call' && o.action?.type === 'search' ? [o.action] : []))
+  const queries = searches.flatMap((a) => a.queries ?? (a.query === undefined ? [] : [a.query]))
   const reasoning = u?.output_tokens_details.reasoning_tokens ?? 0
   logUsage(
     { op: call.op, model: call.model, tier: response.service_tier ?? tier, elapsedMs },
     {
       input: u?.input_tokens ?? 0,
       cachedInput: u?.input_tokens_details.cached_tokens ?? 0,
+      cacheWrite: u?.input_tokens_details.cache_write_tokens ?? 0,
       toolInput: 0,
       // output_tokens includes the reasoning; the log keeps them apart.
       output: (u?.output_tokens ?? 0) - reasoning,

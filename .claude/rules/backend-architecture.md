@@ -129,6 +129,15 @@ rejected after we reached it). Construct with `ok()` / `err()` from
 `services/result.ts`. Guard-only services return
 `ServiceResult<undefined>` so callers can `if (!guard.ok) return guard`.
 
+## Measurement
+
+Never measure an axis on the sends the ordering produced from that same axis:
+the arm the ordering prefers is then compared against its own leftovers, and no
+amount of data exposes the bias (#478). Measure such an axis on the lever's
+random exploration slots only, or do not compute the metric at all. A metric
+withdrawn for this reason is listed in `domain/learnings.ts`, so the learnings
+resting on it retire themselves on the next evaluate.
+
 ## Value builders
 
 Extract a pure insert-values builder at 3+ construction sites. Single-service
