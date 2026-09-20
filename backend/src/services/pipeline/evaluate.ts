@@ -1,11 +1,13 @@
 // Stage: evaluate — the PDCA read of a project (evaluate/SKILL.md, server-side).
 // The model narrates and proposes; every write passes a code gate first: no
-// data → report only, a fresh angle only when the tick asks for one, strategy
-// registrations only when the portfolio is short.
+// data → report only (a retraction still lands — withdrawn metrics are retired
+// whatever the model returns), a fresh angle only when the tick asks for one,
+// strategy registrations only when the portfolio is short.
 import { z } from 'zod'
 import type { Db } from '../../db/connection'
 import type { ProjectId, TenantId } from '../../domain/ids'
 import { discoveryStrategySchema, variantIdSchema } from '../../domain/ids'
+import { retireWithdrawnMetricEntries } from '../../domain/learnings'
 import type { JobResult } from '../../domain/jobs'
 import { ok, err, type ServiceResult } from '../result'
 import { callLlmJson, LlmError } from '../llm'
@@ -81,6 +83,7 @@ export async function runEvaluate(
   if (!variants.ok) return variants
   const sufficient = stats.value.dataSufficiency.sufficient
   const rejectionData = rejections.ok ? rejections.value : null
+  const priorLearnings = learnings === null ? null : retireWithdrawnMetricEntries(learnings)
 
   await progress('analyzing', 1, 3)
   const prompt = `You are Ace, evaluating a project's outbound results and steering the next cycle. Today is ${utcDateKey()}.
@@ -92,7 +95,7 @@ ${docs.value.business}
 ${docs.value.salesStrategy}
 
 ## Learnings Log (the cross-stage memory; one line per entry: "[stage] [YYYY-MM-DD] claim — evidence: metric=<name>, n=<sample>"; "[retired]" tombstones stay)
-${learnings ?? '(none yet)'}
+${priorLearnings ?? '(none yet)'}
 
 ## Analysis frameworks
 ${frameworks}
@@ -124,12 +127,14 @@ message variants: ${JSON.stringify(variants.value.variants)}
 
   await progress('applying', 2, 3)
   const wrote: string[] = []
+  const proposedLearnings = sufficient ? out.learnings : null
+  const nextLearnings = proposedLearnings === null ? priorLearnings : retireWithdrawnMetricEntries(proposedLearnings)
+  if (nextLearnings !== null && nextLearnings !== learnings) {
+    const r = await runWithRls(db, tenantId, (tx) => saveDocument(tx, tenantId, STAGE_CALLER, env, { id: projectId, slug: 'learnings' }, { content: nextLearnings }))
+    if (r.ok) wrote.push(proposedLearnings === null ? 'learnings (withdrawn metrics retired)' : 'learnings')
+  }
   if (sufficient) {
-    const { learnings: newLearnings, salesStrategy: newStrategy, newVariant } = out
-    if (newLearnings !== null && newLearnings !== learnings) {
-      const r = await runWithRls(db, tenantId, (tx) => saveDocument(tx, tenantId, STAGE_CALLER, env, { id: projectId, slug: 'learnings' }, { content: newLearnings }))
-      if (r.ok) wrote.push('learnings')
-    }
+    const { salesStrategy: newStrategy, newVariant } = out
     if (newStrategy !== null && newStrategy !== docs.value.salesStrategy) {
       const r = await runWithRls(db, tenantId, (tx) => saveDocument(tx, tenantId, STAGE_CALLER, env, { id: projectId, slug: 'sales_strategy' }, { content: newStrategy }))
       if (r.ok) wrote.push('sales_strategy')

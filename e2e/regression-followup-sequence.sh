@@ -119,13 +119,33 @@ TENANT_ID="$(psql_local "SELECT tenant_id FROM tenant_members WHERE user_id = '$
 [[ -n "$TENANT_ID" ]] || { echo "no tenant for user $USER_ID — sign in once via the frontend first" >&2; exit 1; }
 say "tenant_id=$TENANT_ID"
 
+# A snapshot that silently failed would make teardown write NULLs over the
+# developer's real compliance fields, so stop if the read did not come back.
+ORIGINAL_TENANT="$(api GET /api/tenant-settings)"
+echo "$ORIGINAL_TENANT" | jq -e 'has("legalName")' >/dev/null 2>&1 \
+  || { echo "could not read tenant settings: $ORIGINAL_TENANT" >&2; exit 1; }
+ORIG_LEGAL="$(echo "$ORIGINAL_TENANT" | jq -r '.legalName // ""')"
+ORIG_ADDR="$(echo "$ORIGINAL_TENANT" | jq -r '.physicalAddress // ""')"
+ORIG_COUNTRY="$(echo "$ORIGINAL_TENANT" | jq -r '.defaultSenderCountry // ""')"
+
 restore_and_exit() {
   local rc=$?
   if [[ "$SKIP_CLEANUP" == "1" ]]; then
-    echo "" >&2; echo "SKIP_CLEANUP=1 — leaving project_id=${PROJECT_ID:-<none>} and run-tagged rows in place." >&2
+    echo "" >&2; echo "SKIP_CLEANUP=1 — leaving project_id=${PROJECT_ID:-<none>}, run-tagged rows, and tenant settings in place." >&2
     exit "$rc"
   fi
   echo "" >&2; echo "=== teardown ===" >&2
+  local restore_body
+  restore_body="$(jq -nc --arg legal "$ORIG_LEGAL" --arg addr "$ORIG_ADDR" --arg country "$ORIG_COUNTRY" \
+    '{legalName: (if $legal=="" then null else $legal end),
+      physicalAddress: (if $addr=="" then null else $addr end),
+      defaultSenderCountry: (if $country=="" then null else $country end)}')"
+  if api PUT /api/tenant-settings "$restore_body" | jq -e 'has("legalName")' >/dev/null 2>&1; then
+    say "restored tenant settings"
+  else
+    echo "  COULD NOT restore tenant settings — put them back by hand: $restore_body" >&2
+    rc=1
+  fi
   if [[ -n "${PROJECT_ID:-}" ]]; then
     api DELETE "/api/projects/$PROJECT_ID" > /dev/null || true
     say "deleted project $PROJECT_ID"
@@ -137,7 +157,8 @@ restore_and_exit() {
 }
 trap restore_and_exit EXIT
 
-step "create project (new ⇒ follow_up_sequence.enabled=true)"
+step "set tenant compliance (the send gate) + create project (new ⇒ follow_up_sequence.enabled=true)"
+api PUT /api/tenant-settings '{"legalName":"E2E Followup Corp","physicalAddress":"123 Test Lane, Test City, CA 94000","defaultSenderCountry":"US"}' > /dev/null
 PROJECT_ID="$(api POST /api/projects "$(jq -nc --arg n "$PROJECT_NAME" '{name:$n}')" | jq -r '.id // ""')"
 [[ -n "$PROJECT_ID" ]] || { echo "create-project failed" >&2; exit 1; }
 say "project_id=$PROJECT_ID"

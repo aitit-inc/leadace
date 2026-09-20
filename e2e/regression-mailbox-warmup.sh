@@ -35,12 +35,9 @@
 # ramp and set daily_cap_override relative to the measured baseline, so a
 # non-empty day doesn't skew the assertions.
 #
-# Does NOT delete the tenant's real Gmail sending_identities row: it snapshots and
-# restores the three warmup columns (or removes a dummy row it inserted itself).
-# Relies on the tenant being compliance-ready (legalName / physicalAddress /
-# defaultSenderCountry set) and on US sends being allowed — same baseline as
-# regression-followup-sequence.sh. If the first send is not 2xx, that is the
-# likely cause.
+# Does NOT delete the tenant's real Gmail sending_identities row: it snapshots
+# and restores the three warmup columns (or removes a dummy row it inserted
+# itself), and does the same for the compliance fields the sends here need.
 #
 # Curl-only, no Claude session / Anthropic budget. Single tenant, one project,
 # cleans up.
@@ -93,10 +90,10 @@ psql_local() { PGPASSWORD=postgres psql -h 127.0.0.1 -p 54322 -U postgres -d pos
 reach()    { api GET "/api/projects/$PROJECT_ID/prospects/reachable?limit=200"; }
 mq()       { reach | jq -r ".mailboxQuota.$1"; }
 # Project-scoped health: the test project has no assigned sending identity, so it
-# resolves the gmail fallback — the same row the warmup columns are set on below.
+# resolves the sign-in-account fallback — the row the warmup columns are set on below.
 # Pool totals live at the top level; per-mailbox fields on the first (only) listed mailbox.
 mh()       { api GET "/api/projects/$PROJECT_ID/mailbox-health" | jq -r ".mailboxes[0].$1"; }
-started_null() { psql_local "SELECT (warmup_started_at IS NULL) FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth' AND parent_identity_id IS NULL;"; }
+started_null() { psql_local "SELECT (warmup_started_at IS NULL) FROM sending_identities WHERE tenant_id='$TENANT_ID' AND identity_id='$GMAIL_IDENTITY_ID';"; }
 
 put_warmup()        { api PUT "/api/me/sending-identities/$GMAIL_IDENTITY_ID/warmup" "$1"; }
 put_warmup_status() { curl -sS -o /dev/null -w '%{http_code}' -X PUT -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d "$1" "$API_URL/api/me/sending-identities/$GMAIL_IDENTITY_ID/warmup"; }
@@ -104,7 +101,7 @@ put_warmup_status() { curl -sS -o /dev/null -w '%{http_code}' -X PUT -H "Authori
 # Args are raw SQL fragments (NULL / number / NOW()-expr) so callers control
 # nullability precisely.
 set_warmup() { # started_at override paused
-  psql_local "UPDATE sending_identities SET warmup_started_at=$1, daily_cap_override=$2, paused_until=$3 WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth' AND parent_identity_id IS NULL;" >/dev/null
+  psql_local "UPDATE sending_identities SET warmup_started_at=$1, daily_cap_override=$2, paused_until=$3 WHERE tenant_id='$TENANT_ID' AND identity_id='$GMAIL_IDENTITY_ID';" >/dev/null
 }
 
 send_status() { # prospectId channel
@@ -137,45 +134,56 @@ TENANT_ID="$(psql_local "SELECT tenant_id FROM tenant_members WHERE user_id = '$
 [[ -n "$TENANT_ID" ]] || { echo "no tenant for user $USER_ID — sign in once via the frontend first" >&2; exit 1; }
 say "tenant_id=$TENANT_ID"
 
-# Snapshot the mailbox so we never destroy a real connected Gmail row. If a row
-# exists, capture the three warmup columns (empty string = SQL NULL) and restore
-# them on teardown; if not, insert a dummy and delete it on teardown.
-HAD_GMAIL="$(psql_local "SELECT EXISTS(SELECT 1 FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth' AND parent_identity_id IS NULL);")"
+# A snapshot that silently failed would make teardown write NULLs over the
+# developer's real compliance fields, so read it before anything is mutated and
+# stop if the read did not come back.
+ORIGINAL_TENANT="$(api GET /api/tenant-settings)"
+echo "$ORIGINAL_TENANT" | jq -e 'has("legalName")' >/dev/null 2>&1 \
+  || { echo "could not read tenant settings: $ORIGINAL_TENANT" >&2; exit 1; }
+ORIG_LEGAL="$(echo "$ORIGINAL_TENANT" | jq -r '.legalName // ""')"
+ORIG_ADDR="$(echo "$ORIGINAL_TENANT" | jq -r '.physicalAddress // ""')"
+ORIG_COUNTRY="$(echo "$ORIGINAL_TENANT" | jq -r '.defaultSenderCountry // ""')"
+
+# The mailbox this suite drives is the sign-in account: that is the row a
+# project listing no identity falls back to. One per member, so a tenant with
+# several members has several and the fallback picks an arbitrary one — refuse
+# rather than drive a mailbox the project may not resolve.
+SIGN_IN_ID="$(psql_local "SELECT identity_id FROM sending_identities WHERE tenant_id='$TENANT_ID' AND sign_in_account;")"
+case "$SIGN_IN_ID" in
+  *$'\n'*) echo "tenant $TENANT_ID has more than one sign-in mailbox; this suite needs a single-member tenant" >&2; exit 1 ;;
+esac
+
+DUMMY_ID=""
 SNAP_STARTED=""; SNAP_OVERRIDE=""; SNAP_PAUSED=""
-if [[ "$HAD_GMAIL" == "t" ]]; then
-  SNAP_STARTED="$(psql_local "SELECT COALESCE(warmup_started_at::text,'') FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth' AND parent_identity_id IS NULL;")"
-  SNAP_OVERRIDE="$(psql_local "SELECT COALESCE(daily_cap_override::text,'') FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth' AND parent_identity_id IS NULL;")"
-  SNAP_PAUSED="$(psql_local "SELECT COALESCE(paused_until::text,'') FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth' AND parent_identity_id IS NULL;")"
-  say "snapshotted existing mailbox warmup state"
-else
-  psql_local "INSERT INTO sending_identities (tenant_id, identity_id, user_id, provider, from_email, scope, secret)
-    VALUES ('$TENANT_ID', replace(gen_random_uuid()::text,'-',''), '$USER_ID', 'gmail_oauth', 'e2e-warmup@example.com', 'https://www.googleapis.com/auth/gmail.send', decode('00','hex'));" >/dev/null
-  say "inserted dummy mailbox row"
-fi
-
-# Resolve the gmail identity_id now the row is guaranteed to exist — the
-# per-identity warmup write path (step 6) addresses the mailbox by id.
-GMAIL_IDENTITY_ID="$(api GET /api/me/sending-identities | jq -r '.identities[] | select(.kind=="gmail") | .identityId' | head -1)"
-[[ -n "$GMAIL_IDENTITY_ID" ]] || { echo "could not resolve gmail identity_id" >&2; exit 1; }
-say "gmail_identity_id=$GMAIL_IDENTITY_ID"
-
 restore_and_exit() {
   local rc=$?
   if [[ "$SKIP_CLEANUP" == "1" ]]; then
-    echo "" >&2; echo "SKIP_CLEANUP=1 — leaving project_id=${PROJECT_ID:-<none>} and run-tagged rows in place." >&2
+    echo "" >&2
+    echo "SKIP_CLEANUP=1 — leaving project_id=${PROJECT_ID:-<none>}, run-tagged rows, tenant settings${DUMMY_ID:+, and dummy mailbox $DUMMY_ID} in place." >&2
     exit "$rc"
   fi
   echo "" >&2; echo "=== teardown ===" >&2
-  if [[ "$HAD_GMAIL" == "t" ]]; then
+  local restore_body
+  restore_body="$(jq -nc --arg legal "$ORIG_LEGAL" --arg addr "$ORIG_ADDR" --arg country "$ORIG_COUNTRY" \
+    '{legalName: (if $legal=="" then null else $legal end),
+      physicalAddress: (if $addr=="" then null else $addr end),
+      defaultSenderCountry: (if $country=="" then null else $country end)}')"
+  if api PUT /api/tenant-settings "$restore_body" | jq -e 'has("legalName")' >/dev/null 2>&1; then
+    say "restored tenant settings"
+  else
+    echo "  COULD NOT restore tenant settings — put them back by hand: $restore_body" >&2
+    rc=1
+  fi
+  if [[ -n "$DUMMY_ID" ]]; then
+    psql_local "DELETE FROM sending_identities WHERE tenant_id='$TENANT_ID' AND identity_id='$DUMMY_ID';" >/dev/null || true
+    say "removed dummy mailbox row"
+  elif [[ -n "${GMAIL_IDENTITY_ID:-}" ]]; then
     local started_sql override_sql paused_sql
     started_sql="$([[ -z "$SNAP_STARTED" ]] && echo NULL || echo "'$SNAP_STARTED'")"
     override_sql="$([[ -z "$SNAP_OVERRIDE" ]] && echo NULL || echo "$SNAP_OVERRIDE")"
     paused_sql="$([[ -z "$SNAP_PAUSED" ]] && echo NULL || echo "'$SNAP_PAUSED'")"
     set_warmup "$started_sql" "$override_sql" "$paused_sql"
     say "restored mailbox warmup state"
-  else
-    psql_local "DELETE FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth' AND parent_identity_id IS NULL AND user_id='$USER_ID';" >/dev/null || true
-    say "removed dummy mailbox row"
   fi
   if [[ -n "${PROJECT_ID:-}" ]]; then
     api DELETE "/api/projects/$PROJECT_ID" > /dev/null || true
@@ -188,7 +196,26 @@ restore_and_exit() {
 }
 trap restore_and_exit EXIT
 
-step "create project + seed 4 US prospects (3 email targets + 1 form target)"
+# Snapshot the mailbox so a real connected Gmail survives the run: capture the
+# three warmup columns (empty string = SQL NULL) and restore them on teardown.
+# With no sign-in mailbox, insert a dummy one and delete it on teardown.
+if [[ -n "$SIGN_IN_ID" ]]; then
+  GMAIL_IDENTITY_ID="$SIGN_IN_ID"
+  SNAP_STARTED="$(psql_local "SELECT COALESCE(warmup_started_at::text,'') FROM sending_identities WHERE tenant_id='$TENANT_ID' AND identity_id='$GMAIL_IDENTITY_ID';")"
+  SNAP_OVERRIDE="$(psql_local "SELECT COALESCE(daily_cap_override::text,'') FROM sending_identities WHERE tenant_id='$TENANT_ID' AND identity_id='$GMAIL_IDENTITY_ID';")"
+  SNAP_PAUSED="$(psql_local "SELECT COALESCE(paused_until::text,'') FROM sending_identities WHERE tenant_id='$TENANT_ID' AND identity_id='$GMAIL_IDENTITY_ID';")"
+  say "snapshotted existing mailbox warmup state"
+else
+  DUMMY_ID="$(psql_local "SELECT replace(gen_random_uuid()::text,'-','');")"
+  GMAIL_IDENTITY_ID="$DUMMY_ID"
+  psql_local "INSERT INTO sending_identities (tenant_id, identity_id, user_id, provider, from_email, sign_in_account, scope, secret)
+    VALUES ('$TENANT_ID', '$DUMMY_ID', '$USER_ID', 'gmail_oauth', 'e2e-warmup@example.com', true, 'https://www.googleapis.com/auth/gmail.send', decode('00','hex'));" >/dev/null
+  say "inserted dummy mailbox row"
+fi
+say "gmail_identity_id=$GMAIL_IDENTITY_ID"
+
+step "set tenant compliance (the send gate) + create project + seed 4 US prospects (3 email targets + 1 form target)"
+api PUT /api/tenant-settings '{"legalName":"E2E Warmup Corp","physicalAddress":"123 Test Lane, Test City, CA 94000","defaultSenderCountry":"US"}' > /dev/null
 PROJECT_ID="$(api POST /api/projects "$(jq -nc --arg n "$PROJECT_NAME" '{name:$n}')" | jq -r '.id // ""')"
 [[ -n "$PROJECT_ID" ]] || { echo "create-project failed" >&2; exit 1; }
 say "project_id=$PROJECT_ID"
@@ -252,7 +279,7 @@ W6A="$(put_warmup '{"dailyCapOverride":5}')"
 assert_eq "6a put kind=active" "$(echo "$W6A" | jq -r .kind)" "active"
 assert_eq "6a override is the cap, below the ramp (cap=5)" "$(echo "$W6A" | jq -r .cap)" "5"
 assert_eq "6a dailyCapOverride=5" "$(echo "$W6A" | jq -r .dailyCapOverride)" "5"
-assert_eq "6a write hit DB (daily_cap_override=5)" "$(psql_local "SELECT daily_cap_override FROM sending_identities WHERE tenant_id='$TENANT_ID' AND provider='gmail_oauth' AND parent_identity_id IS NULL;")" "5"
+assert_eq "6a write hit DB (daily_cap_override=5)" "$(psql_local "SELECT daily_cap_override FROM sending_identities WHERE tenant_id='$TENANT_ID' AND identity_id='$GMAIL_IDENTITY_ID';")" "5"
 
 W6B="$(put_warmup '{"dailyCapOverride":50}')"
 assert_eq "6b override raises cap above the week-2 ramp (17 → 50)" "$(echo "$W6B" | jq -r .cap)" "50"
