@@ -18,7 +18,8 @@
 #      regression-caller-gates.sh step 6.)
 #   5. Re-POST after done is also a no-op (written=false, status=done).
 #   6. A non-playbook document save touches no suggestion.
-#   7. Validation: non-kebab kind → 400, bad status → 400, unknown id → 404.
+#   7. Validation: non-kebab kind → 400, no instruction → 400, bad status
+#      → 400, unknown id → 404.
 #
 # Curl-only, no Claude session. Cleans up (project delete cascades).
 #
@@ -74,7 +75,7 @@ api_body() { cat "$BODY_FILE"; }
 suggestion_body() { # dedupeKey title
   jq -nc --arg k "$1" --arg t "$2" \
     '{kind:"add-means", dedupeKey:$k, title:$t,
-      body:"Evidence: e2e probe body", command:("/leadace p add "+$k+" as an outreach means")}'
+      body:"Evidence: e2e probe body", instruction:("Add "+$k+" as an outreach means.")}'
 }
 
 require_jq() { command -v jq >/dev/null 2>&1 || { echo "need jq on PATH" >&2; exit 1; }; }
@@ -160,8 +161,11 @@ assert_eq "statuses unchanged" "$(api_body | jq -r '[.suggestions[].status] | so
 
 step "7. validation"
 STATUS="$(api_status POST "/api/projects/$PROJECT_ID/suggestions" \
-  "$(jq -nc '{kind:"Add_Means", dedupeKey:"x", title:"t", body:"b", command:"c"}')")"
+  "$(jq -nc '{kind:"Add_Means", dedupeKey:"x", title:"t", body:"b", instruction:"i"}')")"
 assert_eq "non-kebab kind → 400" "$STATUS" "400"
+STATUS="$(api_status POST "/api/projects/$PROJECT_ID/suggestions" \
+  "$(jq -nc '{kind:"add-means", dedupeKey:"y", title:"t", body:"b"}')")"
+assert_eq "no instruction → 400" "$STATUS" "400"
 STATUS="$(api_status PATCH "/api/suggestions/$SID1" '{"status":"open"}')"
 assert_eq "re-open rejected → 400 (PATCH is dismiss-only)" "$STATUS" "400"
 STATUS="$(api_status PATCH "/api/suggestions/999999999" '{"status":"dismissed"}')"

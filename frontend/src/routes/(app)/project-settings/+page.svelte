@@ -250,7 +250,7 @@
             <option value="draft">Create drafts only</option>
           </select>
           <p class="mt-1.5 text-xs text-text-muted">
-            In draft mode, <span class="font-mono">/outbound</span> stores composed messages here as
+            In draft mode, Ace stores composed messages here as
             drafts (status <span class="font-mono">pending_review</span>) instead of sending. Review
             and send each one from the
             <a href="/drafts" class="text-accent-strong hover:underline">Drafts</a> page; sending counts toward
@@ -395,8 +395,7 @@
             {/each}
           </div>
           <p class="mt-2 text-xs text-text-muted">
-            Channels available to automated outbound (<span class="font-mono">/build-list</span>,
-            <span class="font-mono">/outbound</span>). Prospects whose only reachable channel is
+            Channels available to automated outbound. Prospects whose only reachable channel is
             unchecked are excluded from automated outbound. Leaving every box unchecked pauses
             automated outbound for this project.
           </p>
@@ -424,8 +423,7 @@
             {#if s.targetCountries.length === 0}
               No project-level restriction — the compliance allowlist (US / CA / JP) is the only gate.
             {:else}
-              Automated <span class="font-mono">/build-list</span> focuses discovery on the selected
-              countries and <span class="font-mono">/outbound</span> skips prospects outside the set.
+              Ace focuses discovery on the selected countries and skips prospects outside the set.
               The send-time compliance check still applies independently.
             {/if}
           </p>
@@ -483,7 +481,7 @@
           {/if}
 
           <p class="mt-2 text-xs text-text-muted">
-            When a prospect doesn't reply, <span class="font-mono">/outbound</span> queues a short,
+            When a prospect doesn't reply, Ace queues a short,
             fresh-angle follow-up on this cadence and stops automatically on any real reply, bounce, or
             unsubscribe (auto-replies don't stop it). Follow-ups don't count against your plan — a
             prospect counts once, when its first email goes out — but an N-email sequence still

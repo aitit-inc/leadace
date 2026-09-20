@@ -458,7 +458,7 @@
 
 <h2 class="mb-1 font-display text-2xl font-semibold tracking-tight text-text">Drafts</h2>
 <p class="mb-4 text-sm text-text-secondary">
-  Pending review from <span class="font-mono">/outbound</span> in draft mode. Email drafts send via your
+  Outreach Ace composed in draft mode, waiting for your review. Email drafts send via your
   connected Gmail. Form / SNS drafts are sent manually — open the destination, paste the body, then
   mark as sent. Both count toward your outreach quota.
 </p>

@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { goto, invalidate } from '$app/navigation';
+  import { page } from '$app/state';
   import { ArrowUp } from '@lucide/svelte';
   import { ApiError } from '$lib/api';
   import { ACCEPTED_FILE_TYPES, MAX_ATTACHMENT_BYTES, canAttach } from '$lib/chat-attachments';
@@ -63,6 +65,8 @@
   // even one left and come back to, finds the generation moved on.
   let shownView: string | undefined;
   let viewGen = 0;
+  // The opening message this view already sent, so an invalidate doesn't repeat it.
+  let askSent: string | undefined;
 
   $effect(() => {
     // Reset per-view state on a view switch only. Every invalidate hands
@@ -71,6 +75,7 @@
     if (shownView === view) return;
     shownView = view;
     viewGen++;
+    askSent = undefined;
     liveMessages = [];
     streamingText = '';
     liveSteps = 0;
@@ -82,6 +87,15 @@
     error = '';
     pending = data.thread?.pendingCall ?? null;
     for (const j of data.jobs) if (!TERMINAL_JOB_STATUSES.includes(j.status)) void watchJob(j.id);
+  });
+
+  $effect(() => {
+    // Only an in-app navigation carries it, so no link can start a turn.
+    const ask = data.thread ? undefined : page.state.ask;
+    if (!ask || ask === askSent) return;
+    askSent = ask;
+    // untrack: the handover depends on the state alone, not on what send() reads.
+    untrack(() => void send(ask));
   });
 
   $effect(() => {

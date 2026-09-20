@@ -271,7 +271,9 @@
       {#if data.suggestions.length > 0}
         <SuggestionsSection
           suggestions={data.suggestions}
+          projectName={data.projects.find((p) => p.id === data.activeProjectId)?.name ?? null}
           {token}
+          onAsk={(ask) => goto('/chat', { state: { ask } })}
           onChanged={() => invalidate('app:suggestions')}
         />
       {/if}

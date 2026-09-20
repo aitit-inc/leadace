@@ -211,7 +211,7 @@ assert_eq "malformed playbook slug → 400" "$STATUS" "400"
 
 step "6. add-means suggestion resolves on approval, not on the pending save"
 STATUS="$(ui POST "/api/projects/$PROJECT_ID/suggestions" \
-  "$(jq -nc --arg k "$SUGGESTION_SLUG" '{kind:"add-means", dedupeKey:$k, title:"t", body:"b", command:"c"}')")"
+  "$(jq -nc --arg k "$SUGGESTION_SLUG" '{kind:"add-means", dedupeKey:$k, title:"t", body:"b", instruction:"i"}')")"
 [[ "$STATUS" == "201" ]] || { echo "suggestion create failed ($STATUS): $(api_body)" >&2; exit 1; }
 SID="$(api_body | jq -r '.id')"
 mcp PUT "$DOCS/playbook_$SUGGESTION_SLUG" '{"content":"# pending"}' > /dev/null

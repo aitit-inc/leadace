@@ -144,7 +144,7 @@
 <h2 class="mb-6 font-display text-2xl font-semibold tracking-tight text-text">Documents</h2>
 
 {#if !data.activeProjectId}
-  <EmptyState message="No active project. Create one with /leadace first." />
+  <EmptyState message="No active project. Ask Ace in chat to create one first." />
 {:else}
   <div class="flex flex-col md:flex-row gap-4 md:gap-6">
     <div class="md:w-48 md:shrink-0">

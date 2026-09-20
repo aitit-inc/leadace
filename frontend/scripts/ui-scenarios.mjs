@@ -585,6 +585,17 @@ function seedDashboardFixture(ctx, projectId) {
     `INSERT INTO tenant_plans (tenant_id, plan) VALUES (${q(tenant)}, 'unlimited')
      ON CONFLICT (tenant_id) DO UPDATE SET plan = 'unlimited';`,
   );
+  psql(
+    // `command` is the column the `instruction` field still lives in.
+    `INSERT INTO suggestions (tenant_id, project_id, kind, dedupe_key, title, body, command) VALUES
+     (${q(tenant)}, ${q(projectId)}, 'add-means', 'wantedly-story-posts',
+      ${q('Wantedly stories reach the schools email is bouncing at')},
+      ${q(
+        'Four of the eight bounces this month are schools whose only published contact is a Wantedly page. ' +
+          'Wantedly needs a company account and its terms accepted, so Ace cannot sign up on your behalf.',
+      )},
+      ${q('Add Wantedly as an outreach means.')});`,
+  );
 }
 
 // ─── scenarios ──────────────────────────────────────────────────────────────
@@ -797,7 +808,18 @@ const SCENARIOS = [
         {
           name: 'page',
           path: '/dashboard',
-          expect: ['2 meeting requests waiting', 'Optimizing across 2 message angles', 'Three minutes a day'],
+          expect: [
+            '2 meeting requests waiting',
+            'Optimizing across 2 message angles',
+            'Three minutes a day',
+            'Add Wantedly as an outreach means.',
+          ],
+        },
+        {
+          name: 'suggestion-menu',
+          path: '/dashboard',
+          click: 'button[aria-label="Other ways to run this"]',
+          expect: 'Copy Claude Code command',
         },
       ];
     },

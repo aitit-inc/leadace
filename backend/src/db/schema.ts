@@ -1289,7 +1289,10 @@ export const suggestions = pgTable('suggestions', {
   dedupeKey: text('dedupe_key').notNull(),
   title: text('title').notNull(),
   body: text('body').notNull(),
-  command: text('command').notNull(),
+  // A sentence addressed to Ace, never a slash command: the web UI sends it to
+  // the chat as it is. The column keeps its old name until a later release —
+  // renaming it breaks the Worker still running during a deploy (release.md).
+  instruction: text('command').notNull(),
   status: suggestionStatusEnum('status').notNull().default('open'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),

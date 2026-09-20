@@ -28,7 +28,11 @@ import { applyStrategyDraftSchema, strategyDraftInputSchema } from '../domain/st
 // outbound-mode / footer / landing-CTA fields left update_project_settings
 // (Web UI only) — an older onboarding still writes them and would silently
 // lose the values.
-const MIN_PLUGIN_VERSION = '0.7.56'
+// 0.7.113: record_suggestion's `command` became `instruction` and now takes a
+// sentence for the chat. An older /evaluate writes a /leadace one-liner into
+// it, which the Web UI would then send to the chat verbatim — the value is
+// wrong whatever the field is called, so there is no shim to write.
+const MIN_PLUGIN_VERSION = '0.7.113'
 
 function replyCollectionLine(status: ReplyCollectionStatus): string {
   switch (status.kind) {
@@ -1769,7 +1773,10 @@ export function buildToolRegistry(): ToolDef[] {
       dedupeKey: z.string().min(1).describe('Stable dedup key within the kind'),
       title: z.string().min(1).describe('Short headline shown in the Web UI'),
       body: z.string().min(1).describe('Rationale and expected payoff, markdown'),
-      command: z.string().min(1).describe('Copy-runnable next action, e.g. a /leadace one-liner'),
+      instruction: z
+        .string()
+        .min(1)
+        .describe('The next action as one sentence addressed to Ace, e.g. "Add Wantedly as an outreach means."'),
     },
     async ({ projectId, ...body }, ctx) => {
       const { ok, data } = await ctx.callApi('POST', `/projects/${encodeURIComponent(projectId)}/suggestions`, body)
@@ -1787,7 +1794,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'list_suggestions',
-    'List persisted suggestions for a project: id, kind, dedupeKey, title, body, command, status (open/dismissed/done), timestamps. Optional status filter.',
+    'List persisted suggestions for a project: id, kind, dedupeKey, title, body, instruction, status (open/dismissed/done), timestamps. Optional status filter.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       status: z.enum(SUGGESTION_STATUSES).optional().describe('Filter by status'),

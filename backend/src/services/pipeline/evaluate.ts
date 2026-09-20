@@ -44,8 +44,7 @@ const evaluationSchema = z.object({
       dedupeKey: z.string().min(1).max(128),
       title: z.string().min(1).max(200),
       body: z.string().min(1).max(4000),
-      // A sentence the person can paste into the LeadAce chat.
-      command: z.string().min(1).max(500),
+      instruction: z.string().min(1).max(500),
     }),
   ),
 })
@@ -112,7 +111,7 @@ message variants: ${JSON.stringify(variants.value.variants)}
 - learnings: return the full log with reconciled entries, or null. Write gate for a new entry: sufficient data, a cited metric with n ≥ ${lever.value.minSamplePerArm}, a pattern that repeated. Retire entries whose direction no longer reproduces by replacing their tag with [retired]. Keep ≤ 15 active entries. Stage tags: [targeting] [body] [timing] [channel] [discovery].
 - newVariant: only when lever needsReplenishment is ${lever.value.needsReplenishment} === true — one angle most different from every active one (subject pattern ≤ 80 chars using only {{org}} / {{name}} / {{signal}} placeholders, a 2–5 line body approach, a label) on a fresh slug like gen_${utcDateKey().replace(/-/g, '')}; otherwise null.
 - strategyUpserts: archive (archived: true, approach echoed unchanged) only on evidence the tick cannot see — clearly elevated bounceRate, an approach that cannot select for the Prerequisites, or a dead source. Register 1–2 fresh strategies (new kebab-case slug, 2–5 line approach: where / how to search and why it should work, preferring sources where the Prerequisites are observable) only when discovery.needsReplenishment is ${lever.value.discovery.needsReplenishment} === true or the premise check reoriented the Target. Never reuse a slug for a different idea.
-- suggestions: only actions the person alone can do — kind "${ADD_MEANS_SUGGESTION_KIND}" for a means needing account setup (dedupeKey = the tentative strategy slug), kind "${REVISIT_STRATEGY_SUGGESTION_KIND}" (dedupeKey e.g. cross-channel-slump) when low performance persists across every channel and strategy through repeated rotations. command = a sentence to paste into the LeadAce chat.
+- suggestions: only actions the person alone can do — kind "${ADD_MEANS_SUGGESTION_KIND}" for a means needing account setup (dedupeKey = the tentative strategy slug), kind "${REVISIT_STRATEGY_SUGGESTION_KIND}" (dedupeKey e.g. cross-channel-slump) when low performance persists across every channel and strategy through repeated rotations. instruction = the next action as one sentence addressed to Ace.
 - report (markdown): key KPIs; inquiry-landing conversions when any outcome is non-zero; changes since the last cycle; discovery strategy performance (skip when no send carries a slug); suggestions recorded; findings; improvements applied; tactical rejection signals (distribution, recontact queue, decision-maker referrals) when total > 0; lever observability (angles leading with weights / pBest and maturity vs minSamplePerArm, archived variants — a "stagnation" archive is a rotation for freshness, not a loser — channel affinity, targeting lifts, trend across ticks; "uniform / none yet" when there is no data); next actions. Never imply progress the numbers do not show.`
 
   let out: z.infer<typeof evaluationSchema>

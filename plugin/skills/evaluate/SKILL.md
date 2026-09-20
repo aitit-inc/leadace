@@ -156,7 +156,7 @@ Evaluate supplies and narrates this lever; the daily tick owns reply-based selec
 - **Never reuse a slug for a different idea** — a slug is the arm's measured identity; archive instead. Refining the same idea may update the same slug's `approach`. Playbook-driven strategies get the same archive treatment; leave their `approach`'s playbook reference intact
 
 **Suggest playbook-driven means (persist + report, never self-add):**
-When a promising means needs user setup (platform account, login, ToS), don't register it as a strategy yourself — call `record_suggestion` with `projectId: "$0"`, `kind: "add-means"`, `dedupeKey` = tentative strategy slug, short `title`, `body` citing the evidence, and a `command` runnable verbatim like `/leadace <project> add <platform> as an outreach means` (working language is fine).
+When a promising means needs user setup (platform account, login, ToS), don't register it as a strategy yourself — call `record_suggestion` with `projectId: "$0"`, `kind: "add-means"`, `dedupeKey` = tentative strategy slug, short `title`, `body` citing the evidence, and an `instruction` — the next action as one sentence addressed to Ace, like `Add <platform> as an outreach means.` (working language is fine). Never a slash command: the Web UI sends it to the chat as it is.
 - Suggest only what the user alone can do — never what this skill or the loop can do itself.
 - The server never resurrects a dismissed/done suggestion; if the confirmation says it was left untouched, drop it from next actions.
 - add_means completion closes the suggestion automatically.
@@ -193,7 +193,7 @@ The lever tick prunes and re-weights message variants but never *generates* new 
 - **Boundary (report-only intact):** this hands the bandit a new arm to *test* — it does not assert the new angle is better and does not edit SALES_STRATEGY messaging. Frame it as "an angle to test," not "a better message."
 
 **Escalate a slump that messaging can't fix (suggest, never self-pivot):**
-The loop's own escape hatch is the angle rotation above — use it, don't suggest it. But when the long-horizon signal says the problem is bigger than message angles — low performance **across every channel and every discovery strategy** persisting through repeated rotations and fresh angles — the remaining moves (repositioning, an audience beyond what the business serves, a full messaging reset) involve direction preferences only the user can set. Record that once via `record_suggestion`: `kind: "revisit-strategy"`, a stable `dedupeKey` naming the diagnosis (e.g. `cross-channel-slump`), `title` + `body` citing the measured evidence (per-channel and per-strategy rates, the rotation history), and a runnable `command` — `/leadace <project> refine strategy`, or `/leadace <project> reset messaging` when the evidence points at the message pool itself. Same rules as the add-means suggestions: dismissed/done is final, don't re-raise.
+The loop's own escape hatch is the angle rotation above — use it, don't suggest it. But when the long-horizon signal says the problem is bigger than message angles — low performance **across every channel and every discovery strategy** persisting through repeated rotations and fresh angles — the remaining moves (repositioning, an audience beyond what the business serves, a full messaging reset) involve direction preferences only the user can set. Record that once via `record_suggestion`: `kind: "revisit-strategy"`, a stable `dedupeKey` naming the diagnosis (e.g. `cross-channel-slump`), `title` + `body` citing the measured evidence (per-channel and per-strategy rates, the rotation history), and an `instruction` — `Refine the sales strategy.`, or `Reset the message pool.` when the evidence points at the message pool itself. Same rules as the add-means suggestions: dismissed/done is final, don't re-raise.
 
 ### 5. Results Report
 
@@ -202,7 +202,7 @@ Report the following directly to the user (no file output needed -- live metrics
 - **Inquiry landing conversions** (from step 1's `inquiryOutcomeCounts`): show whenever any of `lead` / `signup_clicked` / `inquired` / `unsubscribed` is non-zero. Report `lead` (meeting-request conversions) and `signup_clicked` (self-serve signup conversions) separately — they reflect different CTA modes and inform whether the project's chosen CTA is converting. Skip the section when all five outcomes are 0
 - Changes since the last cycle (what the Learnings Log added or `[retired]` in step 4, plus notable lever shifts from `get_lever_decisions`)
 - **Discovery strategy performance** (from `discoveryStrategyResponseRate`): per-strategy sends + reply rate, any registry changes applied in step 4 (archived / registered). Skip when no send carries a strategy slug yet
-- **Suggestions recorded** (from step 4 — a new means to add, or a strategy revisit): title, one-line rationale, and the copy-runnable command; note it stays on the Web UI dashboard until acted on or dismissed. Skip when none
+- **Suggestions recorded** (from step 4 — a new means to add, or a strategy revisit): title, one-line rationale, and the instruction; note it stays on the Web UI dashboard until acted on or dismissed. Skip when none
 - Important findings from the analysis
 - List of improvements applied
 - **Tactical rejection signals** (from step 1's `get_rejection_feedback_summary`):

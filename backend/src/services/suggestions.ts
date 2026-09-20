@@ -16,7 +16,7 @@ export const recordSuggestionBodySchema = z.object({
   dedupeKey: z.string().min(1).max(128),
   title: z.string().min(1).max(200),
   body: z.string().min(1).max(4000),
-  command: z.string().min(1).max(500),
+  instruction: z.string().min(1).max(500),
 })
 export type RecordSuggestionBody = z.infer<typeof recordSuggestionBodySchema>
 
@@ -37,7 +37,7 @@ export type SuggestionRow = {
   dedupeKey: string
   title: string
   body: string
-  command: string
+  instruction: string
   status: SuggestionStatus
   createdAt: Date
   updatedAt: Date
@@ -69,14 +69,14 @@ export async function recordSuggestion(
       dedupeKey: body.dedupeKey,
       title: body.title,
       body: body.body,
-      command: body.command,
+      instruction: body.instruction,
     })
     .onConflictDoUpdate({
       target: [suggestions.projectId, suggestions.kind, suggestions.dedupeKey],
       set: {
         title: body.title,
         body: body.body,
-        command: body.command,
+        instruction: body.instruction,
         updatedAt: new Date(),
       },
       setWhere: eq(suggestions.status, 'open'),
@@ -115,7 +115,7 @@ export async function listSuggestions(
       dedupeKey: suggestions.dedupeKey,
       title: suggestions.title,
       body: suggestions.body,
-      command: suggestions.command,
+      instruction: suggestions.instruction,
       status: suggestions.status,
       createdAt: suggestions.createdAt,
       updatedAt: suggestions.updatedAt,

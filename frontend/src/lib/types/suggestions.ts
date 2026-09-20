@@ -8,7 +8,7 @@ export interface Suggestion {
   dedupeKey: string;
   title: string;
   body: string;
-  command: string;
+  instruction: string;
   status: SuggestionStatus;
   createdAt: string;
   updatedAt: string;

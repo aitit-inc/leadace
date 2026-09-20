@@ -47,7 +47,7 @@
 </div>
 
 {#if data.organizations.length === 0}
-  <EmptyState message="No organizations yet. Run /build-list or /import-prospects to add prospects — their organizations are created automatically." />
+  <EmptyState message="No organizations yet. Ask Ace in chat to find or import prospects — their organizations are created automatically." />
 {:else}
   <div class="card overflow-hidden">
     <div class="hidden md:grid grid-cols-[1.5fr_1fr_70px_70px_100px] gap-4 border-b border-border px-5 py-2.5 text-xs font-semibold text-text-muted">

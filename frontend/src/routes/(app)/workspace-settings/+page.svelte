@@ -86,7 +86,7 @@
 
   // The send paths refuse with PRECONDITION_FAILED if any of these is
   // missing. We surface this as a banner so the user knows up front rather
-  // than after a failed /outbound run.
+  // than after a failed send.
   let complianceReady = $derived(
     !!formData?.legalName?.trim() &&
       !!formData?.physicalAddress?.trim() &&
