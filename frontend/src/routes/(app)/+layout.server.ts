@@ -1,6 +1,7 @@
 import { dev } from '$app/environment';
 import { ACTIVE_PROJECT_COOKIE } from '$lib/active-project';
 import { listAttention } from '$lib/api/attention';
+import { listNotifications } from '$lib/api/notifications';
 import { getPlan } from '$lib/api/billing';
 import { listProjects } from '$lib/api/projects';
 import type { PlanInfo } from '$lib/types/plan';
@@ -10,7 +11,7 @@ import type { LayoutServerLoad } from './$types';
 // the server can pre-render the right project on first paint, without waiting
 // for client localStorage reconciliation.
 export const load: LayoutServerLoad = async ({ fetch, locals, cookies, depends }) => {
-	depends('app:active-project', 'app:projects', 'app:plan', 'app:attention');
+	depends('app:active-project', 'app:projects', 'app:plan', 'app:attention', 'app:notifications');
 
 	const session = locals.session;
 	if (!session) {
@@ -20,10 +21,10 @@ export const load: LayoutServerLoad = async ({ fetch, locals, cookies, depends }
 	}
 	const token = session.access_token;
 
-	// /projects is required — let it throw and surface via +error.svelte. Plan
-	// and attention are best-effort: a transient failure hides the relevant
-	// widget (banners, bell), not the whole app.
-	const [projects, planResult, attention] = await Promise.all([
+	// /projects is required — let it throw and surface via +error.svelte. Plan,
+	// attention and notifications are best-effort: a transient failure hides the
+	// relevant widget (banners, bell), not the whole app.
+	const [projects, planResult, attention, notifications] = await Promise.all([
 		listProjects(fetch, token),
 		getPlan(fetch, token).then(
 			(p) => ({ ok: true as const, plan: p }),
@@ -33,6 +34,7 @@ export const load: LayoutServerLoad = async ({ fetch, locals, cookies, depends }
 			}),
 		),
 		listAttention(fetch, token).catch(() => []),
+		listNotifications(fetch, token).catch(() => []),
 	]);
 	const plan: PlanInfo | null = planResult.ok ? planResult.plan : null;
 	const planError: string | null = planResult.ok ? null : planResult.message;
@@ -59,5 +61,5 @@ export const load: LayoutServerLoad = async ({ fetch, locals, cookies, depends }
 		}
 	}
 
-	return { activeProjectId: next, projects, plan, planError, attention };
+	return { activeProjectId: next, projects, plan, planError, attention, notifications };
 };

@@ -17,6 +17,12 @@ Generate the `BUSINESS.md` document with the following structure:
 ## Pricing
 (As much detail as available)
 
+## Customers & Proof
+(Who buys today, results they got, case studies, survey or review findings)
+
+## Current Sales
+(How it sells today: channels, deal size, sales cycle, what has worked, common objections)
+
 ## Competition
 (Key competitors and their characteristics)
 
@@ -24,6 +30,8 @@ Generate the `BUSINESS.md` document with the following structure:
 (Market size, trends, etc.)
 ```
 
-Each section should be written by combining information obtained from the user with web research results. For sections where information is unknown, write "Not available" — do not leave sections empty.
+Each section should be written by combining information obtained from the user with web research results; what the user says outranks the web. Mark an inference as one in a few words ("inferred from the pricing page"). For sections where information is unknown, write "Not available" — do not leave sections empty.
 
-**Target length ~60 lines or fewer.** This is a reference doc — keep each section to the essentials; do not pad.
+Write for a salesperson drafting a cold email or answering an objection: concrete facts (numbers, named customers, named competitors) over description.
+
+**Target length ~80 lines or fewer.** This is a reference doc — keep each section to the essentials; do not pad.

@@ -7,8 +7,13 @@ import { discoveryStrategySchema, variantIdSchema } from './ids'
 import { localeSchema } from './locale'
 import { isPublicHttpsUrl } from './url'
 
+const publicHttpsUrl = z.url().max(500).refine(isPublicHttpsUrl, { message: 'must be a public https:// URL' })
+
 export const strategyDraftInputSchema = z.object({
-  url: z.url().max(500).refine(isPublicHttpsUrl, { message: 'must be a public https:// URL' }),
+  url: publicHttpsUrl,
+  moreUrls: z.array(publicHttpsUrl).max(5).default([]),
+  notes: z.string().max(20_000).default(''),
+  competitors: z.array(z.string().min(1).max(200)).max(5).default([]),
 })
 export type StrategyDraftInput = z.infer<typeof strategyDraftInputSchema>
 

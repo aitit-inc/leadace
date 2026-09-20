@@ -1,16 +1,27 @@
 <script lang="ts">
   import { goto, invalidate } from '$app/navigation';
   import { ApiError } from '$lib/api';
-  import { confirmChatCall, createThread, deleteThread, sendChatMessage, stopChat, watchThread } from '$lib/api/chat';
+  import { ACCEPTED_FILE_TYPES, MAX_ATTACHMENT_BYTES } from '$lib/chat-attachments';
+  import {
+    confirmChatCall,
+    createThread,
+    deleteThread,
+    downloadChatAttachment,
+    sendChatMessage,
+    stopChat,
+    uploadChatAttachment,
+    watchThread,
+  } from '$lib/api/chat';
   import { cancelJob, getJob } from '$lib/api/jobs';
   import ThreadList from '$lib/components/chat/ThreadList.svelte';
+  import AttachmentChip from '$lib/components/chat/AttachmentChip.svelte';
   import MessageItem from '$lib/components/chat/MessageItem.svelte';
   import JobCard from '$lib/components/chat/JobCard.svelte';
   import ConfirmCard from '$lib/components/chat/ConfirmCard.svelte';
   import SenderIdentityCard, { type SenderIdentityProposal } from '$lib/components/chat/SenderIdentityCard.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import Logo from '$lib/components/Logo.svelte';
-  import type { ChatEvent, ChatMessage, PendingCall } from '$lib/types/chat';
+  import type { ChatAttachment, ChatEvent, ChatMessage, PendingCall } from '$lib/types/chat';
   import { TERMINAL_JOB_STATUSES, type Job, type JobDetail } from '$lib/types/jobs';
   import type { PageProps } from './$types';
 
@@ -31,6 +42,11 @@
   let jobs = $state<Record<string, Job | JobDetail>>({});
   let error = $state('');
   let input = $state('');
+  // Already uploaded to this thread, waiting to ride the next message.
+  let attachments = $state<ChatAttachment[]>([]);
+  let uploading = $state<{ key: number; name: string }[]>([]);
+  let uploadKey = 0;
+  let filePicker = $state<HTMLInputElement | null>(null);
   let deleting = $state<string | null>(null);
   let bottom = $state<HTMLDivElement | null>(null);
   // A thread, or one project's home. A request started for an earlier view,
@@ -48,6 +64,8 @@
     liveMessages = [];
     streamingText = '';
     liveSteps = 0;
+    attachments = [];
+    uploading = [];
     running = false;
     stopping = false;
     jobs = Object.fromEntries(data.jobs.map((j) => [j.id, j]));
@@ -86,9 +104,10 @@
     };
     return { callId: call?.id ?? null, legalName: text('legalName'), postalAddress: text('postalAddress'), senderCountry: text('senderCountry') };
   });
-  let showIdentityCard = $derived(
-    data.attention.some((a) => a.kind === 'compliance_incomplete') && (data.thread?.projectId ?? data.activeProjectId) !== null,
-  );
+  // No project yet, or one whose first setup has not been written.
+  let needsSetup = $derived(!data.projects.find((p) => p.id === (data.thread?.projectId ?? data.activeProjectId))?.setUp);
+  // Asked for once the setup is written, so it never hides the website prompt.
+  let showIdentityCard = $derived(data.attention.some((a) => a.kind === 'compliance_incomplete') && !needsSetup);
   let liveThreadJobs = $derived(
     data.thread ? Object.values(jobs).filter((j) => !TERMINAL_JOB_STATUSES.includes(j.status)) : [],
   );
@@ -108,8 +127,8 @@
   }
 
   // Tools after which the layout's project list (and the active project a
-  // fresh tenant has none of) must be reloaded.
-  const PROJECT_LIST_TOOLS = ['setup_project', 'delete_project'];
+  // fresh tenant has none of, or a project's setup state) must be reloaded.
+  const PROJECT_LIST_TOOLS = ['setup_project', 'delete_project', 'apply_strategy_draft'];
   let projectsChanged = false;
 
   const quickActions = [
@@ -208,8 +227,10 @@
     return t.id;
   }
 
+  // Tool events are not replayed after a reconnect, so a project still being
+  // set up rereads its state rather than trusting the apply_strategy_draft one.
   async function reload() {
-    if (projectsChanged) {
+    if (projectsChanged || needsSetup) {
       projectsChanged = false;
       await invalidate('app:projects');
     }
@@ -223,18 +244,67 @@
     if (id === threadId) pending = data.thread?.pendingCall ?? null;
   }
 
+  const MAX_ATTACHMENTS = 5;
+
+  // Uploaded as they are picked, so the model has them the moment the message
+  // is sent. They belong to the thread, which is created first if there is none.
+  async function attach(picked: FileList | null) {
+    if (!picked || picked.length === 0) return;
+    const files = [...picked];
+    error = '';
+    if (attachments.length + uploading.length + files.length > MAX_ATTACHMENTS) {
+      error = `Up to ${MAX_ATTACHMENTS} files per message.`;
+      return;
+    }
+    const tooBig = files.find((f) => f.size > MAX_ATTACHMENT_BYTES);
+    if (tooBig) {
+      error = `${tooBig.name} is larger than ${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB.`;
+      return;
+    }
+    const id = await ensureThread();
+    const gen = viewGen;
+    // The whole pick is shown as pending before the first byte goes up, so a
+    // second pick counts against the limit and Send waits for all of them.
+    const queued = files.map((file) => ({ key: uploadKey++, file }));
+    uploading = [...uploading, ...queued.map(({ key, file }) => ({ key, name: file.name }))];
+    for (const { key, file } of queued) {
+      // The view moved on: its own state was reset, and these belong to it.
+      if (gen !== viewGen) return;
+      try {
+        const uploaded = await uploadChatAttachment(id, file, fetch, token);
+        if (gen === viewGen) attachments = [...attachments, uploaded];
+      } catch (e) {
+        if (gen === viewGen) error = e instanceof ApiError ? e.message : `${file.name} could not be attached.`;
+      } finally {
+        if (gen === viewGen) uploading = uploading.filter((u) => u.key !== key);
+      }
+    }
+  }
+
+  async function openFile(file: ChatAttachment) {
+    const id = threadId;
+    if (!id) return;
+    try {
+      await downloadChatAttachment(id, file, token);
+    } catch (e) {
+      if (id === threadId) error = e instanceof ApiError ? e.message : 'The file could not be opened.';
+    }
+  }
+
   // A message sent while a turn runs is answered right after it.
   async function send(text: string) {
     const trimmed = text.trim();
-    if (!trimmed || sending || stopping) return;
+    if ((!trimmed && attachments.length === 0) || sending || stopping || uploading.length > 0) return;
+    const attachmentIds = attachments.map((a) => a.id);
     input = '';
+    attachments = [];
     pending = null;
     error = '';
     sending = true;
     let id = threadId;
     try {
       id = await ensureThread();
-      const message = await sendChatMessage(id, trimmed, fetch, token);
+      const message = await sendChatMessage(id, trimmed, attachmentIds, fetch, token);
       if (id === threadId) liveMessages = [...liveMessages, message];
     } catch (e) {
       if (id !== threadId) return;
@@ -309,7 +379,7 @@
 
 {#snippet composer(centered: boolean)}
   <form
-    class="flex items-end gap-2 rounded-3xl border border-border bg-surface p-2 pl-4 transition-colors focus-within:border-accent {centered
+    class="flex flex-col gap-1.5 rounded-3xl border border-border bg-surface p-2 transition-colors focus-within:border-accent {centered
       ? 'shadow-lg'
       : ''}"
     onsubmit={(e) => {
@@ -317,39 +387,78 @@
       void send(input);
     }}
   >
-    <!-- svelte-ignore a11y_autofocus -->
-    <textarea
-      bind:value={input}
-      rows={centered ? 1 : 2}
-      autofocus={centered}
-      aria-label="Message Ace"
-      placeholder={data.activeProjectId ? 'Tell Ace what to do…' : 'https://your-company.com'}
-      onkeydown={(e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-          e.preventDefault();
-          void send(input);
-        }
-      }}
-      class="max-h-40 min-w-0 flex-1 resize-none bg-transparent py-2 text-base text-text placeholder:text-text-muted focus:outline-none"
-    ></textarea>
-    {#if running}
+    {#if attachments.length > 0 || uploading.length > 0}
+      <div class="flex flex-wrap gap-1.5 px-1 pt-1">
+        {#each attachments as a (a.id)}
+          <AttachmentChip name={a.name} size={a.size} onremove={() => (attachments = attachments.filter((x) => x.id !== a.id))} />
+        {/each}
+        {#each uploading as u (u.key)}
+          <AttachmentChip name={u.name} size={0} busy />
+        {/each}
+      </div>
+    {/if}
+    <div class="flex items-end gap-2">
+      <input
+        bind:this={filePicker}
+        type="file"
+        multiple
+        accept={ACCEPTED_FILE_TYPES}
+        class="hidden"
+        onchange={(e) => {
+          void attach(e.currentTarget.files);
+          e.currentTarget.value = '';
+        }}
+      />
       <button
         type="button"
-        onclick={stop}
-        disabled={stopping}
-        aria-label="Stop"
-        title="Stop"
-        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-2 text-text transition-colors hover:bg-border disabled:opacity-50"
+        onclick={() => filePicker?.click()}
+        disabled={sending || stopping}
+        aria-label="Attach files"
+        title="Attach files (sales deck, pricing, customer results…)"
+        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-surface-2 hover:text-text disabled:opacity-50"
       >
-        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" class="h-3.5 w-3.5">
-          <rect x="2" y="2" width="12" height="12" rx="2" />
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true" class="h-5 w-5">
+          <path d="M21 11.5 12.5 20a5 5 0 0 1-7-7l8-8a3.5 3.5 0 0 1 5 5l-8 8a2 2 0 0 1-3-3l7.5-7.5" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
       </button>
-    {:else}
-      <button type="submit" disabled={sending || stopping || !input.trim()} class="btn btn-primary h-10">
-        {data.activeProjectId ? 'Send' : 'Start'}
-      </button>
-    {/if}
+      <!-- svelte-ignore a11y_autofocus -->
+      <textarea
+        bind:value={input}
+        rows={centered ? 1 : 2}
+        autofocus={centered}
+        aria-label="Message Ace"
+        placeholder={needsSetup ? 'https://your-company.com' : 'Tell Ace what to do…'}
+        onkeydown={(e) => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            void send(input);
+          }
+        }}
+        class="max-h-40 min-w-0 flex-1 resize-none bg-transparent py-2 text-base text-text placeholder:text-text-muted focus:outline-none"
+      ></textarea>
+      {#if running}
+        <button
+          type="button"
+          onclick={stop}
+          disabled={stopping}
+          aria-label="Stop"
+          title="Stop"
+          class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-2 text-text transition-colors hover:bg-border disabled:opacity-50"
+        >
+          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" class="h-3.5 w-3.5">
+            <rect x="2" y="2" width="12" height="12" rx="2" />
+          </svg>
+        </button>
+      {:else}
+        <button
+          type="submit"
+          disabled={sending || stopping || uploading.length > 0 || (!input.trim() && attachments.length === 0)}
+          class="btn btn-primary h-10"
+        >
+          {needsSetup ? 'Start' : 'Send'}
+        </button>
+      {/if}
+    </div>
   </form>
 {/snippet}
 
@@ -373,14 +482,14 @@
           <Logo size={44} class="mx-auto text-accent" />
         </div>
         <h1 class="mx-auto mt-5 max-w-xl animate-rise font-display text-3xl font-semibold tracking-tight text-balance text-text">
-          {data.activeProjectId ? 'What should Ace do next?' : 'Paste your website to begin'}
+          {needsSetup ? 'Paste your website to begin' : 'What should Ace do next?'}
         </h1>
         <p class="mx-auto mt-3 max-w-lg animate-rise text-base text-text-secondary">
-          {#if data.activeProjectId}
-            Find prospects, draft outreach, run the daily cycle, or ask how the numbers look.
-          {:else}
+          {#if needsSetup}
             Ace reads your site, suggests who to contact and what to say, then waits for your OK. Nothing is sent
             until you approve it.
+          {:else}
+            Find prospects, draft outreach, run the daily cycle, or ask how the numbers look.
           {/if}
         </p>
       </div>
@@ -402,7 +511,7 @@
                   <p class="text-sm text-text-muted">{m.content.summary}</p>
                 {/if}
               {:else}
-                <MessageItem content={m.content} />
+                <MessageItem content={m.content} onopenfile={openFile} />
               {/if}
             </div>
           {/each}
@@ -442,7 +551,7 @@
 
     <!-- One composer for both layouts, so sending the first message keeps focus in it. -->
     <div class="mx-auto w-full {fresh ? 'mt-8 max-w-2xl animate-rise' : 'max-w-3xl space-y-2 pt-3'}">
-      {#if !fresh && data.activeProjectId}
+      {#if !fresh && !needsSetup}
         {@render quickActionRow(false)}
       {/if}
       {@render composer(fresh)}
@@ -450,9 +559,7 @@
 
     {#if fresh}
       <div class="mt-5 w-full max-w-2xl animate-rise">
-        {#if data.activeProjectId}
-          {@render quickActionRow(true)}
-        {:else}
+        {#if needsSetup}
           <ol class="flex flex-wrap justify-center gap-2" aria-label="What happens next">
             {#each ['Reads your site', 'Suggests who to contact', 'Finds companies that fit', 'Drafts emails for your OK'] as step, i (step)}
               <li
@@ -464,6 +571,8 @@
               </li>
             {/each}
           </ol>
+        {:else}
+          {@render quickActionRow(true)}
         {/if}
       </div>
       {#if error}

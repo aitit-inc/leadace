@@ -8,6 +8,12 @@ export type TenantSettings = {
   // is 'ja'. Null = fall back to the default field above.
   legalNameJa: string | null;
   physicalAddressJa: string | null;
-  // Where the plugin's notify_user emails land. Null = the connected Gmail itself.
+  // Where notification emails go. Null = the connected Gmail itself.
   notificationEmail: string | null;
+  notifyGeneralInApp: boolean;
+  notifyGeneralEmail: boolean;
+  notifyCronInApp: boolean;
+  notifyCronEmail: boolean;
+  notifyLeadInApp: boolean;
+  notifyLeadEmail: boolean;
 };

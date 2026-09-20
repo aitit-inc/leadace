@@ -260,6 +260,7 @@ async function seedProject(ctx, { name, settings }) {
   const api = apiFor(ctx);
   await api('PUT', '/api/tenant-settings', COMPLIANCE);
   const project = await api('POST', '/api/projects', { name });
+  await api('PUT', `/api/projects/${project.id}/documents/business`, { content: `# ${SENDER.company}\n\nScheduling software for small clinics.` });
   await api('PUT', `/api/projects/${project.id}/settings`, {
     senderDisplayName: SENDER.name,
     senderCompanyName: SENDER.company,
@@ -609,6 +610,16 @@ const SCENARIOS = [
     ],
   },
   {
+    name: 'new-project',
+    summary: 'The chat of a project created from the switcher, before its first setup',
+    stack: 'self-host',
+    setup: async (ctx) => {
+      // No sender identity either: the website prompt must not wait on it.
+      await apiFor(ctx)('POST', '/api/projects', { name: 'Second product' });
+      return [{ name: 'empty', path: '/chat', expectSelector: 'textarea[placeholder="https://your-company.com"]' }];
+    },
+  },
+  {
     name: 'approval',
     summary: 'A tool call waiting for approval: an ordinary one and a destructive one',
     stack: 'self-host',
@@ -755,6 +766,24 @@ const SCENARIOS = [
       const prospects = await seedProspects(ctx, projectId, 8);
       await recordSent(ctx, projectId, prospects);
       return [{ name: 'page', path: '/plans', expect: ['Prepaid credits', '$25.00', '8 / 100'] }];
+    },
+  },
+  {
+    name: 'notifications',
+    summary: 'The bell with notifications (one unread), and the notification settings',
+    stack: 'self-host',
+    setup: async (ctx) => {
+      await seedProject(ctx, { name: 'Northwind outbound', settings: {} });
+      const t = q(ctx.persona.tenantId);
+      psql(`UPDATE tenants SET notifications_seen_at = now() - interval '2 hours' WHERE id = ${t};
+        INSERT INTO notifications (tenant_id, category, reference, subject, body, link, created_at) VALUES
+        (${t}, 'cron', 'ui:1', 'daily cycle failed: Northwind outbound', 'Search step failed upstream — upstream LLM request failed', '/chat', now() - interval '1 hour'),
+        (${t}, 'general', 'ui:2', 'discover succeeded: Northwind outbound', 'Registered 8 of 12 (6 with email); 4 skipped.', '/chat', now() - interval '5 hours'),
+        (${t}, 'cron', 'ui:3', 'daily cycle succeeded: Northwind outbound', 'evaluate: 2 responses scored | draft: 20 sent | journal: saved', '/chat', now() - interval '1 day');`);
+      return [
+        { name: 'bell', path: '/dashboard', click: 'button[aria-haspopup="menu"][aria-label^="Alerts"]', expect: 'daily cycle failed: Northwind outbound' },
+        { name: 'settings', path: '/workspace-settings', click: 'text=Scheduled runs', expect: 'Scheduled runs' },
+      ];
     },
   },
   {
@@ -962,6 +991,10 @@ async function shoot(names, themes) {
           tab.on('pageerror', (e) => errors.push(e.message));
           const url = `${ctx.appUrl}${page.path}`;
           const response = await tab.goto(url, { waitUntil: 'networkidle' });
+          if (page.click) {
+            await tab.click(page.click);
+            await tab.waitForLoadState('networkidle');
+          }
           const file = join(SHOT_DIR, `${name}--${page.name}--${theme}.png`);
           await tab.screenshot({ path: file, fullPage: true });
           written.push(file);

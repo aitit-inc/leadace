@@ -1,5 +1,5 @@
 // The daily cycle's one ordering decision: replenish the list before sending
-// when it cannot carry the day's outbound (daily-cycle/SKILL.md step 6).
+// when it cannot carry the day's outbound (daily-cycle/SKILL.md step 5).
 export type ReachableSnapshot = {
   // Prospects the hosted agent can act on by itself (email only in send mode).
   deliverable: number

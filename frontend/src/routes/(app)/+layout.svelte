@@ -1,7 +1,6 @@
 <script lang="ts">
   import { page } from '$app/state';
   import ProjectSwitcher from '$lib/components/ProjectSwitcher.svelte';
-  import ProjectCreateDialog from '$lib/components/ProjectCreateDialog.svelte';
   import Logo from '$lib/components/Logo.svelte';
   import AccountMenu from '$lib/components/AccountMenu.svelte';
   import AlertBell from '$lib/components/AlertBell.svelte';
@@ -29,7 +28,6 @@
   import type { LayoutProps } from './$types';
 
   let { data, children }: LayoutProps = $props();
-  let showCreate = $state(false);
   let drawerOpen = $state(false);
   let moreOpen = $state(false);
   let connectingGmail = $state(false);
@@ -177,12 +175,6 @@
   </aside>
 
   <div class="flex flex-1 flex-col overflow-hidden">
-    {#if showCreate}
-      <ProjectCreateDialog
-        onclose={() => (showCreate = false)}
-        oncreated={() => window.location.reload()}
-      />
-    {/if}
     <header class="flex items-center gap-2 border-b border-border px-3 py-2.5 md:px-6">
       <button
         type="button"
@@ -196,7 +188,7 @@
       <div class="min-w-0 flex-1">
         <ProjectSwitcher projects={data.projects} activeProjectId={data.activeProjectId} />
       </div>
-      <AlertBell items={bellItems} />
+      <AlertBell items={bellItems} notifications={data.notifications} token={data.session?.access_token} />
     </header>
 
     {#if data.projects.length === 0 && page.url.pathname !== '/chat' && page.url.pathname !== '/dashboard'}

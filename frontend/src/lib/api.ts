@@ -81,6 +81,8 @@ export type RequestOptions = {
   method: string;
   path: string;
   body?: unknown;
+  /** Sent as-is, for an endpoint that takes bytes rather than JSON (a chat attachment). */
+  raw?: BodyInit;
   auth: RequestAuth;
   /** Required when `auth: 'required'`. */
   token?: string;
@@ -123,7 +125,7 @@ export async function request<T>(
   const res = await fetchFn(`${API_BASE}/api${opts.path}`, {
     method: opts.method,
     headers,
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+    body: opts.raw ?? (opts.body !== undefined ? JSON.stringify(opts.body) : undefined),
   });
 
   if (!res.ok) await throwApiError(res, opts.auth);

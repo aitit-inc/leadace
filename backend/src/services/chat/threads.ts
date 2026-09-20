@@ -5,7 +5,8 @@ import { z } from 'zod'
 import { and, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from 'drizzle-orm'
 import type { Db } from '../../db/connection'
 import { chatMessages, chatThreads } from '../../db/schema'
-import type { ChatContent, ChatRole, PendingCall } from '../../domain/chat'
+import type { ChatContent, ChatRole, ChatUserPart, PendingCall } from '../../domain/chat'
+import { attachmentIdsSchema, type FileRef } from '../../domain/chat-attachment'
 import type { JobOrigin } from '../../domain/jobs'
 import { asProjectId, projectRefSchema, type ProjectId, type TenantId } from '../../domain/ids'
 import { randomFromAlphabet } from '../../auth/random-id'
@@ -26,7 +27,10 @@ export const listThreadsQuerySchema = z.object({
 })
 export type ListThreadsQuery = z.infer<typeof listThreadsQuerySchema>
 
-export const messageBodySchema = z.object({ text: z.string().min(1).max(8000) }).strict()
+export const messageBodySchema = z
+  .object({ text: z.string().max(8000), attachmentIds: attachmentIdsSchema.default([]) })
+  .strict()
+  .refine((b) => b.text.trim() !== '' || b.attachmentIds.length > 0, { message: 'Write something or attach a file' })
 export const confirmBodySchema = z.object({ callId: z.string().min(1), approve: z.boolean() }).strict()
 export const threadIdParamSchema = z.object({ id: z.string().min(1).max(64) })
 
@@ -195,13 +199,21 @@ async function insertMessage(
 // A person's message. The first one names the thread. One sent while calls
 // await approval is the answer "no" to all of them; one sent before the card
 // came up is not, and waits behind it (hasUnanswered).
-export async function postMessage(db: Db, tenantId: TenantId, threadId: string, text: string): Promise<ServiceResult<MessageView>> {
+export async function postMessage(
+  db: Db,
+  tenantId: TenantId,
+  threadId: string,
+  text: string,
+  files: FileRef[],
+): Promise<ServiceResult<MessageView>> {
   const thread = await getThread(db, tenantId, threadId)
   if (!thread.ok) return thread
-  const title = thread.value.title === DEFAULT_THREAD_TITLE ? titleFromMessage(text) : ''
+  const title = thread.value.title === DEFAULT_THREAD_TITLE ? titleFromMessage(text || (files[0]?.name ?? '')) : ''
   if (title) await renameThread(db, tenantId, threadId, title)
   await supersedePendingCall(db, tenantId, threadId)
-  return ok(await insertMessage(db, tenantId, threadId, { role: 'user', parts: [{ text }] }, null))
+  // Files first: the model sees the material before the ask.
+  const parts: ChatUserPart[] = [...files.map((file) => ({ file })), ...(text ? [{ text }] : [])]
+  return ok(await insertMessage(db, tenantId, threadId, { role: 'user', parts }, null))
 }
 
 const SUPERSEDED = { error: 'The person did not approve this call and continued the conversation.' }

@@ -1,13 +1,7 @@
 import { eq, and, isNull } from 'drizzle-orm'
-import {
-  inquirySessions,
-  outreachLogs,
-  prospects,
-  sendingIdentities,
-  tenantMembers,
-} from '../db/schema'
+import { inquirySessions, outreachLogs, prospects } from '../db/schema'
 import type { Db } from '../db/connection'
-import { asSendingIdentityId, asTenantId } from '../domain/ids'
+import { asTenantId } from '../domain/ids'
 import { callOpenAIResponses, type OpenAIEnv } from './openai'
 import {
   closeSessionWithSummary,
@@ -15,17 +9,7 @@ import {
   recordMeetingRequestForSession,
   type MeetingRequestTarget,
 } from './inquiry-session'
-import { sendForIdentity } from '../auth/google'
-
-// Env subset for the lead-notification email path; intentionally narrower than
-// the chat path so notifyLeadByEmail's signature names exactly what it uses.
-export type LeadNotifyEnv = {
-  APP_URL: string
-  GMAIL_TOKEN_ENCRYPTION_KEY: string
-  GOOGLE_CLIENT_ID: string
-  GOOGLE_CLIENT_SECRET: string
-  E2E_RECIPIENT_OVERRIDE?: string
-}
+import { notify, notifyCtxOf, type NotifyEnv } from './notifications'
 
 const SUMMARIZE_MODEL = 'gpt-5.4-mini'
 const SUMMARIZE_TEMPERATURE = 0.2
@@ -37,7 +21,7 @@ export type SummarizeTrigger = 'cap' | 'idle'
 // a non-LLM close (see inquiry-chat.ts).
 export async function generateSessionSummary(
   db: Db,
-  env: OpenAIEnv & LeadNotifyEnv,
+  env: OpenAIEnv & NotifyEnv,
   sessionId: number,
   trigger: SummarizeTrigger,
 ): Promise<void> {
@@ -70,11 +54,11 @@ export async function generateSessionSummary(
     // recordResponse insert. The concurrent path's outcome wins; skip email.
     if (!escalated.ok) return
     // Best-effort — failures don't unwind the lead. The dashboard banner is the
-    // always-on path; email is a nudge for operators not staring at the app.
+    // always-on path; the notification is a nudge for operators not staring at the app.
     try {
-      await notifyLeadByEmail(db, env, sessionId, parsed.summary)
-    } catch {
-      // Gmail not connected, token revoked, send rejected — never fail the lead.
+      await notifyLead(db, env, target, parsed.summary)
+    } catch (e) {
+      console.warn(`[inquiry] lead notification failed session=${sessionId}`, e)
     }
   } else {
     await closeSessionWithSummary(db, sessionId, parsed?.summary ?? llm.outputText.trim())
@@ -126,67 +110,34 @@ export type ParsedSummary = {
   outcome: 'inquired' | 'lead'
 }
 
-// Skips silently when the tenant has no Gmail sending identity (form/SNS-only
-// projects). The recipient and the From: are the same address — the lead lands
-// in the operator's own inbox; no separate transactional transport needed.
-async function notifyLeadByEmail(
-  db: Db,
-  env: LeadNotifyEnv,
-  sessionId: number,
-  summary: string,
-): Promise<void> {
+async function notifyLead(db: Db, env: NotifyEnv, target: MeetingRequestTarget, summary: string): Promise<void> {
   const [row] = await db
-    .select({
-      tenantId: sendingIdentities.tenantId,
-      identityId: sendingIdentities.identityId,
-      ownerEmail: sendingIdentities.fromEmail,
-      prospectName: prospects.name,
-      prospectEmail: prospects.email,
-    })
+    .select({ name: prospects.name, email: prospects.email })
     .from(inquirySessions)
     .innerJoin(prospects, eq(prospects.id, inquirySessions.prospectId))
-    .innerJoin(tenantMembers, eq(tenantMembers.tenantId, inquirySessions.tenantId))
-    .innerJoin(
-      sendingIdentities,
-      and(
-        eq(sendingIdentities.tenantId, tenantMembers.tenantId),
-        eq(sendingIdentities.userId, tenantMembers.userId),
-        eq(sendingIdentities.provider, 'gmail_oauth'),
-        isNull(sendingIdentities.parentIdentityId),
-      ),
-    )
-    .where(eq(inquirySessions.id, sessionId))
+    .where(eq(inquirySessions.id, target.sessionId))
     .limit(1)
-
   if (!row) return
-
-  const dashboardUrl = `${env.APP_URL}/responses`
-  const prospectLine = row.prospectEmail
-    ? `${row.prospectName} <${row.prospectEmail}>`
-    : row.prospectName
-  const subject = `[LeadAce] New lead from ${row.prospectName}`
-  const body = [
-    `A recipient just escalated to a lead via the inquiry chat.`,
-    '',
-    `Prospect: ${prospectLine}`,
-    '',
-    'Summary:',
-    summary,
-    '',
-    `Open dashboard: ${dashboardUrl}`,
-  ].join('\n')
-
-  await sendForIdentity(db, {
-    tenantId: asTenantId(row.tenantId),
-    identityId: asSendingIdentityId(row.identityId),
-    encryptionKey: env.GMAIL_TOKEN_ENCRYPTION_KEY,
-    clientId: env.GOOGLE_CLIENT_ID,
-    clientSecret: env.GOOGLE_CLIENT_SECRET,
-    to: [row.ownerEmail],
-    subject,
-    body,
-    e2eRecipientOverride: env.E2E_RECIPIENT_OVERRIDE ?? null,
-  })
+  const r = await notify(
+    (fn) => fn(db),
+    target.tenantId,
+    notifyCtxOf(env),
+    {
+      category: 'lead',
+      reference: `inquiry_lead:${target.sessionId}`,
+      subject: `New lead from ${row.name}`,
+      body: [
+        'A recipient just escalated to a lead via the inquiry chat.',
+        '',
+        `Prospect: ${row.email ? `${row.name} <${row.email}>` : row.name}`,
+        '',
+        'Summary:',
+        summary,
+      ].join('\n'),
+      link: '/responses',
+    },
+  )
+  if (!r.ok) console.warn(`[inquiry] lead notification failed session=${target.sessionId}: ${r.error}`)
 }
 
 export function parseSummaryJson(raw: string): ParsedSummary | null {

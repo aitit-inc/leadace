@@ -1,11 +1,21 @@
 import type { z } from 'zod'
 import type { GroundedText, LlmEnv, UrlJsonResult } from './common'
-import { callOpenAIFollowUpJson, callOpenAIGroundedText, callOpenAIJson, streamOpenAIChat, type ChatRequest, type ChatStreamEvent } from './openai'
+import {
+  callOpenAIFollowUpJson,
+  callOpenAIGroundedText,
+  callOpenAIJson,
+  streamOpenAIChat,
+  uploadOpenAIFile,
+  type ChatRequest,
+  type ChatStreamEvent,
+  type FileUpload,
+  type UploadedFile,
+} from './openai'
 import { callOpenAIPagesJson } from './pages'
 import { OPENAI_ROUTES, type FollowUpJsonOp, type GroundedTextOp, type JsonOp, type PagesJsonOp } from './routes'
 
 export { LlmError, withLlmScope, type Citation, type GroundedText, type LlmEnv, type UrlJsonResult } from './common'
-export type { ChatCall, ChatRequest, ChatStreamEvent } from './openai'
+export type { ChatCall, ChatRequest, ChatStreamEvent, UploadedFile } from './openai'
 
 type SchemaPrompt<T> = { prompt: string; schema: z.ZodType<T> }
 
@@ -34,4 +44,8 @@ export function callLlmFollowUpJson<T>(env: LlmEnv, op: FollowUpJsonOp, args: Sc
 
 export function streamLlmChat(env: LlmEnv, args: ChatRequest): AsyncGenerator<ChatStreamEvent> {
   return streamOpenAIChat({ op: 'chat', apiKey: env.OPENAI_API_KEY, ...OPENAI_ROUTES.chat, ...args })
+}
+
+export function uploadLlmFile(env: LlmEnv, args: Omit<FileUpload, 'apiKey'>): Promise<UploadedFile> {
+  return uploadOpenAIFile({ apiKey: env.OPENAI_API_KEY, ...args })
 }

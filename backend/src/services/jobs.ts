@@ -4,7 +4,8 @@
 import { z } from 'zod'
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import type { Db } from '../db/connection'
-import { jobs } from '../db/schema'
+import type { TenantRun } from '../db/rls'
+import { jobs, projects } from '../db/schema'
 import type { ProjectId, ProjectRef, TenantId } from '../domain/ids'
 import { asProjectId, asTenantId, projectRefSchema } from '../domain/ids'
 import {
@@ -25,6 +26,8 @@ import { randomFromAlphabet } from '../auth/random-id'
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { getActiveStrategySlugs } from './discovery-strategies'
+import { notify, type NotifyCtx, type NotifyResult } from './notifications'
+import { categoryOfJob } from '../domain/notifications'
 
 // The Workflow binding, narrowed to what this service needs so it stays
 // testable and free of the Worker env type.
@@ -268,6 +271,26 @@ export async function loadJobForRun(db: Db, tenantId: TenantId, id: string): Pro
     .limit(1)
   if (!row) return null
   return { ...toView(row), tenantId: asTenantId(row.tenantId) }
+}
+
+// Reads the row, not the run's outcome: a job cancelled while it ran ends
+// quietly, whatever the run returned.
+export async function notifyJobFinished(run: TenantRun, tenantId: TenantId, ctx: NotifyCtx, id: string): Promise<ServiceResult<NotifyResult>> {
+  const [row] = await run((db) => db
+    .select({ kind: jobs.kind, status: jobs.status, result: jobs.result, error: jobs.error, startedBy: jobs.startedBy, threadId: jobs.threadId, project: projects.name })
+    .from(jobs)
+    .innerJoin(projects, eq(projects.id, jobs.projectId))
+    .where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, id)))
+    .limit(1))
+  if (!row) return err('NOT_FOUND', `Job ${id} not found`)
+  if (row.status !== 'succeeded' && row.status !== 'failed') return ok({ emailedTo: null })
+  return notify(run, tenantId, ctx, {
+    category: categoryOfJob(row.startedBy),
+    reference: `job:${id}`,
+    subject: `${row.kind.replace('_', ' ')} ${row.status}: ${row.project}`,
+    body: (row.status === 'succeeded' ? row.result?.summary : row.error) ?? row.status,
+    link: row.threadId ? `/chat?t=${row.threadId}` : '/chat',
+  })
 }
 
 export async function markJobRunning(db: Db, tenantId: TenantId, id: string): Promise<void> {

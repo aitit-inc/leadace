@@ -7,6 +7,7 @@ import {
 } from '../db/schema'
 import { createDb, type Db } from '../db/connection'
 import type { TenantId } from '../domain/ids'
+import { deleteTenantAttachments } from './chat/attachments'
 import { revokeUserFamilies } from './mcp-sessions'
 import { ok, err, type ServiceResult } from './result'
 import { stripeApiRequest } from './stripe-api'
@@ -36,6 +37,7 @@ export type DeleteAccountConfig = {
   databaseUrl: string
   stripeKey: string | null
   mcpOauthStore: KVNamespace
+  attachments: R2Bucket
 }
 
 // Stripe first so a billing failure doesn't leave the user paying for a deleted
@@ -92,6 +94,13 @@ export async function deleteOwnAccount(
     await revokeUserFamilies(cfg.mcpOauthStore, userId)
   } catch (e) {
     console.error('account-deletion: MCP session revoke failed', { userId, e })
+  }
+
+  // The chat's attachments live in the bucket, which no cascade reaches.
+  try {
+    await deleteTenantAttachments(cfg.attachments, tenantId)
+  } catch (e) {
+    console.error('account-deletion: attachment delete failed', { tenantId, e })
   }
 
   return ok(undefined)

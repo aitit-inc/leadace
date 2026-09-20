@@ -4,15 +4,8 @@
   import { createProject } from '$lib/api/projects';
   import { setActiveProject } from '$lib/active-project';
   import Modal from '$lib/components/Modal.svelte';
-  import type { Project } from '$lib/types/projects';
 
-  let {
-    onclose,
-    oncreated,
-  }: {
-    onclose: () => void;
-    oncreated?: (project: Project) => void;
-  } = $props();
+  let { onclose }: { onclose: () => void } = $props();
 
   let name = $state('');
   let error = $state('');
@@ -30,12 +23,10 @@
       // server-side rerun of (app)/+layout.server.ts sees it.
       await setActiveProject(project.id);
       // Refresh the projects list so the new row is in /projects before
-      // anyone (including this dialog's onclose path) reads it. Drop the
-      // list-page query state so the user lands on a clean page-1 of the new
-      // project instead of inheriting filters from wherever they were.
+      // anyone (including this dialog's onclose path) reads it. A new project
+      // is set up in the chat, so that is where it opens.
       await invalidate('app:projects');
-      void goto(page.url.pathname, { replaceState: true, keepFocus: true, noScroll: true });
-      oncreated?.(project);
+      void goto('/chat');
       onclose();
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to create project';

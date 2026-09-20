@@ -12,6 +12,9 @@ export const NOTIFICATIONS_PER_TENANT_PER_DAY = 100
 export const MAIN_CHAT_TURNS_PER_TENANT_PER_DAY = 300
 // URL → strategy drafts (onboarding); each reads a site.
 export const STRATEGY_DRAFTS_PER_TENANT_PER_DAY = 10
+// Chat attachments: each one is stored and handed to the provider, whether or
+// not the message carrying it is ever sent.
+export const ATTACHMENT_UPLOADS_PER_TENANT_PER_DAY = 100
 
 const LIMITS: Record<ChatRateScope, number> = {
   inquiry_link: INQUIRY_CHAT_TURNS_PER_LINK_PER_DAY,
@@ -19,6 +22,7 @@ const LIMITS: Record<ChatRateScope, number> = {
   notification: NOTIFICATIONS_PER_TENANT_PER_DAY,
   main_chat: MAIN_CHAT_TURNS_PER_TENANT_PER_DAY,
   strategy_draft: STRATEGY_DRAFTS_PER_TENANT_PER_DAY,
+  attachment_upload: ATTACHMENT_UPLOADS_PER_TENANT_PER_DAY,
 }
 
 // Reserve-first: call immediately before the LLM spend, so a concurrent burst

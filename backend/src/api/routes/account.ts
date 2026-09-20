@@ -32,6 +32,7 @@ accountRouter.delete(
         databaseUrl: c.env.DATABASE_URL,
         stripeKey,
         mcpOauthStore: c.env.MCP_OAUTH_STORE,
+        attachments: c.env.ATTACHMENTS,
       },
       c.get('db'),
       c.get('tenantId'),

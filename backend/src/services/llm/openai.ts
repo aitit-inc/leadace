@@ -1,4 +1,4 @@
-import OpenAI from 'openai'
+import OpenAI, { toFile } from 'openai'
 import { zodTextFormat } from 'openai/helpers/zod'
 import type { FunctionTool, Response, ResponseCreateParamsNonStreaming, ResponseInputItem, ResponseOutputText } from 'openai/resources/responses/responses'
 import { z } from 'zod'
@@ -316,5 +316,38 @@ export async function* streamOpenAIChat(args: OpenAICall & ChatRequest): AsyncGe
     if (args.signal.aborted) return
     if (e instanceof LlmError) throw e
     throw toLlmError(e, args, 'default', args.timeoutMs, deadline, Date.now() - startedAt)
+  }
+}
+
+export type FileUpload = {
+  apiKey: string
+  filename: string
+  mimeType: string
+  bytes: Uint8Array
+  expiresInSeconds: number
+}
+
+// The provider's copy and the moment it drops it.
+export type UploadedFile = { fileId: string; expiresAt: Date }
+
+const FILE_UPLOAD_TIMEOUT_MS = 60_000
+
+export async function uploadOpenAIFile(args: FileUpload): Promise<UploadedFile> {
+  const client = new OpenAI({ apiKey: args.apiKey, maxRetries: 0 })
+  try {
+    const file = await client.files.create(
+      {
+        file: await toFile(args.bytes, args.filename, { type: args.mimeType }),
+        purpose: 'user_data',
+        expires_after: { anchor: 'created_at', seconds: args.expiresInSeconds },
+      },
+      { signal: AbortSignal.timeout(FILE_UPLOAD_TIMEOUT_MS) },
+    )
+    const expiresAt = file.expires_at === undefined ? Date.now() + args.expiresInSeconds * 1000 : file.expires_at * 1000
+    return { fileId: file.id, expiresAt: new Date(expiresAt) }
+  } catch (e) {
+    const status = e instanceof OpenAI.APIError ? (e.status ?? 502) : 502
+    console.error('OpenAI file upload failed', { status, detail: e instanceof Error ? e.message : String(e) })
+    throw new LlmError('upstream LLM file upload failed', status)
   }
 }

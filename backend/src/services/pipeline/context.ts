@@ -8,7 +8,6 @@ import { parseEdition, type Edition } from '../../domain/edition'
 import type { LlmEnv } from '../llm'
 import type { OpenAIEnv } from '../openai'
 import type { SendContext } from '../outreach'
-import type { GoogleCtx } from '../google-auth'
 import { getDocument } from '../documents'
 import { getMasterDocument } from '../master-documents'
 import { ok, err, type ServiceResult } from '../result'
@@ -45,15 +44,6 @@ export function sendContextOf(env: HostedEnv): SendContext {
     unsubscribeSecret: env.UNSUBSCRIBE_TOKEN_SECRET,
     e2eRecipientOverride: env.E2E_RECIPIENT_OVERRIDE ?? null,
     emailVerifyApiKey: env.EMAILABLE_API_KEY ?? null,
-  }
-}
-
-export function googleCtxOf(env: HostedEnv): GoogleCtx {
-  return {
-    encryptionKey: env.GMAIL_TOKEN_ENCRYPTION_KEY,
-    clientId: env.GOOGLE_CLIENT_ID,
-    clientSecret: env.GOOGLE_CLIENT_SECRET,
-    e2eRecipientOverride: env.E2E_RECIPIENT_OVERRIDE ?? null,
   }
 }
 

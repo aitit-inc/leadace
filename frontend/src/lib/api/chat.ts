@@ -1,5 +1,5 @@
-import { API_BASE, request, type RequestFetch } from '../api';
-import type { ChatEvent, ChatMessage, ChatThread } from '$lib/types/chat';
+import { API_BASE, ApiError, request, type RequestFetch } from '../api';
+import type { ChatAttachment, ChatEvent, ChatMessage, ChatThread } from '$lib/types/chat';
 
 export function listThreads(
   params: { projectId?: string; limit?: number },
@@ -32,8 +32,29 @@ export function deleteThread(id: string, fetchFn: RequestFetch = fetch, token?: 
   return request<{ id: string }>(fetchFn, { method: 'DELETE', path: `/chat/threads/${encodeURIComponent(id)}`, auth: 'required', token }).then(() => undefined);
 }
 
-export function sendChatMessage(threadId: string, text: string, fetchFn: RequestFetch, token: string): Promise<ChatMessage> {
-  return request<ChatMessage>(fetchFn, { method: 'POST', path: `/chat/threads/${encodeURIComponent(threadId)}/messages`, body: { text }, auth: 'required', token });
+export function sendChatMessage(threadId: string, text: string, attachmentIds: string[], fetchFn: RequestFetch, token: string): Promise<ChatMessage> {
+  const path = `/chat/threads/${encodeURIComponent(threadId)}/messages`;
+  return request<ChatMessage>(fetchFn, { method: 'POST', path, body: { text, attachmentIds }, auth: 'required', token });
+}
+
+export function uploadChatAttachment(threadId: string, file: File, fetchFn: RequestFetch, token: string): Promise<ChatAttachment> {
+  const path = `/chat/threads/${encodeURIComponent(threadId)}/attachments?name=${encodeURIComponent(file.name)}`;
+  return request<ChatAttachment>(fetchFn, { method: 'POST', path, raw: file, auth: 'required', token });
+}
+
+// The endpoint needs the token, so the file cannot be a plain link: it is
+// fetched and saved. Saved, not opened in a tab — a blob: URL would run an
+// attached page on this origin.
+export async function downloadChatAttachment(threadId: string, file: ChatAttachment, token: string): Promise<void> {
+  const url = `${API_BASE}/api/chat/threads/${encodeURIComponent(threadId)}/attachments/${file.id}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new ApiError(res.status, 'The file could not be opened.');
+  const blob = URL.createObjectURL(await res.blob());
+  const link = document.createElement('a');
+  link.href = blob;
+  link.download = file.name;
+  link.click();
+  URL.revokeObjectURL(blob);
 }
 
 export function confirmChatCall(threadId: string, callId: string, approve: boolean, fetchFn: RequestFetch, token: string): Promise<void> {

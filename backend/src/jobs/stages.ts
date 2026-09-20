@@ -13,7 +13,7 @@ import { appendJobLog, loadJobForRun, writeJobProgress, type LoadedJob } from '.
 import { kickAutoTopUp } from '../services/credits'
 import { runDiscover } from '../services/pipeline/discover'
 import { runEnrich } from '../services/pipeline/enrich'
-import { draftLogEntry, draftOne, loadCompositionContext, loadDraftBatch, refillDrawSize, summarizeDraftOutcomes, type DraftOutcome } from '../services/pipeline/draft'
+import { draftLogEntry, draftOne, loadDraftBatch, refillDrawSize, summarizeDraftOutcomes, type DraftOutcome } from '../services/pipeline/draft'
 import { runEvaluate } from '../services/pipeline/evaluate'
 import { runJournal, type CycleDigest } from '../services/pipeline/journal'
 import { withLlmScope } from '../services/llm'
@@ -149,11 +149,6 @@ export async function draftStage(
     )
   let batch = await load(1, wanted)
   if (batch.targets.length === 0) return summarizeDraftOutcomes([], batch.needsHands, batch.quotaMessage)
-  // Shared by every composition; its own retried step so the zero-retry send
-  // step below holds nothing but the one call that must not run twice.
-  const context = await ctx.step.do(`${namePrefix}:context`, STEP_RETRY, () =>
-    tenantTx(ctx, async (tx) => unwrap(await loadCompositionContext(tx, tenantId, projectId))),
-  )
   const outcomes: DraftOutcome[] = []
   const needsHands = batch.needsHands
   let quotaMessage = batch.quotaMessage
@@ -168,7 +163,7 @@ export async function draftStage(
         const db = createDb(ctx.env.DATABASE_URL)
         if (await isCancelled(ctx, db)) return null
         await progressWriter(ctx, db, 'draft')(p.name, done, wanted)
-        const drafted = await draftOne(db, tenantId, ctx.env, projectId, p, batch, context, new Date(ctx.job.createdAt))
+        const drafted = unwrap(await draftOne(db, tenantId, ctx.env, projectId, p.prospectId, new Date(ctx.job.createdAt)))
         await writeLog(ctx, db, stepName, [draftLogEntry(p.name, drafted)])
         return drafted
       }))

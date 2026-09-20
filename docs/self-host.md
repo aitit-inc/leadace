@@ -290,7 +290,23 @@ npx wrangler kv namespace create MCP_OAUTH_STORE
 # placeholder id (same id in both).
 ```
 
-### 4. Set wrangler secrets
+### 4. Create the chat attachment bucket
+
+Files people attach in the chat are stored in R2 (keys are
+`<tenantId>/<threadId>/<attachmentId>`) and uploaded to OpenAI, which the
+model reads them from for 30 days. Create the bucket the API Worker's
+`ATTACHMENTS` binding names:
+
+```bash
+cd backend
+npx wrangler r2 bucket create lead-ace-chat-attachments
+# A different name is fine — change `bucket_name` in wrangler.api.jsonc to match.
+```
+
+R2 requires a payment method on the Cloudflare account; its free tier covers
+this use. Local dev simulates the bucket, so nothing is needed there.
+
+### 5. Set wrangler secrets
 
 The Worker config files (`backend/wrangler.api.jsonc`,
 `backend/wrangler.mcp.jsonc`) declare non-secret `vars` inline. Real
@@ -342,7 +358,7 @@ Notes:
 - See `wrangler.api.jsonc` for the per-secret comments that explain
   what fails if a value is missing.
 
-### 5. Deploy the Workers
+### 6. Deploy the Workers
 
 Once the secrets are in place:
 
@@ -366,7 +382,7 @@ curl -o /dev/null -w "%{http_code}\n" \
 If you wired up a custom domain via the `routes` block in the wrangler
 configs, check `https://api.<your-domain>/health` instead.
 
-### 6. Deploy the frontend (Cloudflare Pages)
+### 7. Deploy the frontend (Cloudflare Pages)
 
 The frontend is a SvelteKit app served from Cloudflare Pages. Easiest
 path is to create the project from the dashboard once and let CI take
@@ -399,7 +415,7 @@ npx wrangler pages deploy .svelte-kit/cloudflare \
 The PUBLIC_* values are baked into the build at this step, so always
 rebuild after changing them.
 
-### 7. Marketing landing page (not included)
+### 8. Marketing landing page (not included)
 
 SurpassOne's marketing splash page (`landing/`) is **not** part of the
 open-source distribution. You don't need it to run LeadAce — sign-in
@@ -407,7 +423,7 @@ works directly against the frontend (§6). If you want an apex-domain
 landing page, build your own static site and deploy it as a separate
 Cloudflare Pages project.
 
-### 8. Optional: GitHub Actions CI/CD
+### 9. Optional: GitHub Actions CI/CD
 
 The open-source mirror ships **no deploy workflow** — SurpassOne's
 production pipeline (`deploy.yml`) is kept in a private repo so its
@@ -470,7 +486,7 @@ Keep `PUBLIC_LEADACE_EDITION: self-hosted` (the example above hard-codes
 it). Only set it to `cloud` and add the `PUBLIC_STRIPE_PRICE_*` variables
 if you actually run the paid-billing edition (§12).
 
-### 9. Optional: Resend SMTP (custom auth email sender)
+### 10. Optional: Resend SMTP (custom auth email sender)
 
 Supabase's default `noreply@mail.supabase.io` lands in spam often
 enough that the hosted service uses Resend with a verified domain.
@@ -491,7 +507,7 @@ You only need this if Supabase's defaults aren't good enough for you.
    The hosted service's templates live under `supabase/templates/` in
    this repo as a starting point.
 
-### 10. Google Sign-in
+### 11. Google Sign-in
 
 The committed `/login` UI offers a "Continue with Google" button — and
 since that UI is Google-only, this setup is required for a working
@@ -515,7 +531,7 @@ sign-in. To make it work:
 3. Supabase Dashboard → **Authentication → Providers → Google**.
    Paste the Client ID and Client Secret, save.
 
-### 11. Optional: Gmail OAuth for outbound send
+### 12. Optional: Gmail OAuth for outbound send
 
 `/api/outreach/send-and-record` calls Gmail's `gmail.send` scope on behalf of the
 signed-in user using a refresh token captured during the §10 sign-in
@@ -547,7 +563,7 @@ path HMAC-signs an unsubscribe link before it checks Gmail, so an empty
 `UNSUBSCRIBE_TOKEN_SECRET` makes it fail with a 500 instead of the 412.
 Set it (§4) even if you never enable outbound.
 
-### 12. Optional: Stripe (cloud edition only)
+### 13. Optional: Stripe (cloud edition only)
 
 If you actually want plan caps and a paid-billing UI in your fork,
 flip `LEADACE_EDITION=cloud` (and `PUBLIC_LEADACE_EDITION=cloud`),
@@ -589,6 +605,7 @@ Most self-hosters will leave Stripe off entirely.
 | `APP_URL` | API | yes | URL of the frontend. Used in outbound-email links. |
 | `API_URL` | API | yes | Public URL of the API Worker itself (e.g. `https://api.<your-domain>`). Hosted-agent jobs build unsubscribe / inquiry link hosts from it. |
 | `JOBS` | API | yes | Cloudflare Workflows binding (`wrangler.api.jsonc` → `workflows`, class `LeadAceJobWorkflow`). Runs the hosted agent's jobs (daily cycle, prospect discovery, drafting, sending, evaluation). Created on first `wrangler deploy`; available on the Workers Free plan. |
+| `ATTACHMENTS` | API | yes | R2 binding (`wrangler.api.jsonc` → `r2_buckets`) holding the files people attach in the chat. Create the bucket once with `wrangler r2 bucket create`; a deleted thread or account clears its prefix. |
 | `THREADS` | API | yes | Durable Objects binding (`wrangler.api.jsonc` → `durable_objects`, class `ThreadRunner`, SQLite-backed). One object per chat thread runs the hosted agent's turns, answers finished jobs, and streams to open chat tabs over a WebSocket. Created on first `wrangler deploy` from `migrations`; available on the Workers Free plan. |
 | `FRONTEND_URL` | MCP | yes | URL of the frontend. Used by the OAuth handshake. |
 | `ENVIRONMENT` | API + MCP | yes | `development` or `production`. |

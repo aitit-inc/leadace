@@ -31,12 +31,13 @@ import {
   INQUIRY_CHAT_TURNS_MAX,
   type InquiryChatMessageInput,
 } from './inquiry-session'
-import { generateSessionSummary, type LeadNotifyEnv } from './inquiry-summarize'
+import { generateSessionSummary } from './inquiry-summarize'
+import type { NotifyEnv } from './notifications'
 import type { Edition } from '../domain/edition'
 
-// Composed from two narrow aliases so notifyLeadByEmail's signature isn't
+// Composed from two narrow aliases so notifyLead's signature isn't
 // forced to declare OPENAI_API_KEY just because it sits behind the same chat run.
-type InquiryChatEnv = OpenAIEnv & LeadNotifyEnv
+type InquiryChatEnv = OpenAIEnv & NotifyEnv
 
 // Lazy idle-timeout. Sessions left untouched longer than this are considered
 // abandoned — the next request closes them with a summary and refuses the new

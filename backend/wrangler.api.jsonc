@@ -48,6 +48,16 @@
       "id": "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
     }
   ],
+  // Files people attach in the chat (src/services/chat/attachments.ts). Keys are
+  // `<tenantId>/<threadId>/<attachmentId>`; a deleted thread or account clears
+  // its prefix. Create it once with `wrangler r2 bucket create lead-ace-chat-attachments`
+  // (local dev simulates the bucket regardless of the name).
+  "r2_buckets": [
+    {
+      "binding": "ATTACHMENTS",
+      "bucket_name": "lead-ace-chat-attachments"
+    }
+  ],
   // Hosted-agent jobs: one Workflow instance per jobs row (src/jobs/workflow.ts).
   // The hourly cron and the chat / Web UI / MCP start instances through the
   // `JOBS` binding; the class is exported from src/api/index.ts.

@@ -24,8 +24,8 @@ import { readRecentEvents } from './enrich'
 import { runWithRls } from '../../db/rls'
 
 export type DraftBatch = {
-  targets: ReachableProspect[]
-  outboundMode: 'send' | 'draft'
+  // A step result: ids, not records.
+  targets: Array<{ prospectId: number; name: string }>
   // Reachable prospects the hosted agent cannot deliver to (form / SNS while
   // in send mode need a browser — the plugin's hands).
   needsHands: number
@@ -52,8 +52,6 @@ export async function listHostedReachable(
   return listReachable(db, tenantId, editionOf(env), projectId, { ...query, channels: hostedChannels(mode) })
 }
 
-// Which prospects this run will write to, and the batch-wide context every
-// composition shares. Loaded once per job, not per prospect.
 export async function loadDraftBatch(
   db: Db,
   tenantId: TenantId,
@@ -72,8 +70,7 @@ export async function loadDraftBatch(
   if (!reachable.ok) return reachable
   const r = reachable.value
   return ok({
-    targets: r.prospects,
-    outboundMode: r.outboundMode,
+    targets: r.prospects.map((p) => ({ prospectId: p.prospectId, name: p.name })),
     needsHands: r.total - r.withinChannels,
     quotaMessage: r.message ?? null,
   })
@@ -85,21 +82,15 @@ export function refillDrawSize(wanted: number, produced: number, attempted: numb
   return Math.max(0, Math.min(wanted - produced, 2 * wanted - attempted))
 }
 
-// Plain data (it is a Workflow step's output): the settings fields the prompt
-// and the send path read, not the full row.
-export type CompositionSettings = Pick<
-  ProjectSettingsRow,
-  'targetLanguage' | 'outboundChannels' | 'inquiryLandingEnabled' | 'inquiryChatBrief' | 'inquiryOneLiner' | 'inquiryCtaType'
->
-export type CompositionContext = {
+type CompositionContext = {
   business: string
   salesStrategy: string
   learnings: string | null
   guidelines: string
-  settings: CompositionSettings
+  settings: ProjectSettingsRow
 }
 
-export async function loadCompositionContext(
+async function loadCompositionContext(
   db: Db,
   tenantId: TenantId,
   projectId: ProjectId,
@@ -112,13 +103,7 @@ export async function loadCompositionContext(
     getProjectSettings(db, tenantId, projectId, null),
   ])
   if (!settings.ok) return settings
-  const { targetLanguage, outboundChannels, inquiryLandingEnabled, inquiryChatBrief, inquiryOneLiner, inquiryCtaType } = settings.value
-  return ok({
-    ...docs.value,
-    learnings,
-    guidelines,
-    settings: { targetLanguage, outboundChannels, inquiryLandingEnabled, inquiryChatBrief, inquiryOneLiner, inquiryCtaType },
-  })
+  return ok({ ...docs.value, learnings, guidelines, settings: settings.value })
 }
 
 // Flat on purpose: a root-level union does not survive the model's response
@@ -291,17 +276,42 @@ function priorOutcome(t: PriorTouch): DraftOutcome {
   }
 }
 
+const lastTouch = (db: Db, tenantId: TenantId, projectId: ProjectId, prospectId: number, jobStart: Date) =>
+  runWithRls(db, tenantId, (tx) => lastTouchSince(tx, tenantId, projectId, prospectId, jobStart))
+
 export async function draftOne(
   db: Db,
   tenantId: TenantId,
   env: HostedEnv,
   projectId: ProjectId,
+  prospectId: number,
+  jobStart: Date,
+): Promise<ServiceResult<DraftOutcome>> {
+  const [ctx, reachable] = await Promise.all([
+    loadCompositionContext(db, tenantId, projectId),
+    listHostedReachable(db, tenantId, env, projectId, { limit: 1, prospectIds: [prospectId] }),
+  ])
+  if (!ctx.ok) return ctx
+  if (!reachable.ok) return reachable
+  // After the read: this step's other run may have written in between, and
+  // the reachable list no longer holds a prospect with outreach in flight.
+  const prior = await lastTouch(db, tenantId, projectId, prospectId, jobStart)
+  if (prior) return ok(priorOutcome(prior))
+  const target = reachable.value.prospects[0]
+  // Drawn earlier in the job; a reply, an opt-out or the spent quota may have closed it since.
+  if (!target) return ok({ kind: 'skipped', reason: 'no longer reachable' })
+  return ok(await composeAndDeliver(db, tenantId, env, projectId, target, ctx.value, jobStart))
+}
+
+async function composeAndDeliver(
+  db: Db,
+  tenantId: TenantId,
+  env: HostedEnv,
+  projectId: ProjectId,
   target: ReachableProspect,
-  batch: Pick<DraftBatch, 'outboundMode'>,
   ctx: CompositionContext,
   jobStart: Date,
 ): Promise<DraftOutcome> {
-  const touched = () => runWithRls(db, tenantId, (tx) => lastTouchSince(tx, tenantId, projectId, target.prospectId, jobStart))
   // A write that lost to the other run of this step reports what that run wrote.
   const claimed = <T>(write: (tx: Db) => Promise<ServiceResult<T>>) =>
     runWithRls(db, tenantId, async (tx): Promise<ServiceResult<T>> => {
@@ -309,12 +319,10 @@ export async function draftOne(
       return claim.ok ? write(tx) : claim
     })
   const writeFailed = async (r: ServiceError, error: string): Promise<DraftOutcome> => {
-    const other = r.code === 'CONFLICT' ? await touched() : null
+    const other = r.code === 'CONFLICT' ? await lastTouch(db, tenantId, projectId, target.prospectId, jobStart) : null
     return other ? priorOutcome(other) : { kind: 'failed', error, at: 'send' }
   }
-  const prior = await touched()
-  if (prior) return priorOutcome(prior)
-  const channel = pickChannel(target, ctx.settings.outboundChannels, batch.outboundMode)
+  const channel = pickChannel(target, ctx.settings.outboundChannels, ctx.settings.outboundMode)
   if (!channel) return { kind: 'needs_hands' }
   const now = new Date()
   const refreshed = await refreshSiteRead(db, tenantId, env, target, now)

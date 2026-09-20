@@ -251,13 +251,48 @@
         </div>
       </section>
 
+      <section class="card space-y-3 p-6">
+        <div>
+          <h2 class="text-sm font-medium text-text">Notifications</h2>
+          <p class="mt-0.5 text-xs text-text-muted">
+            Leads from the inquiry page, jobs finishing, scheduled runs failing, and the plugin's run reports. In the app they appear
+            under the bell (the latest 30).
+          </p>
+        </div>
+        <table class="text-sm">
+          <thead>
+            <tr class="text-xs text-text-muted">
+              <th class="pr-6 text-left font-normal"></th>
+              <th class="px-3 font-normal">In the app</th>
+              <th class="px-3 font-normal">Email</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="py-1 pr-6 text-text">Leads from the inquiry page</td>
+              <td class="px-3 text-center"><input type="checkbox" aria-label="Leads in the app" bind:checked={formData.notifyLeadInApp} /></td>
+              <td class="px-3 text-center"><input type="checkbox" aria-label="Leads by email" bind:checked={formData.notifyLeadEmail} /></td>
+            </tr>
+            <tr>
+              <td class="py-1 pr-6 text-text">Scheduled runs</td>
+              <td class="px-3 text-center"><input type="checkbox" aria-label="Scheduled runs in the app" bind:checked={formData.notifyCronInApp} /></td>
+              <td class="px-3 text-center"><input type="checkbox" aria-label="Scheduled runs by email" bind:checked={formData.notifyCronEmail} /></td>
+            </tr>
+            <tr>
+              <td class="py-1 pr-6 text-text">Everything else</td>
+              <td class="px-3 text-center"><input type="checkbox" aria-label="Everything else in the app" bind:checked={formData.notifyGeneralInApp} /></td>
+              <td class="px-3 text-center"><input type="checkbox" aria-label="Everything else by email" bind:checked={formData.notifyGeneralEmail} /></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
       <section class="card space-y-1.5 p-6">
         <label for="notificationEmail" class="block text-sm font-medium text-text">
           Notification email
         </label>
         <p class="text-xs text-text-muted">
-          Where the plugin sends its run notifications (daily-cycle start and completion reports).
-          They go out from your connected Gmail and, by default, to that same address
+          Where notification emails go. They go out from your connected Gmail and, by default, to that same address
           {#if data.connectedGmail}({data.connectedGmail}){:else}(none connected yet — see Account settings){/if}.
           Enter an address to redirect them; leave blank to use the default. This can only be
           changed here, never by the plugin.

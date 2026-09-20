@@ -24,6 +24,12 @@ export const updateTenantSettingsSchema = z
     legalNameJa: z.string().min(1).max(200).nullable().optional(),
     physicalAddressJa: z.string().min(5).max(500).nullable().optional(),
     notificationEmail: z.email().nullable().optional(),
+    notifyGeneralInApp: z.boolean().optional(),
+    notifyGeneralEmail: z.boolean().optional(),
+    notifyCronInApp: z.boolean().optional(),
+    notifyCronEmail: z.boolean().optional(),
+    notifyLeadInApp: z.boolean().optional(),
+    notifyLeadEmail: z.boolean().optional(),
   })
   .strict()
 export type UpdateTenantSettingsPatch = z.infer<typeof updateTenantSettingsSchema>
@@ -37,6 +43,12 @@ export type TenantSettingsRow = {
   legalNameJa: string | null
   physicalAddressJa: string | null
   notificationEmail: string | null
+  notifyGeneralInApp: boolean
+  notifyGeneralEmail: boolean
+  notifyCronInApp: boolean
+  notifyCronEmail: boolean
+  notifyLeadInApp: boolean
+  notifyLeadEmail: boolean
 }
 
 const settingsCols = {
@@ -48,6 +60,12 @@ const settingsCols = {
   legalNameJa: tenants.legalNameJa,
   physicalAddressJa: tenants.physicalAddressJa,
   notificationEmail: tenants.notificationEmail,
+  notifyGeneralInApp: tenants.notifyGeneralInApp,
+  notifyGeneralEmail: tenants.notifyGeneralEmail,
+  notifyCronInApp: tenants.notifyCronInApp,
+  notifyCronEmail: tenants.notifyCronEmail,
+  notifyLeadInApp: tenants.notifyLeadInApp,
+  notifyLeadEmail: tenants.notifyLeadEmail,
 }
 
 export async function loadTenantSettings(
@@ -89,6 +107,12 @@ export async function updateTenantSettings(
     ...(patch.legalNameJa !== undefined ? { legalNameJa: patch.legalNameJa } : {}),
     ...(patch.physicalAddressJa !== undefined ? { physicalAddressJa: patch.physicalAddressJa } : {}),
     ...(patch.notificationEmail !== undefined ? { notificationEmail: patch.notificationEmail } : {}),
+    ...(patch.notifyGeneralInApp !== undefined ? { notifyGeneralInApp: patch.notifyGeneralInApp } : {}),
+    ...(patch.notifyGeneralEmail !== undefined ? { notifyGeneralEmail: patch.notifyGeneralEmail } : {}),
+    ...(patch.notifyCronInApp !== undefined ? { notifyCronInApp: patch.notifyCronInApp } : {}),
+    ...(patch.notifyCronEmail !== undefined ? { notifyCronEmail: patch.notifyCronEmail } : {}),
+    ...(patch.notifyLeadInApp !== undefined ? { notifyLeadInApp: patch.notifyLeadInApp } : {}),
+    ...(patch.notifyLeadEmail !== undefined ? { notifyLeadEmail: patch.notifyLeadEmail } : {}),
   }
 
   if (Object.keys(updateSet).length === 0) {

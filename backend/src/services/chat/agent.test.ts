@@ -54,6 +54,25 @@ describe('toItems', () => {
   })
 })
 
+describe('toItems attachments', () => {
+  const file = (expiresAt: string) => ({ id: 'a'.repeat(21), fileId: 'file_1', expiresAt, name: 'deck.pdf', kind: 'document' as const, size: 10 })
+  const sent = (expiresAt: string) => msg({ role: 'user', parts: [{ file: file(expiresAt) }, { text: 'read this' }] })
+
+  it('hands the model the provider\'s copy', () => {
+    const items = toItems([sent('2026-10-01T00:00:00.000Z')], null, new Date('2026-09-20'))
+    expect(items).toEqual([
+      { role: 'user', content: [{ type: 'input_file', file_id: 'file_1' }, { type: 'input_text', text: 'read this' }] },
+    ])
+  })
+
+  it('says a file is gone once the provider has dropped it', () => {
+    const items = toItems([sent('2026-08-01T00:00:00.000Z')], null, new Date('2026-09-20'))
+    expect(items).toEqual([
+      { role: 'user', content: [{ type: 'input_text', text: '[attached file deck.pdf — no longer available to read]' }, { type: 'input_text', text: 'read this' }] },
+    ])
+  })
+})
+
 describe('contextOf', () => {
   it('sends the whole thread when no stored response holds it', () => {
     const context = contextOf([msg({ role: 'user', parts: [{ text: 'hi' }] }), msg({ role: 'model', parts: [{ text: 'Hello.' }] })])

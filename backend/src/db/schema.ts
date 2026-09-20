@@ -29,6 +29,7 @@ import type { VitalsAssessment } from '../domain/vital-signs'
 import type { MailboxSendRefusal } from '../domain/warmup'
 import type { JobLogLine, JobParams, JobProgress, JobResult } from '../domain/jobs'
 import { JOB_KINDS, JOB_ORIGINS, JOB_STATUSES } from '../domain/jobs'
+import { NOTIFICATION_CATEGORIES } from '../domain/notifications'
 import type { ChatContent, PendingCall } from '../domain/chat'
 import { CHAT_ROLES } from '../domain/chat'
 
@@ -370,11 +371,20 @@ export const tenants = pgTable('tenants', {
   // Optional — never gates a send (not part of compliance readiness).
   legalNameJa: text('legal_name_ja'),
   physicalAddressJa: text('physical_address_ja'),
-  // Where notify_user delivers. NULL = the connected Gmail itself (the
+  // Where notification emails go. NULL = the connected Gmail itself (the
   // mailbox the notification is sent from). Set only through the Workspace
   // Settings UI — updateTenantSettings refuses it from an MCP token, so a
   // prompt-injected brain cannot redirect notifications.
   notificationEmail: text('notification_email'),
+  // Delivery per notification category (domain/notifications.ts).
+  notifyGeneralInApp: boolean('notify_general_in_app').notNull().default(true),
+  notifyGeneralEmail: boolean('notify_general_email').notNull().default(false),
+  notifyCronInApp: boolean('notify_cron_in_app').notNull().default(true),
+  notifyCronEmail: boolean('notify_cron_email').notNull().default(true),
+  notifyLeadInApp: boolean('notify_lead_in_app').notNull().default(true),
+  notifyLeadEmail: boolean('notify_lead_email').notNull().default(true),
+  // Notifications created after this are unread.
+  notificationsSeenAt: timestamp('notifications_seen_at', { withTimezone: true }).defaultNow().notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   // NULL = the plugin has never connected; gates the web onboarding flow.
   firstMcpConnectedAt: timestamp('first_mcp_connected_at', { withTimezone: true }),
@@ -494,6 +504,26 @@ export const creditLedger = pgTable('credit_ledger', {
 }, (table) => [
   unique('uq_credit_ledger_reference').on(table.tenantId, table.kind, table.reference),
   index('idx_credit_ledger_tenant').on(table.tenantId, table.createdAt),
+])
+
+export const notificationCategoryEnum = pgEnum('notification_category', NOTIFICATION_CATEGORIES)
+
+// Things that happened, newest kept (services/notifications.ts prunes the rest).
+export const notifications = pgTable('notifications', {
+  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  category: notificationCategoryEnum('category').notNull(),
+  // What happened, once: a rerun of the step that notifies finds its row.
+  reference: text('reference').notNull(),
+  subject: text('subject').notNull(),
+  body: text('body').notNull(),
+  link: text('link').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  unique('uq_notifications_reference').on(table.tenantId, table.reference),
+  index('idx_notifications_tenant').on(table.tenantId, table.createdAt),
 ])
 
 export const projects = pgTable('projects', {
@@ -1199,7 +1229,7 @@ export const inquiryMessages = pgTable('inquiry_messages', {
 // Fixed-window abuse counters (LLM-backed chat endpoints, operator notifications).
 // 'inquiry_link' keys by short_id; 'preview', 'notification', 'main_chat' and
 // 'strategy_draft' key by the tenant id.
-export type ChatRateScope = 'inquiry_link' | 'preview' | 'notification' | 'main_chat' | 'strategy_draft'
+export type ChatRateScope = 'inquiry_link' | 'preview' | 'notification' | 'main_chat' | 'strategy_draft' | 'attachment_upload'
 
 export const chatRateWindows = pgTable('chat_rate_windows', {
   tenantId: text('tenant_id')

@@ -1,5 +1,5 @@
 // The daily cycle (daily-cycle/SKILL.md, server-side): evaluate → lever tick →
-// outbound → prospect discovery when the list runs low → journal → report.
+// outbound → prospect discovery when the list runs low → journal.
 // Each stage is the same code a standalone job runs; this file only decides
 // the order and the counts.
 import { NonRetryableError } from 'cloudflare:workflows'
@@ -8,9 +8,8 @@ import { shouldBuildFirst, type ReachableSnapshot } from '../domain/cycle-plan'
 import { runLeverTick } from '../services/levers'
 import { getActiveStrategySlugs } from '../services/discovery-strategies'
 import { discoveryPausedReason, getRemainingProspectQuota } from '../services/plan-limits'
-import { assertTenantComplianceReady, getTenantOwnerUserId } from '../services/tenants'
-import { notifyUser } from '../services/notifications'
-import { editionOf, googleCtxOf } from '../services/pipeline/context'
+import { assertTenantComplianceReady } from '../services/tenants'
+import { editionOf } from '../services/pipeline/context'
 import { CYCLE_MIN_CANDIDATES_PER_SEARCH } from '../services/pipeline/discover'
 import { listHostedReachable } from '../services/pipeline/draft'
 import type { CycleDigest } from '../services/pipeline/journal'
@@ -115,22 +114,6 @@ export async function runDailyCycle(ctx: StageCtx, params: JobParamsOf<'daily_cy
 
   const digest: CycleDigest = { stages, decisions }
   await stage('journal', await advisory(() => journalStage(ctx, digest)))
-
-  const notified = await ctx.step.do('notify', { retries: { limit: 1, delay: '10 seconds' } }, () => tenantTx(ctx, async (db) => {
-    const owner = await getTenantOwnerUserId(db, tenantId)
-    if (!owner) return 'no owner to notify'
-    const body = [
-      `Daily Cycle Report — ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`,
-      `Project: ${projectId}`,
-      '',
-      ...stages.map((s) => `${s.kind}: ${s.summary}`),
-      '',
-      `Decisions: ${decisions.length > 0 ? decisions.join('; ') : 'none'}`,
-    ].join('\n')
-    const r = await notifyUser(db, tenantId, owner, googleCtxOf(ctx.env), { subject: `daily-cycle completed: ${projectId}`, body })
-    return r.ok ? `notified ${r.value.to}` : `notification failed: ${r.error}`
-  }))
-  await decide(notified)
 
   return { kind: 'daily_cycle', summary: stages.map((s) => `${s.kind}: ${s.summary}`).join(' | ') }
 }

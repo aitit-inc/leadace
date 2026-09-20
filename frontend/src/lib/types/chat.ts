@@ -5,12 +5,15 @@ export type FunctionCallPart = {
   functionCall: { id: string; name: string; args: Record<string, unknown> };
 };
 export type TextPart = { text: string };
+// Mirrors backend domain/chat-attachment.ts `FileRef`.
+export type ChatAttachment = { id: string; fileId: string; name: string; kind: 'document' | 'image'; size: number };
+export type FilePart = { file: ChatAttachment };
 export type FunctionResponsePart = {
   functionResponse: { id: string; name: string; response: Record<string, unknown> };
 };
 
 export type ChatContent =
-  | { role: 'user'; parts: TextPart[] }
+  | { role: 'user'; parts: Array<TextPart | FilePart> }
   | { role: 'model'; parts: Array<TextPart | FunctionCallPart> }
   | { role: 'tool'; parts: FunctionResponsePart[] }
   | { role: 'job'; jobId: string; kind: string; status: string; summary: string };

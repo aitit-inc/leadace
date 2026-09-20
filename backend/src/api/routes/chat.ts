@@ -13,8 +13,16 @@ import {
   messageBodySchema,
   confirmBodySchema,
 } from '../../services/chat/threads'
+import {
+  attachmentIdParamSchema,
+  deleteThreadAttachments,
+  readAttachment,
+  resolveAttachments,
+  uploadAttachment,
+  uploadAttachmentQuerySchema,
+} from '../../services/chat/attachments'
 import { respondWithError } from '../respond'
-import { withTenantConnection } from '../../db/rls'
+import { withTenantConnection, type TenantRun } from '../../db/rls'
 import type { Env, Variables } from '../types'
 
 export const chatRouter = new Hono<{ Bindings: Env; Variables: Variables }>()
@@ -42,8 +50,13 @@ chatRouter.get('/chat/threads/:id', zValidator('param', threadIdParamSchema), as
 })
 
 chatRouter.delete('/chat/threads/:id', zValidator('param', threadIdParamSchema), async (c) => {
-  const result = await deleteThread(c.get('db'), c.get('tenantId'), c.req.valid('param').id)
+  const tenantId = c.get('tenantId')
+  const { id } = c.req.valid('param')
+  const result = await deleteThread(c.get('db'), tenantId, id)
   if (!result.ok) return respondWithError(c, result)
+  // No cascade reaches the bucket. A failure here rolls the row back with the
+  // request, so a retry takes both.
+  await deleteThreadAttachments(c.env, tenantId, id)
   return c.json(result.value)
 })
 
@@ -53,12 +66,44 @@ chatRouter.delete('/chat/threads/:id', zValidator('param', threadIdParamSchema),
 
 type ChatCtx = Context<{ Bindings: Env; Variables: Variables }, string>
 
+function tenantRun(c: ChatCtx): TenantRun {
+  return (fn) => withTenantConnection(c.env.DATABASE_URL, c.get('tenantId'), fn)
+}
+
 function ownThread(c: ChatCtx, id: string) {
   const tenantId = c.get('tenantId')
   return withTenantConnection(c.env.DATABASE_URL, tenantId, (db) => getThread(db, tenantId, id))
 }
 
 export const chatRunnerRouter = new Hono<{ Bindings: Env; Variables: Variables }>()
+
+// Attachments sit with the runner's routes: the upload waits on the model
+// provider, and no request connection may be held across that.
+chatRunnerRouter.post(
+  '/chat/threads/:id/attachments',
+  zValidator('param', threadIdParamSchema),
+  zValidator('query', uploadAttachmentQuerySchema),
+  async (c) => {
+    const { id } = c.req.valid('param')
+    const thread = await ownThread(c, id)
+    if (!thread.ok) return respondWithError(c, thread)
+    const result = await uploadAttachment(tenantRun(c), c.get('tenantId'), c.env, id, c.req.valid('query'), c.req.raw.body)
+    if (!result.ok) return respondWithError(c, result)
+    return c.json(result.value, 201)
+  },
+)
+
+chatRunnerRouter.get('/chat/threads/:id/attachments/:attachmentId', zValidator('param', attachmentIdParamSchema), async (c) => {
+  const { id, attachmentId } = c.req.valid('param')
+  const thread = await ownThread(c, id)
+  if (!thread.ok) return respondWithError(c, thread)
+  const object = await readAttachment(c.env, c.get('tenantId'), id, attachmentId)
+  if (!object) return c.json({ error: 'Attachment not found' }, 404)
+  return c.body(object.body, 200, {
+    'Content-Type': object.httpMetadata?.contentType ?? 'application/octet-stream',
+    'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(object.customMetadata?.name ?? attachmentId)}`,
+  })
+})
 
 chatRunnerRouter.post(
   '/chat/threads/:id/messages',
@@ -67,7 +112,10 @@ chatRunnerRouter.post(
   async (c) => {
     const { id } = c.req.valid('param')
     const tenantId = c.get('tenantId')
-    const message = await withTenantConnection(c.env.DATABASE_URL, tenantId, (db) => postMessage(db, tenantId, id, c.req.valid('json').text))
+    const { text, attachmentIds } = c.req.valid('json')
+    const files = await resolveAttachments(c.env, tenantId, id, attachmentIds)
+    if (!files.ok) return respondWithError(c, files)
+    const message = await withTenantConnection(c.env.DATABASE_URL, tenantId, (db) => postMessage(db, tenantId, id, text, files.value))
     if (!message.ok) return respondWithError(c, message)
     await c.env.THREADS.getByName(id).wake({ tenantId, threadId: id })
     return c.json(message.value, 201)

@@ -1,9 +1,13 @@
 <script lang="ts">
   import { renderChatMarkdown } from '$lib/chat-markdown';
   import { humanize } from '$lib/attention-meta';
-  import type { ChatContent } from '$lib/types/chat';
+  import AttachmentChip from './AttachmentChip.svelte';
+  import type { ChatAttachment, ChatContent } from '$lib/types/chat';
 
-  let { content }: { content: Exclude<ChatContent, { role: 'job' }> } = $props();
+  let {
+    content,
+    onopenfile,
+  }: { content: Exclude<ChatContent, { role: 'job' }>; onopenfile?: (file: ChatAttachment) => void } = $props();
   let expanded = $state(false);
 
   function stepResult(r: Record<string, unknown>): string {
@@ -13,10 +17,19 @@
 </script>
 
 {#if content.role === 'user'}
-  <div class="flex justify-end">
-    <div class="max-w-[80%] whitespace-pre-wrap rounded-3xl rounded-br-lg bg-surface-2 px-4 py-2.5 text-base text-text">
-      {content.parts.map((p) => p.text).join('')}
-    </div>
+  {@const files = content.parts.flatMap((p) => ('file' in p ? [p.file] : []))}
+  {@const text = content.parts.flatMap((p) => ('text' in p ? [p.text] : [])).join('')}
+  <div class="flex flex-col items-end gap-1.5">
+    {#if files.length > 0}
+      <div class="flex max-w-[80%] flex-wrap justify-end gap-1.5">
+        {#each files as file (file.id)}
+          <AttachmentChip name={file.name} size={file.size} onopen={onopenfile && (() => onopenfile(file))} />
+        {/each}
+      </div>
+    {/if}
+    {#if text}
+      <div class="max-w-[80%] whitespace-pre-wrap rounded-3xl rounded-br-lg bg-surface-2 px-4 py-2.5 text-base text-text">{text}</div>
+    {/if}
   </div>
 {:else if content.role === 'model'}
   {@const text = content.parts.flatMap((p) => ('text' in p ? [p.text] : [])).join('')}

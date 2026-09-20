@@ -3,6 +3,7 @@
 // are the server's own notices (a job finished) and are rendered to the model
 // as text on the next turn.
 import { z } from 'zod'
+import { fileRefSchema } from './chat-attachment'
 
 export const CHAT_ROLES = ['user', 'model', 'tool', 'job'] as const
 export type ChatRole = (typeof CHAT_ROLES)[number]
@@ -15,6 +16,7 @@ const functionCallPartSchema = z.object({
   }),
 })
 const textPartSchema = z.object({ text: z.string() })
+const filePartSchema = z.object({ file: fileRefSchema })
 const functionResponsePartSchema = z.object({
   functionResponse: z.object({
     id: z.string().min(1),
@@ -24,7 +26,7 @@ const functionResponsePartSchema = z.object({
 })
 
 export const chatContentSchema = z.discriminatedUnion('role', [
-  z.object({ role: z.literal('user'), parts: z.array(textPartSchema).min(1) }),
+  z.object({ role: z.literal('user'), parts: z.array(z.union([textPartSchema, filePartSchema])).min(1) }),
   z.object({
     role: z.literal('model'),
     parts: z.array(z.union([textPartSchema, functionCallPartSchema])).min(1),
@@ -44,6 +46,7 @@ export const chatContentSchema = z.discriminatedUnion('role', [
 ])
 export type ChatContent = z.infer<typeof chatContentSchema>
 export type ChatModelPart = Extract<ChatContent, { role: 'model' }>['parts'][number]
+export type ChatUserPart = Extract<ChatContent, { role: 'user' }>['parts'][number]
 
 // What the person is asked to approve: the effect of the call, never its
 // arguments. Written where the gate is decided (tools/registry).

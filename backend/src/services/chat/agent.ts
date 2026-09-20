@@ -4,11 +4,12 @@
 // persisted to the thread as it happens in its own short RLS transaction, so a
 // dropped connection loses nothing, no connection is held across a model call,
 // and a replay sees exactly what the model saw.
-import type { FunctionTool, ResponseInputItem } from 'openai/resources/responses/responses'
+import type { FunctionTool, ResponseInputContent, ResponseInputItem } from 'openai/resources/responses/responses'
 import type { Db } from '../../db/connection'
 import { asProjectId, type TenantId } from '../../domain/ids'
 import { utcDateKey } from '../../domain/time'
-import type { ChatModelPart, ConfirmSummary, PendingCall, ToolEffect } from '../../domain/chat'
+import type { ChatModelPart, ChatUserPart, ConfirmSummary, PendingCall, ToolEffect } from '../../domain/chat'
+import { attachmentExpired } from '../../domain/chat-attachment'
 import { LlmError, streamLlmChat, type ChatCall, type ChatRequest, type ChatStreamEvent, type LlmEnv } from '../llm'
 import { takeChatRateSlot, MAIN_CHAT_TURNS_PER_TENANT_PER_DAY } from '../chat-rate-limit'
 import { listProjects } from '../projects'
@@ -93,13 +94,20 @@ const INTERRUPTED: ToolResult = { ok: false, text: 'This call was interrupted be
 
 const outputItem = (r: ToolResponse): ResponseInputItem => ({ type: 'function_call_output', call_id: r.id, output: JSON.stringify(r.response) })
 
+function userContent(part: ChatUserPart, now: Date): ResponseInputContent {
+  if (!('file' in part)) return { type: 'input_text', text: part.text }
+  const { file } = part
+  if (attachmentExpired(file, now)) return { type: 'input_text', text: `[attached file ${file.name} — no longer available to read]` }
+  return file.kind === 'image' ? { type: 'input_image', file_id: file.fileId, detail: 'auto' } : { type: 'input_file', file_id: file.fileId }
+}
+
 // The thread as the model must see it: every function call answered by its
 // output right after it. A call left unanswered (a turn that died mid-tool, a
 // job notice landing while a call awaited approval, the history window cutting
 // between the two) gets a synthetic error output, so one bad exchange never
 // makes the thread unusable. With `after`, only the items that follow that
 // message's own.
-export function toItems(messages: MessageView[], after: number | null = null): ResponseInputItem[] {
+export function toItems(messages: MessageView[], after: number | null = null, now: Date = new Date()): ResponseInputItem[] {
   const items: ResponseInputItem[] = []
   let from = 0
   let open: Call[] = []
@@ -117,7 +125,7 @@ export function toItems(messages: MessageView[], after: number | null = null): R
     switch (c.role) {
       case 'user':
         if (open.length > 0) answerOpen([])
-        items.push({ role: 'user', content: c.parts.map((p) => ({ type: 'input_text', text: p.text })) })
+        items.push({ role: 'user', content: c.parts.map((p) => userContent(p, now)) })
         break
       case 'model':
         if (open.length > 0) answerOpen([])
@@ -178,7 +186,7 @@ async function buildContext(deps: ChatTurnDeps, threadProjectId: string | null, 
   )
   return buildSystemInstruction({
     today: utcDateKey(),
-    projects: projects.ok ? projects.value.projects.map((p) => ({ id: p.id, name: p.name })) : [],
+    projects: projects.ok ? projects.value.projects.map((p) => ({ id: p.id, name: p.name, setUp: p.setUp })) : [],
     threadProjectId,
     gmail: gmail.ok ? (gmail.value.connected ? `connected as ${gmail.value.email}` : 'not connected — connect it at the Web UI top banner') : 'unknown',
     compliance: compliance.ok ? (compliance.value.ready ? 'ready' : `missing ${compliance.value.missing.join(', ')} — set on /workspace-settings`) : 'unknown',

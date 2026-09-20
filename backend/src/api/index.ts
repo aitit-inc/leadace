@@ -82,6 +82,8 @@ const dispatch: InternalDispatch = (request, env, ctx) => Promise.resolve(app.fe
 // The chat's thread runner: auth, then a tenant transaction per call — a
 // message commits before the runner is woken to read it.
 app.use('/api/chat/threads/:id/messages', authMiddleware)
+app.use('/api/chat/threads/:id/attachments', authMiddleware)
+app.use('/api/chat/threads/:id/attachments/:attachmentId', authMiddleware)
 app.use('/api/chat/threads/:id/confirm', authMiddleware)
 app.use('/api/chat/threads/:id/stop', authMiddleware)
 app.use('/api/chat/threads/:id/live', authMiddleware)

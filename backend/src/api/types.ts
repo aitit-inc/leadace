@@ -48,6 +48,8 @@ export type Env = {
   JOBS: Workflow<{ jobId: string; tenantId: string }>
   // One Durable Object per chat thread, running its turns (api/thread-runner.ts).
   THREADS: DurableObjectNamespace<ThreadRunner>
+  // Files people attach in the chat (services/chat/attachments.ts).
+  ATTACHMENTS: R2Bucket
 }
 
 export type Variables = {

@@ -1,7 +1,7 @@
 import { z } from 'zod'
-import { eq, and, or, count } from 'drizzle-orm'
+import { eq, and, or, count, exists, sql } from 'drizzle-orm'
 import type { Db } from '../db/connection'
-import { projects, projectSettings } from '../db/schema'
+import { projects, projectDocuments, projectSettings } from '../db/schema'
 import { getTenantPlan, getPlanLimits } from './plan-limits'
 import { randomFromAlphabet } from '../auth/random-id'
 import { ok, err, type ServiceResult } from './result'
@@ -54,6 +54,7 @@ function generateProjectId(length = 21): string {
 export type ProjectSummary = {
   id: ProjectId
   name: string
+  setUp: boolean
   createdAt: Date
   updatedAt: Date
 }
@@ -66,6 +67,12 @@ export async function listProjects(
     .select({
       id: projects.id,
       name: projects.name,
+      setUp: sql<boolean>`${exists(
+        db
+          .select({ one: sql`1` })
+          .from(projectDocuments)
+          .where(and(eq(projectDocuments.projectId, projects.id), eq(projectDocuments.slug, 'business'))),
+      )}`,
       createdAt: projects.createdAt,
       updatedAt: projects.updatedAt,
     })

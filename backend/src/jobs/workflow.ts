@@ -4,10 +4,11 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers'
 import type { Env } from '../api/types'
 import { createDb } from '../db/connection'
-import { withTenantConnection } from '../db/rls'
+import { withTenantConnection, type TenantRun } from '../db/rls'
 import type { JobResult } from '../domain/jobs'
 import { asTenantId } from '../domain/ids'
-import { finishJob, loadJobForRun, markJobRunning } from '../services/jobs'
+import { finishJob, loadJobForRun, markJobRunning, notifyJobFinished } from '../services/jobs'
+import { notifyCtxOf } from '../services/notifications'
 import { appendJobNotice } from '../services/chat/threads'
 import { runDailyCycle } from './daily-cycle'
 import { discoverStage, draftStage, enrichStage, evaluateStage, journalStage, sendStage, type StageCtx } from './stages'
@@ -78,6 +79,12 @@ export class LeadAceJobWorkflow extends WorkflowEntrypoint<Env, JobWorkflowParam
     }
     await step.do('finish', async () => {
       await finishJob(createDb(this.env.DATABASE_URL), job.tenantId, job.id, outcome)
+      return true
+    })
+    await step.do('notify', async () => {
+      const run: TenantRun = (fn) => withTenantConnection(this.env.DATABASE_URL, job.tenantId, fn)
+      const r = await notifyJobFinished(run, job.tenantId, notifyCtxOf(this.env), job.id)
+      if (!r.ok) console.warn(`[jobs] notification failed job=${job.id}: ${r.error}`)
       return true
     })
     // Whether the thread owes an answer is the runner's call. It wakes after
