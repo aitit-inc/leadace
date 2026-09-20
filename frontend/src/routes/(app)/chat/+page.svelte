@@ -1,5 +1,6 @@
 <script lang="ts">
   import { goto, invalidate } from '$app/navigation';
+  import { ArrowUp } from '@lucide/svelte';
   import { ApiError } from '$lib/api';
   import { ACCEPTED_FILE_TYPES, MAX_ATTACHMENT_BYTES } from '$lib/chat-attachments';
   import {
@@ -16,6 +17,7 @@
   import ThreadList from '$lib/components/chat/ThreadList.svelte';
   import AttachmentChip from '$lib/components/chat/AttachmentChip.svelte';
   import MessageItem from '$lib/components/chat/MessageItem.svelte';
+  import MicButton from '$lib/components/chat/MicButton.svelte';
   import JobCard from '$lib/components/chat/JobCard.svelte';
   import ConfirmCard from '$lib/components/chat/ConfirmCard.svelte';
   import SenderIdentityCard, { type SenderIdentityProposal } from '$lib/components/chat/SenderIdentityCard.svelte';
@@ -45,6 +47,11 @@
   // Already uploaded to this thread, waiting to ride the next message.
   let attachments = $state<ChatAttachment[]>([]);
   let uploading = $state<{ key: number; name: string }[]>([]);
+  let dictating = $state(false);
+  let dropping = $state(false);
+  // dragover keeps firing while a drag is over the page; counting enters and
+  // leaves instead would stick whenever the element under the pointer goes.
+  let dropTimer: ReturnType<typeof setTimeout> | undefined;
   let uploadKey = 0;
   let filePicker = $state<HTMLInputElement | null>(null);
   let deleting = $state<string | null>(null);
@@ -281,6 +288,26 @@
     }
   }
 
+  function draggingFiles(e: DragEvent) {
+    return e.dataTransfer?.types.includes('Files') ?? false;
+  }
+
+  function dragFilesOver(e: DragEvent) {
+    if (!draggingFiles(e)) return;
+    e.preventDefault();
+    dropping = true;
+    clearTimeout(dropTimer);
+    dropTimer = setTimeout(() => (dropping = false), 400);
+  }
+
+  function dropFiles(e: DragEvent) {
+    if (!draggingFiles(e)) return;
+    e.preventDefault();
+    clearTimeout(dropTimer);
+    dropping = false;
+    void attach(e.dataTransfer?.files ?? null);
+  }
+
   async function openFile(file: ChatAttachment) {
     const id = threadId;
     if (!id) return;
@@ -291,6 +318,11 @@
     }
   }
 
+  function dictated(said: string) {
+    // Whatever was typed is left as it is, newlines included.
+    input = !input || /\s$/.test(input) ? input + said : `${input} ${said}`;
+  }
+
   // A message sent while a turn runs is answered right after it.
   async function send(text: string) {
     const trimmed = text.trim();
@@ -298,6 +330,7 @@
     const attachmentIds = attachments.map((a) => a.id);
     input = '';
     attachments = [];
+    dictating = false;
     pending = null;
     error = '';
     sending = true;
@@ -362,6 +395,13 @@
   <title>Chat · LeadAce</title>
 </svelte:head>
 
+<!-- A file dropped beside the chat would otherwise open in the tab, taking the
+     draft with it. Text and links dragged into the box are left alone. -->
+<svelte:window
+  ondragover={(e) => draggingFiles(e) && e.preventDefault()}
+  ondrop={(e) => draggingFiles(e) && e.preventDefault()}
+/>
+
 {#snippet quickActionRow(centered: boolean)}
   <div class="flex flex-wrap gap-2 {centered ? 'justify-center' : ''}">
     {#each quickActions as a (a.label)}
@@ -379,14 +419,17 @@
 
 {#snippet composer(centered: boolean)}
   <form
-    class="flex flex-col gap-1.5 rounded-3xl border border-border bg-surface p-2 transition-colors focus-within:border-accent {centered
-      ? 'shadow-lg'
-      : ''}"
+    class="flex flex-col gap-1.5 rounded-3xl border bg-surface p-2 transition-colors focus-within:border-accent {dropping
+      ? 'border-dashed border-accent'
+      : 'border-border'} {centered ? 'shadow-lg' : ''}"
     onsubmit={(e) => {
       e.preventDefault();
       void send(input);
     }}
   >
+    {#if dropping}
+      <p class="px-2 pt-1 text-sm font-semibold text-accent-strong">Drop files here to attach them</p>
+    {/if}
     {#if attachments.length > 0 || uploading.length > 0}
       <div class="flex flex-wrap gap-1.5 px-1 pt-1">
         {#each attachments as a (a.id)}
@@ -436,6 +479,7 @@
         }}
         class="max-h-40 min-w-0 flex-1 resize-none bg-transparent py-2 text-base text-text placeholder:text-text-muted focus:outline-none"
       ></textarea>
+      <MicButton bind:listening={dictating} ontranscript={dictated} onerror={(m) => (error = m)} />
       {#if running}
         <button
           type="button"
@@ -453,16 +497,23 @@
         <button
           type="submit"
           disabled={sending || stopping || uploading.length > 0 || (!input.trim() && attachments.length === 0)}
-          class="btn btn-primary h-10"
+          aria-label={needsSetup ? 'Start' : 'Send'}
+          title={needsSetup ? 'Start' : 'Send'}
+          class="btn btn-primary h-10 w-10 shrink-0 p-0"
         >
-          {needsSetup ? 'Start' : 'Send'}
+          <ArrowUp size={18} />
         </button>
       {/if}
     </div>
   </form>
 {/snippet}
 
-<div class="flex h-[calc(100vh-7rem)] gap-6">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="flex h-[calc(100vh-7rem)] gap-6"
+  ondragover={dragFilesOver}
+  ondrop={dropFiles}
+>
   <div class="hidden md:block">
     <ThreadList
       threads={data.threads}
