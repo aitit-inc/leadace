@@ -358,6 +358,14 @@ const DASH_NAMED = [
   { name: 'Northgate University', domain: 'northgate-university.example', minsAgo: 1442 },
   { name: "Fairhaven Women's University", domain: 'fairhaven-womens.example', minsAgo: 1444 },
 ];
+// A segment axis is shown only when it has more than one bucket, so the sends
+// are spread over these profiles.
+const DASH_SEGMENTS = [
+  { industry: 'Education Institution', band: '11-50', country: 'US', strategy: 'school-directory-nationwide' },
+  { industry: 'Education Institution', band: '201+', country: 'US', strategy: 'association-member-list' },
+  { industry: 'Government / Public Sector', band: '11-50', country: 'GB', strategy: 'school-directory-nationwide' },
+  { industry: 'Government / Public Sector', band: '201+', country: 'GB', strategy: 'association-member-list' },
+];
 const DASH_LEARNINGS = [
   `[body] [D-0] Proof-led (${DASH_PROOF}) is driving reply rate and meetings by a wide margin — evidence: metric=variantResponseRate ${DASH_PROOF} 8.8% n=114 vs the other 3 angles 3.1-3.3% n=30-32 (meanReward 0.118 vs 0-0.067)`,
   `[targeting] [D-1] Prospects carrying a why-now signal at send time reply about 4x more often — evidence: metric=freshSignalResponseRate withSignal 13.1% n=61 / withoutSignal 3.3% n=211`,
@@ -411,6 +419,7 @@ function seedDashboardFixture(ctx, projectId) {
   });
   sends.forEach((s, i) => {
     if (!s.named) s.named = { name: `Prospect ${i + 1}`, domain: `org-${i + 1}.example` };
+    s.profile = DASH_SEGMENTS[i % DASH_SEGMENTS.length];
   });
 
   const curMature = sends
@@ -462,18 +471,26 @@ function seedDashboardFixture(ctx, projectId) {
     psql(
       `INSERT INTO organizations (tenant_id, domain, name, website_url, country, country_source, employee_band) VALUES ` +
         part
-          .map((s) => `(${q(tenant)}, ${q(s.named.domain)}, ${q(s.named.name)}, ${q(`https://${s.named.domain}`)}, 'US', 'manual', '11-50')`)
+          .map(
+            (s) =>
+              `(${q(tenant)}, ${q(s.named.domain)}, ${q(s.named.name)}, ${q(`https://${s.named.domain}`)}, ${q(s.profile.country)}, 'manual', ${q(s.profile.band)})`,
+          )
           .join(',') +
         ` ON CONFLICT DO NOTHING;`,
     );
   }
   for (const part of chunk(sends, 60)) {
     psql(
-      `INSERT INTO prospects (tenant_id, name, organization_id, overview, website_url, email, country, country_source, origin) ` +
-        `SELECT ${q(tenant)}, v.name, o.id, v.name || ' — career services contact.', 'https://' || v.domain, 'contact@' || v.domain, 'US', 'manual', 'found' ` +
+      `INSERT INTO prospects (tenant_id, name, organization_id, overview, website_url, email, country, country_source, origin, industry, discovery_strategy) ` +
+        `SELECT ${q(tenant)}, v.name, o.id, v.name || ' — career services contact.', 'https://' || v.domain, 'contact@' || v.domain, v.country, 'manual', 'found', v.industry, v.strategy ` +
         `FROM (VALUES ` +
-        part.map((s) => `(${q(s.named.name)}, ${q(s.named.domain)})`).join(',') +
-        `) AS v(name, domain) JOIN organizations o ON o.domain = v.domain AND o.tenant_id = ${q(tenant)};`,
+        part
+          .map(
+            (s) =>
+              `(${q(s.named.name)}, ${q(s.named.domain)}, ${q(s.profile.country)}, ${q(s.profile.industry)}, ${q(s.profile.strategy)})`,
+          )
+          .join(',') +
+        `) AS v(name, domain, country, industry, strategy) JOIN organizations o ON o.domain = v.domain AND o.tenant_id = ${q(tenant)};`,
     );
   }
   psql(
@@ -816,6 +833,12 @@ const SCENARIOS = [
           ],
         },
         {
+          name: 'segments',
+          path: '/dashboard',
+          scrollTo: 'h3:has-text("What the market is telling you")',
+          expect: ['Company size', 'Where they were found', 'Unsubscribe request'],
+        },
+        {
           name: 'suggestion-menu',
           path: '/dashboard',
           click: 'button[aria-label="Other ways to run this"]',
@@ -1033,6 +1056,11 @@ async function shoot(names, themes) {
           if (page.click) {
             await tab.click(page.click);
             await tab.waitForLoadState('networkidle');
+          }
+          // fullPage stops at the viewport because the app shell scrolls an inner container.
+          if (page.scrollTo) {
+            await tab.locator(page.scrollTo).scrollIntoViewIfNeeded();
+            await tab.waitForTimeout(300);
           }
           const file = join(SHOT_DIR, `${name}--${page.name}--${theme}.png`);
           await tab.screenshot({ path: file, fullPage: true });

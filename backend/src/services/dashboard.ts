@@ -9,6 +9,7 @@ import {
   JOURNAL_WINDOW_DAYS,
   buildFunnel,
   buildJournal,
+  buildSegments,
   buildTrend,
   parseLearnings,
   periodToWindow,
@@ -19,6 +20,7 @@ import {
   type DashboardLearning,
   type DashboardRejections,
   type DashboardSummary,
+  type SegmentCount,
   type DecisionMakerReferral,
   type LearningEntry,
   type NotRelevantNote,
@@ -52,6 +54,8 @@ const RECENT_ACTIVITY_LIMIT = 8
 const RECENT_ACTIVITY_CANDIDATES = 50
 
 type WindowCountRow = { current: string | number; previous: string | number }
+
+type SegmentCountRow = { axis: SegmentCount['axis']; value: string | null; sent: string | number; replied: string | number }
 
 // Through the prod transaction pooler (prepare:false) postgres-js can't read column type
 // OIDs, so raw db.execute returns int/timestamp columns as strings — numeric reads below use
@@ -94,6 +98,7 @@ export async function getDashboardSummary(
     escalationRows,
     pendingDraftsRows,
     learningsRows,
+    segmentRows,
     outboundAllowlist,
     leverRes,
     leverHistoryRes,
@@ -230,6 +235,37 @@ export async function getDashboardSummary(
       .where(and(eq(projectDocuments.projectId, projectId), eq(projectDocuments.slug, 'learnings')))
       .orderBy(desc(projectDocuments.createdAt))
       .limit(1),
+    // Reply rate per segment on the reply-rate KPI's unit: prospects contacted in
+    // the window, counted once, credited with a reply whenever it arrived.
+    raw<SegmentCountRow>(sql`
+      WITH contacted AS (
+        SELECT DISTINCT ol.prospect_id AS pid
+        FROM outreach_logs ol
+        WHERE ol.project_id = ${projectId} AND ol.status = 'sent' AND ol.sent_at >= ${curIso}::timestamptz
+      ), replied AS (
+        SELECT DISTINCT ol.prospect_id AS pid
+        FROM responses r JOIN outreach_logs ol ON ol.id = r.outreach_log_id
+        WHERE ol.project_id = ${projectId} AND r.response_type NOT IN ('bounce', 'auto_reply')
+          AND ol.prospect_id IN (SELECT pid FROM contacted)
+      ), base AS (
+        SELECT
+          NULLIF(TRIM(p.industry), '') AS industry,
+          o.employee_band::text AS band,
+          COALESCE(p.country, o.country) AS country,
+          p.discovery_strategy AS strategy,
+          EXISTS (SELECT 1 FROM replied x WHERE x.pid = c.pid) AS replied
+        FROM contacted c
+          JOIN prospects p ON p.id = c.pid
+          JOIN organizations o ON o.id = p.organization_id
+      )
+      SELECT v.axis, v.value, COUNT(*)::int AS sent, COUNT(*) FILTER (WHERE base.replied)::int AS replied
+      FROM base, LATERAL (VALUES
+        ('industry', base.industry),
+        ('employeeBand', base.band),
+        ('country', base.country),
+        ('discoveryStrategy', base.strategy)
+      ) AS v(axis, value)
+      GROUP BY v.axis, v.value`),
     loadProjectOutboundAllowlist(db, projectId),
     getLeverStateById(db, tenantId, projectId),
     getLeverDecisionsHistory(db, tenantId, projectId, JOURNAL_WINDOW_DAYS),
@@ -288,6 +324,10 @@ export async function getDashboardSummary(
     new Date(now.getTime() - JOURNAL_WINDOW_DAYS * DAY_MS).toISOString().slice(0, 10),
   )
   const rejections = buildRejections(rejectionRes.value)
+  const segments = buildSegments(
+    segmentRows.map((r) => ({ axis: r.axis, value: r.value, sent: Number(r.sent), replied: Number(r.replied) })),
+    leverRes.value.minSamplePerArm,
+  )
   const recentActivity = recentRes.value.logs
     .map(toActivityEvent)
     .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
@@ -318,6 +358,7 @@ export async function getDashboardSummary(
     journal,
     lastCycleDate: lastCycleRows[0]?.last ?? null,
     rejections,
+    segments,
     recentActivity,
     attention,
   })

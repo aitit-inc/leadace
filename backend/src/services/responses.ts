@@ -118,6 +118,14 @@ export type RecordResponseResult = {
   emailsToVerify: string[]
 }
 
+// No caller is held to the rule: the reply ingest hard-codes neutral for a
+// deterministic unsubscribe, and no prompt binds the classifier or the agent.
+export function sentimentForResponse(
+  input: Pick<RecordResponseInput, 'responseType' | 'sentiment'>,
+): RecordResponseInput['sentiment'] {
+  return input.responseType === 'rejection' ? 'negative' : input.sentiment
+}
+
 export async function recordResponse(
   db: Db,
   tenantId: TenantId,
@@ -144,6 +152,7 @@ export async function recordResponse(
 
   const now = new Date()
   const receivedAt = input.receivedAt ? new Date(input.receivedAt) : now
+  const sentiment = sentimentForResponse(input)
 
   const [reapproachSettings, [newResponse]] = await Promise.all([
     loadProjectReapproachSettings(db, log.projectId as ProjectId),
@@ -154,7 +163,7 @@ export async function recordResponse(
         outreachLogId: input.outreachLogId,
         channel: input.channel,
         content: input.content,
-        sentiment: input.sentiment,
+        sentiment,
         responseType: input.responseType,
         receivedAt,
         rejectionFeedback: input.rejectionFeedback,
@@ -194,7 +203,7 @@ export async function recordResponse(
   })
   const newStatus = nextStatusFromResponse({
     responseType: input.responseType,
-    sentiment: input.sentiment,
+    sentiment,
     reapproachMonths,
   })
 

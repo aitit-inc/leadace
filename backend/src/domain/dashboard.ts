@@ -1,5 +1,6 @@
 import type { Channel, RejectionRecontactWindow } from '../db/schema'
 import type { AttentionItem } from './attention'
+import { coarseIndustry } from './coarse-industry'
 
 export const DASHBOARD_PERIODS = ['7d', '30d', 'all'] as const
 export type DashboardPeriod = (typeof DASHBOARD_PERIODS)[number]
@@ -155,6 +156,54 @@ export type DashboardRejections = {
   recontactSoon: { window: RejectionRecontactWindow; count: number } | null
 }
 
+const SEGMENT_AXES = ['industry', 'employeeBand', 'country', 'discoveryStrategy'] as const
+export type SegmentAxis = (typeof SEGMENT_AXES)[number]
+
+export type SegmentRow = { value: string; sent: number; replied: number; replyRate: number }
+export type DashboardSegment = { axis: SegmentAxis; rows: SegmentRow[] }
+
+// A glance, not a table: past the top few, near-identical rates read as noise.
+const SEGMENT_ROWS_PER_AXIS = 3
+
+export type SegmentCount = { axis: SegmentAxis; value: string | null; sent: number; replied: number }
+
+// Observational: the lever already orders sends by these axes, so a row is where
+// replies came from, not a controlled comparison.
+export function buildSegments(counts: SegmentCount[], minSends: number): DashboardSegment[] {
+  const byAxis: Record<SegmentAxis, Map<string, { sent: number; replied: number }>> = {
+    industry: new Map(),
+    employeeBand: new Map(),
+    country: new Map(),
+    discoveryStrategy: new Map(),
+  }
+  for (const c of counts) {
+    // 'unknown' is the employee_band default — a bucket nobody can act on.
+    if (c.value === null || c.value === 'unknown') continue
+    const value = c.axis === 'industry' ? coarseIndustry(c.value) : c.value
+    // coarseIndustry folds every label outside the vocabulary into 'other', which
+    // names no segment either.
+    if (c.axis === 'industry' && value === 'other') continue
+    const bucket = byAxis[c.axis]
+    const held = bucket.get(value) ?? { sent: 0, replied: 0 }
+    bucket.set(value, { sent: held.sent + c.sent, replied: held.replied + c.replied })
+  }
+  return SEGMENT_AXES.flatMap((axis) => {
+    const rows = Array.from(byAxis[axis], ([value, n]) => ({
+      value,
+      sent: n.sent,
+      replied: n.replied,
+      replyRate: replyRate(n.replied, n.sent),
+    }))
+      .filter((r) => r.sent >= minSends)
+      .sort((a, b) => b.replyRate - a.replyRate || b.sent - a.sent || (a.value < b.value ? -1 : 1))
+      .slice(0, SEGMENT_ROWS_PER_AXIS)
+    // An axis needs two buckets over the floor to say anything: a single row has
+    // nothing to be compared against, and with the rest of the sends below the
+    // floor it sits close to the project's own reply rate anyway.
+    return rows.length > 1 ? [{ axis, rows }] : []
+  })
+}
+
 export type DashboardActivityKind =
   | 'sent'
   | 'failed'
@@ -194,6 +243,7 @@ export type DashboardSummary = {
   // Newest lever-tick cycle date (all-time, not window-bound); null = no tick has ever run.
   lastCycleDate: string | null
   rejections: DashboardRejections
+  segments: DashboardSegment[]
   recentActivity: DashboardActivityEvent[]
   attention: AttentionItem[]
 }

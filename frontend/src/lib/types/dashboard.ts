@@ -100,6 +100,20 @@ export interface DashboardRejections {
   recontactSoon: { window: RejectionRecontactWindow; count: number } | null;
 }
 
+export type SegmentAxis = 'industry' | 'employeeBand' | 'country' | 'discoveryStrategy';
+
+export interface SegmentRow {
+  value: string;
+  sent: number;
+  replied: number;
+  replyRate: number;
+}
+
+export interface DashboardSegment {
+  axis: SegmentAxis;
+  rows: SegmentRow[];
+}
+
 export type DashboardActivityKind =
   | 'sent'
   | 'failed'
@@ -136,6 +150,7 @@ export interface DashboardSummary {
   journal: JournalEvent[];
   lastCycleDate: string | null;
   rejections: DashboardRejections;
+  segments: DashboardSegment[];
   recentActivity: DashboardActivityEvent[];
   attention: AttentionItem[];
 }

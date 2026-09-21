@@ -7,6 +7,7 @@
     DashboardPeriod,
     FunnelStageKey,
     JournalEvent,
+    SegmentAxis,
   } from '$lib/types/dashboard';
   import type { FunnelStageFilter } from '$lib/types/outreach';
   import EmptyState from '$lib/components/EmptyState.svelte';
@@ -95,6 +96,13 @@
   };
   const LEARNINGS_SHOWN = 6;
   const JOURNAL_SHOWN = 5;
+
+  const SEGMENT_AXIS_LABELS: Record<SegmentAxis, string> = {
+    industry: 'Industry',
+    employeeBand: 'Company size',
+    country: 'Country',
+    discoveryStrategy: 'Where they were found',
+  };
 
   function fmtDay(day: string): string {
     const d = new Date(`${day}T00:00:00Z`);
@@ -504,6 +512,32 @@
             <MessageSquareX size={18} class="text-inbound" />
             <h3 class="font-display text-lg font-semibold text-text">What the market is telling you</h3>
           </div>
+          {#if summary.segments.length > 0}
+            <p class="mb-3 text-sm text-text-muted">
+              Reply rate among the prospects contacted in this period. The AI already prioritises by
+              these, so read it as where replies came from, not as a test.
+            </p>
+            <ul class="mb-5 space-y-3">
+              {#each summary.segments as segment}
+                <li>
+                  <p class="text-xs font-semibold text-text-muted">{SEGMENT_AXIS_LABELS[segment.axis]}</p>
+                  <ul class="mt-1 space-y-1">
+                    {#each segment.rows as row}
+                      {@const label = segment.axis === 'industry' ? humanize(row.value) : row.value}
+                      <li class="flex items-baseline justify-between gap-2 text-sm">
+                        <span class="min-w-0 truncate text-text" title={label}>
+                          {label}
+                        </span>
+                        <span class="shrink-0 text-xs tabular-nums text-text-secondary">
+                          {row.replyRate}% · {row.replied}/{row.sent} replied
+                        </span>
+                      </li>
+                    {/each}
+                  </ul>
+                </li>
+              {/each}
+            </ul>
+          {/if}
           <p class="mb-4 text-sm text-text-muted">
             From rejection replies. The AI can't fix these on its own — they're your business calls.
           </p>

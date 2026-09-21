@@ -743,6 +743,13 @@
       "when": 1789890798604,
       "tag": "0105_suggestion_instruction_sentence",
       "breakpoints": true
+    },
+    {
+      "idx": 106,
+      "version": "7",
+      "when": 1789919517811,
+      "tag": "0106_rejection_sentiment_negative",
+      "breakpoints": true
     }
   ]
 }

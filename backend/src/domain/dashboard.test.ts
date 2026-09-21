@@ -2,12 +2,15 @@ import { describe, it, expect } from 'vitest'
 import {
   buildFunnel,
   buildJournal,
+  buildSegments,
   buildTrend,
   computeDeltaPct,
   parseLearnings,
   periodToWindow,
   replyRate,
   trendWindowStartIso,
+  type SegmentAxis,
+  type SegmentCount,
 } from './dashboard'
 
 describe('computeDeltaPct', () => {
@@ -264,5 +267,86 @@ describe('buildJournal', () => {
       '2026-06-16',
     )
     expect(events.map((e) => e.kind)).toEqual(['variant_added', 'variant_archived'])
+  })
+})
+
+describe('buildSegments', () => {
+  const count = (axis: SegmentAxis, value: string | null, sent: number, replied: number): SegmentCount => ({
+    axis,
+    value,
+    sent,
+    replied,
+  })
+
+  it('keeps only buckets that reached the lever sample floor, best rate first', () => {
+    const [industry] = buildSegments(
+      [
+        count('industry', 'B2B SaaS', 40, 4),
+        count('industry', 'FinTech', 20, 4),
+        count('industry', 'Hardware / IoT / Robotics', 5, 3),
+      ],
+      10,
+    )
+    expect(industry?.axis).toBe('industry')
+    expect(industry?.rows).toEqual([
+      { value: 'vertical_tech', sent: 20, replied: 4, replyRate: 20 },
+      { value: 'software_tech', sent: 40, replied: 4, replyRate: 10 },
+    ])
+  })
+
+  it('folds fine industries into their coarse bucket before gating', () => {
+    const [industry] = buildSegments(
+      [
+        count('industry', 'B2B SaaS', 6, 1),
+        count('industry', 'AI / ML', 6, 1),
+        count('industry', 'Hardware / IoT / Robotics', 20, 1),
+      ],
+      10,
+    )
+    expect(industry?.rows).toEqual([
+      { value: 'software_tech', sent: 12, replied: 2, replyRate: 16.7 },
+      { value: 'hardware_industrial', sent: 20, replied: 1, replyRate: 5 },
+    ])
+  })
+
+  it("drops the industry vocabulary's catch-all bucket", () => {
+    expect(
+      buildSegments(
+        [count('industry', 'Other', 40, 4), count('industry', 'B2B SaaS', 40, 2)],
+        10,
+      ),
+    ).toEqual([])
+  })
+
+  it('omits an axis where a single bucket holds everything (it would restate the project rate)', () => {
+    expect(buildSegments([count('country', 'US', 200, 12)], 10)).toEqual([])
+  })
+
+  it('drops buckets nobody can name', () => {
+    expect(
+      buildSegments(
+        [
+          count('country', null, 50, 5),
+          count('employeeBand', 'unknown', 50, 5),
+          count('discoveryStrategy', null, 50, 5),
+        ],
+        10,
+      ),
+    ).toEqual([])
+  })
+
+  it('caps each axis and omits an axis with nothing to show', () => {
+    const segments = buildSegments(
+      [
+        count('country', 'US', 40, 8),
+        count('country', 'JP', 40, 6),
+        count('country', 'DE', 40, 4),
+        count('country', 'FR', 40, 2),
+        count('industry', 'B2B SaaS', 5, 2),
+      ],
+      10,
+    )
+    expect(segments).toHaveLength(1)
+    expect(segments[0]?.rows.map((r) => r.value)).toEqual(['US', 'JP', 'DE'])
   })
 })
