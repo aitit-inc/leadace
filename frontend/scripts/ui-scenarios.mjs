@@ -908,10 +908,12 @@ const SCENARIOS = [
   },
   {
     name: 'project-settings',
-    summary: 'The settings of a project that already sends',
+    summary: 'The settings screens of a project that already sends',
     stack: 'self-host',
     setup: async (ctx) => {
       await seedProject(ctx, { name: 'Northwind outbound', settings: { outboundMode: 'send' } });
+      // The unsaved-changes bar appears only once a field differs from the
+      // server, so its shots edit a toggle first.
       return [
         {
           name: 'follow-up',
@@ -919,6 +921,30 @@ const SCENARIOS = [
           // The page scrolls in its own pane; the click brings the help text into the shot.
           click: 'text=Turning this on also picks up',
           expect: 'Auto follow-up on unanswered emails',
+        },
+        {
+          name: 'unsaved',
+          path: '/project-settings',
+          click: 'label[for="unsubscribe-enabled"]',
+          expect: 'Unsaved changes',
+        },
+        {
+          name: 'leave-dialog',
+          path: '/project-settings',
+          click: ['label[for="unsubscribe-enabled"]', 'nav[aria-label="Main"] a[href="/dashboard"]'],
+          expect: 'Leave without saving?',
+        },
+        {
+          name: 'workspace-unsaved',
+          path: '/workspace-settings',
+          click: 'input[aria-label="Leads by email"]',
+          expect: 'Unsaved changes',
+        },
+        {
+          name: 'inquiry-unsaved',
+          path: '/inquiry-settings',
+          click: 'label:has-text("Enable inquiry landing") input[type="checkbox"]',
+          expect: 'Unsaved changes',
         },
       ];
     },

@@ -5,6 +5,7 @@
   import { setActiveProject } from '$lib/active-project';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import ProjectMailboxes from '$lib/components/project-settings/ProjectMailboxes.svelte';
+  import SaveBar from '$lib/components/SaveBar.svelte';
   import ProjectSchedules from '$lib/components/schedules/ProjectSchedules.svelte';
   import {
     ALLOWED_SEND_COUNTRIES,
@@ -57,7 +58,7 @@
   let footerText = $state('');
   let footerLoadedOverride = $state<string | null>(null);
 
-  $effect(() => {
+  function hydrate() {
     const loaded = data.projectSettings;
     if (!loaded) {
       projectSettings = null;
@@ -78,11 +79,12 @@
       gapDays: [...loaded.followUpSequence.gapDays],
     };
     footerText = loaded.footerOverride ?? loaded.footerDefault ?? '';
-    footerLoadedOverride = loaded.footerOverride;
-  });
+    footerLoadedOverride = normalizedFooter(loaded.footerOverride, loaded.footerDefault);
+  }
+  $effect(hydrate);
 
   let savingSettings = $state(false);
-  let settingsMessage = $state('');
+  let settingsError = $state<string | null>(null);
   let message = $state('');
 
   let showDeleteDialog = $state(false);
@@ -97,7 +99,7 @@
   async function saveProjectSettings() {
     if (!projectSettings || !data.projectId) return;
     savingSettings = true;
-    settingsMessage = '';
+    settingsError = null;
     try {
       const body = {
         outboundMode: projectSettings.outboundMode,
@@ -119,9 +121,8 @@
         token,
       );
       await invalidate('app:project-settings');
-      settingsMessage = 'Saved.';
     } catch (e) {
-      settingsMessage = `Error: ${e instanceof Error ? e.message : 'Unknown error'}`;
+      settingsError = `Error: ${e instanceof Error ? e.message : 'Unknown error'}`;
     }
     savingSettings = false;
   }
@@ -179,15 +180,42 @@
     );
   }
 
+  function normalizedFooter(text: string | null, def: string | null): string | null {
+    const t = (text ?? '').trim();
+    const d = (def ?? '').trim();
+    return t === '' || t === d ? null : t;
+  }
+
   function computedFooterOverride(): string | null {
-    const text = footerText.trim();
-    const def = (projectSettings?.footerDefault ?? '').trim();
-    return text === '' || text === def ? null : text;
+    return normalizedFooter(footerText, projectSettings?.footerDefault ?? null);
   }
 
   function footerChanged(): boolean {
     return computedFooterOverride() !== footerLoadedOverride;
   }
+
+  // The form rebuilds these in constant order, the server keeps the order it
+  // was given, so only membership tells an edit from a round trip.
+  function sameSet(a: readonly string[], b: readonly string[]): boolean {
+    return a.length === b.length && a.every((v) => b.includes(v));
+  }
+
+  let settingsDirty = $derived.by(() => {
+    const s = projectSettings;
+    const base = data.projectSettings;
+    if (!s || !base) return false;
+    return (
+      s.outboundMode !== base.outboundMode ||
+      (s.senderDisplayName?.trim() || null) !== (base.senderDisplayName?.trim() || null) ||
+      s.unsubscribeEnabled !== base.unsubscribeEnabled ||
+      s.targetLanguage !== base.targetLanguage ||
+      !sameSet(s.outboundChannels, base.outboundChannels) ||
+      !sameSet(s.targetCountries, base.targetCountries) ||
+      s.publicScoreboardEnabled !== base.publicScoreboardEnabled ||
+      footerChanged() ||
+      followUpChanged()
+    );
+  });
 
   function resetFooter() {
     footerText = projectSettings?.footerDefault ?? '';
@@ -519,20 +547,6 @@
             </label>
           </div>
         {/if}
-
-        <div class="flex items-center gap-3 border-t border-border pt-5">
-          <button
-            type="button"
-            onclick={saveProjectSettings}
-            disabled={savingSettings}
-            class="btn btn-primary"
-          >
-            {savingSettings ? 'Saving…' : 'Save'}
-          </button>
-          {#if settingsMessage}
-            <span class="text-xs text-text-muted">{settingsMessage}</span>
-          {/if}
-        </div>
       </div>
     {/if}
   </section>
@@ -560,6 +574,14 @@
       </div>
     {/if}
   </section>
+
+  <SaveBar
+    dirty={settingsDirty}
+    saving={savingSettings}
+    error={settingsError}
+    onsave={saveProjectSettings}
+    ondiscard={hydrate}
+  />
 </div>
 
 {#if showDeleteDialog}

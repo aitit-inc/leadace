@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invalidate } from '$app/navigation';
   import { updateProjectSettings } from '$lib/api/project-settings';
+  import SaveBar from '$lib/components/SaveBar.svelte';
   import type { PageProps } from './$types';
   import type { InquirySettings } from './types';
 
@@ -13,16 +14,20 @@
   // Hydrated once per project: the post-save invalidate re-runs this
   // $effect with an unchanged projectId (no-op), so a failed save never
   // clobbers typed input; success re-syncs formData explicitly in save().
+  let validationErrors = $state<Partial<Record<keyof InquirySettings, string>>>({});
   let formData = $state<InquirySettings | null>(null);
   let saving = $state(false);
   let hydratedFor = $state<string | null | undefined>(undefined);
+  function hydrate() {
+    formData = data.settings ? { ...data.settings } : null;
+    validationErrors = {};
+  }
   $effect(() => {
     if (data.projectId === hydratedFor) return;
-    formData = data.settings ? { ...data.settings } : null;
+    hydrate();
     hydratedFor = data.projectId;
   });
-  let saveMessage = $state('');
-  let validationErrors = $state<Partial<Record<keyof InquirySettings, string>>>({});
+  let saveError = $state<string | null>(null);
 
   // Defense-in-depth — these match the backend zod regexes exactly so the
   // user gets immediate feedback and the server is unlikely to reject what
@@ -81,28 +86,38 @@
     return t === '' ? null : t;
   }
 
+  function normalize(s: InquirySettings): InquirySettings {
+    return {
+      senderCompanyName: emptyToNull(s.senderCompanyName),
+      senderJobTitle: emptyToNull(s.senderJobTitle),
+      inquiryLandingEnabled: s.inquiryLandingEnabled,
+      inquiryChatBrief: emptyToNull(s.inquiryChatBrief),
+      inquiryOneLiner: emptyToNull(s.inquiryOneLiner),
+      inquiryVideoUrl: emptyToNull(s.inquiryVideoUrl),
+      inquiryPdfUrl: emptyToNull(s.inquiryPdfUrl),
+      inquiryBrandColor: emptyToNull(s.inquiryBrandColor),
+      inquiryBrandLogoUrl: emptyToNull(s.inquiryBrandLogoUrl),
+      inquiryDarkBackground: s.inquiryDarkBackground,
+      inquiryCtaType: s.inquiryCtaType,
+      inquiryCtaUrl: emptyToNull(s.inquiryCtaUrl),
+    };
+  }
+
+  let dirty = $derived(
+    !!formData &&
+      !!data.settings &&
+      JSON.stringify(normalize(formData)) !== JSON.stringify(normalize(data.settings)),
+  );
+
   async function save() {
     if (!formData || !data.projectId) return;
-    const normalized: InquirySettings = {
-      senderCompanyName: emptyToNull(formData.senderCompanyName),
-      senderJobTitle: emptyToNull(formData.senderJobTitle),
-      inquiryLandingEnabled: formData.inquiryLandingEnabled,
-      inquiryChatBrief: emptyToNull(formData.inquiryChatBrief),
-      inquiryOneLiner: emptyToNull(formData.inquiryOneLiner),
-      inquiryVideoUrl: emptyToNull(formData.inquiryVideoUrl),
-      inquiryPdfUrl: emptyToNull(formData.inquiryPdfUrl),
-      inquiryBrandColor: emptyToNull(formData.inquiryBrandColor),
-      inquiryBrandLogoUrl: emptyToNull(formData.inquiryBrandLogoUrl),
-      inquiryDarkBackground: formData.inquiryDarkBackground,
-      inquiryCtaType: formData.inquiryCtaType,
-      inquiryCtaUrl: emptyToNull(formData.inquiryCtaUrl),
-    };
+    const normalized = normalize(formData);
     if (!validate(normalized)) {
-      saveMessage = 'Fix the highlighted fields above before saving.';
+      saveError = 'Fix the highlighted fields above before saving.';
       return;
     }
     saving = true;
-    saveMessage = '';
+    saveError = null;
     try {
       await updateProjectSettings<InquirySettings>(
         data.projectId,
@@ -111,12 +126,10 @@
         token,
       );
       await invalidate('app:project-settings');
-      // Adopt post-save server state as the authoritative view. Only on
-      // success — a failed save keeps the typed input visible.
-      if (data.settings) formData = { ...data.settings };
-      saveMessage = 'Saved.';
+      // Only on success — a failed save keeps the typed input visible.
+      hydrate();
     } catch (e) {
-      saveMessage = `Error: ${e instanceof Error ? e.message : 'Unknown error'}`;
+      saveError = `Error: ${e instanceof Error ? e.message : 'Unknown error'}`;
     } finally {
       saving = false;
     }
@@ -160,13 +173,7 @@
     </div>
   {:else if formData}
     {@const s = formData}
-    <form
-      class="space-y-3"
-      onsubmit={(e) => {
-        e.preventDefault();
-        void save();
-      }}
-    >
+    <form class="space-y-3">
       <section class="card p-5">
         <label class="flex cursor-pointer items-start gap-3">
           <input
@@ -465,21 +472,8 @@
           {/if}
         </div>
       </section>
-
-      <div class="flex items-center gap-3 pt-3">
-        <button
-          type="submit"
-          disabled={saving}
-          class="btn btn-primary"
-        >
-          {saving ? 'Saving…' : 'Save'}
-        </button>
-        {#if saveMessage}
-          <span class={saveMessage.startsWith('Error') ? 'text-xs text-danger' : 'text-xs text-text-muted'}>
-            {saveMessage}
-          </span>
-        {/if}
-      </div>
     </form>
+
+    <SaveBar {dirty} {saving} error={saveError} onsave={save} ondiscard={hydrate} />
   {/if}
 </div>

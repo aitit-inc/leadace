@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invalidate } from '$app/navigation';
   import { updateWorkspaceSettings } from '$lib/api/workspace-settings';
+  import SaveBar from '$lib/components/SaveBar.svelte';
   import type { PageProps } from './$types';
   import type { TenantSettings } from '$lib/types/tenants';
   import { SUPPORTED_COUNTRIES } from '$lib/countries';
@@ -8,14 +9,16 @@
   let { data }: PageProps = $props();
   let token = $derived(data.session?.access_token);
 
+  let validationErrors = $state<Partial<Record<keyof TenantSettings, string>>>({});
   let formData = $state<TenantSettings | null>(null);
-  $effect(() => {
+  function hydrate() {
     formData = data.settings ? { ...data.settings } : null;
-  });
+    validationErrors = {};
+  }
+  $effect(hydrate);
 
   let saving = $state(false);
-  let saveMessage = $state('');
-  let validationErrors = $state<Partial<Record<keyof TenantSettings, string>>>({});
+  let saveError = $state<string | null>(null);
 
   function validate(s: TenantSettings): boolean {
     const errors: Partial<Record<keyof TenantSettings, string>> = {};
@@ -54,31 +57,40 @@
     return t === '' ? null : t;
   }
 
+  function normalize(s: TenantSettings): TenantSettings {
+    return {
+      ...s,
+      legalName: emptyToNull(s.legalName),
+      physicalAddress: emptyToNull(s.physicalAddress),
+      defaultSenderCountry: emptyToNull(s.defaultSenderCountry?.toUpperCase() ?? null),
+      legalNameJa: emptyToNull(s.legalNameJa),
+      physicalAddressJa: emptyToNull(s.physicalAddressJa),
+      notificationEmail: emptyToNull(s.notificationEmail),
+    };
+  }
+
+  let dirty = $derived(
+    !!formData &&
+      !!data.settings &&
+      JSON.stringify(normalize(formData)) !== JSON.stringify(normalize(data.settings)),
+  );
+
   async function save() {
     if (!formData) return;
-    const normalized: TenantSettings = {
-      ...formData,
-      legalName: emptyToNull(formData.legalName),
-      physicalAddress: emptyToNull(formData.physicalAddress),
-      defaultSenderCountry: emptyToNull(formData.defaultSenderCountry?.toUpperCase() ?? null),
-      legalNameJa: emptyToNull(formData.legalNameJa),
-      physicalAddressJa: emptyToNull(formData.physicalAddressJa),
-      notificationEmail: emptyToNull(formData.notificationEmail),
-    };
+    const normalized = normalize(formData);
     if (!validate(normalized)) {
-      saveMessage = 'Fix the highlighted fields above before saving.';
+      saveError = 'Fix the highlighted fields above before saving.';
       return;
     }
     saving = true;
-    saveMessage = '';
+    saveError = null;
     try {
       // PUT body excludes `id` (immutable, backend sources it from auth).
       const { id: _id, ...patch } = normalized;
       await updateWorkspaceSettings(patch, fetch, token);
       await Promise.all([invalidate('app:workspace-settings'), invalidate('app:attention')]);
-      saveMessage = 'Saved.';
     } catch (e) {
-      saveMessage = `Error: ${e instanceof Error ? e.message : 'Unknown error'}`;
+      saveError = `Error: ${e instanceof Error ? e.message : 'Unknown error'}`;
     } finally {
       saving = false;
     }
@@ -115,13 +127,7 @@
       </div>
     {/if}
 
-    <form
-      class="space-y-6"
-      onsubmit={(e) => {
-        e.preventDefault();
-        void save();
-      }}
-    >
+    <form class="space-y-6">
       <div class="card space-y-5 p-6">
         <section class="space-y-1.5">
           <label for="name" class="block text-sm font-medium text-text">Workspace display name</label>
@@ -314,17 +320,8 @@
           <p class="text-xs text-danger">{validationErrors.notificationEmail}</p>
         {/if}
       </section>
-
-      <div class="flex items-center gap-3">
-        <button type="submit" disabled={saving} class="btn btn-primary">
-          {saving ? 'Saving…' : 'Save'}
-        </button>
-        {#if saveMessage}
-          <span class={saveMessage.startsWith('Error') ? 'text-sm text-danger' : 'text-sm text-text-muted'}>
-            {saveMessage}
-          </span>
-        {/if}
-      </div>
     </form>
+
+    <SaveBar {dirty} {saving} error={saveError} onsave={save} ondiscard={hydrate} />
   {/if}
 </div>
