@@ -23,6 +23,7 @@ import {
   previewDraft,
   markDraftSent,
   discardDraft,
+  discardReviewSchema,
   discardDrafts,
   discardDraftsBodySchema,
   type SendContext,
@@ -181,8 +182,10 @@ outreachRouter.post(
 outreachRouter.delete(
   '/outreach/drafts/:id',
   zValidator('param', outreachLogIdParamSchema),
+  zValidator('json', discardReviewSchema),
   async (c) => {
-    const result = await discardDraft(c.get('db'), c.get('tenantId'), c.req.valid('param').id)
+    const { verdict, note } = c.req.valid('json')
+    const result = await discardDraft(c.get('db'), c.get('tenantId'), c.req.valid('param').id, { verdict, note: note ?? null })
     if (!result.ok) return respondWithError(c, result)
     return c.json(result.value)
   },

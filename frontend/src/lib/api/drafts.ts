@@ -87,14 +87,20 @@ export function markDraftSent(
   });
 }
 
+// Mirrors backend domain/draft-review.ts.
+export type DiscardVerdict = 'wrong_message' | 'wrong_prospect';
+export type DiscardReview = { verdict: DiscardVerdict; note?: string };
+
 export function discardDraft(
   draftId: number,
+  review: DiscardReview,
   fetchFn: RequestFetch = fetch,
   token?: string,
 ): Promise<void> {
   return request<void>(fetchFn, {
     method: 'DELETE',
     path: `/outreach/drafts/${draftId}`,
+    body: review,
     auth: 'required',
     token,
   });
@@ -102,13 +108,14 @@ export function discardDraft(
 
 export function discardDrafts(
   ids: number[],
+  review: DiscardReview,
   fetchFn: RequestFetch = fetch,
   token?: string,
 ): Promise<{ deletedIds: number[]; skippedIds: number[] }> {
   return request<{ deletedIds: number[]; skippedIds: number[] }>(fetchFn, {
     method: 'POST',
     path: '/outreach/drafts/discard',
-    body: { ids },
+    body: { ids, ...review },
     auth: 'required',
     token,
   });

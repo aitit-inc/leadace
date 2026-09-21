@@ -5,7 +5,7 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import type { ConfirmSummary, ToolEffect } from '../domain/chat'
 import { z } from 'zod'
-import { BUG_REPORT_CATEGORIES, EMPLOYEE_BANDS, OUTBOUND_CHANNELS, REACHABLE_STATUSES, REJECTION_PRIMARY_REASONS, REJECTION_RECONTACT_WINDOWS, SUGGESTION_STATUSES, prospectStatusEnum, prioritySchema, type ProspectStatus } from '../db/schema'
+import { BUG_REPORT_CATEGORIES, EMPLOYEE_BANDS, OUTBOUND_CHANNELS, OUTBOUND_MODES, REACHABLE_STATUSES, REJECTION_PRIMARY_REASONS, REJECTION_RECONTACT_WINDOWS, SUGGESTION_STATUSES, prospectStatusEnum, prioritySchema, type OutboundMode, type ProspectStatus } from '../db/schema'
 import { ALLOWED_SEND_COUNTRIES } from '../domain/country'
 import { discoveryStrategySchema, suggestionKindSchema, variantIdSchema } from '../domain/ids'
 import { localeSchema } from '../domain/locale'
@@ -2341,6 +2341,48 @@ export function buildToolRegistry(): ToolDef[] {
           body: existing?.prompt ?? '',
           confirmLabel: 'Remove schedule',
         }
+      },
+    },
+  )
+
+  defineTool(
+    'set_outbound_mode',
+    'Switch whether a project sends on its own ("send") or holds every message as a draft for review ("draft"). Answers with the saved mode.',
+    {
+      projectId: z.string().min(1).describe('Project name or ID'),
+      mode: z.enum(OUTBOUND_MODES),
+    },
+    async ({ projectId, mode }, ctx) => {
+      const { ok, data } = await ctx.callApi('PUT', `/projects/${encodeURIComponent(projectId)}/outbound-mode`, { mode })
+      if (!ok) {
+        const e = data as { error: string; detail?: string }
+        return { content: [{ type: 'text' as const, text: `Error: ${e.detail ? `${e.error}: ${e.detail}` : e.error}` }], isError: true }
+      }
+      return { content: [{ type: 'text' as const, text: `Saved: outbound mode is ${(data as { outboundMode: OutboundMode }).outboundMode}.` }] }
+    },
+    {
+      surface: 'chat',
+      confirm: async ({ projectId, mode }, ctx) => {
+        const project = { label: 'Project', value: await projectLabel(ctx, projectId) }
+        return mode === 'send'
+          ? {
+              title: 'Send without review',
+              facts: [
+                project,
+                { label: 'After this', value: 'Each run sends its email on its own, scheduled runs included' },
+                { label: 'Still applies', value: "Your mailbox's daily cap and the do-not-contact list" },
+                { label: 'To undo', value: 'Switch back any time in Project settings' },
+              ],
+              confirmLabel: 'Send without review',
+            }
+          : {
+              title: 'Review before sending',
+              facts: [
+                project,
+                { label: 'After this', value: 'Nothing is sent until you send it from the Drafts page — scheduled runs only prepare drafts' },
+              ],
+              confirmLabel: 'Hold for review',
+            }
       },
     },
   )

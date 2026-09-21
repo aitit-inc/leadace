@@ -22,6 +22,7 @@ import {
   uploadAttachmentQuerySchema,
 } from '../../services/chat/attachments'
 import { respondWithError } from '../respond'
+import { err } from '../../services/result'
 import { withTenantConnection, type TenantRun } from '../../db/rls'
 import type { Env, Variables } from '../types'
 
@@ -127,6 +128,9 @@ chatRunnerRouter.post(
   zValidator('param', threadIdParamSchema),
   zValidator('json', confirmBodySchema),
   async (c) => {
+    // An approval is a person's click: an MCP token answering the card would
+    // let an agent approve what the card exists to put in front of a person.
+    if (c.get('caller') !== 'browser') return respondWithError(c, err('FORBIDDEN', 'Approval cards are answered in the Web UI only'))
     const { id } = c.req.valid('param')
     const thread = await ownThread(c, id)
     if (!thread.ok) return respondWithError(c, thread)

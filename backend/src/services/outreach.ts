@@ -74,6 +74,8 @@ import { addDays } from '../domain/prospect-status'
 import { isAllowedSendCountry } from '../domain/country'
 import type { Locale } from '../domain/locale'
 import { buildSkipAuditBody } from '../domain/outreach-skip'
+import { discardNoteSchema, discardVerdictSchema, type DiscardReview } from '../domain/draft-review'
+import { discardPendingDrafts, recordDraftEdit } from './draft-reviews'
 import { isPublicHttpsUrl } from '../domain/url'
 import type { Edition } from '../domain/edition'
 
@@ -1381,6 +1383,7 @@ export async function editDraft(
   id: number,
   patch: EditDraftPatch,
 ): Promise<ServiceResult<{ id: number }>> {
+  await recordDraftEdit(db, tenantId, id, patch)
   const [updated] = await db
     .update(outreachLogs)
     .set({
@@ -1641,19 +1644,11 @@ export async function discardDraft(
   db: Db,
   tenantId: TenantId,
   id: number,
+  review: DiscardReview,
 ): Promise<ServiceResult<{ deleted: true }>> {
-  // Atomic delete-if-pending: avoids the read-then-delete race that would
-  // let concurrent /send and /delete both succeed.
-  const [deleted] = await db
-    .delete(outreachLogs)
-    .where(and(
-      eq(outreachLogs.id, id),
-      eq(outreachLogs.tenantId, tenantId),
-      eq(outreachLogs.status, 'pending_review'),
-    ))
-    .returning({ id: outreachLogs.id })
+  const deleted = await discardPendingDrafts(db, tenantId, eq(outreachLogs.id, id), review)
 
-  if (!deleted) {
+  if (deleted.length === 0) {
     const [exists] = await db
       .select({ status: outreachLogs.status })
       .from(outreachLogs)
@@ -1666,15 +1661,23 @@ export async function discardDraft(
   return ok({ deleted: true })
 }
 
+const discardReviewShape = {
+  verdict: discardVerdictSchema.default('wrong_message'),
+  note: discardNoteSchema.optional(),
+}
+export const discardReviewSchema = z.object(discardReviewShape).strict()
+
 // Other-tenant or already-sent ids are silently excluded (surfaced via
 // skippedIds in explicit-id mode) rather than erroring.
 export const discardDraftsBodySchema = z
   .union([
     z.object({
       ids: z.array(outreachLogIdSchema).min(1).max(200),
+      ...discardReviewShape,
     }).strict(),
     z.object({
       allInProjectId: projectRefSchema,
+      ...discardReviewShape,
     }).strict(),
   ])
 export type DiscardDraftsInput = z.infer<typeof discardDraftsBodySchema>
@@ -1684,38 +1687,16 @@ export async function discardDrafts(
   tenantId: TenantId,
   input: DiscardDraftsInput,
 ): Promise<ServiceResult<{ deletedIds: number[]; skippedIds: number[] }>> {
+  const review: DiscardReview = { verdict: input.verdict, note: input.note ?? null }
   if ('allInProjectId' in input) {
     const resolved = await resolveProject(db, tenantId, input.allInProjectId)
     if (!resolved.ok) return resolved
-    const projectId = resolved.value
-
-    const deleted = await db
-      .delete(outreachLogs)
-      .where(and(
-        eq(outreachLogs.projectId, projectId),
-        eq(outreachLogs.tenantId, tenantId),
-        eq(outreachLogs.status, 'pending_review'),
-      ))
-      .returning({ id: outreachLogs.id })
-
-    return ok({
-      deletedIds: deleted.map((d) => d.id),
-      skippedIds: [],
-    })
+    const deletedIds = await discardPendingDrafts(db, tenantId, eq(outreachLogs.projectId, resolved.value), review)
+    return ok({ deletedIds, skippedIds: [] })
   }
 
   const uniqueIds = [...new Set(input.ids)]
-
-  const deleted = await db
-    .delete(outreachLogs)
-    .where(and(
-      inArray(outreachLogs.id, uniqueIds),
-      eq(outreachLogs.tenantId, tenantId),
-      eq(outreachLogs.status, 'pending_review'),
-    ))
-    .returning({ id: outreachLogs.id })
-
-  const deletedIds = deleted.map((d) => d.id)
+  const deletedIds = await discardPendingDrafts(db, tenantId, inArray(outreachLogs.id, uniqueIds), review)
   const deletedSet = new Set<number>(deletedIds)
   const skippedIds = uniqueIds.filter((id) => !deletedSet.has(id))
   return ok({ deletedIds, skippedIds })

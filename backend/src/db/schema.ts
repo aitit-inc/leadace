@@ -550,8 +550,8 @@ export const projectSettings = pgTable('project_settings', {
   tenantId: text('tenant_id')
     .notNull()
     .references(() => tenants.id, { onDelete: 'cascade' }),
-  // New projects draft until a human switches to send in the Web UI — the
-  // agent cannot change this field (services/project-settings.ts).
+  // New projects draft until a human switches to send: in the Web UI, or on
+  // the chat's approval card (services/project-settings.ts setOutboundMode).
   outboundMode: outboundModeEnum('outbound_mode').notNull().default('draft'),
   senderDisplayName: text('sender_display_name'),
   // Recipient-facing company / brand name (e.g. "Acme Inc."). Paired with
@@ -928,6 +928,48 @@ export const outreachLogs = pgTable('outreach_logs', {
   index('idx_outreach_dedup').on(table.projectId, table.prospectId, table.status),
   index('idx_outreach_quota').on(table.tenantId, table.status, table.sentAt),
   index('idx_outreach_variant').on(table.projectId, table.variantId, table.status),
+])
+
+// The two discards differ in what follows: a wrong message leaves the prospect
+// reachable for a rewrite, a wrong prospect takes them out of the project.
+export const DRAFT_REVIEW_VERDICTS = ['edited', 'wrong_message', 'wrong_prospect'] as const
+export type DraftReviewVerdict = (typeof DRAFT_REVIEW_VERDICTS)[number]
+export const draftReviewVerdictEnum = pgEnum('draft_review_verdict', DRAFT_REVIEW_VERDICTS)
+
+// One row per reviewed draft, holding the agent's text as it stood before the
+// person touched it. Fed back to the stages it concerns as the person's own
+// words (services/draft-reviews.ts) — not a measurement, so it never becomes a
+// learnings entry.
+export const draftReviews = pgTable('draft_reviews', {
+  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  projectId: text('project_id').notNull(),
+  prospectId: integer('prospect_id').notNull(),
+  // NULL once the draft is discarded (that row is deleted); for 'edited' it
+  // leads to the text the person sent.
+  outreachLogId: integer('outreach_log_id').references(() => outreachLogs.id, { onDelete: 'set null' }),
+  channel: channelEnum('channel').notNull(),
+  verdict: draftReviewVerdictEnum('verdict').notNull(),
+  note: text('note'),
+  agentSubject: text('agent_subject'),
+  agentBody: text('agent_body').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  unique('uq_draft_review_outreach').on(table.outreachLogId),
+  foreignKey({
+    columns: [table.projectId, table.tenantId],
+    foreignColumns: [projects.id, projects.tenantId],
+    name: 'fk_draft_review_project_tenant',
+  }).onDelete('cascade'),
+  foreignKey({
+    columns: [table.prospectId, table.tenantId],
+    foreignColumns: [prospects.id, prospects.tenantId],
+    name: 'fk_draft_review_prospect_tenant',
+  }).onDelete('cascade'),
+  index('idx_draft_reviews_tenant').on(table.tenantId),
+  index('idx_draft_reviews_project').on(table.projectId, table.createdAt),
 ])
 
 // Per-project library of message-angle variants (subject + body approach).

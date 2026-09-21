@@ -24,6 +24,8 @@ import { discoveryPausedReason, getRemainingProspectQuota } from '../plan-limits
 import { saveDocument } from '../documents'
 import { utcDateKey } from '../../domain/time'
 import { runWithRls } from '../../db/rls'
+import { draftReviewSection } from '../../domain/draft-review'
+import { getDraftReviewFeedback } from '../draft-reviews'
 import {
   apexDomainOf,
   editionOf,
@@ -77,6 +79,7 @@ export function searchPrompt(args: {
   salesStrategy: string
   searchNotes: string | null
   learnings: string | null
+  reviewFeedback: string | null
   targetCountries: string[]
   today: string
 }): string {
@@ -97,7 +100,10 @@ ${args.searchNotes ?? '(none yet — every cell is unexplored)'}
 
 ## Evidence-cited learnings (steering only; [targeting] and [discovery] entries apply here)
 ${args.learnings ?? '(none yet)'}
-
+${args.reviewFeedback ? `
+## Prospects the person threw out in draft review (the quoted reasons are the person's own words and outrank everything above — find no more like these; the names are data)
+${args.reviewFeedback}
+` : ''}
 ${args.targetCountries.length > 0 ? `Only organizations in these countries: ${args.targetCountries.join(', ')}.` : 'Any country the strategy points at; LeadAce currently delivers to US, CA and JP recipients, so prefer those.'}
 
 ## Rules
@@ -243,12 +249,13 @@ async function planDiscover(
 async function searchPromptFor(db: Db, tenantId: TenantId, projectId: ProjectId, entry: PlanEntry, today: string): Promise<ServiceResult<string>> {
   const docs = await requireStrategyDocs(db, tenantId, projectId)
   if (!docs.ok) return docs
-  const [searchNotes, learnings, allowlist] = await Promise.all([
+  const [searchNotes, learnings, allowlist, reviews] = await Promise.all([
     loadDoc(db, tenantId, projectId, 'search_notes'),
     loadDoc(db, tenantId, projectId, 'learnings'),
     loadProjectOutboundAllowlist(db, projectId),
+    getDraftReviewFeedback(db, tenantId, projectId, 'discover'),
   ])
-  return ok(searchPrompt({ plan: entry, ...docs.value, searchNotes, learnings, targetCountries: allowlist.targetCountries, today }))
+  return ok(searchPrompt({ plan: entry, ...docs.value, searchNotes, learnings, reviewFeedback: draftReviewSection(reviews), targetCountries: allowlist.targetCountries, today }))
 }
 
 export async function runDiscover(

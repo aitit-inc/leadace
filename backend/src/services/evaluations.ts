@@ -40,6 +40,11 @@ const NO_COUNTABLE_REPLY = sql`NOT EXISTS (SELECT 1 FROM responses r WHERE r.out
 type ResponseType = (typeof responseTypeEnum.enumValues)[number]
 type Sentiment = (typeof sentimentEnum.enumValues)[number]
 
+// Settling is per send, not days since the last send: a daily schedule never
+// goes three days without sending (#763).
+const REPLY_SETTLE_DAYS = 3
+const MIN_SETTLED_SENDS = 30
+
 export type DailyActivity = { date: string; sent: number; responses: number }
 
 export type RespondedMessage = {
@@ -65,7 +70,7 @@ export type ProjectStatsResult = {
   dataSufficiency: {
     sufficient: boolean
     totalSent: number
-    daysSinceLastSend: number | null
+    settledSent: number
   }
   dailyActivity: DailyActivity[]
 }
@@ -386,7 +391,7 @@ export async function getProjectStats(
     countryRows,
     respondedMessagesRows,
     noResponseSampleRows,
-    lastSentRows,
+    sentCountRows,
     inquiryOutcomeRows,
     dailySentRows,
     dailyResponseRows,
@@ -479,7 +484,8 @@ export async function getProjectStats(
                  FROM outreach_logs ol WHERE ol.project_id = ${projectId} AND ol.status = ${SENT}
                    AND NOT EXISTS (SELECT 1 FROM responses r WHERE r.outreach_log_id = ol.id)
                  ORDER BY ol.sent_at DESC LIMIT 10`),
-    rawQuery<{ totalSent: string | number; lastSentAt: string | Date | null }>(sql`SELECT COUNT(*)::int AS "totalSent", MAX(sent_at) AS "lastSentAt"
+    rawQuery<{ totalSent: string | number; settledSent: string | number }>(sql`SELECT COUNT(*)::int AS "totalSent",
+                   COUNT(*) FILTER (WHERE sent_at < now() - make_interval(days => ${REPLY_SETTLE_DAYS}))::int AS "settledSent"
                  FROM outreach_logs WHERE project_id = ${projectId} AND status = ${SENT}`),
     // inquiry_sessions has no project_id column — project scope flows through
     // outreach_logs.
@@ -505,12 +511,8 @@ export async function getProjectStats(
   ])
 
   const totalOutreach = Number(totalOutreachRows[0]?.totalOutreach ?? 0)
-  const lastSentRow = lastSentRows[0]
-  const totalSent = Number(lastSentRow?.totalSent ?? 0)
-  const lastSentAt = lastSentRow?.lastSentAt ?? null
-  const daysSinceLastSend = lastSentAt
-    ? Math.floor((Date.now() - new Date(lastSentAt).getTime()) / 86_400_000)
-    : null
+  const totalSent = Number(sentCountRows[0]?.totalSent ?? 0)
+  const settledSent = Number(sentCountRows[0]?.settledSent ?? 0)
 
   // Seed every outcome at 0 so the response shape is stable when a project
   // has no sessions for a given outcome (or no sessions at all).
@@ -672,9 +674,9 @@ export async function getProjectStats(
       body: r.body,
     })),
     dataSufficiency: {
-      sufficient: totalSent >= 30 && (daysSinceLastSend === null || daysSinceLastSend >= 3),
+      sufficient: settledSent >= MIN_SETTLED_SENDS,
       totalSent,
-      daysSinceLastSend,
+      settledSent,
     },
     dailyActivity,
   })

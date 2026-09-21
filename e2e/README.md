@@ -91,6 +91,9 @@ on, need no Claude session, and run fast:
 - `regression-draft-send.sh` — `sendDraft`/`markDraftSent` preconditions +
   re-applied compliance/country at send time; `markDraftSent` happy path (no
   Gmail); `sendDraft` Gmail leg gated on `sending_identities` + override.
+- `regression-draft-reviews.sh` — `draft_reviews`: an edit keeps the agent's
+  text once; a wrong-message discard returns the prospect, a wrong-prospect
+  discard sets it `inactive`; a sent draft gets no discard record.
 - `regression-inflight-reachable.sh` — `get_outbound_targets` in-flight exclusion
   (open `pending_review` / in-TTL `pre_send` dropped; aged-out `pre_send`
   re-included) — the daily-cycle double-send guard.

@@ -30,6 +30,6 @@ export interface ProjectStats {
   metrics: EvaluationMetrics;
   respondedMessages: Array<Record<string, unknown>>;
   noResponseSample: Array<Record<string, unknown>>;
-  dataSufficiency: { sufficient: boolean; totalSent: number; daysSinceLastSend: number | null };
+  dataSufficiency: { sufficient: boolean; totalSent: number; settledSent: number };
   dailyActivity: DailyActivity[];
 }

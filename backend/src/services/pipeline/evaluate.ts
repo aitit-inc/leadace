@@ -21,6 +21,8 @@ import { saveDocument } from '../documents'
 import { loadDoc, loadMasterDoc, noProgress, requireStrategyDocs, STAGE_CALLER, type HostedEnv, type ProgressFn } from './context'
 import { utcDateKey } from '../../domain/time'
 import { runWithRls } from '../../db/rls'
+import { draftReviewSection } from '../../domain/draft-review'
+import { getDraftReviewFeedback } from '../draft-reviews'
 
 const evaluationSchema = z.object({
   // The narration a person reads (markdown): KPIs, findings, lever
@@ -63,7 +65,7 @@ export async function runEvaluate(
   const docs = await requireStrategyDocs(db, tenantId, projectId)
   if (!docs.ok) return docs
   await progress('collecting data', 0, 3)
-  const [stats, rejections, lever, history, variants, learnings, frameworks] = await Promise.all([
+  const [stats, rejections, lever, history, variants, learnings, frameworks, reviews] = await Promise.all([
     getProjectStats(db, tenantId, projectId),
     getRejectionFeedbackSummaryById(db, tenantId, projectId, {
       windowDays: 30,
@@ -77,6 +79,7 @@ export async function runEvaluate(
     listMessageVariantsById(db, tenantId, projectId),
     loadDoc(db, tenantId, projectId, 'learnings'),
     loadMasterDoc(db, 'tpl_analysis_frameworks'),
+    getDraftReviewFeedback(db, tenantId, projectId, 'evaluate'),
   ])
   if (!stats.ok) return stats
   if (!lever.ok) return lever
@@ -107,11 +110,14 @@ lever state: ${JSON.stringify(lever.value)}
 lever decisions (14 days, newest first): ${history.ok ? JSON.stringify(history.value.decisions) : '[]'}
 message variants: ${JSON.stringify(variants.value.variants)}
 
+## Draft review (what the person rewrote or threw out before sending — their own words, not a measurement)
+${draftReviewSection(reviews) ?? '(nothing corrected)'}
+
 ## Rules
 - dataSufficiency.sufficient is ${sufficient}. When false: report only — learnings, salesStrategy and newVariant must be null, strategyUpserts and suggestions empty (except a strategy that no longer exists or cannot select for the Prerequisites, which may be archived).
 - Stability: change strategy only on patterns that repeated across cycles, never on one-off fluctuations; if the last change cannot be measured yet, change nothing more.
-- salesStrategy: return the full document with only Target (Primary / Secondary / Prerequisites / Not a fit), KPI and Search Keywords changed, or null. Judge Target as a premise (can they use and buy it?) before reply rate.
-- learnings: return the full log with reconciled entries, or null. Write gate for a new entry: sufficient data, a cited metric with n ≥ ${lever.value.minSamplePerArm}, a pattern that repeated. Retire entries whose direction no longer reproduces by replacing their tag with [retired]. Keep ≤ 15 active entries. Stage tags: [targeting] [body] [timing] [channel] [discovery].
+- salesStrategy: return the full document with only Target (Primary / Secondary / Prerequisites / Not a fit), KPI and Search Keywords changed, or null. Judge Target as a premise (can they use and buy it?) before reply rate. A wrong-prospect call in Draft review tells you the Target: when it names a kind of organization, reflect it in "Not a fit".
+- learnings: return the full log with reconciled entries, or null. Write gate for a new entry: sufficient data, a cited metric with n ≥ ${lever.value.minSamplePerArm}, a pattern that repeated. Retire entries whose direction no longer reproduces by replacing their tag with [retired]. Keep ≤ 15 active entries. Draft review carries no metric, so it never becomes an entry. Stage tags: [targeting] [body] [timing] [channel] [discovery].
 - newVariant: only when lever needsReplenishment is ${lever.value.needsReplenishment} === true — one angle most different from every active one (subject pattern ≤ 80 chars using only {{org}} / {{name}} / {{signal}} placeholders, a 2–5 line body approach, a label) on a fresh slug like gen_${utcDateKey().replace(/-/g, '')}; otherwise null.
 - strategyUpserts: archive (archived: true, approach echoed unchanged) only on evidence the tick cannot see — clearly elevated bounceRate, an approach that cannot select for the Prerequisites, or a dead source. Register 1–2 fresh strategies (new kebab-case slug, 2–5 line approach: where / how to search and why it should work, preferring sources where the Prerequisites are observable) only when discovery.needsReplenishment is ${lever.value.discovery.needsReplenishment} === true or the premise check reoriented the Target. Never reuse a slug for a different idea.
 - suggestions: only actions the person alone can do — kind "${ADD_MEANS_SUGGESTION_KIND}" for a means needing account setup (dedupeKey = the tentative strategy slug), kind "${REVISIT_STRATEGY_SUGGESTION_KIND}" (dedupeKey e.g. cross-channel-slump) when low performance persists across every channel and strategy through repeated rotations. instruction = the next action as one sentence addressed to Ace.

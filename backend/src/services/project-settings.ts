@@ -12,6 +12,7 @@ import {
 } from '../db/schema'
 import type { Db } from '../db/connection'
 import type { ProjectId, ProjectRef, SendingIdentityId, TenantId } from '../domain/ids'
+import type { JobOrigin } from '../domain/jobs'
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { listProjectMailboxIds } from './mailbox'
@@ -174,6 +175,30 @@ export async function getOutboundMode(
     .where(eq(projectSettings.projectId, projectId))
     .limit(1)
   return assertSettingsRow(row, projectId).outboundMode
+}
+
+export const setOutboundModeSchema = z.object({ mode: z.enum(OUTBOUND_MODES) }).strict()
+
+// The chat is allowed because its call is held for the person's approval card;
+// an MCP client and an unattended run have no one to ask.
+export async function setOutboundMode(
+  db: Db,
+  tenantId: TenantId,
+  origin: JobOrigin,
+  projectRef: ProjectRef,
+  mode: OutboundMode,
+): Promise<ServiceResult<{ outboundMode: OutboundMode }>> {
+  if (origin !== 'ui' && origin !== 'chat') {
+    return err('FORBIDDEN', 'outboundMode: set from the Web UI or the web chat only')
+  }
+  const resolved = await resolveProject(db, tenantId, projectRef)
+  if (!resolved.ok) return resolved
+  const [row] = await db
+    .update(projectSettings)
+    .set({ outboundMode: mode, updatedAt: new Date() })
+    .where(eq(projectSettings.projectId, resolved.value))
+    .returning({ outboundMode: projectSettings.outboundMode })
+  return ok(assertSettingsRow(row, resolved.value))
 }
 
 export type ProjectSendSettings = {

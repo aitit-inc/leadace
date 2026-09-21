@@ -8,6 +8,8 @@
     previewDraft,
     sendDraft,
     updateDraft,
+    type DiscardReview,
+    type DiscardVerdict,
   } from '$lib/api/drafts';
   import { ApiError } from '$lib/api';
   import { safeHttpUrl } from '$lib/redirect';
@@ -37,6 +39,8 @@
     | { kind: 'send-batch'; ids: number[] }
     | null
   >(null);
+  let discardVerdict = $state<DiscardVerdict>('wrong_message');
+  let discardNote = $state('');
   let busyId = $state<number | null>(null);
   let copiedId = $state<number | null>(null);
   let selectedIds = $state<Set<number>>(new Set());
@@ -218,10 +222,21 @@
     }
   }
 
+  function askDiscard(target: { kind: 'discard'; draft: OutreachDraft } | { kind: 'discard-batch'; ids: number[] }) {
+    discardVerdict = 'wrong_message';
+    discardNote = '';
+    confirming = target;
+  }
+
+  function discardReview(): DiscardReview {
+    const note = discardNote.trim();
+    return note ? { verdict: discardVerdict, note } : { verdict: discardVerdict };
+  }
+
   async function handleDiscard(d: OutreachDraft) {
     busyId = d.id;
     try {
-      await discardDraft(d.id, fetch, token);
+      await discardDraft(d.id, discardReview(), fetch, token);
       banner = { kind: 'info', text: 'Draft discarded.' };
       await refreshAfterMutation(1);
     } catch (err) {
@@ -236,7 +251,7 @@
     if (ids.length === 0) return;
     batchBusy = true;
     try {
-      const res = await discardDrafts(ids, fetch, token);
+      const res = await discardDrafts(ids, discardReview(), fetch, token);
       selectedIds = new Set();
       const skipNote = res.skippedIds.length > 0
         ? ` (${res.skippedIds.length} skipped — already sent or no longer pending)`
@@ -415,16 +430,14 @@
       const n = c.ids.length;
       return {
         title: `Discard ${n} draft${n === 1 ? '' : 's'}?`,
-        message:
-          'Selected drafts will be deleted. Any prospect whose only outreach was a discarded draft will be available for outbound again.',
+        message: 'The selected drafts are deleted and cannot be recovered.',
         label: `Discard ${n}`,
       };
     }
     if (c.kind === 'discard') {
       return {
         title: 'Discard this draft?',
-        message:
-          'The draft will be deleted. If this was the only outreach for the prospect, they will be available for outbound again.',
+        message: 'The draft is deleted and cannot be recovered.',
         label: 'Discard',
       };
     }
@@ -514,7 +527,7 @@
       <button
         type="button"
         disabled={selectedIds.size === 0 || batchBusy}
-        onclick={() => (confirming = { kind: 'discard-batch', ids: [...selectedIds] })}
+        onclick={() => askDiscard({ kind: 'discard-batch', ids: [...selectedIds] })}
         class="btn btn-danger-ghost btn-sm"
       >
         Discard selected
@@ -667,7 +680,7 @@
               <button
                 type="button"
                 disabled={busyId === draft.id}
-                onclick={() => (confirming = { kind: 'discard', draft })}
+                onclick={() => askDiscard({ kind: 'discard', draft })}
                 class="btn btn-danger-ghost ml-auto"
               >
                 Discard
@@ -709,5 +722,36 @@
       void action;
     }}
     oncancel={() => (confirming = null)}
-  />
+  >
+    {#if c.kind === 'discard' || c.kind === 'discard-batch'}
+      <fieldset class="mt-4 space-y-2">
+        <legend class="text-sm font-medium text-text">What was off?</legend>
+        <label class="flex items-start gap-2 text-sm">
+          <input type="radio" name="discard-verdict" value="wrong_message" bind:group={discardVerdict} class="mt-1" />
+          <span>
+            <span class="text-text">The message</span>
+            <span class="block text-text-secondary">They stay on the list and get a new draft.</span>
+          </span>
+        </label>
+        <label class="flex items-start gap-2 text-sm">
+          <input type="radio" name="discard-verdict" value="wrong_prospect" bind:group={discardVerdict} class="mt-1" />
+          <span>
+            <span class="text-text">The prospect</span>
+            <span class="block text-text-secondary">They leave this project and are not drafted again.</span>
+          </span>
+        </label>
+      </fieldset>
+      <label class="mt-4 block space-y-1.5">
+        <span class="text-sm font-medium text-text">Tell Ace why <span class="font-normal text-text-muted">(optional)</span></span>
+        <textarea
+          rows={2}
+          maxlength="500"
+          bind:value={discardNote}
+          placeholder={discardVerdict === 'wrong_prospect' ? 'We do not sell to agencies' : 'The funding news is a year old'}
+          class="field resize-none"
+        ></textarea>
+        <span class="block text-xs text-text-muted">Ace reads this before it {discardVerdict === 'wrong_prospect' ? 'looks for more prospects' : 'writes the next drafts'}.</span>
+      </label>
+    {/if}
+  </ConfirmDialog>
 {/if}

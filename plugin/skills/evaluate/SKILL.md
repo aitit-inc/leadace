@@ -47,7 +47,7 @@ If `get_eval_data` returns a "Project not found" error, instruct the user to run
   - `metrics.inquiryOutcomeCounts`: per-project session totals keyed by outcome (`opened` / `inquired` / `lead` / `signup_clicked` / `unsubscribed`). `signup_clicked` is the self-serve conversion path (project's CTA mode is `signup`, visitor clicked the Sign up button); `lead` is the human-sales conversion (meeting requested, button or chat-derived). Both `signup_clicked` and `lead` flip `project_prospects.status` to `responded`, so the prospect drops out of the outbound pool — they are different conversion axes that both belong in the "won" column
 - `respondedMessages`: all outreach bodies that received responses (with sentiment and responseType)
 - `noResponseSample`: sample of outreach bodies that received no response
-- `dataSufficiency`: `{ sufficient, totalSent, daysSinceLastSend }`
+- `dataSufficiency`: `{ sufficient, totalSent, settledSent }` — `settledSent` counts sends at least 3 days old, so replies have had time to arrive
 
 `get_rejection_feedback_summary` (scope="tactical", windowDays=30) response includes:
 - `total`, `primaryReasonDistribution`: counts of `not_relevant` / `wrong_timing` / `budget` / `not_decision_maker` / `unsubscribe_request` / `other`
@@ -109,9 +109,7 @@ These feed the Step 5 report and the `[channel]` entries of the Learnings Log (s
 
 **Data volume check (required):**
 
-Use the `dataSufficiency` field from step 1. If `sufficient` is `false`, **do not apply changes to SALES_STRATEGY.md**. Only run the report (step 5) and report "Insufficient data -- continue monitoring":
-- Total approaches (status='sent') fewer than 30
-- Less than 3 business days since last send
+Use the `dataSufficiency` field from step 1. If `sufficient` is `false` (fewer than 30 sends are at least 3 days old), **do not apply changes to SALES_STRATEGY.md**. Only run the report (step 5) and report "Insufficient data -- continue monitoring".
 
 Even with insufficient data, still generate the report (step 5) -- it is useful for understanding current status.
 

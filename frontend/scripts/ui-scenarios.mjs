@@ -649,7 +649,7 @@ const SCENARIOS = [
   },
   {
     name: 'approval',
-    summary: 'A tool call waiting for approval: an ordinary one and a destructive one',
+    summary: 'A tool call waiting for approval: the switch to sending, an ordinary one and a destructive one',
     stack: 'self-host',
     setup: async (ctx) => {
       const projectId = await seedProject(ctx, { name: 'Northwind outbound', settings: { outboundMode: 'draft' } });
@@ -694,9 +694,52 @@ const SCENARIOS = [
           confirmLabel: 'Delete project',
         },
       });
+      const sendMode = seedThread(ctx, {
+        projectId,
+        title: 'Run it every day',
+        userText: 'Those looked right. Run this every weekday from now on.',
+        modelText: 'The schedule is set. One more step makes it hands-off: let the runs send on their own.',
+        toolName: 'set_outbound_mode',
+        args: { projectId, mode: 'send' },
+        summary: {
+          title: 'Send without review',
+          facts: [
+            { label: 'Project', value: 'Northwind outbound' },
+            { label: 'After this', value: 'Each run sends its email on its own, scheduled runs included' },
+            { label: 'Still applies', value: "Your mailbox's daily cap and the do-not-contact list" },
+            { label: 'To undo', value: 'Switch back any time in Project settings' },
+          ],
+          confirmLabel: 'Send without review',
+        },
+      });
       return [
+        { name: 'send-mode', path: `/chat?t=${sendMode}`, expect: 'Send without review' },
         { name: 'ordinary', path: `/chat?t=${ordinary}`, expect: 'Draft this email' },
         { name: 'destructive', path: `/chat?t=${destructive}`, expect: 'This cannot be undone.' },
+      ];
+    },
+  },
+  {
+    name: 'drafts',
+    summary: 'Drafts waiting for review, and the discard dialog that asks what was off',
+    stack: 'self-host',
+    setup: async (ctx) => {
+      const projectId = await seedProject(ctx, { name: 'Northwind outbound', settings: { outboundMode: 'draft' } });
+      const prospects = await seedProspects(ctx, projectId, 3);
+      const api = apiFor(ctx);
+      for (const [index, p] of prospects.entries()) {
+        await api('POST', '/api/outreach', {
+          projectId,
+          prospectId: p.prospectId,
+          channel: 'email',
+          subject: `A quicker first reply for ${p.org}`,
+          body: outreachBody(p, index),
+          status: 'pending_review',
+        });
+      }
+      return [
+        { name: 'list', path: '/drafts', expect: 'A quicker first reply' },
+        { name: 'discard', path: '/drafts', click: ['button:has-text("A quicker first reply") >> nth=0', 'button:text-is("Discard")'], expect: 'What was off?' },
       ];
     },
   },
@@ -1069,8 +1112,9 @@ async function shoot(names, themes) {
           tab.on('pageerror', (e) => errors.push(e.message));
           const url = `${ctx.appUrl}${page.path}`;
           const response = await tab.goto(url, { waitUntil: 'networkidle' });
-          if (page.click) {
-            await tab.click(page.click);
+          // `click` is one selector, or several clicked in order.
+          for (const selector of [page.click ?? []].flat()) {
+            await tab.click(selector);
             await tab.waitForLoadState('networkidle');
           }
           // fullPage stops at the viewport because the app shell scrolls an inner container.

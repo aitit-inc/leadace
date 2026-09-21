@@ -14,7 +14,9 @@
 #      mode, sending identity, sender identity, footer override, landing
 #      CTA / media / branding) → 403 naming the field, value unchanged; MCP
 #      writing an agent-owned field (inquiryOneLiner) → 200; browser writing
-#      outboundMode → 200.
+#      outboundMode → 200. PUT /projects/:id/outbound-mode (the chat's approval
+#      card writes through it): MCP → 403, browser → 200. Answering an approval
+#      card (POST /chat/threads/:id/confirm): MCP → 403.
 #   3. Playbook approval gate: MCP save → 201 pending (approvedAt null); MCP GET
 #      → 412; browser GET → 200 (newest, pending); MCP approve → 403; browser
 #      approve → 200; MCP GET → 200 (approved content); re-approve → 409;
@@ -156,6 +158,18 @@ assert_eq "value written" "$(api_body | jq -r '.inquiryOneLiner')" "e2e one-line
 STATUS="$(ui PUT "/api/projects/$PROJECT_ID/settings" '{"outboundMode":"draft"}')"
 assert_eq "browser outboundMode → 200" "$STATUS" "200"
 assert_eq "outboundMode=draft" "$(api_body | jq -r '.outboundMode')" "draft"
+STATUS="$(mcp PUT "/api/projects/$PROJECT_ID/outbound-mode" '{"mode":"send"}')"
+assert_eq "MCP outbound-mode → 403" "$STATUS" "403"
+ui GET "/api/projects/$PROJECT_ID/settings" > /dev/null
+assert_eq "outboundMode still draft" "$(api_body | jq -r '.outboundMode')" "draft"
+STATUS="$(ui PUT "/api/projects/$PROJECT_ID/outbound-mode" '{"mode":"send"}')"
+assert_eq "browser outbound-mode → 200" "$STATUS" "200"
+assert_eq "outboundMode=send" "$(api_body | jq -r '.outboundMode')" "send"
+# The card is the person's click: an MCP token must not be able to answer it.
+STATUS="$(mcp POST "/api/chat/threads/no-such-thread/confirm" '{"callId":"x","approve":true}')"
+assert_eq "MCP approval-card answer → 403" "$STATUS" "403"
+STATUS="$(ui POST "/api/chat/threads/no-such-thread/confirm" '{"callId":"x","approve":true}')"
+assert_eq "browser approval-card answer reaches the thread lookup → 404" "$STATUS" "404"
 
 step "3. playbook approval gate"
 STATUS="$(mcp PUT "$DOCS/playbook_$PLAYBOOK_SLUG" '{"content":"# Playbook v1\ne2e"}')"
