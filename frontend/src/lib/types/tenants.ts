@@ -16,4 +16,6 @@ export type TenantSettings = {
   notifyCronEmail: boolean;
   notifyLeadInApp: boolean;
   notifyLeadEmail: boolean;
+  notifyInsightInApp: boolean;
+  notifyInsightEmail: boolean;
 };

@@ -47,16 +47,17 @@ export function notifyCtxOf(env: NotifyEnv): NotifyCtx {
   }
 }
 
-// Where the email went; null when the category's email is off or the event
-// was already notified.
-export type NotifyResult = { emailedTo: string | null }
+// `recorded` is false when this call found the event already notified, so a
+// caller that keeps its own cursor knows the report it built was not the one
+// filed. `emailedTo` is null when the category's email switch is off.
+export type NotifyResult = { recorded: boolean; emailedTo: string | null }
 
 // Records the event for the bell and emails it when the category's switch is
 // on. The recipient is never caller-supplied, so the brain cannot aim it. The
 // record commits before the email goes out, so a rerun finds it and does not
 // send again.
 export async function notify(run: TenantRun, tenantId: TenantId, ctx: NotifyCtx, notice: Notice): Promise<ServiceResult<NotifyResult>> {
-  const email = await run(async (db) => {
+  const record = await run(async (db) => {
     const [inserted] = await db
       .insert(notifications)
       .values({ tenantId, ...notice })
@@ -71,13 +72,21 @@ export async function notify(run: TenantRun, tenantId: TenantId, ctx: NotifyCtx,
       .limit(NOTIFICATIONS_KEPT)
     await db.delete(notifications).where(and(eq(notifications.tenantId, tenantId), notInArray(notifications.id, kept)))
     const [row] = await db
-      .select({ to: tenants.notificationEmail, general: tenants.notifyGeneralEmail, cron: tenants.notifyCronEmail, lead: tenants.notifyLeadEmail })
+      .select({
+        to: tenants.notificationEmail,
+        general: tenants.notifyGeneralEmail,
+        cron: tenants.notifyCronEmail,
+        lead: tenants.notifyLeadEmail,
+        insight: tenants.notifyInsightEmail,
+      })
       .from(tenants)
       .where(eq(tenants.id, tenantId))
       .limit(1)
-    return row?.[notice.category] ? { to: row.to } : null
+    return { email: row?.[notice.category] ? { to: row.to } : null }
   })
-  if (!email) return ok({ emailedTo: null })
+  if (!record) return ok({ recorded: false, emailedTo: null })
+  const email = record.email
+  if (!email) return ok({ recorded: true, emailedTo: null })
 
   return run(async (db): Promise<ServiceResult<NotifyResult>> => {
     const owner = await getTenantOwnerUserId(db, tenantId)
@@ -94,7 +103,7 @@ export async function notify(run: TenantRun, tenantId: TenantId, ctx: NotifyCtx,
       body: `${notice.body}\n\n${ctx.appUrl}${notice.link}`,
     })
     if (!sent.ok) return sent
-    return ok({ emailedTo: sent.value.to })
+    return ok({ recorded: true, emailedTo: sent.value.to })
   })
 }
 
@@ -110,7 +119,13 @@ export type NotificationItem = {
 
 export async function listNotifications(db: Db, tenantId: TenantId): Promise<ServiceResult<NotificationItem[]>> {
   const [prefs] = await db
-    .select({ general: tenants.notifyGeneralInApp, cron: tenants.notifyCronInApp, lead: tenants.notifyLeadInApp, seenAt: tenants.notificationsSeenAt })
+    .select({
+      general: tenants.notifyGeneralInApp,
+      cron: tenants.notifyCronInApp,
+      lead: tenants.notifyLeadInApp,
+      insight: tenants.notifyInsightInApp,
+      seenAt: tenants.notificationsSeenAt,
+    })
     .from(tenants)
     .where(eq(tenants.id, tenantId))
     .limit(1)

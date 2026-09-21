@@ -803,14 +803,30 @@ const SCENARIOS = [
     setup: async (ctx) => {
       await seedProject(ctx, { name: 'Northwind outbound', settings: {} });
       const t = q(ctx.persona.tenantId);
+      // The cycle digest, as domain/digest.ts assembles it.
+      const digestBody = q(
+        [
+          'Northwind outbound — last 30 days',
+          'Contacted 122 prospects · reply rate 7.4% (was 6.1%) · engaged 9 · won 2',
+          '',
+          'What the market is telling you',
+          'Industry: Software tech 11.9% (5/42) · Hardware industrial 4.5% (2/44)',
+          'Why 21 said no: Not relevant 43% · Budget 24% · Feature gap 19%',
+          '',
+          'What changed since 2026-09-11',
+          'Un-learned: "Prospects carrying a fresh signal reply more often" — the measurement it rested on was withdrawn',
+          'New angle: Cost of doing nothing',
+        ].join('\n'),
+      );
       psql(`UPDATE tenants SET notifications_seen_at = now() - interval '2 hours' WHERE id = ${t};
         INSERT INTO notifications (tenant_id, category, reference, subject, body, link, created_at) VALUES
         (${t}, 'cron', 'ui:1', 'daily cycle failed: Northwind outbound', 'Search step failed upstream — upstream LLM request failed', '/chat', now() - interval '1 hour'),
         (${t}, 'general', 'ui:2', 'discover succeeded: Northwind outbound', 'Registered 8 of 12 (6 with email); 4 skipped.', '/chat', now() - interval '5 hours'),
-        (${t}, 'cron', 'ui:3', 'daily cycle succeeded: Northwind outbound', 'evaluate: 2 responses scored | draft: 20 sent | journal: saved', '/chat', now() - interval '1 day');`);
+        (${t}, 'cron', 'ui:3', 'daily cycle succeeded: Northwind outbound', 'evaluate: 2 responses scored | draft: 20 sent | journal: saved', '/chat', now() - interval '1 day'),
+        (${t}, 'insight', 'ui:4', 'Northwind outbound: 2 changes from what we learned', ${digestBody}, '/dashboard', now() - interval '30 minutes');`);
       return [
         { name: 'bell', path: '/dashboard', click: 'button[aria-haspopup="menu"][aria-label^="Alerts"]', expect: 'daily cycle failed: Northwind outbound' },
-        { name: 'settings', path: '/workspace-settings', click: 'text=Scheduled runs', expect: 'Scheduled runs' },
+        { name: 'settings', path: '/workspace-settings', click: 'text=Scheduled runs', expect: ['Scheduled runs', 'What we learned'] },
       ];
     },
   },

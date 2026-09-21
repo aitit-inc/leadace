@@ -750,6 +750,13 @@
       "when": 1789919517811,
       "tag": "0106_rejection_sentiment_negative",
       "breakpoints": true
+    },
+    {
+      "idx": 107,
+      "version": "7",
+      "when": 1789949766372,
+      "tag": "0107_insight_digest",
+      "breakpoints": true
     }
   ]
 }

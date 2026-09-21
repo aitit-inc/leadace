@@ -1,11 +1,14 @@
 // The daily cycle (daily-cycle/SKILL.md, server-side): evaluate → lever tick →
-// outbound → prospect discovery when the list runs low → journal.
+// outbound → prospect discovery when the list runs low → journal → the digest
+// that reports what changed.
 // Each stage is the same code a standalone job runs; this file only decides
 // the order and the counts.
 import { NonRetryableError } from 'cloudflare:workflows'
 import type { JobKind, JobParamsOf, JobResult } from '../domain/jobs'
 import { shouldBuildFirst, type ReachableSnapshot } from '../domain/cycle-plan'
+import { sendCycleDigest } from '../services/digest'
 import { runLeverTick } from '../services/levers'
+import { notifyCtxOf } from '../services/notifications'
 import { getActiveStrategySlugs } from '../services/discovery-strategies'
 import { discoveryPausedReason, getRemainingProspectQuota } from '../services/plan-limits'
 import { assertTenantComplianceReady } from '../services/tenants'
@@ -114,6 +117,22 @@ export async function runDailyCycle(ctx: StageCtx, params: JobParamsOf<'daily_cy
 
   const digest: CycleDigest = { stages, decisions }
   await stage('journal', await advisory(() => journalStage(ctx, digest)))
+
+  // Advisory like the journal: a report that could not go out must not fail the
+  // day it reports on.
+  await ctx.step.do('digest', async () => {
+    const failure = await sendCycleDigest(
+      (fn) => tenantTx(ctx, fn),
+      tenantId,
+      { ...notifyCtxOf(ctx.env), edition: editionOf(ctx.env) },
+      projectId,
+    ).then(
+      (r) => (r.ok ? null : r.error),
+      (e) => (e instanceof Error ? e.message : String(e)),
+    )
+    if (failure) console.warn(`[cycle] digest failed project=${projectId}: ${failure}`)
+    return true
+  })
 
   return { kind: 'daily_cycle', summary: stages.map((s) => `${s.kind}: ${s.summary}`).join(' | ') }
 }

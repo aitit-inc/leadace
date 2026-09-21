@@ -383,6 +383,8 @@ export const tenants = pgTable('tenants', {
   notifyCronEmail: boolean('notify_cron_email').notNull().default(true),
   notifyLeadInApp: boolean('notify_lead_in_app').notNull().default(true),
   notifyLeadEmail: boolean('notify_lead_email').notNull().default(true),
+  notifyInsightInApp: boolean('notify_insight_in_app').notNull().default(true),
+  notifyInsightEmail: boolean('notify_insight_email').notNull().default(true),
   // Notifications created after this are unread.
   notificationsSeenAt: timestamp('notifications_seen_at', { withTimezone: true }).defaultNow().notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -624,6 +626,10 @@ export const projectSettings = pgTable('project_settings', {
   // Outbound-message language. A content setting, not a targeting filter —
   // independent of target_countries. Mirrors localeSchema (domain/locale.ts).
   targetLanguage: text('target_language').$type<Locale>().notNull().default('en'),
+  // Cursor, not a setting: the insight digest reports the whole UTC days from
+  // this one up to (not including) today, then moves to today's start. Begins
+  // at the row's creation, so a project's first digest covers its first days.
+  insightDigestSince: timestamp('insight_digest_since', { withTimezone: true }).defaultNow().notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [

@@ -255,8 +255,8 @@
         <div>
           <h2 class="text-sm font-medium text-text">Notifications</h2>
           <p class="mt-0.5 text-xs text-text-muted">
-            Leads from the inquiry page, jobs finishing, scheduled runs failing, and the plugin's run reports. In the app they appear
-            under the bell (the latest 30).
+            Leads from the inquiry page, jobs finishing, scheduled runs failing, the plugin's run reports, and what the daily cycle
+            learned. In the app they appear under the bell (the latest 30).
           </p>
         </div>
         <table class="text-sm">
@@ -272,6 +272,11 @@
               <td class="py-1 pr-6 text-text">Leads from the inquiry page</td>
               <td class="px-3 text-center"><input type="checkbox" aria-label="Leads in the app" bind:checked={formData.notifyLeadInApp} /></td>
               <td class="px-3 text-center"><input type="checkbox" aria-label="Leads by email" bind:checked={formData.notifyLeadEmail} /></td>
+            </tr>
+            <tr>
+              <td class="py-1 pr-6 text-text">What we learned (per project, when something changed)</td>
+              <td class="px-3 text-center"><input type="checkbox" aria-label="Learning reports in the app" bind:checked={formData.notifyInsightInApp} /></td>
+              <td class="px-3 text-center"><input type="checkbox" aria-label="Learning reports by email" bind:checked={formData.notifyInsightEmail} /></td>
             </tr>
             <tr>
               <td class="py-1 pr-6 text-text">Scheduled runs</td>

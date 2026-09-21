@@ -30,6 +30,8 @@ export const updateTenantSettingsSchema = z
     notifyCronEmail: z.boolean().optional(),
     notifyLeadInApp: z.boolean().optional(),
     notifyLeadEmail: z.boolean().optional(),
+    notifyInsightInApp: z.boolean().optional(),
+    notifyInsightEmail: z.boolean().optional(),
   })
   .strict()
 export type UpdateTenantSettingsPatch = z.infer<typeof updateTenantSettingsSchema>
@@ -49,6 +51,8 @@ export type TenantSettingsRow = {
   notifyCronEmail: boolean
   notifyLeadInApp: boolean
   notifyLeadEmail: boolean
+  notifyInsightInApp: boolean
+  notifyInsightEmail: boolean
 }
 
 const settingsCols = {
@@ -66,6 +70,8 @@ const settingsCols = {
   notifyCronEmail: tenants.notifyCronEmail,
   notifyLeadInApp: tenants.notifyLeadInApp,
   notifyLeadEmail: tenants.notifyLeadEmail,
+  notifyInsightInApp: tenants.notifyInsightInApp,
+  notifyInsightEmail: tenants.notifyInsightEmail,
 }
 
 export async function loadTenantSettings(
@@ -113,6 +119,8 @@ export async function updateTenantSettings(
     ...(patch.notifyCronEmail !== undefined ? { notifyCronEmail: patch.notifyCronEmail } : {}),
     ...(patch.notifyLeadInApp !== undefined ? { notifyLeadInApp: patch.notifyLeadInApp } : {}),
     ...(patch.notifyLeadEmail !== undefined ? { notifyLeadEmail: patch.notifyLeadEmail } : {}),
+    ...(patch.notifyInsightInApp !== undefined ? { notifyInsightInApp: patch.notifyInsightInApp } : {}),
+    ...(patch.notifyInsightEmail !== undefined ? { notifyInsightEmail: patch.notifyInsightEmail } : {}),
   }
 
   if (Object.keys(updateSet).length === 0) {

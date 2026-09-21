@@ -283,7 +283,7 @@ export async function notifyJobFinished(run: TenantRun, tenantId: TenantId, ctx:
     .where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, id)))
     .limit(1))
   if (!row) return err('NOT_FOUND', `Job ${id} not found`)
-  if (row.status !== 'succeeded' && row.status !== 'failed') return ok({ emailedTo: null })
+  if (row.status !== 'succeeded' && row.status !== 'failed') return ok({ recorded: false, emailedTo: null })
   return notify(run, tenantId, ctx, {
     category: categoryOfJob(row.startedBy),
     reference: `job:${id}`,
