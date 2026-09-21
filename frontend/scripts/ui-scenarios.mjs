@@ -924,6 +924,12 @@ const SCENARIOS = [
       // server, so its shots edit a toggle first.
       return [
         {
+          name: 'channels',
+          path: '/project-settings',
+          scrollTo: 'text=Outbound channels',
+          expect: 'Coming soon',
+        },
+        {
           name: 'follow-up',
           path: '/project-settings',
           // The page scrolls in its own pane; the click brings the help text into the shot.

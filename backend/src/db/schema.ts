@@ -617,9 +617,10 @@ export const projectSettings = pgTable('project_settings', {
   // rows ({}) parse to enabled:false, so only new opted-in projects sequence.
   followUpSequence: jsonb('follow_up_sequence').$type<FollowUpSequencePatch>().notNull().default({}),
   // Scoped to automated outbound (listReachable). Empty array pauses
-  // automated outbound; manual UI Send / Mark-sent bypass.
+  // automated outbound; manual UI Send / Mark-sent bypass. The default is email
+  // alone: it is the only channel the hosted agent delivers by itself.
   outboundChannels: text('outbound_channels').array().notNull()
-    .default(sql`'{"email","form","sns_twitter","sns_linkedin"}'`),
+    .default(sql`'{"email"}'`),
   // Further narrows ALLOWED_SEND_COUNTRIES for automated outbound; empty =
   // no project-level restriction. Send-time compliance gate is independent.
   targetCountries: text('target_countries').array().notNull().default(sql`'{}'`),

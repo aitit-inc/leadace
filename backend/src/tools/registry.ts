@@ -2074,7 +2074,7 @@ export function buildToolRegistry(): ToolDef[] {
       }).optional()
         .describe('Follow-up sequence for unanswered prospects. gapDays = relative waits in DAYS before each next touch (default [3,7,7]). Whole-object replace: omitting `enabled` sets it false, disabling follow-ups AND clearing in-progress sequences — pass enabled:true explicitly to keep them on while changing cadence. Turning it on also resumes prospects whose last send is within the sequence length.'),
       outboundChannels: z.array(z.enum(OUTBOUND_CHANNELS)).optional()
-        .describe('Channels the project is allowed to use for outbound. Default: email, form, sns_twitter, sns_linkedin — "platform" must be enabled explicitly. Empty array pauses automated outbound (manual per-draft send still works).'),
+        .describe('Channels the project is allowed to use for outbound. Default: email only — the browser-driven channels must be enabled explicitly. Empty array pauses automated outbound (manual per-draft send still works).'),
       targetCountries: z.array(z.enum(ALLOWED_SEND_COUNTRIES)).optional()
         .describe('Country codes that further narrow the compliance-level send allowlist. Empty array (default) = no project-level restriction; non-empty = explicit allowlist.'),
       targetLanguage: localeSchema.optional()

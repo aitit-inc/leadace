@@ -217,12 +217,12 @@ Save the values the user actually chose:
 ```
 update_project_settings
   projectId: "$0"
-  outboundChannels: ["email", ...]   # a NON-EMPTY subset; see guard below. Omit to keep the all-channels default
+  outboundChannels: ["email", ...]   # the confirmed channels, spelled out; see guard below
   targetCountries: ["US", ...]       # omit entirely unless the user is restricting delivery
   targetLanguage: "en" | "ja"        # the value confirmed with the user; always include it
 ```
 Guards:
-- `outboundChannels`: **never save `[]`** — an empty array pauses outbound entirely. If the user wants all channels, omit the field (the project already defaults to all). Only write a concrete non-empty subset when the user (or the `ENV_SUMMARY` capability default) narrows it.
+- `outboundChannels`: **never save `[]`** — an empty array pauses outbound entirely. A project starts on email alone, so always write the confirmed list in full, including when the user wants every channel.
 - `targetCountries`: omit the field unless the user explicitly restricts delivery. Never send `[]` or `null` — that is the default and writing it changes nothing meaningful while risking clobbering an existing restriction.
 
 #### 4-9. Scheduling and Response Definition
@@ -285,7 +285,7 @@ Write the approved setup in one pass. **Include a field only when it has a value
 ```
 update_project_settings
   projectId: "$0"
-  outboundChannels: ["email"]     # BROWSER_AUTOMATION: other → ["email","form"]; none/unsure → ["email"]; chrome → omit (all). Never []
+  outboundChannels: ["email"]     # BROWSER_AUTOMATION: chrome → ["email","form","sns_twitter","sns_linkedin"]; other → ["email","form"]; none/unsure → ["email"]. Never []
   targetLanguage: "ja"            # only for a Japanese audience; omit for the "en" default
   inquiryChatBrief: <brief>
   inquiryOneLiner: <one-liner>

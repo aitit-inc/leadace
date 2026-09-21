@@ -28,10 +28,10 @@
   };
   const CHANNEL_HINTS: Record<OutboundChannel, string> = {
     email: 'Most stable. Default channel.',
-    form: 'Browser-driven submission via claude-in-chrome. Less stable.',
-    sns_twitter: 'Browser-driven DM via claude-in-chrome. Less stable; rate-limited.',
-    sns_linkedin: 'Browser-driven DM via claude-in-chrome. Less stable; rate-limited.',
-    platform: 'In-platform proposals (crowdsourcing, matching sites) driven by a project playbook. Off by default.',
+    form: 'Submitting a form needs a browser Ace does not have yet.',
+    sns_twitter: 'Sending a DM needs a signed-in browser Ace does not have yet.',
+    sns_linkedin: 'Sending a DM needs a signed-in browser Ace does not have yet.',
+    platform: 'In-platform proposals (crowdsourcing, matching sites) need a browser Ace does not have yet.',
   };
   const COUNTRY_LABELS: Record<AllowedSendCountry, string> = {
     US: 'United States',
@@ -425,18 +425,33 @@
           <div class="mb-2 text-sm font-medium text-text">
             Outbound channels
           </div>
+          <!-- Ace delivers email by itself; every other channel needs a browser it does not
+               run. The Claude Code plugin still delivers them, so a channel already stored
+               stays on and editable. -->
           <div class="space-y-2">
             {#each OUTBOUND_CHANNELS as ch (ch)}
-              <label class="flex items-start gap-2 text-sm text-text">
+              {@const comingSoon = ch !== 'email'}
+              {@const locked = comingSoon && !s.outboundChannels.includes(ch)}
+              <label class="flex items-start gap-2 text-sm {comingSoon ? 'text-text-muted' : 'text-text'}">
                 <input
                   type="checkbox"
                   checked={s.outboundChannels.includes(ch)}
+                  disabled={locked}
                   onchange={(e) => toggleChannel(ch, (e.currentTarget as HTMLInputElement).checked)}
                   class="mt-0.5"
                 />
                 <span>
                   <span class="font-medium">{CHANNEL_LABELS[ch]}</span>
-                  <span class="block text-xs text-text-muted">{CHANNEL_HINTS[ch]}</span>
+                  {#if comingSoon}
+                    <span class="chip ml-1.5 bg-surface-2 align-middle text-text-secondary">
+                      Coming soon
+                    </span>
+                  {/if}
+                  <span class="block text-xs text-text-muted">
+                    {CHANNEL_HINTS[ch]}{#if comingSoon && !locked}{' '}Still on for this project — Ace will not
+                      send it; you deliver it from Drafts, or the Claude Code plugin does. Turning it
+                      off here is final until the channel ships.{/if}
+                  </span>
                 </span>
               </label>
             {/each}
