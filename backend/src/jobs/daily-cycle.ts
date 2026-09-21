@@ -4,7 +4,7 @@
 // Each stage is the same code a standalone job runs; this file only decides
 // the order and the counts.
 import { NonRetryableError } from 'cloudflare:workflows'
-import type { JobKind, JobParamsOf, JobResult } from '../domain/jobs'
+import type { JobKind, JobParamsOf, JobResult, StrategyPlanCompliance } from '../domain/jobs'
 import { shouldBuildFirst, type ReachableSnapshot } from '../domain/cycle-plan'
 import { sendCycleDigest } from '../services/digest'
 import { runLeverTick } from '../services/levers'
@@ -43,6 +43,8 @@ export async function runDailyCycle(ctx: StageCtx, params: JobParamsOf<'daily_cy
   const { tenantId, projectId } = ctx.job
   const stages: CycleDigest['stages'] = []
   const decisions: string[] = []
+  // The two discovery branches below exclude each other, so this is one pass.
+  let planCompliance: StrategyPlanCompliance[] = []
   const stage = async (kind: JobKind, summary: string) => {
     const n = stages.push({ kind, summary })
     await logStep(ctx, `stage:${n}`, [{ kind: 'stage', stage: kind, summary }])
@@ -83,6 +85,7 @@ export async function runDailyCycle(ctx: StageCtx, params: JobParamsOf<'daily_cy
     await decide(`list low (${reachable.deliverable} reachable${reachable.needsHands > 0 ? `, ${reachable.needsHands} more need a browser` : ''}) → discovery before outbound`)
     const found = await discoverStage(ctx, { kind: 'discover', count: params.outboundCount, minCandidatesPerSearch: CYCLE_MIN_CANDIDATES_PER_SEARCH }, 'discover:first')
     await stage('discover', found.summary)
+    planCompliance = found.planCompliance
     built = true
     reachable = await reachableSnapshot(ctx, 'reachable:after-build')
   }
@@ -112,6 +115,7 @@ export async function runDailyCycle(ctx: StageCtx, params: JobParamsOf<'daily_cy
       await decide(`remaining list ${reachable.deliverable - processed} < ${3 * params.outboundCount} → discovery after outbound`)
       const found = await discoverStage(ctx, { kind: 'discover', count: params.outboundCount, minCandidatesPerSearch: CYCLE_MIN_CANDIDATES_PER_SEARCH }, 'discover:after')
       await stage('discover', found.summary)
+      planCompliance = found.planCompliance
     }
   }
 
@@ -134,5 +138,5 @@ export async function runDailyCycle(ctx: StageCtx, params: JobParamsOf<'daily_cy
     return true
   })
 
-  return { kind: 'daily_cycle', summary: stages.map((s) => `${s.kind}: ${s.summary}`).join(' | ') }
+  return { kind: 'daily_cycle', summary: stages.map((s) => `${s.kind}: ${s.summary}`).join(' | '), planCompliance }
 }

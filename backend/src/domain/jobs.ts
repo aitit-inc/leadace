@@ -102,16 +102,32 @@ export type JobProgress = {
   total: number | null
 }
 
+// One row per planned strategy, so a strategy that was asked for is never
+// absent. Read against the day's registrations it tells "search returned
+// nothing" apart from "enrich dropped them"; registrations alone collapse both
+// to zero.
+//   asked       what the search was told to find (the bandit's allocation
+//               lifted to the cycle minimum; the raw allocation stays in
+//               lever_decisions)
+//   returned    the raw extraction yield, before any dedup
+//   fresh       what survived dedup and so reached enrich — the only counter
+//               comparable with registrations. A domain two strategies both
+//               surfaced is credited to whichever ran first, so a low fresh
+//               against a high returned can mean "another strategy got it"
+//               as well as "already in the pool"
+//   unavailable passes that shed upstream; their zeros mean "never ran"
+export type StrategyPlanCompliance = { slug: string; asked: number; returned: number; fresh: number; unavailable: number }
+
 // Per-kind outcome. `summary` is the one line a person (or the chat agent)
 // reads; the structured fields let the UI and the daily cycle branch.
 export type JobResult =
-  | { kind: 'discover'; summary: string; found: number; fresh: number; registered: number; skipped: number; planCompliance: Array<{ slug: string; planned: number; found: number }> }
+  | { kind: 'discover'; summary: string; found: number; fresh: number; registered: number; skipped: number; planCompliance: StrategyPlanCompliance[] }
   | { kind: 'enrich'; summary: string; registered: number; skipped: number; withEmail: number }
   | { kind: 'draft'; summary: string; drafted: number; sent: number; skipped: number; failed: number; needsHands: number; variantIds: string[] }
   | { kind: 'send'; summary: string; sent: number; failed: number }
   | { kind: 'evaluate'; summary: string; report: string; wrote: string[] }
   | { kind: 'journal'; summary: string; saved: boolean }
-  | { kind: 'daily_cycle'; summary: string }
+  | { kind: 'daily_cycle'; summary: string; planCompliance: StrategyPlanCompliance[] }
 
 type ProspectOutcome =
   | { outcome: 'registered'; prospectId: number }

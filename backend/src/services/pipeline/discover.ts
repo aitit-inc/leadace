@@ -14,6 +14,7 @@ import {
   type DiscoverCandidate,
   type JobParamsOf,
   type JobResult,
+  type StrategyPlanCompliance,
 } from '../../domain/jobs'
 import { ok, err, type ServiceResult } from '../result'
 import { callLlmFollowUpJson, callLlmGroundedText, LlmError, type Citation, type GroundedText } from '../llm'
@@ -151,6 +152,7 @@ ${args.priorNotes ?? '(none — create the document)'}
 - matchPassages: the numbers of the cited passages that state that Prerequisite of this organization itself; a passage that only mentions what the Prerequisite is about does not state that this organization meets it. Leave empty when no passage states it.
 - signals: text "YYYY-MM-DD: what happened" with every name exactly as the notes write it, and passages, the numbers of the cited passages that state it; drop a signal no cited passage states; leave empty when none.
 - overview and matchReason carry no dated events (funding, hiring, launches, partnerships, press) — those go only in signals, which a later step checks against their pages.
+- websiteUrl is the organization's own site. A profile, repository or listing page identifies the platform hosting it, not the organization; drop such a candidate unless the strategy targets that platform's own company.
 - Drop duplicates by domain. Keep only candidates with an official URL and an overview.
 
 ## search_notes document
@@ -196,6 +198,15 @@ export function shapeCandidates(
       signals: sourcedSignals(signals, citations),
     }))
     .slice(0, Math.ceil(plan.count * 1.5))
+}
+
+function countByStrategy(candidates: DiscoverCandidate[]): Map<string, number> {
+  const n = new Map<string, number>()
+  for (const c of candidates) {
+    if (c.discoveryStrategy === undefined) continue
+    n.set(c.discoveryStrategy, (n.get(c.discoveryStrategy) ?? 0) + 1)
+  }
+  return n
 }
 
 // Documents stay out of step results (a result is capped at 1 MiB, a document
@@ -302,7 +313,7 @@ export async function runDiscover(
   // Extraction stays serial — each pass rewrites the search_notes the next one
   // merges into. Until one has, the stored notes are the prior ones.
   const found: DiscoverCandidate[] = []
-  const planCompliance: Array<{ slug: string; planned: number; found: number }> = []
+  const extracted: string[] = []
   let carried: { notes: string } | null = null
   let extractionShed: string | null = null
   for (const [i, { entry, search }] of searches.entries()) {
@@ -326,14 +337,14 @@ export async function runDiscover(
       unavailable.push(entry.slug)
       continue
     }
-    planCompliance.push({ slug: entry.slug, planned: entry.planned, found: pass.candidates.length })
+    extracted.push(entry.slug)
     found.push(...pass.candidates)
     carried = { notes: pass.notes }
   }
 
-  // planCompliance carries one row per extraction that completed, so an empty
+  // `extracted` carries one slug per extraction that completed, so an empty
   // one means the stage produced nothing.
-  if (planCompliance.length === 0 && extractionShed !== null) {
+  if (extracted.length === 0 && extractionShed !== null) {
     return err('BAD_GATEWAY', 'Extraction step failed upstream', extractionShed)
   }
 
@@ -362,6 +373,17 @@ export async function runDiscover(
     }
     return ok(kept)
   })
+
+  const shedSlugs = new Set(unavailable)
+  const returnedBySlug = countByStrategy(found)
+  const freshBySlug = countByStrategy(fresh)
+  const planCompliance: StrategyPlanCompliance[] = plan.map((entry) => ({
+    slug: entry.slug,
+    asked: entry.count,
+    returned: returnedBySlug.get(entry.slug) ?? 0,
+    fresh: freshBySlug.get(entry.slug) ?? 0,
+    unavailable: shedSlugs.has(entry.slug) ? 1 : 0,
+  }))
 
   const ran = plan.length - unavailable.length
   const note = unavailable.length === 0 ? '' : ` Unavailable upstream: ${unavailable.join(', ')}.`
