@@ -62,6 +62,7 @@
     const loaded = data.projectSettings;
     if (!loaded) {
       projectSettings = null;
+      mailboxesDirty = false;
       followUpLoaded = null;
       footerText = '';
       footerLoadedOverride = null;
@@ -83,6 +84,10 @@
   }
   $effect(hydrate);
 
+  let mailboxes = $state<ReturnType<typeof ProjectMailboxes>>();
+  let mailboxesDirty = $state(false);
+  let mailboxesInvalid = $state(false);
+
   let savingSettings = $state(false);
   let settingsError = $state<string | null>(null);
   let message = $state('');
@@ -98,6 +103,10 @@
 
   async function saveProjectSettings() {
     if (!projectSettings || !data.projectId) return;
+    if (mailboxesInvalid) {
+      settingsError = 'Fix the highlighted fields above before saving.';
+      return;
+    }
     savingSettings = true;
     settingsError = null;
     try {
@@ -120,6 +129,8 @@
         fetch,
         token,
       );
+      // Last, so a rejected settings body leaves the mailbox list untouched.
+      await mailboxes?.save();
       await invalidate('app:project-settings');
     } catch (e) {
       settingsError = `Error: ${e instanceof Error ? e.message : 'Unknown error'}`;
@@ -221,6 +232,11 @@
     footerText = projectSettings?.footerDefault ?? '';
   }
 
+  function discard() {
+    hydrate();
+    mailboxes?.reset();
+  }
+
   async function handleDelete() {
     const pid = activeProjectId;
     if (!pid) return;
@@ -287,11 +303,14 @@
         </div>
 
         <ProjectMailboxes
+          bind:this={mailboxes}
+          bind:dirty={mailboxesDirty}
+          bind:invalid={mailboxesInvalid}
           projectId={s.projectId}
           identities={data.sendingIdentities}
           sendingIdentityIds={s.sendingIdentityIds}
           {token}
-          onChanged={() => invalidate('app:project-settings')}
+          saving={savingSettings}
         />
         {#if sendingIdentitiesError}
           <p class="text-xs text-text-muted">Couldn't load your mailboxes. Reload to edit the list.</p>
@@ -576,11 +595,11 @@
   </section>
 
   <SaveBar
-    dirty={settingsDirty}
+    dirty={settingsDirty || mailboxesDirty}
     saving={savingSettings}
     error={settingsError}
     onsave={saveProjectSettings}
-    ondiscard={hydrate}
+    ondiscard={discard}
   />
 </div>
 

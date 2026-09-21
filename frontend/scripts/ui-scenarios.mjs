@@ -912,6 +912,14 @@ const SCENARIOS = [
     stack: 'self-host',
     setup: async (ctx) => {
       await seedProject(ctx, { name: 'Northwind outbound', settings: { outboundMode: 'send' } });
+      // A connected mailbox, so Sending mailboxes has a row to offer.
+      // chk_sending_identities_secret_owner is why it has to carry secret bytes.
+      psql(
+        `INSERT INTO sending_identities (tenant_id, identity_id, user_id, provider, from_email, scope, secret, sign_in_account, granted_at, updated_at)
+         VALUES (${q(ctx.persona.tenantId)}, 'ui-settings-identity', ${q(ctx.persona.userId)}, 'gmail_oauth', 'sam@northwind-labs.example',
+                 'https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly',
+                 decode('00', 'hex'), true, NOW(), NOW());`,
+      );
       // The unsaved-changes bar appears only once a field differs from the
       // server, so its shots edit a toggle first.
       return [
@@ -926,6 +934,12 @@ const SCENARIOS = [
           name: 'unsaved',
           path: '/project-settings',
           click: 'label[for="unsubscribe-enabled"]',
+          expect: 'Unsaved changes',
+        },
+        {
+          name: 'mailbox-unsaved',
+          path: '/project-settings',
+          click: 'li:has-text("sam@northwind-labs.example") button:text-is("Add")',
           expect: 'Unsaved changes',
         },
         {

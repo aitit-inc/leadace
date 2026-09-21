@@ -8,23 +8,44 @@
     identities: SendingIdentity[];
     sendingIdentityIds: string[];
     token: string | undefined;
-    onChanged: () => void | Promise<void>;
+    saving: boolean;
+    dirty: boolean;
+    invalid: boolean;
   };
-  let { projectId, identities, sendingIdentityIds, token, onChanged }: Props = $props();
+  let {
+    projectId,
+    identities,
+    sendingIdentityIds,
+    token,
+    saving,
+    dirty = $bindable(false),
+    invalid = $bindable(false),
+  }: Props = $props();
 
   // Priority order being edited, plus each mailbox's daily-cap input. Re-seeded
   // only when the stored values change, so an unrelated reload keeps edits.
   let pool = $state<string[]>([]);
   let capInputs = $state<Record<string, string>>({});
   let seededKey = $state('');
+  // What the server holds: the props until a write lands, then what that write
+  // put there. A save that fails partway must not leave Discard restoring a
+  // list the server no longer has.
+  let serverPool = $state<string[]>([]);
+  let serverCaps = $state<Record<string, number | null>>({});
+
+  export function reset() {
+    pool = [...serverPool];
+    capInputs = Object.fromEntries(
+      Object.entries(serverCaps).map(([id, cap]) => [id, cap === null ? '' : String(cap)]),
+    );
+  }
   $effect(() => {
     const key = JSON.stringify([projectId, sendingIdentityIds, identities.map((i) => [i.identityId, i.dailyCapOverride])]);
     if (key === seededKey) return;
     seededKey = key;
-    pool = [...sendingIdentityIds];
-    capInputs = Object.fromEntries(
-      identities.map((i) => [i.identityId, i.dailyCapOverride === null ? '' : String(i.dailyCapOverride)]),
-    );
+    serverPool = [...sendingIdentityIds];
+    serverCaps = Object.fromEntries(identities.map((i) => [i.identityId, i.dailyCapOverride]));
+    reset();
   });
 
   let byId = $derived(new Map(identities.map((i) => [i.identityId, i])));
@@ -34,8 +55,6 @@
   let signInGmail = $derived(identities.find((i) => i.signInAccount) ?? null);
 
   let dragIndex = $state<number | null>(null);
-  let saving = $state(false);
-  let message = $state('');
 
   function move(from: number, to: number) {
     if (to < 0 || to >= pool.length) return;
@@ -59,28 +78,36 @@
   function capChanges(): Array<{ identityId: string; cap: number | null }> {
     return listed.flatMap((i) => {
       const cap = parsedCap(capInputs[i.identityId] ?? '');
-      return cap === 'invalid' || cap === i.dailyCapOverride ? [] : [{ identityId: i.identityId, cap }];
+      return cap === 'invalid' || cap === (serverCaps[i.identityId] ?? null)
+        ? []
+        : [{ identityId: i.identityId, cap }];
     });
   }
 
-  let invalidCap = $derived(listed.some((i) => parsedCap(capInputs[i.identityId] ?? '') === 'invalid'));
+  $effect(() => {
+    invalid = listed.some((i) => parsedCap(capInputs[i.identityId] ?? '') === 'invalid');
+  });
+
+  // A cap the field can't parse counts as an edit too, so the save bar stays up
+  // instead of hiding what the user typed.
+  $effect(() => {
+    dirty =
+      pool.length !== serverPool.length ||
+      pool.some((id, idx) => id !== serverPool[idx]) ||
+      listed.some((i) => parsedCap(capInputs[i.identityId] ?? '') === 'invalid') ||
+      capChanges().length > 0;
+  });
 
   // The list and each cap are separate resources, so a failure midway leaves
-  // the earlier writes in place; the reload below shows what was saved.
-  async function save() {
-    saving = true;
-    message = '';
-    try {
-      await replaceProjectMailboxes(projectId, pool, fetch, token);
-      for (const { identityId, cap } of capChanges()) {
-        await updateIdentityWarmup(identityId, { dailyCapOverride: cap }, fetch, token);
-      }
-      message = 'Saved.';
-    } catch (e) {
-      message = `Error: ${e instanceof Error ? e.message : 'Unknown error'}`;
+  // the earlier writes in place — each one moves the server view as it lands.
+  export async function save() {
+    if (!dirty) return;
+    await replaceProjectMailboxes(projectId, pool, fetch, token);
+    serverPool = [...pool];
+    for (const { identityId, cap } of capChanges()) {
+      await updateIdentityWarmup(identityId, { dailyCapOverride: cap }, fetch, token);
+      serverCaps = { ...serverCaps, [identityId]: cap };
     }
-    await onChanged();
-    saving = false;
   }
 
   const kindLabel = (i: SendingIdentity) =>
@@ -195,19 +222,9 @@
     </ul>
   {/if}
 
-  <div class="flex items-center gap-3">
-    <button
-      type="button"
-      onclick={save}
-      disabled={saving || invalidCap}
-      class="btn btn-secondary"
-    >
-      {saving ? 'Saving…' : 'Save mailboxes'}
-    </button>
-    {#if invalidCap}
-      <span class="text-xs text-text-muted">A daily cap is a whole number from 0 to 100,000; blank follows the warmup ramp.</span>
-    {:else if message}
-      <span class="text-xs text-text-secondary">{message}</span>
-    {/if}
-  </div>
+  {#if invalid}
+    <p class="text-xs text-danger">
+      A daily cap is a whole number from 0 to 100,000; blank follows the warmup ramp.
+    </p>
+  {/if}
 </div>
