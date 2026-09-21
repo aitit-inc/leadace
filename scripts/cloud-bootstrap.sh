@@ -70,7 +70,11 @@ if supa status >/dev/null 2>&1; then
   say "Supabase already running"
 else
   say "Starting Supabase (a cold image cache makes this slow)"
-  supa start || die "supabase start failed"
+  # A cold boot can outlast the CLI's health-check window. A failed start stops
+  # every container again, so the second one starts from a clean slate.
+  supa start \
+    || { say "supabase start failed — retrying once"; supa start; } \
+    || die "supabase start failed twice"
 fi
 
 STATUS="$(supa status -o env 2>/dev/null)"

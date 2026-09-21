@@ -25,7 +25,7 @@
   import SenderIdentityCard, { type SenderIdentityProposal } from '$lib/components/chat/SenderIdentityCard.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import Logo from '$lib/components/Logo.svelte';
-  import type { ChatAttachment, ChatEvent, ChatMessage, PendingCall } from '$lib/types/chat';
+  import type { ChatAttachment, ChatContent, ChatEvent, ChatMessage, PendingCall } from '$lib/types/chat';
   import { TERMINAL_JOB_STATUSES, type Job, type JobDetail } from '$lib/types/jobs';
   import type { PageProps } from './$types';
 
@@ -36,6 +36,11 @@
   // The persisted transcript comes from the loader; the pieces below come from
   // the thread's live feed and are folded back in by the next invalidate.
   let liveMessages = $state<ChatMessage[]>([]);
+  // The message just handed to the server: creating the thread and storing it
+  // are two round trips, and until they return the transcript has nothing.
+  let outgoing = $state<Extract<ChatContent, { role: 'user' }> | null>(null);
+  // The stored copy takes the echo's place without replaying its entrance.
+  let echoed = $state<number | null>(null);
   let streamingText = $state('');
   let liveSteps = $state(0);
   // The server's word, so every tab shows the same whoever set the turn off.
@@ -66,7 +71,7 @@
   let shownView: string | undefined;
   let viewGen = 0;
   // The opening message this view already sent, so an invalidate doesn't repeat it.
-  let askSent: string | undefined;
+  let askSent = $state<string | undefined>(undefined);
 
   $effect(() => {
     // Reset per-view state on a view switch only. Every invalidate hands
@@ -77,6 +82,7 @@
     viewGen++;
     askSent = undefined;
     liveMessages = [];
+    echoed = null;
     streamingText = '';
     liveSteps = 0;
     attachments = [];
@@ -89,9 +95,14 @@
     for (const j of data.jobs) if (!TERMINAL_JOB_STATUSES.includes(j.status)) void watchJob(j.id);
   });
 
+  // Only an in-app navigation carries it, so no link can start a turn. Derived,
+  // not local to the effect, so the empty screen is never up on the first paint.
+  let ask = $derived(data.thread ? undefined : page.state.ask);
+  // Until the effect below has handed it over; after that `outgoing` carries it,
+  // and a hand-over that failed lands back on the empty screen with the error.
+  let handingOver = $derived(ask !== undefined && ask !== askSent);
+
   $effect(() => {
-    // Only an in-app navigation carries it, so no link can start a turn.
-    const ask = data.thread ? undefined : page.state.ask;
     if (!ask || ask === askSent) return;
     askSent = ask;
     // untrack: the handover depends on the state alone, not on what send() reads.
@@ -113,6 +124,7 @@
 
   $effect(() => {
     void messages.length;
+    void outgoing;
     void streamingText;
     bottom?.scrollIntoView({ block: 'end' });
   });
@@ -139,6 +151,8 @@
     activity.length === 0 &&
       liveThreadJobs.length === 0 &&
       messages.length === 0 &&
+      !outgoing &&
+      !handingOver &&
       !streamingText &&
       !running &&
       !pending &&
@@ -372,6 +386,10 @@
     const trimmed = text.trim();
     if ((!trimmed && attachments.length === 0) || sending || stopping || uploading.length + attaching > 0) return;
     const attachmentIds = attachments.map((a) => a.id);
+    outgoing = {
+      role: 'user',
+      parts: [...attachments.map((file) => ({ file })), ...(trimmed ? [{ text: trimmed }] : [])],
+    };
     input = '';
     attachments = [];
     dictating = false;
@@ -382,13 +400,17 @@
     try {
       id = await ensureThread();
       const message = await sendChatMessage(id, trimmed, attachmentIds, fetch, token);
-      if (id === threadId) liveMessages = [...liveMessages, message];
+      if (id === threadId) {
+        echoed = message.id;
+        liveMessages = [...liveMessages, message];
+      }
     } catch (e) {
       if (id !== threadId) return;
       pending = data.thread?.pendingCall ?? null;
       error = e instanceof ApiError ? e.message : 'Something went wrong. Please try again.';
     } finally {
       sending = false;
+      outgoing = null;
     }
   }
 
@@ -552,24 +574,24 @@
   </form>
 {/snippet}
 
+<!-- h-full, not a viewport calculation: the banners above <main> sit in the same
+     column, and what they take is what the chat gives up. -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
-  class="flex h-[calc(100vh-7rem)] gap-6"
+  class="flex h-full flex-col gap-3 md:flex-row md:gap-6"
   ondragover={dragFilesOver}
   ondrop={dropFiles}
 >
-  <div class="hidden md:block">
-    <ThreadList
-      threads={data.threads}
-      selectedId={data.thread?.id ?? null}
-      onselect={(id) => goto(`/chat?t=${id}`, { keepFocus: true, noScroll: true })}
-      onnew={() => goto('/chat', { keepFocus: true, noScroll: true })}
-      ondelete={(id) => (deleting = id)}
-    />
-  </div>
+  <ThreadList
+    threads={data.threads}
+    selectedId={data.thread?.id ?? null}
+    onselect={(id) => goto(`/chat?t=${id}`, { keepFocus: true, noScroll: true })}
+    onnew={() => goto('/chat', { keepFocus: true, noScroll: true })}
+    ondelete={(id) => (deleting = id)}
+  />
 
   <section
-    class="flex min-w-0 flex-1 flex-col {fresh ? 'items-center justify-center overflow-y-auto px-2 py-8' : ''}"
+    class="flex min-h-0 min-w-0 flex-1 flex-col {fresh ? 'items-center justify-center-safe overflow-y-auto px-2 py-8' : ''}"
   >
     {#if fresh}
       <div class="text-center">
@@ -598,7 +620,7 @@
             {/each}
           {/if}
           {#each messages as m (m.id)}
-            <div class="animate-rise">
+            <div class={m.id === echoed ? undefined : 'animate-rise'}>
               {#if m.content.role === 'job'}
                 {#if jobs[m.content.jobId]}
                   <JobCard job={jobs[m.content.jobId]!} ondetails={loadDetails} />
@@ -610,6 +632,11 @@
               {/if}
             </div>
           {/each}
+          {#if outgoing}
+            <div class="animate-rise">
+              <MessageItem content={outgoing} onopenfile={openFile} />
+            </div>
+          {/if}
           {#each liveThreadJobs as job (job.id)}
             <JobCard {job} oncancel={cancel} ondetails={loadDetails} />
           {/each}
