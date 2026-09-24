@@ -86,6 +86,8 @@ const MODEL_PRICES: Record<string, { input: number; cached: number; output: numb
   'gemini-3.8-flash': { input: 0.75, cached: 0.075, output: 3.75 },
   'gpt-5.6-luna': { input: 0.2, cached: 0.02, output: 1.2 },
   'gpt-5.6-terra': { input: 2, cached: 0.2, output: 12 },
+  'gpt-6-luna': { input: 0.1, cached: 0.01, output: 0.5 },
+  'gpt-6-sol': { input: 2, cached: 0.2, output: 10 },
 }
 const SEARCH_PER_CALL = 0.01
 const GROUNDING_PER_QUERY = 0.014

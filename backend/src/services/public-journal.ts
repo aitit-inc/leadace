@@ -9,7 +9,7 @@ import { ok, err, type ServiceResult } from './result'
 // checked deterministically on the pass's output, so a missed one or an
 // injected one fails the save instead of going public. Upstream failure also
 // rejects the save — the previous entry stays published.
-const REDACT_MODEL = 'gpt-5.6-terra'
+const REDACT_MODEL = 'gpt-6-sol'
 // Reasoning tokens count against this budget; the entry itself is ~100 words.
 const REDACT_MAX_OUTPUT_TOKENS = 4000
 

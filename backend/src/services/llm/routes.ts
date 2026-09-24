@@ -7,6 +7,7 @@ export type FollowUpJsonOp = 'discover.extract' | 'strategy-draft.competitors.ex
 
 // Search skips flex: its bill is mostly per call, which flex does not halve,
 // and flex ran past 120 s where standard answered in about 65 s (2026-09-19).
+// GPT-6 Luna search took 69–224 s on the eval strategies (2026-09-24).
 // Extraction picks from what the search found: on the same search, Luna
 // chose the same organizations as Terra across 13 eval passes at a tenth of
 // the cost (2026-09-19). Production inputs of up to 136k tokens ran past
@@ -14,25 +15,25 @@ export type FollowUpJsonOp = 'discover.extract' | 'strategy-draft.competitors.ex
 // writes at half standard's speed, so 14 of 20 flex attempts ran past 60 s
 // and were redone on standard (2026-09-19).
 export const OPENAI_ROUTES: Record<JsonOp | PagesJsonOp | GroundedTextOp | FollowUpJsonOp | 'chat', OpenAIRoute> = {
-  'discover.search': { model: 'gpt-5.6-luna', timeoutMs: 180_000, flexTimeoutMs: null, maxOutputTokens: 24_576 },
-  'discover.extract': { model: 'gpt-5.6-luna', timeoutMs: 180_000, flexTimeoutMs: null, maxOutputTokens: 49_152 },
-  draft: { model: 'gpt-5.6-luna', timeoutMs: 120_000, flexTimeoutMs: 60_000, maxOutputTokens: 8_192 },
+  'discover.search': { model: 'gpt-6-luna', timeoutMs: 300_000, flexTimeoutMs: null, maxOutputTokens: 24_576 },
+  'discover.extract': { model: 'gpt-6-luna', timeoutMs: 180_000, flexTimeoutMs: null, maxOutputTokens: 49_152 },
+  draft: { model: 'gpt-6-luna', timeoutMs: 120_000, flexTimeoutMs: 60_000, maxOutputTokens: 8_192 },
   // Flex answered in 85–104 s with the strategy rewritten (2026-09-19).
-  evaluate: { model: 'gpt-5.6-luna', timeoutMs: 240_000, flexTimeoutMs: 180_000, maxOutputTokens: 32_768 },
-  journal: { model: 'gpt-5.6-luna', timeoutMs: 120_000, flexTimeoutMs: 60_000, maxOutputTokens: 4_096 },
-  'reply-classify': { model: 'gpt-5.6-luna', timeoutMs: 60_000, flexTimeoutMs: null, maxOutputTokens: 2_048 },
-  'reply-domain-match': { model: 'gpt-5.6-luna', timeoutMs: 60_000, flexTimeoutMs: null, maxOutputTokens: 2_048 },
-  'enrich.site': { model: 'gpt-5.6-luna', timeoutMs: 90_000, flexTimeoutMs: 60_000, maxOutputTokens: 8_192 },
-  'enrich.pages': { model: 'gpt-5.6-luna', timeoutMs: 90_000, flexTimeoutMs: 60_000, maxOutputTokens: 8_192 },
-  'enrich.claims': { model: 'gpt-5.6-luna', timeoutMs: 90_000, flexTimeoutMs: 60_000, maxOutputTokens: 8_192 },
+  evaluate: { model: 'gpt-6-luna', timeoutMs: 240_000, flexTimeoutMs: 180_000, maxOutputTokens: 32_768 },
+  journal: { model: 'gpt-6-luna', timeoutMs: 120_000, flexTimeoutMs: 60_000, maxOutputTokens: 4_096 },
+  'reply-classify': { model: 'gpt-6-luna', timeoutMs: 60_000, flexTimeoutMs: null, maxOutputTokens: 2_048 },
+  'reply-domain-match': { model: 'gpt-6-luna', timeoutMs: 60_000, flexTimeoutMs: null, maxOutputTokens: 2_048 },
+  'enrich.site': { model: 'gpt-6-luna', timeoutMs: 90_000, flexTimeoutMs: 60_000, maxOutputTokens: 8_192 },
+  'enrich.pages': { model: 'gpt-6-luna', timeoutMs: 90_000, flexTimeoutMs: 60_000, maxOutputTokens: 8_192 },
+  'enrich.claims': { model: 'gpt-6-luna', timeoutMs: 90_000, flexTimeoutMs: 60_000, maxOutputTokens: 8_192 },
   // Also read inside draft's one-shot send step (10 min), before composing.
-  'enrich.events': { model: 'gpt-5.6-luna', timeoutMs: 60_000, flexTimeoutMs: 30_000, maxOutputTokens: 8_192 },
-  'enrich.events.pages': { model: 'gpt-5.6-luna', timeoutMs: 60_000, flexTimeoutMs: 30_000, maxOutputTokens: 8_192 },
+  'enrich.events': { model: 'gpt-6-luna', timeoutMs: 60_000, flexTimeoutMs: 30_000, maxOutputTokens: 8_192 },
+  'enrich.events.pages': { model: 'gpt-6-luna', timeoutMs: 60_000, flexTimeoutMs: 30_000, maxOutputTokens: 8_192 },
   // A person waits on onboarding in the chat.
-  'strategy-draft.site': { model: 'gpt-5.6-luna', timeoutMs: 60_000, flexTimeoutMs: null, maxOutputTokens: 4_096 },
+  'strategy-draft.site': { model: 'gpt-6-luna', timeoutMs: 60_000, flexTimeoutMs: null, maxOutputTokens: 4_096 },
   // Runs once per project and every later stage builds on what it writes.
-  'strategy-draft': { model: 'gpt-5.6-terra', timeoutMs: 240_000, flexTimeoutMs: null, maxOutputTokens: 32_768 },
-  'strategy-draft.competitors': { model: 'gpt-5.6-luna', timeoutMs: 120_000, flexTimeoutMs: null, maxOutputTokens: 8_192 },
-  'strategy-draft.competitors.extract': { model: 'gpt-5.6-luna', timeoutMs: 60_000, flexTimeoutMs: null, maxOutputTokens: 4_096 },
-  chat: { model: 'gpt-5.6-terra', timeoutMs: 120_000, flexTimeoutMs: null, maxOutputTokens: 16_384 },
+  'strategy-draft': { model: 'gpt-6-sol', timeoutMs: 240_000, flexTimeoutMs: null, maxOutputTokens: 32_768 },
+  'strategy-draft.competitors': { model: 'gpt-6-luna', timeoutMs: 120_000, flexTimeoutMs: null, maxOutputTokens: 8_192 },
+  'strategy-draft.competitors.extract': { model: 'gpt-6-luna', timeoutMs: 60_000, flexTimeoutMs: null, maxOutputTokens: 4_096 },
+  chat: { model: 'gpt-6-sol', timeoutMs: 120_000, flexTimeoutMs: null, maxOutputTokens: 16_384 },
 }
