@@ -6,6 +6,7 @@ import { z } from 'zod'
 import type { Db } from '../../db/connection'
 import type { ProjectId, TenantId } from '../../domain/ids'
 import { discoverCandidateSchema, isRecentSignal, signalWindowStart, type DiscoverCandidate, type JobLogEntry } from '../../domain/jobs'
+import type { OutboundChannel } from '../../domain/outbound-channel'
 import { withRecentSignals } from '../../domain/site-read'
 import { utcDateKey } from '../../domain/time'
 import { ok, err, type ServiceResult } from '../result'
@@ -13,6 +14,7 @@ import { callLlmPagesJson, LlmError } from '../llm'
 import { batchRegister, type BatchInput } from '../prospect-import'
 import { discoveryPausedReason, getRemainingProspectQuota } from '../plan-limits'
 import { getActiveStrategySlugs, listDiscoveryStrategiesById } from '../discovery-strategies'
+import { loadProjectOutboundAllowlist } from '../project-settings'
 import { stampEmailDeliverability } from '../dns-check'
 import { kickAutoTopUp } from '../credits'
 import { apexDomainOf, editionOf, loadDoc, loadMasterDoc, noProgress, type Checkpoint, type HostedEnv, type ProgressFn } from './context'
@@ -52,7 +54,7 @@ const eventsReadSchema = z.object({
   pagesToRead: z.array(z.string()),
 })
 
-type EnrichSkip = 'site_unreadable' | 'read_failed' | 'prereq_uncited' | 'prereq_unverified'
+type EnrichSkip = 'site_unreadable' | 'read_failed' | 'prereq_uncited' | 'prereq_unverified' | 'channel_not_enabled'
 
 type Enriched = {
   candidate: DiscoverCandidate
@@ -122,6 +124,25 @@ export function mergeContactForm(a: ReadForm | null, b: ReadForm | null): ReadFo
   if (a === null || b === null) return a ?? b
   if (a.url === b.url) return { ...a, noSolicitation: a.noSolicitation || b.noSolicitation }
   return a.noSolicitation && !b.noSolicitation ? b : a
+}
+
+type ChannelState = 'usable' | 'refused' | null
+
+// With no enabled channel a refusal is still registered: it stops discover
+// reading the site again.
+export function contactDecision(
+  found: { email: ChannelState; form: ChannelState; x: boolean; linkedin: boolean },
+  channels: readonly OutboundChannel[],
+): 'reachable' | 'refusal' | 'channel_not_enabled' | 'none' {
+  const on = new Set(channels)
+  if (
+    (found.email === 'usable' && on.has('email')) ||
+    (found.form === 'usable' && on.has('form')) ||
+    (found.x && on.has('sns_twitter')) ||
+    (found.linkedin && on.has('sns_linkedin'))
+  ) return 'reachable'
+  if (found.email === 'refused' || found.form === 'refused') return 'refusal'
+  return found.email !== null || found.form !== null || found.x || found.linkedin ? 'channel_not_enabled' : 'none'
 }
 
 export function newestFirst(signals: string[]): string[] {
@@ -216,7 +237,7 @@ async function confirmClaims(env: HostedEnv, candidate: DiscoverCandidate, now: 
 export async function enrichCandidate(
   env: HostedEnv,
   candidate: DiscoverCandidate,
-  ctx: { procedure: string; offer: string; approaches: string[] },
+  ctx: { procedure: string; offer: string; approaches: string[]; channels: readonly OutboundChannel[] },
 ): Promise<Enriched> {
   const empty: Enriched = {
     candidate,
@@ -293,21 +314,30 @@ export async function enrichCandidate(
     ...(read.snsAccounts.linkedin ? { linkedin: read.snsAccounts.linkedin } : {}),
   }
   const snsAccounts = Object.keys(sns).length > 0 ? sns : null
-  // Without a usable channel nothing is ever drafted, so no paid confirmation.
-  const usable = emailUsable || (form !== null && !formNoSolicitation) || snsAccounts !== null
-  const claims = usable ? await confirmClaims(env, candidate, now) : null
+  const decision = contactDecision({
+    email: evidenced === undefined ? null : emailUsable ? 'usable' : 'refused',
+    form: form === null ? null : formNoSolicitation ? 'refused' : 'usable',
+    x: sns.x !== undefined,
+    linkedin: sns.linkedin !== undefined,
+  }, ctx.channels)
+  if (decision === 'channel_not_enabled') return { ...empty, skip: 'channel_not_enabled' }
+  // A refusal is never drafted: no paid confirmation, so only refused channels are kept.
+  const reachable = decision === 'reachable'
+  const claims = reachable ? await confirmClaims(env, candidate, now) : null
   if (claims !== null && !claims.qualifies) return { ...empty, skip: 'prereq_unverified' }
   const signals = claims === null ? [] : newestFirst([...datedEvents(read.events, retrieved, now), ...claims.signals])
+  const keptEmail = reachable || emailNoSolicitation ? evidenced : undefined
+  const keptForm = reachable || formNoSolicitation ? form : null
   return {
     candidate,
     skip: null,
-    email: evidenced?.address.toLowerCase() ?? null,
-    emailSourceUrl: evidenced?.foundOnUrl ?? null,
+    email: keptEmail?.address.toLowerCase() ?? null,
+    emailSourceUrl: keptEmail?.foundOnUrl ?? null,
     emailNoSolicitation,
-    contactFormUrl: form?.url ?? null,
-    formType: form?.formType ?? null,
+    contactFormUrl: keptForm?.url ?? null,
+    formType: keptForm?.formType ?? null,
     formNoSolicitation,
-    snsAccounts,
+    snsAccounts: reachable ? snsAccounts : null,
     contactName: read.contactName,
     department: read.department,
     country: candidate.country ?? read.country,
@@ -407,16 +437,18 @@ function skippedLine(name: string, reason: string): JobLogEntry {
 // Documents stay out of step results (a result is capped at 1 MiB, a document
 // is not): each read loads its own.
 async function readContext(db: Db, tenantId: TenantId, projectId: ProjectId) {
-  const [procedure, business, strategies, activeSlugs] = await Promise.all([
+  const [procedure, business, strategies, activeSlugs, allowlist] = await Promise.all([
     loadMasterDoc(db, 'tpl_enrich_contacts'),
     loadDoc(db, tenantId, projectId, 'business'),
     listDiscoveryStrategiesById(db, projectId),
     getActiveStrategySlugs(db, projectId),
+    loadProjectOutboundAllowlist(db, projectId),
   ])
   return {
     procedure,
     offer: business ? business.split('\n').slice(0, 20).join('\n') : '(business document missing)',
     approaches: strategies.filter((s) => activeSlugs.includes(s.slug)).map((s) => s.approach),
+    channels: allowlist.outboundChannels,
   }
 }
 
@@ -453,7 +485,7 @@ export async function runEnrich(
     const inputs = enriched.map(toProspectInput)
     const registrable = inputs.filter((p): p is NonNullable<typeof p> => p !== null)
     const noChannel = enriched.filter((_, i) => inputs[i] === null).map((e) => ({ name: e.candidate.name, reason: e.skip ?? ('no_contact_found' as const) }))
-    const reasons = { site_unreadable: 0, read_failed: 0, prereq_uncited: 0, prereq_unverified: 0, no_contact_found: 0 }
+    const reasons = { site_unreadable: 0, read_failed: 0, prereq_uncited: 0, prereq_unverified: 0, channel_not_enabled: 0, no_contact_found: 0 }
     for (const s of noChannel) reasons[s.reason]++
     console.log({ message: '[enrich] read', candidates: enriched.length, ...reasons, stale_shape: stale.length, no_solicitation: enriched.filter((e) => e.noSolicitation).length })
     const log = [...staleLines, ...noChannel.map((s) => skippedLine(s.name, s.reason))]

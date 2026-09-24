@@ -215,7 +215,7 @@ async function precheck(siteUrl: string): Promise<Precheck> {
 
 // ---- the full read, as production runs it ---------------------------------
 
-type ReadOutcome = 'email' | 'email_refused' | 'form' | 'form_refused' | 'sns_only' | 'no_contact_found' | 'site_unreadable' | 'read_failed' | 'prereq_uncited' | 'prereq_unverified'
+type ReadOutcome = 'email' | 'email_refused' | 'form' | 'form_refused' | 'sns_only' | 'no_contact_found' | 'site_unreadable' | 'read_failed' | 'prereq_uncited' | 'prereq_unverified' | 'channel_not_enabled'
 
 function outcomeOf(e: Awaited<ReturnType<typeof enrichCandidate>>): ReadOutcome {
   if (e.skip) return e.skip
@@ -278,7 +278,7 @@ async function measure(plan: (typeof strategies)[number]): Promise<{ rows: Row[]
         const key = `${plan.slug}:${i + k}`
         const [pre, enriched] = await Promise.all([
           precheck(c.websiteUrl),
-          withLlmScope({ tenantId: 'probe', jobId: key }, () => enrichCandidate(env, c, { procedure, offer, approaches: [plan.approach] })),
+          withLlmScope({ tenantId: 'probe', jobId: key }, () => enrichCandidate(env, c, { procedure, offer, approaches: [plan.approach], channels: ['email'] })),
         ])
         const cost = tokenCost(usages.filter((u) => u.jobId === key))
         const outcome = outcomeOf(enriched)
@@ -314,7 +314,7 @@ function report(all: Row[], discoverCost: number, searches: number): void {
   log(`per prospect with a usable email: enrich $${perEmail(enrichCost)} | discover+search $${perEmail(discoverCost + searchCost)} | total $${perEmail(enrichCost + discoverCost + searchCost)}`)
 
   log('\n== read outcome by pre-check verdict (rows = pre-check, cols = full read)')
-  const outcomes: ReadOutcome[] = ['email', 'email_refused', 'form', 'form_refused', 'sns_only', 'no_contact_found', 'site_unreadable', 'read_failed', 'prereq_uncited', 'prereq_unverified']
+  const outcomes: ReadOutcome[] = ['email', 'email_refused', 'form', 'form_refused', 'sns_only', 'no_contact_found', 'site_unreadable', 'read_failed', 'prereq_uncited', 'prereq_unverified', 'channel_not_enabled']
   const verdicts: PrecheckVerdict[] = ['email', 'form', 'none', 'unreachable']
   log(`  ${'precheck'.padEnd(12)}${outcomes.map((o) => o.padStart(17)).join('')}   total`)
   for (const v of verdicts) {

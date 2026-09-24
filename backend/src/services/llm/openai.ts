@@ -7,8 +7,9 @@ import { LlmError, logUsage, type Citation, type GroundedText } from './common'
 export type OpenAIRoute = {
   model: string
   timeoutMs: number
-  // A flex attempt shed or past this deadline gets one standard attempt with
-  // timeoutMs, so the half price costs at most this much waiting. null: standard only.
+  // A flex attempt the provider cannot serve, or past this deadline, gets one
+  // standard attempt with timeoutMs, so the half price costs at most this much
+  // waiting. null: standard only.
   flexTimeoutMs: number | null
   // Reasoning tokens come out of this cap too.
   maxOutputTokens: number
@@ -23,6 +24,11 @@ type Tier = 'flex' | 'default'
 
 const FLEX_SHED_STATUS = 429
 
+export function providerUnavailable(e: unknown): boolean {
+  if (e instanceof OpenAI.APIConnectionError) return true
+  return e instanceof OpenAI.APIError && e.status !== undefined && (e.status === FLEX_SHED_STATUS || e.status >= 500)
+}
+
 // The route's deadlines bound each call and the Workflow step owns retries;
 // the SDK's own retries would multiply the deadline a step plans on.
 function clientOf(call: OpenAICall): OpenAI {
@@ -32,14 +38,14 @@ function clientOf(call: OpenAICall): OpenAI {
 function toLlmError(e: unknown, call: OpenAICall, tier: Tier, timeoutMs: number, deadline: AbortSignal, elapsedMs: number): LlmError {
   if (deadline.aborted || e instanceof OpenAI.APIConnectionTimeoutError) {
     console.error('OpenAI request timed out', { op: call.op, tier, timeoutMs, elapsedMs })
-    return new LlmError(`upstream LLM request timed out after ${timeoutMs}ms`, 504)
+    return new LlmError(`upstream LLM request timed out after ${timeoutMs}ms`, 504, true)
   }
   // An error event inside a stream arrives as an APIError with no status.
   if (e instanceof OpenAI.APIError) {
     if (tier === 'flex' && e.status === FLEX_SHED_STATUS) console.warn('OpenAI flex shed', { op: call.op, elapsedMs })
     // Upstream detail can carry prompt fragments — log, never surface.
     else console.error('OpenAI request non-2xx', { op: call.op, tier, status: e.status, elapsedMs, detail: e.message })
-    return new LlmError('upstream LLM request failed', e.status ?? 502)
+    return new LlmError('upstream LLM request failed', e.status ?? 502, providerUnavailable(e))
   }
   if (e instanceof OpenAI.APIConnectionError) {
     console.error('OpenAI request failed', { op: call.op, tier, elapsedMs, detail: e.message })
@@ -48,7 +54,7 @@ function toLlmError(e: unknown, call: OpenAICall, tier: Tier, timeoutMs: number,
   // With an API key the SDK rethrows a failed body read as it came from fetch.
   if (e instanceof TypeError) {
     console.error('OpenAI response body failed', { op: call.op, tier, elapsedMs, detail: e.message })
-    return new LlmError('upstream LLM request failed', 502)
+    return new LlmError('upstream LLM request failed', 502, true)
   }
   // responses.parse runs JSON.parse and the zod schema on the answer.
   if (e instanceof SyntaxError || e instanceof z.ZodError) {
@@ -84,7 +90,7 @@ async function withTier<R extends Response>(call: OpenAICall, send: Send<R>): Pr
   try {
     return await attempt(call, 'flex', call.flexTimeoutMs, send)
   } catch (e) {
-    if (!(e instanceof LlmError) || (e.status !== FLEX_SHED_STATUS && e.status !== 504)) throw e
+    if (!(e instanceof LlmError) || !e.unavailable) throw e
     return attempt(call, 'default', call.timeoutMs, send)
   }
 }

@@ -1,5 +1,6 @@
+import OpenAI from 'openai'
 import { describe, expect, it } from 'vitest'
-import { citationsOf, searchedPagesOf, withoutOpenAITag } from './openai'
+import { citationsOf, providerUnavailable, searchedPagesOf, withoutOpenAITag } from './openai'
 
 const cite = (url: string, start: number, end: number) => ({ type: 'url_citation' as const, url, title: '', start_index: start, end_index: end })
 
@@ -48,5 +49,20 @@ describe('searchedPagesOf', () => {
       ],
     } as unknown as Parameters<typeof searchedPagesOf>[0]
     expect(searchedPagesOf(response, ['acme.jp'])).toEqual(['https://shop.acme.jp/c', 'https://acme.jp/d'])
+  })
+})
+
+describe('providerUnavailable', () => {
+  const apiError = (status: number) => new OpenAI.APIError(status, undefined, `${status}`, undefined)
+  it('counts a shed, a server error and an unreachable host as the provider failing to serve', () => {
+    expect(providerUnavailable(apiError(429))).toBe(true)
+    expect(providerUnavailable(apiError(500))).toBe(true)
+    expect(providerUnavailable(apiError(503))).toBe(true)
+    expect(providerUnavailable(new OpenAI.APIConnectionError({ message: 'reset' }))).toBe(true)
+  })
+  it('leaves a request the provider rejected, which fails the same on any tier', () => {
+    expect(providerUnavailable(apiError(400))).toBe(false)
+    expect(providerUnavailable(apiError(404))).toBe(false)
+    expect(providerUnavailable(new SyntaxError('bad json'))).toBe(false)
   })
 })

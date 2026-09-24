@@ -15,10 +15,14 @@ export function withLlmScope<T>(scope: LlmScope, fn: () => Promise<T>): Promise<
 
 export class LlmError extends Error {
   status: number
-  constructor(message: string, status: number) {
+  // The provider could not serve the request (shed, server error, timed out,
+  // unreachable): another tier may. Any other failure recurs on every tier.
+  unavailable: boolean
+  constructor(message: string, status: number, unavailable = false) {
     super(message)
     this.name = 'LlmError'
     this.status = status
+    this.unavailable = unavailable
   }
 }
 

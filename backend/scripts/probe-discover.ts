@@ -121,7 +121,7 @@ async function measure(plan: (typeof strategies)[number]): Promise<void> {
   // Four at a time, as runEnrich does.
   const enriched: Awaited<ReturnType<typeof enrichCandidate>>[] = []
   for (let i = 0; i < candidates.length; i += 4) {
-    enriched.push(...(await Promise.all(candidates.slice(i, i + 4).map((c) => enrichCandidate(env, c, { procedure, offer, approaches: [plan.approach] })))))
+    enriched.push(...(await Promise.all(candidates.slice(i, i + 4).map((c) => enrichCandidate(env, c, { procedure, offer, approaches: [plan.approach], channels: ['email'] })))))
   }
   const enrichCost = tokenCost(usages.slice(before)) - discoverCost
   const resolved = await Promise.all(candidates.map((c) => resolves(c.websiteUrl)))
