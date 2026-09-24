@@ -15,7 +15,7 @@ import { creditsCoverOverage, USAGE_PRICE_CENTS } from '../domain/credits'
 import { isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG } from '../domain/url'
 import type { ProspectQuota, QuotaWindowKind } from '../services/plan-limits'
 import { SERVER_VERSION } from '../mcp/version'
-import { JOB_KINDS, JOB_STATUSES, jobParamsSchema, type JobKind, type JobLogLine, type JobParams } from '../domain/jobs'
+import { JOB_KINDS, JOB_STATUSES, jobParamsSchema, type JobKind, type JobLogLine, type JobParams, type JobResult, type StrategyPlanCompliance } from '../domain/jobs'
 import { DAYS_OF_WEEK, daysSchema, hourSchema, promptSchema, timezoneSchema } from '../domain/schedules'
 import { applyStrategyDraftSchema, strategyDraftInputSchema } from '../domain/strategy-draft'
 
@@ -2101,7 +2101,7 @@ export function buildToolRegistry(): ToolDef[] {
     kind: string
     status: string
     progress: { step: string; done: number; total: number | null } | null
-    result: { summary: string } | null
+    result: JobResult | null
     error: string | null
     startedBy: string
     createdAt: string
@@ -2112,6 +2112,8 @@ export function buildToolRegistry(): ToolDef[] {
     const tail = j.status === 'succeeded' && j.result ? ` — ${j.result.summary}` : j.status === 'failed' && j.error ? ` — ${j.error}` : progress
     return `${j.id} ${j.kind} [${j.status}] project ${j.projectId}, started by ${j.startedBy} at ${j.createdAt}${tail}`
   }
+  const planLine = (p: StrategyPlanCompliance): string =>
+    `plan ${p.slug}: asked ${p.asked}, returned ${p.returned}, fresh ${p.fresh}, unavailable ${p.unavailable}`
   const jobLogLine = (l: JobLogLine): string => {
     const at = `${l.at.slice(11, 16)} UTC`
     switch (l.kind) {
@@ -2155,7 +2157,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_job',
-    'Status of one job: kind, status (queued / running / succeeded / failed / cancelled), current step and progress while running, the result summary when succeeded, the error when failed — then its log, one UTC-timed line per stage finished, decision taken, and prospect registered, sent, drafted, skipped, or failed on (with the prospect id, the subject, or the reason).',
+    'Status of one job: kind, status (queued / running / succeeded / failed / cancelled), current step and progress while running, the result summary when succeeded, the error when failed; a discover or daily cycle adds one line per planned strategy (asked, returned, fresh, unavailable) — then its log, one UTC-timed line per stage finished, decision taken, and prospect registered, sent, drafted, skipped, or failed on (with the prospect id, the subject, or the reason).',
     { id: z.string().min(1).describe('Job id from start_job or list_jobs.') },
     async ({ id }, ctx) => {
       const { ok, data } = await ctx.callApi('GET', `/jobs/${encodeURIComponent(id)}`, null)
@@ -2164,7 +2166,8 @@ export function buildToolRegistry(): ToolDef[] {
         return { content: [{ type: 'text' as const, text: `Error: ${e.error}` }], isError: true }
       }
       const job = data as JobWire & { log: JobLogLine[] }
-      return { content: [{ type: 'text' as const, text: [jobLine(job), ...job.log.map(jobLogLine)].join('\n') }] }
+      const plan = job.result && 'planCompliance' in job.result ? job.result.planCompliance.map(planLine) : []
+      return { content: [{ type: 'text' as const, text: [jobLine(job), ...plan, ...job.log.map(jobLogLine)].join('\n') }] }
     },
     { readOnly: true },
   )
