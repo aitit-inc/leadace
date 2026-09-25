@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { contactDecision, datedEvents, inRetrieved, newestFirst, parseStored } from './enrich'
+import { contactDecision, datedEvents, inRetrieved, judgeRead, newestFirst, parseStored, verdictOf } from './enrich'
 
 describe('inRetrieved', () => {
   const retrieved = ['https://Example.com/News/A/']
@@ -75,5 +75,34 @@ describe('contactDecision', () => {
   })
   it('finds nothing when the site shows no channel', () => {
     expect(contactDecision(none, ['email', 'form'])).toBe('none')
+  })
+})
+
+describe('judgeRead', () => {
+  it('rules out a candidate whose Prerequisite failed, whatever it can be reached on', () => {
+    expect(judgeRead(false, 'reachable')).toBe('prereq_unverified')
+    expect(judgeRead(false, 'channel_not_enabled')).toBe('prereq_unverified')
+  })
+  it('makes a send target only of a checked candidate on an enabled channel', () => {
+    expect(judgeRead(true, 'reachable')).toBeNull()
+    expect(judgeRead(true, 'channel_not_enabled')).toBe('channel_not_enabled')
+    expect(judgeRead(null, 'refusal')).toBe('no_solicitation')
+    expect(judgeRead(null, 'none')).toBe('no_contact_found')
+  })
+})
+
+describe('verdictOf', () => {
+  it('bills only a send target', () => {
+    expect(verdictOf(null, true)).toBe('billable')
+    expect(verdictOf('channel_not_enabled', true)).toBe('unreachable')
+  })
+  it('keeps every candidate the check did not pass out of the targets', () => {
+    expect(verdictOf('prereq_unverified', false)).toBe('unqualified')
+    expect(verdictOf('no_contact_found', false)).toBe('unqualified')
+    expect(verdictOf('site_unreadable', false)).toBe('unqualified')
+  })
+  it('registers nothing the model did not judge', () => {
+    expect(verdictOf('read_failed', false)).toBeNull()
+    expect(verdictOf('prereq_uncited', false)).toBeNull()
   })
 })

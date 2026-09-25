@@ -744,6 +744,22 @@ const SCENARIOS = [
     },
   },
   {
+    name: 'prospects',
+    summary: 'The prospect list, with candidates the discovery judged but kept out of the targets',
+    stack: 'self-host',
+    setup: async (ctx) => {
+      const projectId = await seedProject(ctx, { name: 'Northwind outbound', settings: {} });
+      const [, , , unqualified, contactless, excluded] = await seedProspects(ctx, projectId, 6);
+      psql(`UPDATE project_prospects SET qualified = false WHERE project_id = ${q(projectId)} AND prospect_id = ${unqualified.prospectId};
+            UPDATE prospects SET email = NULL WHERE id = ${contactless.prospectId};`);
+      await apiFor(ctx)('PATCH', `/api/projects/${projectId}/prospects/target`, { prospectIds: [excluded.prospectId], target: false });
+      return [
+        { name: 'targets', path: '/prospects', expect: ['3 total', 'Dana Brooks'] },
+        { name: 'all', path: '/prospects?scope=all', expect: ['6 total', 'Not a target'] },
+      ];
+    },
+  },
+  {
     name: 'delete-account',
     summary: 'The account deletion page of a workspace that has data to lose',
     stack: 'self-host',

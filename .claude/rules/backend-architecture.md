@@ -86,7 +86,10 @@ Enforced by review (no lint rule yet).
   `sendDraft` take a `TenantRun` (one such transaction per call) and their
   routes sit outside `rlsMiddleware`.
 - Prospect registration requires ≥1 contact channel (email, contactFormUrl,
-  or snsAccounts) — enforced in the service layer.
+  or snsAccounts) — enforced in the service layer. The one exception is the
+  hosted discovery: it registers every candidate it judged, contact or not, so
+  the project does not read it again; `projectTargetExpr` keeps those out of
+  the project's targets.
 - Raw `db.execute` bypasses drizzle's mappers: over the pooler
   (`prepare: false`) numbers and timestamps can come back as strings. Use the
   typed builder; for SQL it cannot express, convert at the boundary

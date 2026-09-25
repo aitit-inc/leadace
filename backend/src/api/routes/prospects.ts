@@ -15,6 +15,8 @@ import {
   listReachable,
   updateProspectStatus,
   updateProspectPriority,
+  setProspectTargetBodySchema,
+  setProspectTarget,
   updateProspect,
   listProjectProspects,
   getProjectProspect,
@@ -44,7 +46,7 @@ prospectsRouter.post('/prospects/batch', zValidator('json', batchSchema), async 
     c.get('tenantId'),
     c.get('edition'),
     c.req.valid('json'),
-    'brought_in',
+    { origin: 'brought_in' },
   )
   if (!result.ok) return respondWithError(c, result)
   const { registered, skippedDetails, emailsToVerify } = result.value
@@ -124,6 +126,17 @@ prospectsRouter.patch(
       c.req.valid('param').id,
       c.req.valid('json'),
     )
+    if (!result.ok) return respondWithError(c, result)
+    return c.json(result.value)
+  },
+)
+
+prospectsRouter.patch(
+  '/projects/:id/prospects/target',
+  zValidator('param', projectRefParamSchema),
+  zValidator('json', setProspectTargetBodySchema),
+  async (c) => {
+    const result = await setProspectTarget(c.get('db'), c.get('tenantId'), c.get('origin'), c.req.valid('param').id, c.req.valid('json'))
     if (!result.ok) return respondWithError(c, result)
     return c.json(result.value)
   },

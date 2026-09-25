@@ -43,6 +43,7 @@ SUITES=(
   regression-platform-channel
   regression-suggestions
   regression-prospect-delete
+  regression-prospect-target
   regression-rejection-cycle
   regression-bounce-stats
   regression-targeting-attributes

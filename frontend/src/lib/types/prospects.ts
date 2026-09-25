@@ -34,6 +34,8 @@ export interface Prospect {
   matchReason: string;
   priority: number;
   status: ProspectStatus;
+  // false: not a target (Prerequisite not confirmed, or taken out by the person).
+  qualified: boolean;
   organizationId: number;
   organizationName: string;
   createdAt: string;

@@ -19,6 +19,7 @@ export const load: PageServerLoad = async ({ fetch, parent, url, locals }) => {
   const status = parseStatus(url.searchParams.get('status'));
   const priority = parsePriority(url.searchParams.get('priority'));
   const q = url.searchParams.get('q')?.trim() ?? '';
+  const scope = url.searchParams.get('scope') === 'all' ? 'all' : '';
   const page = parsePageNumber(url.searchParams.get('page'));
 
   if (!activeProjectId) {
@@ -27,7 +28,7 @@ export const load: PageServerLoad = async ({ fetch, parent, url, locals }) => {
       prospects: [],
       total: 0,
       page,
-      filters: { status, priority, q },
+      filters: { status, priority, q, scope },
     };
   }
 
@@ -39,6 +40,7 @@ export const load: PageServerLoad = async ({ fetch, parent, url, locals }) => {
       status: status === '' ? undefined : status,
       priority: priority === '' ? undefined : priority,
       q: q || undefined,
+      scope: scope || undefined,
     },
     fetch,
     locals.session?.access_token,
@@ -49,6 +51,6 @@ export const load: PageServerLoad = async ({ fetch, parent, url, locals }) => {
     prospects: res.prospects,
     total: res.total,
     page,
-    filters: { status, priority, q },
+    filters: { status, priority, q, scope },
   };
 };

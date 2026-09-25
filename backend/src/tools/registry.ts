@@ -1376,6 +1376,46 @@ export function buildToolRegistry(): ToolDef[] {
   )
 
   defineTool(
+    'set_prospect_target',
+    'On the person\'s instruction only: set whether prospects are targets of a project (qualified), overriding Ace\'s Prerequisite check. false excludes them from outbound; true includes them (web chat only, behind an approval card). Reports the ids updated and the ids not in the project.',
+    {
+      projectId: z.string().min(1).describe('Project name or ID'),
+      prospectIds: z.array(z.number().int().positive()).min(1).max(200),
+      target: z.boolean(),
+    },
+    async ({ projectId, prospectIds, target }, ctx) => {
+      const { ok, data } = await ctx.callApi('PATCH', `/projects/${encodeURIComponent(projectId)}/prospects/target`, { prospectIds, target })
+      if (!ok) {
+        const err = data as { error: string }
+        return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
+      }
+      const { updatedIds, notInProjectIds } = data as { updatedIds: number[]; notInProjectIds: number[] }
+      const word = target ? 'target' : 'not a target'
+      return {
+        content: [{
+          type: 'text' as const,
+          text: `${updatedIds.length} prospect(s) set to ${word}: ${updatedIds.join(', ') || '(none)'}.${notInProjectIds.length > 0 ? ` Not in this project: ${notInProjectIds.join(', ')}.` : ''}`,
+        }],
+      }
+    },
+    {
+      // false only narrows outreach; true widens it past Ace's check.
+      confirm: ({ projectId, prospectIds, target }) =>
+        target
+          ? {
+              title: 'Make these prospects targets',
+              facts: [
+                { label: 'Project', value: projectId },
+                { label: 'Prospects', value: `${prospectIds.length}` },
+                { label: 'What happens', value: 'They can be contacted, whatever Ace\'s Prerequisite check found' },
+              ],
+              confirmLabel: 'Make them targets',
+            }
+          : null,
+    },
+  )
+
+  defineTool(
     'update_organization',
     'Partial-update an organization\'s name, website URL, employeeBand, or doNotContact; domain is immutable. organizationId is the PK returned in the organizationId field of list_tenant_prospects / list_project_prospects / get_outbound_targets, not a domain.',
     {
@@ -1549,7 +1589,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'update_prospect',
-    'Partial-update a tenant prospect\'s fields. UNPROCESSABLE if the patch would leave no contact channel (email, contactFormUrl, an snsAccounts entry, or platformUrl); CONFLICT if email, contactFormUrl, or platformUrl already belongs to another prospect in the workspace. Changing email resets its deliverability verdict and queues a background re-check; changing email or contactFormUrl clears that channel\'s no-solicitation notice unless the patch sets it. Per-project status via update_prospect_status, priority via set_prospect_priority, DNC via set_prospect_do_not_contact.',
+    'Partial-update a tenant prospect\'s fields. UNPROCESSABLE if the patch would remove the last contact channel (email, contactFormUrl, an snsAccounts entry, or platformUrl); CONFLICT if email, contactFormUrl, or platformUrl already belongs to another prospect in the workspace. Changing email resets its deliverability verdict and queues a background re-check; changing email or contactFormUrl clears that channel\'s no-solicitation notice unless the patch sets it. Per-project status via update_prospect_status, priority via set_prospect_priority, DNC via set_prospect_do_not_contact.',
     {
       prospectId: z.number().int().positive(),
       patch: z.object({
@@ -1970,11 +2010,13 @@ export function buildToolRegistry(): ToolDef[] {
       status: z.enum(prospectStatusEnum.enumValues).optional().describe('Filter by per-project status'),
       priority: prioritySchema.optional().describe('Filter by exact priority'),
       q: z.string().min(1).optional().describe('Substring search on prospect name / contact name / organization name / domain'),
+      scope: z.enum(['targets', 'all']).default('targets').describe('all adds non-targets: qualified false (Prerequisite not confirmed, or taken out by the person) or no contact'),
       limit: z.number().int().min(1).max(500).default(100),
       offset: z.number().int().min(0).default(0),
     },
-    async ({ projectId, status, priority, q, limit, offset }, ctx) => {
+    async ({ projectId, status, priority, q, scope, limit, offset }, ctx) => {
       const params = new URLSearchParams()
+      params.set('scope', scope)
       if (status) params.set('status', status)
       if (priority !== undefined) params.set('priority', String(priority))
       if (q) params.set('q', q)

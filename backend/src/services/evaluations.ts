@@ -21,6 +21,7 @@ import type { ChannelFineStat } from '../domain/channel-affinity'
 import { loadLeverConfig } from './project-settings'
 import { ok, type ServiceResult } from './result'
 import { resolveProject } from './projects'
+import { projectTargetExpr } from './prospects'
 
 // Through the prod transaction pooler (Supavisor, prepare:false) postgres-js
 // can't read column type OIDs, so raw db.execute returns numeric/timestamp
@@ -416,7 +417,9 @@ export async function getProjectStats(
                  LEFT JOIN responses r ON r.outreach_log_id = ol.id
                  WHERE pp.project_id = ${projectId}
                  GROUP BY pp.priority ORDER BY pp.priority`),
-    rawQuery<{ status: ProspectStatus; count: string | number }>(sql`SELECT status, COUNT(*)::int AS count FROM project_prospects WHERE project_id = ${projectId} GROUP BY status`),
+    rawQuery<{ status: ProspectStatus; count: string | number }>(sql`SELECT project_prospects.status, COUNT(*)::int AS count FROM project_prospects
+                 JOIN prospects ON prospects.id = project_prospects.prospect_id
+                 WHERE project_prospects.project_id = ${projectId} AND ${projectTargetExpr} GROUP BY project_prospects.status`),
     // responses is 1:N to a send (no unique on outreach_log_id), so COUNT(DISTINCT ol.id) avoids double-counting.
     rawQuery<{ channel: Channel; total: string | number; responses: string | number }>(sql`SELECT ol.channel,
                    COUNT(DISTINCT ol.id)::int AS total,

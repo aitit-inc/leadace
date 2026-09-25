@@ -456,16 +456,23 @@ export type BatchRegisterResult = {
   emailsToVerify: string[]
 }
 
-// `origin` is the registering path's own claim, never the request body's:
-// the hosted discovery pipeline registers 'found', every API caller 'brought_in'.
+// Only a billable candidate (reachable on the project's channels, past the
+// Prerequisite check) spends the found allowance.
+export type FoundVerdict = 'billable' | 'unreachable' | 'unqualified'
+
+// The registering path's own claim, never the request body's: the hosted
+// discovery pipeline registers 'found', every API caller 'brought_in'.
+export type Registration = { origin: 'brought_in' } | { origin: 'found'; verdict: FoundVerdict }
+
 export async function batchRegister(
   db: Db,
   tenantId: TenantId,
   edition: Edition,
   input: BatchInput,
-  origin: ProspectOrigin,
+  path: Registration,
 ): Promise<ServiceResult<BatchRegisterResult>> {
   const { projectId: projectRef, prospects: inputs } = input
+  const billable = path.origin === 'found' && path.verdict === 'billable'
 
   const [resolved, tp] = await Promise.all([
     projectRef ? resolveProject(db, tenantId, projectRef) : Promise.resolve(null),
@@ -523,12 +530,13 @@ export async function batchRegister(
   // The found allowance is the discovery cost guard: rows past it are skipped,
   // not refused, so a pipeline run that crosses it mid-batch still completes.
   // The tenant-level lock serializes concurrent discovery batches (two
-  // projects' jobs) on the budget read, so they cannot both spend the last slot.
+  // projects' jobs) on the budget read, so they cannot both spend the last slot,
+  // and on the dedup read, which no unique key backs for a contactless record.
   // Past the free slots each row debits credits while the balance covers it
   // (domain/credits.ts nextFoundRegistration); the caller tops up afterwards.
   let foundBudget: { freeSlots: number; balanceCents: number | null } | null = null
-  if (origin === 'found') {
-    await db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${tenantId}))`)
+  if (path.origin === 'found') await db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${tenantId}))`)
+  if (billable) {
     const quota = await getRemainingProspectQuotaForPlan(db, tenantId, tp)
     if (quota.kind === 'capped') {
       if (discoveryPausedReason(quota)) {
@@ -590,11 +598,11 @@ export async function batchRegister(
 
     const [newProspect] = await db
       .insert(prospects)
-      .values(prospectInsertValues(tenantId, input, org.id, now, origin))
+      .values(prospectInsertValues(tenantId, input, org.id, now, path.origin))
       .returning({ id: prospects.id })
     if (!newProspect) continue
 
-    if (origin === 'found') {
+    if (billable) {
       await db.insert(discoveryCharges).values({ tenantId, prospectId: newProspect.id, createdAt: now })
       if (foundBudget) {
         if (registration.charge) {
@@ -607,14 +615,17 @@ export async function batchRegister(
     }
 
     if (projectId) {
-      await db.insert(projectProspects).values(projectProspectInsertValues({
-        tenantId,
-        projectId,
-        prospectId: newProspect.id,
-        matchReason: input.matchReason!,
-        priority: input.priority,
-        now,
-      }))
+      await db.insert(projectProspects).values({
+        ...projectProspectInsertValues({
+          tenantId,
+          projectId,
+          prospectId: newProspect.id,
+          matchReason: input.matchReason!,
+          priority: input.priority,
+          now,
+        }),
+        qualified: path.origin === 'brought_in' || path.verdict !== 'unqualified',
+      })
     }
 
     claimRow(dedup, projectId, input)

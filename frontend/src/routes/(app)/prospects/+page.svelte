@@ -19,12 +19,14 @@
   let filterStatus = $derived<string>(data.filters.status ?? '');
   let filterPriority = $derived<string>(String(data.filters.priority));
   let filterQ = $derived<string>(data.filters.q ?? '');
+  let filterScope = $derived<string>(data.filters.scope);
 
-  function updateUrl(next: { status?: string; priority?: string; q?: string; page?: number }) {
+  function updateUrl(next: { status?: string; priority?: string; q?: string; scope?: string; page?: number }) {
     const sp = new URLSearchParams(page.url.searchParams);
     const status = next.status ?? filterStatus;
     const priority = next.priority ?? filterPriority;
     const q = next.q ?? filterQ;
+    const scope = next.scope ?? filterScope;
     const nextPage = next.page ?? data.page;
 
     if (status) sp.set('status', status);
@@ -33,6 +35,8 @@
     else sp.delete('priority');
     if (q) sp.set('q', q);
     else sp.delete('q');
+    if (scope) sp.set('scope', scope);
+    else sp.delete('scope');
     if (next.page !== undefined && nextPage > 1) sp.set('page', String(nextPage));
     else sp.delete('page');
 
@@ -45,6 +49,9 @@
   }
   function onPriorityChange(e: Event) {
     updateUrl({ priority: (e.currentTarget as HTMLSelectElement).value, page: 1 });
+  }
+  function onScopeChange(e: Event) {
+    updateUrl({ scope: (e.currentTarget as HTMLSelectElement).value, page: 1 });
   }
   function onQueryInput(e: Event) {
     const next = (e.currentTarget as HTMLInputElement).value.trim();
@@ -85,6 +92,10 @@
       <option value={String(p)}>P{p}</option>
     {/each}
   </select>
+  <select value={filterScope} onchange={onScopeChange} class="field w-auto">
+    <option value="">Targets only</option>
+    <option value="all">Include screened out</option>
+  </select>
 </div>
 
 {#if data.prospects.length === 0}
@@ -108,7 +119,9 @@
           >
             <div class="min-w-0">
               <p class="text-text truncate">{p.name}</p>
-              <p class="text-xs text-text-muted truncate">{p.organizationName}</p>
+              <p class="text-xs text-text-muted truncate">
+                {p.organizationName}{#if !p.qualified}{' · Not a target'}{/if}
+              </p>
             </div>
             <span class="text-text-secondary self-center">{channelLabel(p)}</span>
             <span class="self-center"><StatusBadge status={p.status} /></span>
@@ -126,7 +139,9 @@
               <p class="min-w-0 flex-1 truncate text-sm text-text">{p.name}</p>
               <span class="shrink-0"><StatusBadge status={p.status} /></span>
             </div>
-            <p class="text-xs text-text-muted truncate">{p.organizationName}</p>
+            <p class="text-xs text-text-muted truncate">
+              {p.organizationName}{#if !p.qualified}{' · Not a target'}{/if}
+            </p>
             <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs tabular-nums text-text-muted">
               <span>{channelLabel(p)}</span>
               <span aria-hidden="true">·</span>

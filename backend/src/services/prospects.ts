@@ -60,6 +60,7 @@ import { siteReadPatch } from '../domain/site-read'
 import type { ChannelRank } from '../domain/channel-affinity'
 import { drawExploreSlots } from '../domain/discovery-allocation'
 import { floorRescuedWeights } from '../domain/arm-bandit'
+import type { JobOrigin } from '../domain/jobs'
 
 // Shared by the reachable gate and the byChannel summary so both agree.
 const emailUsableExpr: SQL = and(
@@ -81,6 +82,18 @@ function channelAvailabilityClause(ch: OutboundChannel): SQL {
     case 'platform': return isNotNull(prospects.platformUrl)
   }
 }
+
+const hasContactExpr: SQL = or(
+  isNotNull(prospects.email),
+  isNotNull(prospects.contactFormUrl),
+  isNotNull(prospects.snsAccounts),
+  isNotNull(prospects.platformUrl),
+)!
+
+// A project prospect the project works on. The rest are candidates the hosted
+// discovery registered only so it does not read them again (not qualified, or
+// no contact on file).
+export const projectTargetExpr: SQL = and(eq(projectProspects.qualified, true), hasContactExpr)!
 
 export { prospectIdParamSchema } from '../domain/ids'
 
@@ -118,6 +131,8 @@ export const listProjectProspectsQuerySchema = z.object({
   status: z.enum(prospectStatusEnum.enumValues).optional(),
   priority: priorityCoerceSchema.optional(),
   q: z.string().trim().min(1).optional(),
+  // 'all' adds the candidates projectTargetExpr leaves out.
+  scope: z.enum(['targets', 'all']).default('targets'),
 })
 export type ListProjectProspectsQuery = z.infer<typeof listProjectProspectsQuerySchema>
 
@@ -141,6 +156,12 @@ export const updateProspectPriorityBodySchema = z.object({
   priority: prioritySchema,
 })
 export type UpdateProspectPriorityBody = z.infer<typeof updateProspectPriorityBodySchema>
+
+export const setProspectTargetBodySchema = z.object({
+  prospectIds: z.array(z.number().int().positive()).min(1).max(200),
+  target: z.boolean(),
+})
+export type SetProspectTargetBody = z.infer<typeof setProspectTargetBodySchema>
 
 export const updateDoNotContactBodySchema = z.object({
   doNotContact: z.boolean(),
@@ -442,6 +463,7 @@ export async function listReachable(
     eq(projectProspects.tenantId, tenantId),
     onlyProspectIds ? inArray(projectProspects.prospectId, onlyProspectIds) : undefined,
     excludeProspectIds?.length ? notInArray(projectProspects.prospectId, excludeProspectIds) : undefined,
+    eq(projectProspects.qualified, true),
     eq(prospects.doNotContact, false),
     eq(organizations.doNotContact, false),
     or(
@@ -872,6 +894,36 @@ export async function updateProspectPriority(
   return ok({ updated: true, prospectId, priority: body.priority })
 }
 
+export async function setProspectTarget(
+  db: Db,
+  tenantId: TenantId,
+  origin: JobOrigin,
+  projectRef: ProjectRef,
+  body: SetProspectTargetBody,
+): Promise<ServiceResult<{ updatedIds: number[]; notInProjectIds: number[] }>> {
+  // Widening past Ace's check needs the person: the web UI, or the chat's
+  // approval card. An MCP client has no card to show.
+  if (body.target && origin !== 'ui' && origin !== 'chat') {
+    return err('FORBIDDEN', 'Making prospects targets is approved in the Web UI chat only; taking them out (target false) works anywhere')
+  }
+  const resolved = await resolveProject(db, tenantId, projectRef)
+  if (!resolved.ok) return resolved
+
+  const updated = await db
+    .update(projectProspects)
+    .set({ qualified: body.target, updatedAt: new Date() })
+    .where(and(
+      eq(projectProspects.projectId, resolved.value),
+      eq(projectProspects.tenantId, tenantId),
+      inArray(projectProspects.prospectId, body.prospectIds),
+    ))
+    .returning({ prospectId: projectProspects.prospectId })
+
+  const updatedIds = updated.map((r) => r.prospectId)
+  const updatedSet = new Set(updatedIds)
+  return ok({ updatedIds, notInProjectIds: [...new Set(body.prospectIds)].filter((id) => !updatedSet.has(id)) })
+}
+
 // Shared so the list and single-prospect detail can never drift.
 const projectProspectSelection = {
   ppId: projectProspects.id,
@@ -893,6 +945,7 @@ const projectProspectSelection = {
   matchReason: projectProspects.matchReason,
   priority: projectProspects.priority,
   status: projectProspects.status,
+  qualified: projectProspects.qualified,
   organizationId: prospects.organizationId,
   organizationName: organizations.name,
   createdAt: projectProspects.createdAt,
@@ -943,12 +996,14 @@ export async function listProjectProspects(
   if (!resolved.ok) return resolved
   const projectId = resolved.value
 
-  const { limit, offset, status, priority, q } = query
+  const { limit, offset, status, priority, q, scope } = query
 
   const conditions = [
     eq(projectProspects.projectId, projectId),
     eq(projectProspects.tenantId, tenantId),
   ]
+
+  if (scope === 'targets') conditions.push(projectTargetExpr)
 
   if (status) conditions.push(eq(projectProspects.status, status))
   if (priority !== undefined) {
@@ -1015,6 +1070,7 @@ export async function listTenantProspects(
     eq(prospects.tenantId, tenantId),
     eq(prospects.doNotContact, false),
     eq(organizations.doNotContact, false),
+    hasContactExpr,
   ]
 
   if (industry) {
@@ -1176,8 +1232,9 @@ export async function linkProspects(
 
 // Per-project junction fields (status / matchReason / priority) live on
 // project_prospects, owned by updateProspectStatus + linkProspects. Invariant:
-// after the merge at least one contact channel must remain, otherwise the
-// prospect becomes unreachable.
+// a patch never removes the last contact channel, otherwise the prospect
+// becomes unreachable. A hosted-discovery record that never had one stays
+// editable.
 export async function updateProspect(
   db: Db,
   tenantId: TenantId,
@@ -1201,8 +1258,9 @@ export async function updateProspect(
   const finalForm = patch.contactFormUrl !== undefined ? patch.contactFormUrl : existing.contactFormUrl
   const finalSns = patch.snsAccounts !== undefined ? patch.snsAccounts : existing.snsAccounts
   const finalPlatform = patch.platformUrl !== undefined ? patch.platformUrl : existing.platformUrl
-  const hasSns = finalSns && Object.values(finalSns).some(Boolean)
-  if (!finalEmail && !finalForm && !hasSns && !finalPlatform) {
+  const hasSns = (sns: typeof finalSns) => sns !== null && Object.values(sns).some(Boolean)
+  const hadContact = existing.email || existing.contactFormUrl || hasSns(existing.snsAccounts) || existing.platformUrl
+  if (hadContact && !finalEmail && !finalForm && !hasSns(finalSns) && !finalPlatform) {
     return err(
       'UNPROCESSABLE',
       'At least one contact channel (email, contactFormUrl, snsAccounts, or platformUrl) is required',

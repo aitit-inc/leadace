@@ -218,6 +218,7 @@ async function precheck(siteUrl: string): Promise<Precheck> {
 type ReadOutcome = 'email' | 'email_refused' | 'form' | 'form_refused' | 'sns_only' | 'no_contact_found' | 'site_unreadable' | 'read_failed' | 'prereq_uncited' | 'prereq_unverified' | 'channel_not_enabled'
 
 function outcomeOf(e: Awaited<ReturnType<typeof enrichCandidate>>): ReadOutcome {
+  if (e.skip === 'no_solicitation') return e.emailNoSolicitation ? 'email_refused' : 'form_refused'
   if (e.skip) return e.skip
   if (e.email) return e.emailNoSolicitation ? 'email_refused' : 'email'
   if (e.contactFormUrl) return e.formNoSolicitation ? 'form_refused' : 'form'

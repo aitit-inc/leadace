@@ -369,9 +369,12 @@ async function assertSendableContent(
   )
 }
 
+const NOT_A_TARGET = 'Prospect is not a target of this project (see list_project_prospects scope=all); only the person can make it one'
+
 async function assertProspectContactable(
   db: Db,
   tenantId: TenantId,
+  projectId: ProjectId,
   prospectId: number,
   channel: Channel,
 ): Promise<ServiceResult<undefined>> {
@@ -380,9 +383,11 @@ async function assertProspectContactable(
       doNotContact: sql<boolean>`${prospects.doNotContact} OR ${organizations.doNotContact}`,
       emailNoSolicitation: prospects.emailNoSolicitation,
       formNoSolicitation: prospects.formNoSolicitation,
+      qualified: projectProspects.qualified,
     })
     .from(prospects)
     .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
+    .leftJoin(projectProspects, and(eq(projectProspects.prospectId, prospects.id), eq(projectProspects.projectId, projectId)))
     .where(and(eq(prospects.id, prospectId), eq(prospects.tenantId, tenantId)))
     .limit(1)
   // Missing prospect → defer to the caller's requireProspect NOT_FOUND.
@@ -390,6 +395,7 @@ async function assertProspectContactable(
   if (row.doNotContact) {
     return err('UNPROCESSABLE', 'Prospect is on do-not-contact list')
   }
+  if (row.qualified === false) return err('UNPROCESSABLE', NOT_A_TARGET)
   const refused = channel === 'email' ? row.emailNoSolicitation : channel === 'form' ? row.formNoSolicitation : false
   if (refused) {
     return err('UNPROCESSABLE', `Prospect's ${channel} channel is published with a no-solicitation notice`)
@@ -490,7 +496,7 @@ export async function recordOutreach(
       if (mailboxErr) return mailboxErr
       sendingIdentityId = await firstProjectMailboxId(db, tenantId, projectId)
     }
-    const contactable = await assertProspectContactable(db, tenantId, input.prospectId, input.channel)
+    const contactable = await assertProspectContactable(db, tenantId, projectId, input.prospectId, input.channel)
     if (!contactable.ok) return contactable
     const country = await assertProspectCountryAllowed(db, tenantId, input.prospectId)
     if (!country.ok) return country
@@ -612,7 +618,7 @@ export async function recordOutreachWithInquiry(
 
   let chargesCredits = false
   if (willSend) {
-    const contactable = await assertProspectContactable(db, tenantId, input.prospectId, input.channel)
+    const contactable = await assertProspectContactable(db, tenantId, projectId, input.prospectId, input.channel)
     if (!contactable.ok) return contactable
     const quota = await assertProspectContactQuota(db, tenantId, edition, input.prospectId)
     if (!quota.ok) return quota
@@ -972,7 +978,7 @@ async function reserveEmailSend(
   const hostGuard = assertPublicHttpsSendHosts(ctx)
   if (!hostGuard.ok) return hostGuard
 
-  const contactable = await assertProspectContactable(db, tenantId, input.prospectId, 'email')
+  const contactable = await assertProspectContactable(db, tenantId, projectId, input.prospectId, 'email')
   if (!contactable.ok) return contactable
 
   const quota = await assertProspectContactQuota(db, tenantId, edition, input.prospectId)
@@ -1433,10 +1439,12 @@ async function reserveDraftSend(
       status: outreachLogs.status,
       sentAt: outreachLogs.sentAt,
       doNotContact: sql<boolean>`${prospects.doNotContact} OR ${organizations.doNotContact}`,
+      qualified: projectProspects.qualified,
     })
     .from(outreachLogs)
     .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
     .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
+    .leftJoin(projectProspects, and(eq(projectProspects.prospectId, outreachLogs.prospectId), eq(projectProspects.projectId, outreachLogs.projectId)))
     .where(and(eq(outreachLogs.id, id), eq(outreachLogs.tenantId, tenantId)))
     .limit(1)
     .then((rows) => rows[0])
@@ -1451,6 +1459,8 @@ async function reserveDraftSend(
   if (draft.doNotContact) {
     return err('UNPROCESSABLE', 'Prospect is on do-not-contact list')
   }
+  // The person may have taken the prospect out after the draft was written.
+  if (draft.qualified === false) return err('UNPROCESSABLE', NOT_A_TARGET)
   const hostGuard = assertPublicHttpsSendHosts(ctx)
   if (!hostGuard.ok) return hostGuard
   const quota = await assertProspectContactQuota(db, tenantId, edition, draft.prospectId)

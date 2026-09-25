@@ -7,6 +7,7 @@ export type ListProspectsParams = {
   status?: ProspectStatus;
   priority?: number;
   q?: string;
+  scope?: 'all';
 };
 
 export function listProspects(
@@ -22,6 +23,7 @@ export function listProspects(
   if (params.status) sp.set('status', params.status);
   if (params.priority !== undefined) sp.set('priority', String(params.priority));
   if (params.q) sp.set('q', params.q);
+  if (params.scope) sp.set('scope', params.scope);
   return request<{ prospects: Prospect[]; total: number }>(fetchFn, {
     method: 'GET',
     path: `/projects/${projectId}/prospects?${sp}`,

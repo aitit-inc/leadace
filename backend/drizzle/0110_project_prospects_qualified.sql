@@ -1,0 +1,1 @@
+ALTER TABLE "project_prospects" ADD COLUMN "qualified" boolean DEFAULT true NOT NULL;

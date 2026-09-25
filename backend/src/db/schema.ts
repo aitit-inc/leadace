@@ -840,6 +840,9 @@ export const projectProspects = pgTable('project_prospects', {
   matchReason: text('match_reason').notNull(),
   priority: smallint('priority').$type<Priority>().notNull().default(3),
   status: prospectStatusEnum('status').notNull().default('new'),
+  // Whether the project targets this prospect: false when the hosted discovery
+  // did not confirm the Prerequisite, or the person took it out.
+  qualified: boolean('qualified').notNull().default(true),
   // Day-scale follow-up axis (P1), kept separate from prospects.next_outreach_after
   // (months-scale) so the two re-eligibility windows never collide. NULL
   // next_followup_after = no sequence in progress.

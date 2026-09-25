@@ -45,6 +45,7 @@ import { resolveProject } from './projects'
 import { loadLeverConfig } from './project-settings'
 import { getVariantStats, getChannelStats, getTargetingStats, getFutilityStats } from './evaluations'
 import { getActiveStrategySlugs, listDiscoveryStrategiesById } from './discovery-strategies'
+import { projectTargetExpr } from './prospects'
 
 async function loadActiveVariantIds(db: Db, projectId: ProjectId): Promise<string[]> {
   const rows = await db
@@ -115,6 +116,7 @@ async function loadPriorDayRegistrations(
     ))
     .where(and(
       eq(projectProspects.projectId, projectId),
+      projectTargetExpr,
       isNotNull(prospects.discoveryStrategy),
       sql`${projectProspects.createdAt} >= ((${cycleDate}::date - 1)::timestamp AT TIME ZONE 'UTC')`,
       sql`${projectProspects.createdAt} < ((${cycleDate}::date)::timestamp AT TIME ZONE 'UTC')`,

@@ -1,7 +1,9 @@
 // Stage: enrich — read each candidate's site for a contact and the dated events
 // it states about itself, then register the batch. An address, an event or the
 // Prerequisite the match rests on counts only when its page is in the retrieval
-// record; an unconfirmed Prerequisite drops the candidate.
+// record. Every candidate judged is registered, so discover's dedup keeps the
+// project from reading it again; only one reachable and past the Prerequisite
+// check is a send target and spends the found allowance.
 import { z } from 'zod'
 import type { Db } from '../../db/connection'
 import type { ProjectId, TenantId } from '../../domain/ids'
@@ -11,7 +13,7 @@ import { withRecentSignals } from '../../domain/site-read'
 import { utcDateKey } from '../../domain/time'
 import { ok, err, type ServiceResult } from '../result'
 import { callLlmPagesJson, LlmError } from '../llm'
-import { batchRegister, type BatchInput } from '../prospect-import'
+import { batchRegister, type BatchInput, type FoundVerdict } from '../prospect-import'
 import { discoveryPausedReason, getRemainingProspectQuota } from '../plan-limits'
 import { getActiveStrategySlugs, listDiscoveryStrategiesById } from '../discovery-strategies'
 import { loadProjectOutboundAllowlist } from '../project-settings'
@@ -54,11 +56,16 @@ const eventsReadSchema = z.object({
   pagesToRead: z.array(z.string()),
 })
 
-type EnrichSkip = 'site_unreadable' | 'read_failed' | 'prereq_uncited' | 'prereq_unverified' | 'channel_not_enabled'
+// Judged, yet not a send target: registered so the project remembers it.
+type Unsendable = 'site_unreadable' | 'prereq_unverified' | 'channel_not_enabled' | 'no_solicitation' | 'no_contact_found'
+type EnrichSkip = 'read_failed' | 'prereq_uncited' | Unsendable
 
 type Enriched = {
   candidate: DiscoverCandidate
   skip: EnrichSkip | null
+  // The Prerequisite check ran and passed. Not run (no usable channel) counts as
+  // unconfirmed, so a contact added later never makes the candidate a target.
+  qualified: boolean
   email: string | null
   emailSourceUrl: string | null
   emailNoSolicitation: boolean
@@ -128,8 +135,6 @@ export function mergeContactForm(a: ReadForm | null, b: ReadForm | null): ReadFo
 
 type ChannelState = 'usable' | 'refused' | null
 
-// With no enabled channel a refusal is still registered: it stops discover
-// reading the site again.
 export function contactDecision(
   found: { email: ChannelState; form: ChannelState; x: boolean; linkedin: boolean },
   channels: readonly OutboundChannel[],
@@ -143,6 +148,17 @@ export function contactDecision(
   ) return 'reachable'
   if (found.email === 'refused' || found.form === 'refused') return 'refusal'
   return found.email !== null || found.form !== null || found.x || found.linkedin ? 'channel_not_enabled' : 'none'
+}
+
+// qualifies: null when no channel was usable, so the Prerequisite was not checked.
+export function judgeRead(qualifies: boolean | null, decision: ReturnType<typeof contactDecision>): Unsendable | null {
+  if (qualifies === false) return 'prereq_unverified'
+  switch (decision) {
+    case 'reachable': return null
+    case 'refusal': return 'no_solicitation'
+    case 'channel_not_enabled': return 'channel_not_enabled'
+    case 'none': return 'no_contact_found'
+  }
 }
 
 export function newestFirst(signals: string[]): string[] {
@@ -242,6 +258,7 @@ export async function enrichCandidate(
   const empty: Enriched = {
     candidate,
     skip: null,
+    qualified: false,
     email: null,
     emailSourceUrl: null,
     emailNoSolicitation: false,
@@ -314,30 +331,30 @@ export async function enrichCandidate(
     ...(read.snsAccounts.linkedin ? { linkedin: read.snsAccounts.linkedin } : {}),
   }
   const snsAccounts = Object.keys(sns).length > 0 ? sns : null
-  const decision = contactDecision({
+  const found = {
     email: evidenced === undefined ? null : emailUsable ? 'usable' : 'refused',
     form: form === null ? null : formNoSolicitation ? 'refused' : 'usable',
     x: sns.x !== undefined,
     linkedin: sns.linkedin !== undefined,
-  }, ctx.channels)
-  if (decision === 'channel_not_enabled') return { ...empty, skip: 'channel_not_enabled' }
-  // A refusal is never drafted: no paid confirmation, so only refused channels are kept.
-  const reachable = decision === 'reachable'
-  const claims = reachable ? await confirmClaims(env, candidate, now) : null
-  if (claims !== null && !claims.qualifies) return { ...empty, skip: 'prereq_unverified' }
+  } as const
+  const decision = contactDecision(found, ctx.channels)
+  // Checked whenever a channel is usable, enabled or not: turning a channel on
+  // later must not make an unchecked candidate a send target.
+  const usable = found.email === 'usable' || found.form === 'usable' || found.x || found.linkedin
+  const claims = usable ? await confirmClaims(env, candidate, now) : null
+  const skip = judgeRead(claims?.qualifies ?? null, decision)
   const signals = claims === null ? [] : newestFirst([...datedEvents(read.events, retrieved, now), ...claims.signals])
-  const keptEmail = reachable || emailNoSolicitation ? evidenced : undefined
-  const keptForm = reachable || formNoSolicitation ? form : null
   return {
     candidate,
-    skip: null,
-    email: keptEmail?.address.toLowerCase() ?? null,
-    emailSourceUrl: keptEmail?.foundOnUrl ?? null,
+    skip,
+    qualified: claims?.qualifies === true,
+    email: evidenced?.address.toLowerCase() ?? null,
+    emailSourceUrl: evidenced?.foundOnUrl ?? null,
     emailNoSolicitation,
-    contactFormUrl: keptForm?.url ?? null,
-    formType: keptForm?.formType ?? null,
+    contactFormUrl: form?.url ?? null,
+    formType: form?.formType ?? null,
     formNoSolicitation,
-    snsAccounts: reachable ? snsAccounts : null,
+    snsAccounts,
     contactName: read.contactName,
     department: read.department,
     country: candidate.country ?? read.country,
@@ -385,8 +402,13 @@ Answer rules:
   }
 }
 
+export function verdictOf(skip: EnrichSkip | null, qualified: boolean): FoundVerdict | null {
+  if (skip === 'read_failed' || skip === 'prereq_uncited') return null
+  if (!qualified) return 'unqualified'
+  return skip === null ? 'billable' : 'unreachable'
+}
+
 function toProspectInput(e: Enriched): BatchInput['prospects'][number] | null {
-  if (!e.email && !e.contactFormUrl && !e.snsAccounts) return null
   const c = e.candidate
   const domain = apexDomainOf(c.websiteUrl)
   if (!domain) return null
@@ -482,25 +504,39 @@ export async function runEnrich(
 
   return ok(await checkpoint('register', async (): Promise<ServiceResult<EnrichOutput>> => {
     await progress('registering', candidates.length, candidates.length)
-    const inputs = enriched.map(toProspectInput)
-    const registrable = inputs.filter((p): p is NonNullable<typeof p> => p !== null)
-    const noChannel = enriched.filter((_, i) => inputs[i] === null).map((e) => ({ name: e.candidate.name, reason: e.skip ?? ('no_contact_found' as const) }))
-    const reasons = { site_unreadable: 0, read_failed: 0, prereq_uncited: 0, prereq_unverified: 0, channel_not_enabled: 0, no_contact_found: 0 }
-    for (const s of noChannel) reasons[s.reason]++
-    console.log({ message: '[enrich] read', candidates: enriched.length, ...reasons, stale_shape: stale.length, no_solicitation: enriched.filter((e) => e.noSolicitation).length })
-    const log = [...staleLines, ...noChannel.map((s) => skippedLine(s.name, s.reason))]
+    const reasons = { site_unreadable: 0, read_failed: 0, prereq_uncited: 0, prereq_unverified: 0, channel_not_enabled: 0, no_solicitation: 0, no_contact_found: 0 }
+    const log = [...staleLines]
+    const groups: Record<FoundVerdict, { input: BatchInput['prospects'][number]; skip: EnrichSkip | null }[]> = { billable: [], unreachable: [], unqualified: [] }
+    for (const e of enriched) {
+      if (e.skip !== null) reasons[e.skip]++
+      const verdict = verdictOf(e.skip, e.qualified)
+      const input = verdict === null ? null : toProspectInput(e)
+      if (verdict === null || input === null) log.push(skippedLine(e.candidate.name, e.skip ?? 'no_domain'))
+      else groups[verdict].push({ input, skip: e.skip })
+    }
+    console.log({ message: '[enrich] read', candidates: enriched.length, ...reasons, stale_shape: stale.length, no_solicitation_notice: enriched.filter((e) => e.noSolicitation).length })
     const emailsToVerify: string[] = []
-    for (let i = 0; i < registrable.length; i += 100) {
-      const result = await runWithRls(db, tenantId, (tx) => batchRegister(tx, tenantId, editionOf(env), { projectId, prospects: registrable.slice(i, i + 100) }, 'found'))
-      if (!result.ok) return result
-      log.push(
-        ...result.value.registered.map((p): JobLogEntry => ({ kind: 'prospect', name: p.name, outcome: 'registered', prospectId: p.id })),
-        ...result.value.skippedDetails.map((s) => skippedLine(s.name, s.reason)),
-      )
-      emailsToVerify.push(...result.value.emailsToVerify)
+    for (const verdict of ['billable', 'unreachable', 'unqualified'] as const) {
+      const rows = groups[verdict]
+      // A candidate registered only to be remembered reads as skipped, with the
+      // reason it cannot be sent.
+      const reasonOf = new Map(rows.map((r) => [r.input.name, r.skip]))
+      for (let i = 0; i < rows.length; i += 100) {
+        const prospects = rows.slice(i, i + 100).map((r) => r.input)
+        const result = await runWithRls(db, tenantId, (tx) => batchRegister(tx, tenantId, editionOf(env), { projectId, prospects }, { origin: 'found', verdict }))
+        if (!result.ok) return result
+        log.push(
+          ...result.value.registered.map((p): JobLogEntry => {
+            const reason = reasonOf.get(p.name)
+            return reason ? skippedLine(p.name, reason) : { kind: 'prospect', name: p.name, outcome: 'registered', prospectId: p.id }
+          }),
+          ...result.value.skippedDetails.map((s) => skippedLine(s.name, s.reason)),
+        )
+        emailsToVerify.push(...result.value.emailsToVerify)
+      }
     }
     await kickAutoTopUp(env, tenantId)
     if (emailsToVerify.length > 0) await stampEmailDeliverability(env.DATABASE_URL, tenantId, emailsToVerify)
-    return ok({ log, withEmail: enriched.filter((e) => e.email !== null && !e.emailNoSolicitation).length })
+    return ok({ log, withEmail: enriched.filter((e) => e.skip === null && e.email !== null && !e.emailNoSolicitation).length })
   }))
 }
