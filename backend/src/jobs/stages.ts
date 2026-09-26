@@ -98,8 +98,9 @@ export async function discoverStage(
   namePrefix = 'discover',
 ): Promise<Extract<JobResult, { kind: 'discover' }>> {
   const { tenantId, projectId }: Ids = ctx.job
-  const db = createDb(ctx.env.DATABASE_URL)
-  const discovered = unwrap(await runDiscover(db, tenantId, ctx.env, projectId, params, checkpointOf(ctx, namePrefix), progressWriter(ctx, db, 'discover')))
+  const connect = () => createDb(ctx.env.DATABASE_URL)
+  const progress: ProgressFn = (step, done, total) => progressWriter(ctx, connect(), 'discover')(step, done, total)
+  const discovered = unwrap(await runDiscover(connect, tenantId, ctx.env, projectId, params, checkpointOf(ctx, namePrefix), progress))
   const enriched = await enrichStage(ctx, discovered.candidates, `${namePrefix}:enrich`)
   return {
     ...discovered.result,

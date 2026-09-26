@@ -269,8 +269,10 @@ async function searchPromptFor(db: Db, tenantId: TenantId, projectId: ProjectId,
   return ok(searchPrompt({ plan: entry, ...docs.value, searchNotes, learnings, reviewFeedback: draftReviewSection(reviews), targetCountries: allowlist.targetCountries, today }))
 }
 
+// A client per unit: units run minutes apart around model calls, and a client
+// held across them finds its connection closed.
 export async function runDiscover(
-  db: Db,
+  connect: () => Db,
   tenantId: TenantId,
   env: HostedEnv,
   projectId: ProjectId,
@@ -281,7 +283,7 @@ export async function runDiscover(
   // Progress is written inside the units: code between them reruns on every
   // replay of the job.
   const { plan, today, industries } = await checkpoint('plan', async () => {
-    const planned = await planDiscover(db, tenantId, env, projectId, params)
+    const planned = await planDiscover(connect(), tenantId, env, projectId, params)
     if (planned.ok) await progress(`searching: ${planned.value.plan.map((p) => p.slug).join(', ')}`, 0, planned.value.plan.length)
     return planned
   })
@@ -291,7 +293,7 @@ export async function runDiscover(
   const passes = await Promise.all(
     plan.map((entry) =>
       checkpoint(`search:${entry.slug}`, async (): Promise<ServiceResult<SearchPass>> => {
-        const prompt = await searchPromptFor(db, tenantId, projectId, entry, today)
+        const prompt = await searchPromptFor(connect(), tenantId, projectId, entry, today)
         if (!prompt.ok) return prompt
         try {
           return ok({ entry, search: await callLlmGroundedText(env, 'discover.search', { prompt: prompt.value }) })
@@ -319,7 +321,7 @@ export async function runDiscover(
   for (const [i, { entry, search }] of searches.entries()) {
     const pass = await checkpoint(`extract:${entry.slug}`, async (): Promise<ServiceResult<ExtractPass>> => {
       await progress(`extracting: ${entry.slug}`, i, plan.length)
-      const priorNotes = carried ? carried.notes : await loadDoc(db, tenantId, projectId, 'search_notes')
+      const priorNotes = carried ? carried.notes : await loadDoc(connect(), tenantId, projectId, 'search_notes')
       try {
         const extracted = await callLlmFollowUpJson(env, 'discover.extract', {
           after: search,
@@ -356,6 +358,7 @@ export async function runDiscover(
   const unique = [...byDomain.values()]
   const fresh = await checkpoint('dedup', async (): Promise<ServiceResult<DiscoverCandidate[]>> => {
     await progress('checking duplicates', plan.length, plan.length)
+    const db = connect()
     const kept: DiscoverCandidate[] = []
     for (let i = 0; i < unique.length; i += 100) {
       const chunk = unique.slice(i, i + 100)
