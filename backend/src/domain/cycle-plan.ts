@@ -2,8 +2,6 @@
 // months-scale re-approach.
 export type ReachArm = 'first' | 'followup' | 'recycle'
 
-// The daily cycle's one ordering decision: replenish the list before sending
-// when it cannot carry the day's outbound (daily-cycle/SKILL.md step 5).
 export type ReachableSnapshot = {
   // First touches the hosted agent can make by itself (email only in send mode).
   deliverable: number
@@ -19,8 +17,42 @@ export type ReachableSnapshot = {
   blocked: string | null
 }
 
-// A list under a third of the day's count is replenished first; what only a
-// browser can reach does not count toward it.
-export function shouldBuildFirst(r: ReachableSnapshot, outboundCount: number): boolean {
-  return r.blocked === null && r.deliverable < outboundCount / 3
+// A runaway-day guard, not a business rule: a strategy yielding a prospect or
+// two per pass would otherwise search all day.
+export const MAX_DISCOVERY_PASSES = 6
+
+export type DiscoveryUnavailable = 'no_strategies' | { paused: string }
+
+export type CycleStop =
+  | { kind: 'reached' }
+  // The list still held prospects, but the last round wrote to none of them.
+  | { kind: 'list_spent'; failed: number }
+  // A discovery pass left nothing new to reach.
+  | { kind: 'dry' }
+  | { kind: 'no_discovery'; why: DiscoveryUnavailable }
+  | { kind: 'pass_cap' }
+
+export type LastRound = { kind: 'draft'; produced: number; failed: number } | { kind: 'discover'; deliverableBefore: number } | null
+
+export type CycleStep = { kind: 'draft'; count: number } | { kind: 'discover'; count: number } | { kind: 'stop'; stop: CycleStop }
+
+// The day's first touches, one round at a time: write to what the list holds,
+// search when it runs out or yields nothing, and stop only when there is
+// nothing more to reach. Cost never stops the day (#531).
+export function nextCycleStep(s: {
+  want: number
+  deliverable: number
+  last: LastRound
+  discovery: DiscoveryUnavailable | null
+  passes: number
+}): CycleStep {
+  if (s.want <= 0) return { kind: 'stop', stop: { kind: 'reached' } }
+  if (s.last?.kind === 'discover' && s.deliverable <= s.last.deliverableBefore) return { kind: 'stop', stop: { kind: 'dry' } }
+  const spent = s.last?.kind === 'draft' && s.last.produced === 0 ? s.last : null
+  if (s.deliverable > 0 && !spent) return { kind: 'draft', count: Math.min(s.want, s.deliverable) }
+  if (s.discovery !== null) {
+    return { kind: 'stop', stop: spent ? { kind: 'list_spent', failed: spent.failed } : { kind: 'no_discovery', why: s.discovery } }
+  }
+  if (s.passes >= MAX_DISCOVERY_PASSES) return { kind: 'stop', stop: { kind: 'pass_cap' } }
+  return { kind: 'discover', count: s.want }
 }

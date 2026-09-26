@@ -29,7 +29,7 @@ type DatedEvent = z.infer<typeof datedEventSchema>
 
 const pageReadSchema = z.object({
   noSolicitationText: z.string().nullable(),
-  emails: z.array(z.object({ address: z.string(), foundOnUrl: z.string(), noSolicitation: z.boolean() })),
+  emails: z.array(z.object({ address: z.string(), foundOnUrl: z.string(), noSolicitation: z.boolean(), salesContact: z.boolean() })),
   pagesToRead: z.array(z.string()),
   contactForm: z.object({ url: z.string(), formType: z.enum(FORM_TYPES), noSolicitation: z.boolean() }).nullable(),
   contactName: z.string().nullable(),
@@ -86,20 +86,24 @@ function eventsRule(since: string): string {
   return `events: up to 5 things this organization states it did on or after ${since} (a release, funding, hire, partnership, expansion, award, office, event), each restated from the page as "YYYY-MM-DD: what happened" — one self-contained sentence with names, dates and figures exactly as the page gives them; foundOnUrl is the exact URL of that page. Omit anything undated, dated before ${since}, or about someone else; never infer a date.`
 }
 
-function readPrompt(args: { candidate: DiscoverCandidate; urls: string[]; procedure: string; offer: string; approaches: string[]; today: string; since: string }): string {
+function readPrompt(args: { candidate: DiscoverCandidate; urls: string[]; procedure: string; offer: string; salesStrategy: string; approaches: string[]; today: string; since: string }): string {
   return `You are reading a company's website to find a publicly posted business contact and what it says about its own recent activity. Today is ${args.today}. The pages: ${args.urls.join(' , ')}
 
 Candidate: ${args.candidate.name} (${args.candidate.organizationName}) — ${args.candidate.overview}
 What we would write to them about (for the hypothesis fields only): ${args.offer}
 Discovery strategies in play (their approach text names directories that may list contacts): ${args.approaches.join(' / ') || '(none)'}
 
+Sales strategy (SALES_STRATEGY.md — a contact policy it states decides which addresses to write to):
+${args.salesStrategy}
+
 Procedure (follow its priorities: sales-refusal notice first, then email, then a general inquiry form):
 ${args.procedure}
 
 Answer rules:
 - Record only what appears verbatim on a page you read. Every email address must be a literal string on the page (a mailto: link or visible text) and foundOnUrl must be the exact page URL it appeared on; noSolicitation is true when a sales-refusal notice sits next to that address. Never construct an address from a name and a domain, never guess.
+- salesContact: whether the address is one to write a first sales approach to, best one listed first. By default a privacy, legal, dpo, abuse, no-reply, support, recruiting, careers or press mailbox is not; the sales strategy's contact policy, when it states one, overrides this default.
 - noSolicitationText: the notice text when a page you read refuses sales approaches for the organization as a whole (a header, footer or contact-page statement such as 営業お断り), else null. A notice attached to one address or one form is not site-wide: mark that address or form instead.
-- pagesToRead: up to 6 absolute URLs on this site that likely carry a contact (contact, about, company, team, imprint / legal, 特定商取引法), most likely first; empty when an email without a refusal notice was already found.
+- pagesToRead: up to 6 absolute URLs on this site that likely carry a contact (contact, about, company, team, imprint / legal, 特定商取引法), most likely first; empty when a sales contact without a refusal notice was already found.
 - contactForm: only a general or B2B inquiry form (never signup, support, careers, feedback), with its formType per the procedure and noSolicitation true when the form or its page states no sales inquiries; null otherwise.
 - contactName / department: only when a specific person and role is clearly stated (CEO, founder, head of the buying function); never a guess.
 - country: ISO 3166-1 alpha-2 of the organization's address if shown, else null.
@@ -121,8 +125,9 @@ type ReadForm = NonNullable<PageRead['contactForm']>
 // not hide a usable address; an address seen with a notice on any page keeps it.
 export function pickEvidencedEmail(emails: ReadEmail[], retrieved: string[]): ReadEmail | undefined {
   const evidenced = emails.filter((e) => z.email().safeParse(e.address).success && inRetrieved(e.foundOnUrl, retrieved))
+  // A notice counts wherever the address was seen, sales contact or not.
   const refused = new Set(evidenced.filter((e) => e.noSolicitation).map((e) => e.address.toLowerCase()))
-  const merged = evidenced.map((e) => ({ ...e, noSolicitation: refused.has(e.address.toLowerCase()) }))
+  const merged = evidenced.filter((e) => e.salesContact).map((e) => ({ ...e, noSolicitation: refused.has(e.address.toLowerCase()) }))
   return merged.find((e) => !e.noSolicitation) ?? merged[0]
 }
 
@@ -253,7 +258,7 @@ async function confirmClaims(env: HostedEnv, candidate: DiscoverCandidate, now: 
 export async function enrichCandidate(
   env: HostedEnv,
   candidate: DiscoverCandidate,
-  ctx: { procedure: string; offer: string; approaches: string[]; channels: readonly OutboundChannel[] },
+  ctx: { procedure: string; offer: string; salesStrategy: string; approaches: string[]; channels: readonly OutboundChannel[] },
 ): Promise<Enriched> {
   const empty: Enriched = {
     candidate,
@@ -459,9 +464,10 @@ function skippedLine(name: string, reason: string): JobLogEntry {
 // Documents stay out of step results (a result is capped at 1 MiB, a document
 // is not): each read loads its own.
 async function readContext(db: Db, tenantId: TenantId, projectId: ProjectId) {
-  const [procedure, business, strategies, activeSlugs, allowlist] = await Promise.all([
+  const [procedure, business, salesStrategy, strategies, activeSlugs, allowlist] = await Promise.all([
     loadMasterDoc(db, 'tpl_enrich_contacts'),
     loadDoc(db, tenantId, projectId, 'business'),
+    loadDoc(db, tenantId, projectId, 'sales_strategy'),
     listDiscoveryStrategiesById(db, projectId),
     getActiveStrategySlugs(db, projectId),
     loadProjectOutboundAllowlist(db, projectId),
@@ -469,6 +475,7 @@ async function readContext(db: Db, tenantId: TenantId, projectId: ProjectId) {
   return {
     procedure,
     offer: business ? business.split('\n').slice(0, 20).join('\n') : '(business document missing)',
+    salesStrategy: salesStrategy ?? '(sales strategy document missing)',
     approaches: strategies.filter((s) => activeSlugs.includes(s.slug)).map((s) => s.approach),
     channels: allowlist.outboundChannels,
   }

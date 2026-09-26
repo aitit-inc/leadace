@@ -25,7 +25,7 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/fetch_url.py --url "<URL>" --prompt "<extr
 
 First, retrieve the **top page** with `fetch_url.py` and check:
 - **Check for sales refusal notices (highest priority)**: Look for text like "No sales emails", "Please refrain from sales inquiries", "No solicitation", etc. A notice is a property of the contact it sits with, not of the organization: a site-wide notice (header, footer, a general statement on the contact page) covers every address and form on this site; a notice next to one address or on one form covers that one only. **Keep looking for the contact**, and mark what the notice covers — `"email_no_solicitation": true` for the address, `"form_no_solicitation": true` for the form — with `"notes": "Site states no sales outreach: {matching text}"`. A covered contact is registered as a suppression record (so the site is not read again) and is never written to; an address found elsewhere for the same organization stays usable
-- Whether the header/footer contains an email address (if so, stop here)
+- Whether the header/footer contains a sales contact email (if so, stop here — see 2b for which addresses count)
 - From the navigation/footer link list, identify pages likely to contain contact information
 
 **Examples of pages that often have contact info:**
@@ -39,16 +39,16 @@ First, retrieve the **top page** with `fetch_url.py` and check:
 
 ### 2. Search for Email Address
 
-If an email is found in the top page header/footer in step 1, stop here. If not, **before diving deeper into the official site**, conduct an external search first (often more efficient than internal site exploration).
+If a sales contact email is found in the top page header/footer in step 1, stop here. If not, **before diving deeper into the official site**, conduct an external search first (often more efficient than internal site exploration).
 
 #### 2a. External Search (Do this first)
 
 Check the project's registered discovery strategies (their `approach` text — the caller carries them from `get_lever_state`) for the specific platforms and directories to use. Then search with WebSearch using 1-2 queries:
 - `"{company name}" email address` or `"{company name}" contact`
-- Search on press release / news sites named in the strategy approaches (press releases often include PR contact emails)
+- Search on press release / news sites named in the strategy approaches (a release may name a person to contact)
 
 Priority sources to check (based on the registered strategy approaches):
-- **Press release / news sites** they name — high rate of PR contact emails
+- **Press release / news sites** they name — a release may name a person to contact
 - **Company databases / startup databases** they name — company pages often have contact info
 - **Industry directories and corporate information sites** they name
 
@@ -56,18 +56,16 @@ If found here, stop the search. If not, proceed to step 2b.
 
 #### 2b. Internal Site Exploration
 
-Check the pages identified in step 1 one by one using `fetch_url.py`. Stop as soon as an email address is found.
+Check the pages identified in step 1 one by one using `fetch_url.py`. Stop as soon as a sales contact email is found.
 
 Search tips:
-- Look for general contact emails like `info@`, `contact@`, as well as personal contact emails
-- Which to prefer: follow the policy in SALES_STRATEGY.md (if no policy, use whatever is found)
+- Look for general contact emails like `info@`, `contact@`, `sales@`, as well as personal contact emails
+- Which to prefer: follow the contact policy in SALES_STRATEGY.md. Without one, `privacy@`, `legal@`, `dpo@`, `abuse@`, `noreply@`, `support@`, `recruit@`, `careers@` and `press@` are not sales contacts: skip them and keep looking
 - Extract `mailto:` links found on the page
-- News/press release pages sometimes list PR contact emails
-- Privacy policy footers sometimes list an administrator email
 
-### 3. Search for Inquiry Form URL (Only if no email found)
+### 3. Search for Inquiry Form URL (Only if no sales contact email found)
 
-Only if no email address was found, look for an inquiry form. Use the link list from step 1 to find an appropriate form page.
+Only if no sales contact email was found, look for an inquiry form. Use the link list from step 1 to find an appropriate form page.
 
 **Appropriate forms (acceptable to register):**
 - General inquiry forms such as "Inquiry" or "Consultation"

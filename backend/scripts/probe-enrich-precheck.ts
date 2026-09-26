@@ -282,7 +282,7 @@ async function measure(plan: (typeof strategies)[number]): Promise<{ rows: Row[]
         const [pre, enriched] = await Promise.all([
           precheck(c.websiteUrl),
           // No database here: the ledger write fails and is logged; the usage line still carries jobId.
-          withPaidCallScope({ databaseUrl: '', tenantId: 'probe' as TenantId, jobId: key }, () => enrichCandidate(env, c, { procedure, offer, approaches: [plan.approach], channels: ['email'] })),
+          withPaidCallScope({ databaseUrl: '', tenantId: 'probe' as TenantId, jobId: key }, () => enrichCandidate(env, c, { procedure, offer, salesStrategy: plan.offer.salesStrategy, approaches: [plan.approach], channels: ['email'] })),
         ])
         const cost = tokenCost(usages.filter((u) => u.jobId === key))
         const outcome = outcomeOf(enriched)

@@ -232,11 +232,10 @@ For each prospect, assign a match reason (why they're appropriate as a target, i
 - 5: Under consideration (indirect possibility)
 
 **Factor in email retrieval ease:** If the following signals are found during exploration, raise priority by 1 level for equal match quality (more email holders -> higher outbound success rate):
-- Has press releases on press release distribution sites (high rate of PR contact email inclusion)
 - Listed in startup DB or industry directory (more public information available)
 - Email explicitly shown on official site (e.g., info@) discovered during exploration
 
-**Note on email types:** Both named individual addresses (`first.last@co.com`) and generic addresses (`info@`, `contact@`, `sales@`, `support@`, `pr@`) are valid outreach targets. Named addresses bounce less and deserve slightly higher priority, but **generic addresses must not be excluded** — for many companies they are the only reachable channel.
+**Note on email types:** Both named individual addresses (`first.last@co.com`) and general addresses (`info@`, `contact@`, `sales@`) are valid outreach targets. Named addresses bounce less and deserve slightly higher priority, but **general addresses must not be excluded** — for many companies they are the only reachable channel. Privacy, legal, support, recruiting, press and no-reply mailboxes are not sales contacts unless SALES_STRATEGY.md's contact policy wants them (`tpl_enrich_contacts`).
 
 ## Phase 1.5: Pre-dedup Filter
 
@@ -339,7 +338,7 @@ For each such candidate, search WebSearch for:
 - `"{company name}" email address`
 - `"{company name}" contact`
 
-Information may be found from industry directories, press release distribution sites, event speaker information, etc. If found, update the candidate's data.
+Information may be found from industry directories, press release distribution sites, event speaker information, etc. If found, update the candidate's data. Leave out privacy, legal, dpo, abuse, no-reply, support, recruiting, careers and press addresses unless SALES_STRATEGY.md's contact policy wants them (`tpl_enrich_contacts`).
 
 **Limit:** Re-search up to a **maximum of 10 candidates** without contact info. Register the rest without contact info (they will be skipped during outbound).
 

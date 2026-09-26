@@ -1,3 +1,5 @@
+import { MAX_DISCOVERY_PASSES, type CycleStop } from './cycle-plan'
+
 // The Free allowance is 30 for the account's lifetime: 5 a day shows replies
 // within days without spending it all on day one.
 export const FREE_DAILY_PACE = 5
@@ -74,16 +76,18 @@ const LIMIT_PHRASE: Record<Exclude<DailyLimit, 'target'>, string> = {
 }
 
 // null when the day reached its target.
-export function shortfallReason(r: {
-  target: number
-  runnable: { count: number; limitedBy: DailyLimit }
-  deliverable: number
-  produced: number
-  failed: number
-}): string | null {
-  if (r.produced >= r.target) return null
-  if (r.runnable.limitedBy !== 'target' && r.produced >= r.runnable.count) return LIMIT_PHRASE[r.runnable.limitedBy]
-  if (r.deliverable < r.runnable.count) return `supply — ${r.deliverable} reachable`
-  if (r.failed > 0) return `${r.failed} failed`
-  return 'supply — the rest were skipped'
+export function shortfallReason(r: { target: number; runnable: { count: number; limitedBy: DailyLimit }; reached: number; stop: CycleStop }): string | null {
+  if (r.reached >= r.target) return null
+  switch (r.stop.kind) {
+    case 'reached':
+      return r.runnable.limitedBy === 'target' ? null : LIMIT_PHRASE[r.runnable.limitedBy]
+    case 'list_spent':
+      return r.stop.failed > 0 ? `${r.stop.failed} failed` : 'supply — the rest were skipped'
+    case 'dry':
+      return 'supply — discovery found nothing new to reach'
+    case 'no_discovery':
+      return r.stop.why === 'no_strategies' ? 'supply — no discovery strategies' : `supply — ${r.stop.why.paused}`
+    case 'pass_cap':
+      return `supply — ${MAX_DISCOVERY_PASSES} discovery passes found too few`
+  }
 }

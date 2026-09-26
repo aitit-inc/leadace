@@ -141,10 +141,13 @@ export async function draftStage(
   params: JobParamsOf<'draft'>,
   namePrefix = 'draft',
   arm?: ReachArm,
+  // Shared across calls that must not draw the same prospect twice; each call
+  // appends the prospects it tries.
+  attempted: number[] = [],
 ): Promise<Extract<JobResult, { kind: 'draft' }>> {
   const { tenantId, projectId }: Ids = ctx.job
   const wanted = params.prospectIds?.length ?? params.count ?? 30
-  const attempted: number[] = []
+  const triedBefore = attempted.length
   const load = (round: number, limit: number) =>
     ctx.step.do(`${namePrefix}:load:${round}`, STEP_RETRY, () =>
       tenantTx(ctx, async (tx) => unwrap(await loadDraftBatch(tx, tenantId, ctx.env, projectId, params, { limit, excludeProspectIds: attempted, arm }))),
@@ -180,7 +183,7 @@ export async function draftStage(
     }
     // An explicit list is the batch itself; a count is refilled until that
     // many messages are out.
-    const limit = params.prospectIds ? 0 : refillDrawSize(wanted, produced, attempted.length)
+    const limit = params.prospectIds ? 0 : refillDrawSize(wanted, produced, attempted.length - triedBefore)
     if (limit === 0) break
     batch = await load(round, limit)
     quotaMessage = batch.quotaMessage ?? quotaMessage

@@ -69,18 +69,21 @@ describe('runnableNewProspects', () => {
 
 describe('shortfallReason', () => {
   const runnable = (count: number, limitedBy: 'target' | 'mailbox' | 'plan') => ({ count, limitedBy })
+  const done = { kind: 'reached' } as const
   it('is silent when the day reached its target', () => {
-    expect(shortfallReason({ target: 10, runnable: runnable(10, 'target'), deliverable: 40, produced: 10, failed: 0 })).toBeNull()
+    expect(shortfallReason({ target: 10, runnable: runnable(10, 'target'), reached: 10, stop: done })).toBeNull()
   })
   it('names the capacity or plan bound the day stopped at', () => {
-    expect(shortfallReason({ target: 30, runnable: runnable(13, 'mailbox'), deliverable: 40, produced: 13, failed: 0 })).toContain('mailbox')
-    expect(shortfallReason({ target: 30, runnable: runnable(5, 'plan'), deliverable: 40, produced: 5, failed: 0 })).toContain('allowance')
+    expect(shortfallReason({ target: 30, runnable: runnable(13, 'mailbox'), reached: 13, stop: done })).toContain('mailbox')
+    expect(shortfallReason({ target: 30, runnable: runnable(5, 'plan'), reached: 5, stop: done })).toContain('allowance')
   })
-  it('blames supply when the list ran short of the bound', () => {
-    expect(shortfallReason({ target: 30, runnable: runnable(13, 'mailbox'), deliverable: 4, produced: 4, failed: 0 })).toBe('supply — 4 reachable')
-    expect(shortfallReason({ target: 20, runnable: runnable(20, 'target'), deliverable: 60, produced: 11, failed: 0 })).toBe('supply — the rest were skipped')
+  it('names what ran out of supply', () => {
+    expect(shortfallReason({ target: 20, runnable: runnable(20, 'target'), reached: 4, stop: { kind: 'dry' } })).toBe('supply — discovery found nothing new to reach')
+    expect(shortfallReason({ target: 20, runnable: runnable(20, 'target'), reached: 11, stop: { kind: 'list_spent', failed: 0 } })).toBe('supply — the rest were skipped')
+    expect(shortfallReason({ target: 20, runnable: runnable(20, 'target'), reached: 0, stop: { kind: 'no_discovery', why: 'no_strategies' } })).toBe('supply — no discovery strategies')
+    expect(shortfallReason({ target: 20, runnable: runnable(20, 'target'), reached: 9, stop: { kind: 'pass_cap' } })).toContain('discovery passes')
   })
-  it('names send failures over skips', () => {
-    expect(shortfallReason({ target: 20, runnable: runnable(20, 'target'), deliverable: 60, produced: 17, failed: 3 })).toBe('3 failed')
+  it('names send failures', () => {
+    expect(shortfallReason({ target: 20, runnable: runnable(20, 'target'), reached: 17, stop: { kind: 'list_spent', failed: 3 } })).toBe('3 failed')
   })
 })

@@ -1,11 +1,11 @@
 // The daily cycle (daily-cycle/SKILL.md, server-side): evaluate → lever tick →
-// outbound → prospect discovery when the list runs low → journal → the digest
-// that reports what changed.
+// follow-ups → new prospects, searching again whenever the list runs out →
+// re-approaches → journal → the digest that reports what changed.
 // Each stage is the same code a standalone job runs; this file only decides
 // the order and the counts.
 import { NonRetryableError } from 'cloudflare:workflows'
 import type { JobKind, JobParamsOf, JobResult, StrategyPlanCompliance } from '../domain/jobs'
-import { shouldBuildFirst, type ReachableSnapshot } from '../domain/cycle-plan'
+import { nextCycleStep, type CycleStop, type DiscoveryUnavailable, type LastRound, type ReachableSnapshot } from '../domain/cycle-plan'
 import { resolveDailyTarget, runnableNewProspects, shortfallReason } from '../domain/daily-target'
 import { loadDailyNewProspects, loadPlanPace } from '../services/daily-target'
 import { sendCycleDigest } from '../services/digest'
@@ -51,8 +51,7 @@ export async function runDailyCycle(ctx: StageCtx, params: JobParamsOf<'daily_cy
   const { tenantId, projectId } = ctx.job
   const stages: CycleDigest['stages'] = []
   const decisions: string[] = []
-  // The two discovery branches below exclude each other, so this is one pass.
-  let planCompliance: StrategyPlanCompliance[] = []
+  const planCompliance: StrategyPlanCompliance[] = []
   const stage = async (kind: JobKind, summary: string) => {
     const n = stages.push({ kind, summary })
     await logStep(ctx, `stage:${n}`, [{ kind: 'stage', stage: kind, summary }])
@@ -77,15 +76,10 @@ export async function runDailyCycle(ctx: StageCtx, params: JobParamsOf<'daily_cy
   await decide(tick.ran ? `lever tick ran (archived ${tick.archived}${tick.vitals ? `, vitals ${tick.vitals}` : ''})` : 'lever tick already ran today')
   if (tick.vitals === 'futile') await decide('FUTILE vitals: recent mature sends draw no interest — check deliverability and targeting')
 
-  const discovery = await ctx.step.do('strategies', STEP_RETRY, () =>
-    tenantTx(ctx, async (db) => ({
-      hasStrategies: (await getActiveStrategySlugs(db, projectId)).length > 0,
-      paused: discoveryPausedReason(await getRemainingProspectQuota(db, tenantId, editionOf(ctx.env))),
-    })),
+  const hasStrategies = await ctx.step.do('strategies', STEP_RETRY, () =>
+    tenantTx(ctx, async (db) => (await getActiveStrategySlugs(db, projectId)).length > 0),
   )
-  const canDiscover = discovery.hasStrategies && discovery.paused === null
-  if (!discovery.hasStrategies) await decide('no active discovery strategies → discovery skipped (set them up from the website URL in the chat)')
-  else if (discovery.paused) await decide(`discovery skipped: ${discovery.paused}`)
+  if (!hasStrategies) await decide('no active discovery strategies → discovery skipped (set them up from the website URL in the chat)')
 
   const daily = await ctx.step.do('daily-target', STEP_RETRY, () => tenantTx(ctx, async (db) => {
     const pace = await loadPlanPace(db, tenantId, editionOf(ctx.env), new Date())
@@ -96,62 +90,70 @@ export async function runDailyCycle(ctx: StageCtx, params: JobParamsOf<'daily_cy
   }))
   await decide(`new prospects today: ${daily.target} (${daily.source})`)
 
-  let reachable = await reachableSnapshot(ctx, 'reachable:before')
-  // Sized before the day's follow-ups take their share of the mailboxes.
-  const wanted = runnableNewProspects(daily.target, reachable.sends ? reachable.mailboxRemaining : null, daily.pace).count
-  let built = false
-  if (canDiscover && wanted > 0 && shouldBuildFirst(reachable, wanted)) {
-    await decide(`list low (${reachable.deliverable} reachable${reachable.needsHands > 0 ? `, ${reachable.needsHands} more need a browser` : ''}) → discovery before outbound`)
-    const found = await discoverStage(ctx, { kind: 'discover', count: wanted, minCandidatesPerSearch: CYCLE_MIN_CANDIDATES_PER_SEARCH }, 'discover:first')
-    await stage('discover', found.summary)
-    planCompliance = found.planCompliance
-    built = true
-    reachable = await reachableSnapshot(ctx, 'reachable:after-build')
-  }
+  const before = await reachableSnapshot(ctx, 'reachable:before')
 
   // The day's count is first touches only. Due follow-ups go first;
   // re-approaches take what the mailboxes have left; the rest wait a day.
-  let produced = 0
-  if (reachable.mailboxRemaining > 0) {
-    const followUps = await draftStage(ctx, { kind: 'draft', count: reachable.mailboxRemaining }, 'draft:followup', 'followup')
+  let followUpsOut = 0
+  if (before.mailboxRemaining > 0) {
+    const followUps = await draftStage(ctx, { kind: 'draft', count: before.mailboxRemaining }, 'draft:followup', 'followup')
     if (tried(followUps) > 0 || followUps.needsHands > 0) await stage('draft', `Follow-ups: ${followUps.summary}`)
-    produced += followUps.drafted + followUps.sent
+    followUpsOut = followUps.drafted + followUps.sent
   }
 
-  const runnable = runnableNewProspects(daily.target, reachable.sends ? reachable.mailboxRemaining - produced : null, daily.pace)
-  let processed = 0
-  if (!reachable.blocked) {
-    const count = Math.min(runnable.count, reachable.deliverable)
-    const drafted = count > 0 ? await draftStage(ctx, { kind: 'draft', count }, 'draft', 'first') : null
-    const reached = drafted ? drafted.drafted + drafted.sent : 0
-    const short = shortfallReason({ target: daily.target, runnable, deliverable: reachable.deliverable, produced: reached, failed: drafted?.failed ?? 0 })
-    const detail = drafted ? drafted.summary : reachable.needsHands > 0 ? `${reachable.needsHands} need a browser.` : ''
-    await stage('draft', `New prospects ${reached} of ${daily.target}${short ? ` (short: ${short})` : ''}. ${detail}`.trim())
-    processed = drafted ? tried(drafted) : 0
-    produced += reached
+  let reached = 0
+  if (before.blocked) {
+    await decide(`outbound blocked: ${before.blocked}`)
   } else {
-    await decide(`outbound blocked: ${reachable.blocked}`)
+    const runnable = runnableNewProspects(daily.target, before.sends ? before.mailboxRemaining - followUpsOut : null, daily.pace)
+    const drafts: string[] = []
+    let last: LastRound = null
+    let lastSnap = before
+    // A prospect one round tried and failed on must not crowd out what a later pass found.
+    const attempted: number[] = []
+    let passes = 0
+    let stop: CycleStop
+    for (let round = 1; ; round++) {
+      const snap = round === 1 ? before : await reachableSnapshot(ctx, `reachable:${round}`)
+      lastSnap = snap
+      // Today's sends may have spent the last of the allowance.
+      const discovery = hasStrategies
+        ? await ctx.step.do(`discovery:${round}`, STEP_RETRY, () =>
+            tenantTx(ctx, async (db): Promise<DiscoveryUnavailable | null> => {
+              const paused = discoveryPausedReason(await getRemainingProspectQuota(db, tenantId, editionOf(ctx.env)))
+              return paused ? { paused } : null
+            }),
+          )
+        : 'no_strategies'
+      const step = nextCycleStep({ want: runnable.count - reached, deliverable: snap.deliverable, last, discovery, passes })
+      if (step.kind === 'stop') {
+        stop = step.stop
+        break
+      }
+      if (step.kind === 'draft') {
+        const drafted = await draftStage(ctx, { kind: 'draft', count: step.count }, `draft:first:${round}`, 'first', attempted)
+        drafts.push(drafted.summary)
+        const produced = drafted.drafted + drafted.sent
+        reached += produced
+        last = { kind: 'draft', produced, failed: drafted.failed }
+        continue
+      }
+      passes++
+      await decide(`${snap.deliverable} reachable, ${step.count} still wanted${snap.needsHands > 0 ? ` (${snap.needsHands} more need a browser)` : ''} → discovery pass ${passes}`)
+      const found = await discoverStage(ctx, { kind: 'discover', count: step.count, minCandidatesPerSearch: CYCLE_MIN_CANDIDATES_PER_SEARCH }, `discover:${passes}`)
+      await stage('discover', found.summary)
+      planCompliance.push(...found.planCompliance)
+      last = { kind: 'discover', deliverableBefore: snap.deliverable }
+    }
+    const short = shortfallReason({ target: daily.target, runnable, reached, stop })
+    const detail = drafts.length > 0 ? drafts.join(' ') : lastSnap.needsHands > 0 ? `${lastSnap.needsHands} need a browser.` : ''
+    await stage('draft', `New prospects ${reached} of ${daily.target}${short ? ` (short: ${short})` : ''}. ${detail}`.trim())
   }
 
-  const mailboxLeft = reachable.mailboxRemaining - produced
+  const mailboxLeft = before.mailboxRemaining - followUpsOut - reached
   if (mailboxLeft > 0) {
     const reapproached = await draftStage(ctx, { kind: 'draft', count: mailboxLeft }, 'draft:recycle', 'recycle')
     if (tried(reapproached) > 0 || reapproached.needsHands > 0) await stage('draft', `Re-approaches: ${reapproached.summary}`)
-  }
-
-  if (canDiscover && !built && !reachable.blocked && wanted > 0 && reachable.deliverable - processed < 3 * wanted) {
-    // Today's sends may have spent the last of the allowance.
-    const pausedAfter = await ctx.step.do('strategies:after', STEP_RETRY, () =>
-      tenantTx(ctx, async (db) => discoveryPausedReason(await getRemainingProspectQuota(db, tenantId, editionOf(ctx.env)))),
-    )
-    if (pausedAfter) {
-      await decide(`discovery skipped: ${pausedAfter}`)
-    } else {
-      await decide(`remaining list ${reachable.deliverable - processed} < ${3 * wanted} → discovery after outbound`)
-      const found = await discoverStage(ctx, { kind: 'discover', count: wanted, minCandidatesPerSearch: CYCLE_MIN_CANDIDATES_PER_SEARCH }, 'discover:after')
-      await stage('discover', found.summary)
-      planCompliance = found.planCompliance
-    }
   }
 
   const digest: CycleDigest = { stages, decisions }

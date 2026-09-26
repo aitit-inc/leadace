@@ -253,6 +253,7 @@ If 7b results show candidates with both email / contact_form_url as null, launch
 Include the following in the prompt:
 - List of target candidates (name, website_url). Up to 10
 - For each candidate, search WebSearch for `"{company name}" email address`, `"{company name}" contact`, etc., to find contacts from industry directories or press release sites
+- Leave out privacy, legal, dpo, abuse, no-reply, support, recruiting, careers and press addresses unless SALES_STRATEGY.md's contact policy wants them (`tpl_enrich_contacts`)
 - Return found contacts (email, contact_form_url, sns_accounts) as a JSON array
 - Candidates not found do not need to be included in results
 
