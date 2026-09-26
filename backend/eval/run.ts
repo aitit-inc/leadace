@@ -42,6 +42,7 @@ import { OPENAI_ROUTES } from '../src/services/llm/routes'
 import { apexDomainOf, parseIndustryVocabulary } from '../src/services/pipeline/context'
 import { utcDateKey } from '../src/domain/time'
 import { discoverCandidateSchema } from '../src/domain/jobs'
+import type { LlmModel } from '../src/domain/paid-calls'
 
 const DATA = resolve(__dirname, 'data.local')
 
@@ -279,7 +280,10 @@ async function onceMore<T>(label: string, call: () => Promise<T>): Promise<T> {
 
 function extract(env: LlmEnv, extractor: string | null, args: { after: GroundedText; prompt: string }): Promise<z.infer<typeof extractionSchema>> {
   const route = OPENAI_ROUTES['discover.extract']
-  return callOpenAIFollowUpJson({ op: 'discover.extract', apiKey: env.OPENAI_API_KEY, ...route, model: extractor ?? route.model, ...args, schema: extractionSchema })
+  // The eval compares models production does not price; its calls run outside
+  // a paid-call scope, so none of them reaches the ledger.
+  const model = (extractor ?? route.model) as LlmModel
+  return callOpenAIFollowUpJson({ op: 'discover.extract', apiKey: env.OPENAI_API_KEY, ...route, model, ...args, schema: extractionSchema })
 }
 
 async function collect(target: string, provider: Provider, extractors: (string | null)[]): Promise<void> {

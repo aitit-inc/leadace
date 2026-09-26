@@ -8,13 +8,13 @@ import {
 describe('followUpSequenceSchema', () => {
   it('parses an empty object into the opt-out-off default cadence', () => {
     // enabled:false is load-bearing: existing rows ({}) must read back OFF.
-    expect(defaultFollowUpSequence).toEqual({ enabled: false, gapDays: [3, 7, 7] })
+    expect(defaultFollowUpSequence).toEqual({ enabled: false, gapDays: [3] })
   })
 
   it('merges a partial override with the defaults', () => {
     const cfg = followUpSequenceSchema.parse({ enabled: true })
     expect(cfg.enabled).toBe(true)
-    expect(cfg.gapDays).toEqual([3, 7, 7])
+    expect(cfg.gapDays).toEqual([3])
   })
 
   it('accepts a custom gap schedule', () => {

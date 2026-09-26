@@ -131,6 +131,7 @@ inquiryRouter.post(
     const result = await runInquiryChat(
       db,
       {
+        DATABASE_URL: c.env.DATABASE_URL,
         OPENAI_API_KEY: c.env.OPENAI_API_KEY,
         GOOGLE_CLIENT_ID: c.env.GOOGLE_CLIENT_ID,
         GOOGLE_CLIENT_SECRET: c.env.GOOGLE_CLIENT_SECRET,

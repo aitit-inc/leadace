@@ -6,7 +6,6 @@ import {
   strategyDraftInputSchema,
   applyStrategyDraftSchema,
 } from '../../services/pipeline/strategy-draft'
-import { withLlmScope } from '../../services/llm'
 import { projectRefParamSchema } from '../../services/projects'
 import { respondWithError } from '../respond'
 import type { Env, Variables } from '../types'
@@ -15,7 +14,7 @@ export const strategyDraftRouter = new Hono<{ Bindings: Env; Variables: Variable
 
 strategyDraftRouter.post('/me/strategy-draft', zValidator('json', strategyDraftInputSchema), async (c) => {
   const tenantId = c.get('tenantId')
-  const result = await withLlmScope({ tenantId }, () => draftStrategyFromUrl(c.get('db'), tenantId, c.env, c.req.valid('json')))
+  const result = await draftStrategyFromUrl(c.get('db'), tenantId, c.env, c.req.valid('json'))
   if (!result.ok) return respondWithError(c, result)
   return c.json(result.value)
 })

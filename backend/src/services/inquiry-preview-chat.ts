@@ -127,6 +127,7 @@ export async function runInquiryPreviewChat(
   let assistantMessage: string
   try {
     const response = await callOpenAIResponses({
+      op: 'inquiry-preview',
       apiKey: env.OPENAI_API_KEY,
       model: CHAT_MODEL,
       instructions,

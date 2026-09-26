@@ -11,6 +11,11 @@ const verifierStatusEnum = z.enum(['deliverable', 'undeliverable', 'risky', 'unk
 export const verifierStatusSchema = verifierStatusEnum.catch('unknown')
 export type VerifierStatus = z.infer<typeof verifierStatusSchema>
 
+// Emailable does not charge an unknown result.
+export function verifierChargesFor(status: VerifierStatus): boolean {
+  return status !== 'unknown'
+}
+
 export const verifierResponseSchema = z.object({ state: verifierStatusEnum })
 
 export const verifierBalanceSchema = z.object({ available_credits: z.number() })

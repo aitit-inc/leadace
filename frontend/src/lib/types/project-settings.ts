@@ -45,9 +45,24 @@ export type ProjectSettings = {
   publicScoreboardEnabled: boolean;
   // Only the project bound to the deployment's SHOWCASE_PROJECT_ID may publish.
   publicScoreboardEligible: boolean;
+  // null = the plan's pace.
+  dailyNewProspects: number | null;
   followUpSequence: FollowUpSequence;
   outboundChannels: OutboundChannel[];
   targetCountries: AllowedSendCountry[];
   targetLanguage: TargetLanguage;
   updatedAt: string | null;
+};
+
+// Mirrors backend DailyTarget (services/daily-target.ts).
+export type DailyTarget = {
+  setting: number | null;
+  planDefault: number;
+  planCap: number | null;
+  target: number;
+  source: 'settings' | 'plan' | 'fixed';
+  // null = drafts wait for review; the mailboxes do not bound them.
+  mailboxCapacity: number | null;
+  runnable: number;
+  limitedBy: 'target' | 'mailbox' | 'plan';
 };

@@ -3,6 +3,8 @@
 // (`inquiry_messages`) stays the single source of truth for transcript state.
 
 import OpenAI from 'openai'
+import type { LlmModel } from '../domain/paid-calls'
+import { recordOpenAIUsage } from './llm/openai'
 
 export type OpenAIEnv = {
   OPENAI_API_KEY: string
@@ -14,8 +16,9 @@ export type OpenAIInputMessage = {
 }
 
 type OpenAIResponsesArgs = {
+  op: string
   apiKey: string
-  model: string
+  model: LlmModel
   instructions: string
   input: OpenAIInputMessage[]
   temperature?: number
@@ -40,6 +43,7 @@ export class OpenAIError extends Error {
 export async function callOpenAIResponses(args: OpenAIResponsesArgs): Promise<OpenAIResponsesResult> {
   const client = new OpenAI({ apiKey: args.apiKey })
   let response: OpenAI.Responses.Response
+  const startedAt = Date.now()
   try {
     response = await client.responses.create({
       model: args.model,
@@ -61,6 +65,7 @@ export async function callOpenAIResponses(args: OpenAIResponsesArgs): Promise<Op
     }
     throw e
   }
+  await recordOpenAIUsage(args, response, 'default', Date.now() - startedAt)
   const text = response.output_text.trim()
   if (!text) {
     console.error('OpenAI responses returned no output_text', { id: response.id })

@@ -17,6 +17,7 @@ export type ProjectSettingsData = {
   inquiryLandingEnabled: boolean;
   publicScoreboardEnabled: boolean;
   publicScoreboardEligible: boolean;
+  dailyNewProspects: number | null;
   followUpSequence: FollowUpSequence;
   outboundChannels: OutboundChannel[];
   targetCountries: AllowedSendCountry[];

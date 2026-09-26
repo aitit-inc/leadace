@@ -31,13 +31,14 @@ import {
   INQUIRY_CHAT_TURNS_MAX,
   type InquiryChatMessageInput,
 } from './inquiry-session'
+import { withPaidCallScope } from './paid-calls'
 import { generateSessionSummary } from './inquiry-summarize'
 import type { NotifyEnv } from './notifications'
 import type { Edition } from '../domain/edition'
 
 // Composed from two narrow aliases so notifyLead's signature isn't
 // forced to declare OPENAI_API_KEY just because it sits behind the same chat run.
-type InquiryChatEnv = OpenAIEnv & NotifyEnv
+type InquiryChatEnv = OpenAIEnv & NotifyEnv & { DATABASE_URL: string }
 
 // Lazy idle-timeout. Sessions left untouched longer than this are considered
 // abandoned — the next request closes them with a summary and refuses the new
@@ -98,7 +99,17 @@ export async function runInquiryChat(
   const ctxResult = await loadChatContext(db, shortId)
   if (!ctxResult.ok) return ctxResult
   const ctx = ctxResult.value
+  return withPaidCallScope({ databaseUrl: env.DATABASE_URL, tenantId: ctx.tenantId }, () => answerInquiry(db, env, edition, shortId, ctx, input))
+}
 
+async function answerInquiry(
+  db: Db,
+  env: InquiryChatEnv,
+  edition: Edition,
+  shortId: ShortId,
+  ctx: ChatContext,
+  input: InquiryChatMessageInput,
+): Promise<ServiceResult<InquiryChatRunResult>> {
   const [transcript, quota] = await Promise.all([
     loadInquiryTranscript(db, ctx.sessionId),
     getRemainingChatQuota(db, ctx.tenantId, edition),
@@ -145,6 +156,7 @@ export async function runInquiryChat(
   let assistantMessage: string
   try {
     const response = await callOpenAIResponses({
+      op: 'inquiry-chat',
       apiKey: env.OPENAI_API_KEY,
       model: CHAT_MODEL,
       instructions,

@@ -4,6 +4,7 @@
   import { deleteProject } from '$lib/api/projects';
   import { setActiveProject } from '$lib/active-project';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+  import DailyNewProspects from '$lib/components/project-settings/DailyNewProspects.svelte';
   import ProjectMailboxes from '$lib/components/project-settings/ProjectMailboxes.svelte';
   import SaveBar from '$lib/components/SaveBar.svelte';
   import ProjectSchedules from '$lib/components/schedules/ProjectSchedules.svelte';
@@ -114,6 +115,7 @@
         outboundMode: projectSettings.outboundMode,
         senderDisplayName: projectSettings.senderDisplayName?.trim() || null,
         unsubscribeEnabled: projectSettings.unsubscribeEnabled,
+        dailyNewProspects: projectSettings.dailyNewProspects,
         ...(footerChanged() ? { footerOverride: computedFooterOverride() } : {}),
         ...(followUpChanged() ? { followUpSequence: projectSettings.followUpSequence } : {}),
         outboundChannels: projectSettings.outboundChannels,
@@ -220,6 +222,7 @@
       (s.senderDisplayName?.trim() || null) !== (base.senderDisplayName?.trim() || null) ||
       s.unsubscribeEnabled !== base.unsubscribeEnabled ||
       s.targetLanguage !== base.targetLanguage ||
+      s.dailyNewProspects !== base.dailyNewProspects ||
       !sameSet(s.outboundChannels, base.outboundChannels) ||
       !sameSet(s.targetCountries, base.targetCountries) ||
       s.publicScoreboardEnabled !== base.publicScoreboardEnabled ||
@@ -490,6 +493,10 @@
             {/if}
           </p>
         </div>
+
+        {#if data.dailyTarget}
+          <DailyNewProspects bind:value={s.dailyNewProspects} daily={data.dailyTarget} />
+        {/if}
 
         <div>
           <div class="flex items-start gap-2">

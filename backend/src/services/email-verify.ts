@@ -1,6 +1,7 @@
 import * as Sentry from '@sentry/cloudflare'
 import {
   verifierBalanceSchema,
+  verifierChargesFor,
   verifierDeliverabilityVerdict,
   verifierResponseSchema,
   type VerifierStatus,
@@ -23,8 +24,8 @@ const VERIFY_TIMEOUT_MS = 8_000
 const VENDOR_TIMEOUT_SECONDS = 6
 
 export type SendTimeVerdict =
-  | { deliverability: 'unknown'; mailboxAnswered: boolean }
-  | { deliverability: 'undeliverable'; reason: string; mailboxAnswered: boolean }
+  | { deliverability: 'unknown'; mailboxAnswered: boolean; verifierCharged: boolean }
+  | { deliverability: 'undeliverable'; reason: string; mailboxAnswered: boolean; verifierCharged: boolean }
 
 type MailboxProbeOutcome = { answered: true; status: VerifierStatus } | { answered: false }
 
@@ -137,13 +138,13 @@ export async function verifyAddressBeforeSend(
   opts: { skipMailboxProbe: boolean },
 ): Promise<SendTimeVerdict> {
   if (isReservedDomain(domainOf(email))) {
-    return { deliverability: 'unknown', mailboxAnswered: false }
+    return { deliverability: 'unknown', mailboxAnswered: false, verifierCharged: false }
   }
 
   // Separate from the DNS verdict, which collapses both causes: `reason` reaches a
   // 422 and the log, so it must not name a cause this has not established.
   if (!isEmailSyntaxValid(email)) {
-    return { deliverability: UNDELIVERABLE, reason: 'malformed address', mailboxAnswered: false }
+    return { deliverability: UNDELIVERABLE, reason: 'malformed address', mailboxAnswered: false, verifierCharged: false }
   }
 
   // DNS re-resolves on every send regardless of the stored verdict — it is
@@ -154,22 +155,25 @@ export async function verifyAddressBeforeSend(
       deliverability: UNDELIVERABLE,
       reason: 'domain does not accept mail',
       mailboxAnswered: false,
+      verifierCharged: false,
     }
   }
-  if (opts.skipMailboxProbe) return { deliverability: 'unknown', mailboxAnswered: false }
+  if (opts.skipMailboxProbe) return { deliverability: 'unknown', mailboxAnswered: false, verifierCharged: false }
   if (!apiKey) {
     console.warn('[deliverability] EMAILABLE_API_KEY is not set — mailbox unchecked')
-    return { deliverability: 'unknown', mailboxAnswered: false }
+    return { deliverability: 'unknown', mailboxAnswered: false, verifierCharged: false }
   }
 
   const outcome = await probeMailbox(email, apiKey)
-  if (!outcome.answered) return { deliverability: 'unknown', mailboxAnswered: false }
+  if (!outcome.answered) return { deliverability: 'unknown', mailboxAnswered: false, verifierCharged: false }
+  const verifierCharged = verifierChargesFor(outcome.status)
   if (verifierDeliverabilityVerdict(outcome.status) !== UNDELIVERABLE) {
-    return { deliverability: 'unknown', mailboxAnswered: true }
+    return { deliverability: 'unknown', mailboxAnswered: true, verifierCharged }
   }
   return {
     deliverability: UNDELIVERABLE,
     reason: `mailbox ${outcome.status}`,
     mailboxAnswered: true,
+    verifierCharged,
   }
 }

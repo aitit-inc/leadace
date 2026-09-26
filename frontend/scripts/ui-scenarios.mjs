@@ -946,6 +946,13 @@ const SCENARIOS = [
           expect: 'Coming soon',
         },
         {
+          // Unmetered self-host plan (20 a day) against one warming-up mailbox (10 a day).
+          name: 'daily-new-prospects',
+          path: '/project-settings',
+          scrollTo: 'text=New prospects per day',
+          expect: ['New prospects per day', 'At most 10 a day can go out'],
+        },
+        {
           name: 'follow-up',
           path: '/project-settings',
           // The page scrolls in its own pane; the click brings the help text into the shot.

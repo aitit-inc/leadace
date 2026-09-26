@@ -7,6 +7,7 @@ import {
   setOutboundModeSchema,
   setOutboundMode,
 } from '../../services/project-settings'
+import { getDailyTarget } from '../../services/daily-target'
 import { projectRefParamSchema } from '../../services/projects'
 import { respondWithError } from '../respond'
 import type { Env, Variables } from '../types'
@@ -23,6 +24,16 @@ projectSettingsRouter.get(
       c.req.valid('param').id,
       c.env.SHOWCASE_PROJECT_ID ?? null,
     )
+    if (!result.ok) return respondWithError(c, result)
+    return c.json(result.value)
+  },
+)
+
+projectSettingsRouter.get(
+  '/projects/:id/daily-target',
+  zValidator('param', projectRefParamSchema),
+  async (c) => {
+    const result = await getDailyTarget(c.get('db'), c.get('tenantId'), c.get('edition'), c.req.valid('param').id)
     if (!result.ok) return respondWithError(c, result)
     return c.json(result.value)
   },

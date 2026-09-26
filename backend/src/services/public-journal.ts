@@ -30,6 +30,7 @@ export async function redactPublicJournal(
 ): Promise<ServiceResult<string>> {
   try {
     const llm = await callOpenAIResponses({
+      op: 'public-journal',
       apiKey: env.OPENAI_API_KEY,
       model: REDACT_MODEL,
       instructions: REDACT_INSTRUCTIONS,

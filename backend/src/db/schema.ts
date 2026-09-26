@@ -27,6 +27,7 @@ import type { CoarseIndustry } from '../domain/coarse-industry'
 import type { TargetingAxisStat, TargetingLifts } from '../domain/targeting-score'
 import type { VitalsAssessment } from '../domain/vital-signs'
 import type { MailboxSendRefusal } from '../domain/warmup'
+import type { PaidCallModel } from '../domain/paid-calls'
 import type { JobLogLine, JobParams, JobProgress, JobResult } from '../domain/jobs'
 import { JOB_KINDS, JOB_ORIGINS, JOB_STATUSES } from '../domain/jobs'
 import { NOTIFICATION_CATEGORIES } from '../domain/notifications'
@@ -600,6 +601,9 @@ export const projectSettings = pgTable('project_settings', {
   // document on the unauthenticated /live page; the daily cycle writes the
   // journal only while this is on. Web UI only.
   publicScoreboardEnabled: boolean('public_scoreboard_enabled').notNull().default(false),
+  // New prospects the daily cycle reaches per day. NULL = the plan's pace,
+  // computed at read so it follows plan and period changes (domain/daily-target.ts).
+  dailyNewProspects: smallint('daily_new_prospects'),
   // Hard cap on rejection cycles before forcing 'rejected' + DNC ratchet.
   maxReapproachCycles: smallint('max_reapproach_cycles').notNull().default(3),
   // Months to defer when rejection feedback's preferred_recontact_window is
@@ -828,6 +832,31 @@ export const discoveryCharges = pgTable('discovery_charges', {
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   index('idx_discovery_charges_tenant').on(table.tenantId, table.createdAt),
+])
+
+// One row per call a vendor bills us for (domain/paid-calls.ts prices it).
+// Project, job and thread are FK-less so the spend outlives what it was for.
+export const paidCalls = pgTable('paid_calls', {
+  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  projectId: text('project_id'),
+  jobId: text('job_id'),
+  threadId: text('thread_id'),
+  op: text('op').notNull(),
+  model: text('model').$type<PaidCallModel>().notNull(),
+  tier: text('tier').notNull(),
+  inputTokens: integer('input_tokens').notNull(),
+  cachedInputTokens: integer('cached_input_tokens').notNull(),
+  cacheWriteTokens: integer('cache_write_tokens').notNull(),
+  outputTokens: integer('output_tokens').notNull(),
+  reasoningTokens: integer('reasoning_tokens').notNull(),
+  searchCalls: integer('search_calls').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_paid_calls_tenant').on(table.tenantId, table.createdAt),
+  index('idx_paid_calls_job').on(table.jobId),
 ])
 
 export const projectProspects = pgTable('project_prospects', {

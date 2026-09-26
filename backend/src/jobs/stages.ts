@@ -6,6 +6,7 @@ import { NonRetryableError } from 'cloudflare:workflows'
 import type { Env } from '../api/types'
 import { createDb, type Db } from '../db/connection'
 import { withTenantConnection } from '../db/rls'
+import type { ReachArm } from '../domain/cycle-plan'
 import type { ProjectId, TenantId } from '../domain/ids'
 import type { DiscoverCandidate, JobLogEntry, JobParamsOf, JobResult } from '../domain/jobs'
 import type { ServiceResult } from '../services/result'
@@ -16,8 +17,8 @@ import { runEnrich } from '../services/pipeline/enrich'
 import { draftLogEntry, draftOne, loadDraftBatch, refillDrawSize, summarizeDraftOutcomes, type DraftOutcome } from '../services/pipeline/draft'
 import { runEvaluate } from '../services/pipeline/evaluate'
 import { runJournal, type CycleDigest } from '../services/pipeline/journal'
-import { withLlmScope } from '../services/llm'
 import { sendDraft, wasSentSince } from '../services/outreach'
+import { withPaidCallScope } from '../services/paid-calls'
 import { editionOf, sendContextOf, type Checkpoint, type ProgressFn } from '../services/pipeline/context'
 
 export type StageCtx = {
@@ -26,10 +27,10 @@ export type StageCtx = {
   job: LoadedJob
 }
 
-// A step callback runs outside the Workflow's async context, so the usage
-// log scope is entered per step.
-function llmScoped<T>(ctx: StageCtx, fn: () => Promise<T>): Promise<T> {
-  return withLlmScope({ tenantId: ctx.job.tenantId, jobId: ctx.job.id }, fn)
+// A step callback runs outside the Workflow's async context, so the paid
+// call scope is entered per step.
+function paidScoped<T>(ctx: StageCtx, fn: () => Promise<T>): Promise<T> {
+  return withPaidCallScope({ databaseUrl: ctx.env.DATABASE_URL, tenantId: ctx.job.tenantId, projectId: ctx.job.projectId, jobId: ctx.job.id }, fn)
 }
 
 // 30 minutes: well above a step's real bound, the timeouts of the few LLM
@@ -48,7 +49,7 @@ export function unwrap<T>(r: ServiceResult<T>): T {
 
 // Each unit of a stage is its own step, so a restart redoes one unit.
 function checkpointOf(ctx: StageCtx, prefix: string): Checkpoint {
-  return (name, fn) => ctx.step.do(`${prefix}:${name}`, STEP_RETRY, () => llmScoped(ctx, async () => unwrap(await fn())))
+  return (name, fn) => ctx.step.do(`${prefix}:${name}`, STEP_RETRY, () => paidScoped(ctx, async () => unwrap(await fn())))
 }
 
 // Progress is advisory: a failed write must not fail the stage it reports on.
@@ -139,13 +140,14 @@ export async function draftStage(
   ctx: StageCtx,
   params: JobParamsOf<'draft'>,
   namePrefix = 'draft',
+  arm?: ReachArm,
 ): Promise<Extract<JobResult, { kind: 'draft' }>> {
   const { tenantId, projectId }: Ids = ctx.job
   const wanted = params.prospectIds?.length ?? params.count ?? 30
   const attempted: number[] = []
   const load = (round: number, limit: number) =>
     ctx.step.do(`${namePrefix}:load:${round}`, STEP_RETRY, () =>
-      tenantTx(ctx, async (tx) => unwrap(await loadDraftBatch(tx, tenantId, ctx.env, projectId, params, { limit, excludeProspectIds: attempted }))),
+      tenantTx(ctx, async (tx) => unwrap(await loadDraftBatch(tx, tenantId, ctx.env, projectId, params, { limit, excludeProspectIds: attempted, arm }))),
     )
   let batch = await load(1, wanted)
   if (batch.targets.length === 0) return summarizeDraftOutcomes([], batch.needsHands, batch.quotaMessage)
@@ -159,7 +161,7 @@ export async function draftStage(
       const stepName = `${namePrefix}:${p.prospectId}`
       const done = produced
       attempted.push(p.prospectId)
-      const outcome = await ctx.step.do(stepName, STEP_RETRY, () => llmScoped(ctx, async (): Promise<DraftOutcome | null> => {
+      const outcome = await ctx.step.do(stepName, STEP_RETRY, () => paidScoped(ctx, async (): Promise<DraftOutcome | null> => {
         const db = createDb(ctx.env.DATABASE_URL)
         if (await isCancelled(ctx, db)) return null
         await progressWriter(ctx, db, 'draft')(p.name, done, wanted)
@@ -193,7 +195,7 @@ export async function sendStage(ctx: StageCtx, params: JobParamsOf<'send'>): Pro
   let failed = 0
   const errors: string[] = []
   for (const [i, id] of params.draftIds.entries()) {
-    const outcome = await ctx.step.do(`send:${id}`, STEP_RETRY, async () => {
+    const outcome = await ctx.step.do(`send:${id}`, STEP_RETRY, () => paidScoped(ctx, async () => {
       const db = createDb(ctx.env.DATABASE_URL)
       if (await isCancelled(ctx, db)) return { ok: false as const, cancelled: true as const, error: 'job cancelled' }
       await progressWriter(ctx, db, 'send')(`draft ${id}`, i, params.draftIds.length)
@@ -204,7 +206,7 @@ export async function sendStage(ctx: StageCtx, params: JobParamsOf<'send'>): Pro
       }
       if (r.ok) await kickAutoTopUp(ctx.env, tenantId)
       return r.ok ? { ok: true as const } : { ok: false as const, cancelled: false as const, error: r.error }
-    })
+    }))
     if (!outcome.ok && outcome.cancelled) break
     if (outcome.ok) {
       sent++
@@ -224,7 +226,7 @@ export async function sendStage(ctx: StageCtx, params: JobParamsOf<'send'>): Pro
 
 export async function evaluateStage(ctx: StageCtx): Promise<Extract<JobResult, { kind: 'evaluate' }>> {
   const { tenantId, projectId }: Ids = ctx.job
-  return ctx.step.do('evaluate', STEP_RETRY, () => llmScoped(ctx, async () => {
+  return ctx.step.do('evaluate', STEP_RETRY, () => paidScoped(ctx, async () => {
     const db = createDb(ctx.env.DATABASE_URL)
     return unwrap(await runEvaluate(db, tenantId, ctx.env, projectId, progressWriter(ctx, db, 'evaluate')))
   }))
@@ -232,7 +234,7 @@ export async function evaluateStage(ctx: StageCtx): Promise<Extract<JobResult, {
 
 export async function journalStage(ctx: StageCtx, digest: CycleDigest | null): Promise<Extract<JobResult, { kind: 'journal' }>> {
   const { tenantId, projectId }: Ids = ctx.job
-  return ctx.step.do('journal', STEP_RETRY, () => llmScoped(ctx, async () => {
+  return ctx.step.do('journal', STEP_RETRY, () => paidScoped(ctx, async () => {
     const db = createDb(ctx.env.DATABASE_URL)
     return unwrap(await runJournal(db, tenantId, ctx.env, projectId, digest, progressWriter(ctx, db, 'journal')))
   }))

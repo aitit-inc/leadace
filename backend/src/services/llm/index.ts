@@ -14,7 +14,7 @@ import {
 import { callOpenAIPagesJson } from './pages'
 import { OPENAI_ROUTES, type FollowUpJsonOp, type GroundedTextOp, type JsonOp, type PagesJsonOp } from './routes'
 
-export { LlmError, withLlmScope, type Citation, type GroundedText, type LlmEnv, type UrlJsonResult } from './common'
+export { LlmError, type Citation, type GroundedText, type LlmEnv, type UrlJsonResult } from './common'
 export type { ChatCall, ChatRequest, ChatStreamEvent, UploadedFile } from './openai'
 
 type SchemaPrompt<T> = { prompt: string; schema: z.ZodType<T> }

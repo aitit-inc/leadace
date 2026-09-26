@@ -14,6 +14,8 @@ import type { ReplyCollectionStatus } from '../domain/attention'
 import { creditsCoverOverage, USAGE_PRICE_CENTS } from '../domain/credits'
 import { isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG } from '../domain/url'
 import type { ProspectQuota, QuotaWindowKind } from '../services/plan-limits'
+import type { DailyTarget } from '../services/daily-target'
+import type { DailyTargetSource } from '../domain/daily-target'
 import { SERVER_VERSION } from '../mcp/version'
 import { JOB_KINDS, JOB_STATUSES, jobParamsSchema, type JobKind, type JobLogLine, type JobParams, type JobResult, type StrategyPlanCompliance } from '../domain/jobs'
 import { DAYS_OF_WEEK, daysSchema, hourSchema, promptSchema, timezoneSchema } from '../domain/schedules'
@@ -82,13 +84,15 @@ export type OutboundPreview = {
   // next = the address the first send uses; null when every listed mailbox is spent.
   mailbox: { next: string | null; remaining: number } | null
   blocked: string | null
+  dailyTarget: number | null
 }
 
 async function outboundPreview(ctx: ToolCtx, projectRef: string): Promise<OutboundPreview | null> {
   const ref = encodeURIComponent(projectRef)
-  const [reachable, health] = await Promise.all([
+  const [reachable, health, daily] = await Promise.all([
     readApi(ctx, `/projects/${ref}/prospects/reachable?limit=1`),
     readApi(ctx, `/projects/${ref}/mailbox-health`),
+    readApi(ctx, `/projects/${ref}/daily-target`),
   ])
   if (!reachable) return null
   const r = reachable as {
@@ -105,6 +109,7 @@ async function outboundPreview(ctx: ToolCtx, projectRef: string): Promise<Outbou
     quota: r.quota,
     mailbox: h?.kind === 'active' ? { next: h.next, remaining: h.remaining } : null,
     blocked: r.outboundBlocked ? (r.message ?? 'Nothing can go out right now.') : null,
+    dailyTarget: daily ? (daily as DailyTarget).target : null,
   }
 }
 
@@ -120,12 +125,13 @@ function formatQuotaUsage(q: ProspectQuota, which: 'contacted' | 'found'): strin
 }
 
 // The one definition of which job kinds need approval.
-type SendScope = { count: number; noun: 'prospect' | 'draft'; upTo: boolean }
+// count null = the cycle's own number, which it works out when it runs.
+type SendScope = { count: number | null; noun: 'prospect' | 'new prospect' | 'draft'; upTo: boolean }
 
 function sendingScope(params: JobParams): SendScope | null {
   switch (params.kind) {
     case 'daily_cycle':
-      return { count: params.outboundCount, noun: 'prospect', upTo: true }
+      return { count: params.outboundCount ?? null, noun: 'new prospect', upTo: true }
     case 'send':
       return { count: params.draftIds.length, noun: 'draft', upTo: false }
     case 'draft':
@@ -143,7 +149,12 @@ export function startJobConfirmSummary(
   const scope = sendingScope(params)
   if (!scope) return null
   const mode = params.kind === 'send' ? 'send' : (preview?.outboundMode ?? 'unknown')
-  const upTo = scope.upTo ? 'up to ' : ''
+  const counted = (noun: string) =>
+    scope.count === null ? "today's new prospects" : `${scope.upTo ? 'up to ' : ''}${plural(scope.count, noun)}`
+  // The plan's pace can move between approval and the run, so the number is
+  // shown as it stands, not promised.
+  const dailyNow = scope.count === null && preview?.dailyTarget != null ? ` (${preview.dailyTarget} as of now)` : ''
+  const cycle = params.kind === 'daily_cycle'
   const facts: Array<{ label: string; value: string }> = [
     { label: 'Project', value: projectName },
     {
@@ -155,9 +166,9 @@ export function startJobConfirmSummary(
             ? 'Drafts are created for your review — nothing is sent'
             : "Your project's outbound mode decides whether these are sent or held as drafts",
     },
-    { label: 'How many', value: `${upTo}${plural(scope.count, scope.noun)}` },
+    { label: 'How many', value: `${scope.count === null ? "the project's daily number of new prospects" : counted(scope.noun)}${dailyNow}${cycle ? ', plus the follow-ups and re-approaches that are due' : ''}` },
   ]
-  if (preview && scope.noun === 'prospect') facts.push({ label: 'Reachable now', value: plural(preview.reachable, 'prospect') })
+  if (preview && scope.noun !== 'draft') facts.push({ label: 'Reachable now', value: plural(preview.reachable, 'prospect') })
   // In draft mode nothing leaves and no quota is spent: these would be noise.
   if (mode !== 'draft' && preview) {
     const { mailbox, quota } = preview
@@ -175,9 +186,9 @@ export function startJobConfirmSummary(
     ...(warning ? { warning } : {}),
     confirmLabel:
       mode === 'send'
-        ? `Send ${upTo}${plural(scope.count, 'email')}`
+        ? cycle ? `Send to ${counted(scope.noun)}` : `Send ${counted('email')}`
         : mode === 'draft'
-          ? `Draft ${upTo}${plural(scope.count, 'message')}`
+          ? cycle ? `Draft for ${counted(scope.noun)}` : `Draft ${counted('message')}`
           : 'Start',
   }
 }
@@ -2076,9 +2087,28 @@ export function buildToolRegistry(): ToolDef[] {
     },
   )
 
+  const DAILY_SOURCE: Record<DailyTargetSource, string> = {
+    settings: 'the project setting',
+    plan: "the plan's pace",
+    fixed: 'the default for a plan without a pace',
+  }
+  const dailyTargetLine = async (ctx: ToolCtx, projectId: string): Promise<string> => {
+    const data = await readApi(ctx, `/projects/${encodeURIComponent(projectId)}/daily-target`)
+    if (!data) return 'Daily new prospects: unavailable.'
+    const d = data as DailyTarget
+    const pace = d.source === 'settings' ? ` (${d.planDefault} when unset)` : ''
+    const bound =
+      d.limitedBy === 'mailbox'
+        ? `; at most ${d.runnable} can go out a day — the mailboxes carry ${d.mailboxCapacity} emails a day, follow-ups included`
+        : d.limitedBy === 'plan'
+          ? `; at most ${d.runnable} can go out a day — the plan's allowance left for the period`
+          : ''
+    return `Daily new prospects (dailyNewProspects): ${d.target} from ${DAILY_SOURCE[d.source]}${pace}${bound}.`
+  }
+
   defineTool(
     'get_project_settings',
-    'Get user-editable project settings as JSON (outboundMode, sender identity, unsubscribeEnabled, footerOverride, inquiry-landing config, publicScoreboardEnabled, follow-up/recycle windows, outboundChannels, targetCountries, targetLanguage). Fields the user never set carry their column defaults; 404 when the project does not exist.',
+    'Get user-editable project settings as JSON (outboundMode, sender identity, unsubscribeEnabled, footerOverride, inquiry-landing config, publicScoreboardEnabled, dailyNewProspects, follow-up/recycle windows, outboundChannels, targetCountries, targetLanguage), then a line with the daily number of new prospects in effect, its source, and any mailbox or plan cap. Fields the user never set carry their column defaults; 404 when the project does not exist.',
     { projectId: z.string().min(1).describe('Project name or ID') },
     async ({ projectId }, ctx) => {
       const { ok, data } = await ctx.callApi('GET', `/projects/${encodeURIComponent(projectId)}/settings`, null)
@@ -2086,7 +2116,7 @@ export function buildToolRegistry(): ToolDef[] {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] }
+      return { content: [{ type: 'text' as const, text: `${JSON.stringify(data, null, 2)}\n${await dailyTargetLine(ctx, projectId)}` }] }
     },
     { readOnly: true },
   )
@@ -2104,6 +2134,8 @@ export function buildToolRegistry(): ToolDef[] {
         .describe('Briefing for the inquiry-landing chat agent. null disables chat input but keeps the rest of the landing page rendering.'),
       inquiryOneLiner: z.string().max(140).nullable().optional()
         .describe('Single-sentence value prop shown above the chat input on the landing page.'),
+      dailyNewProspects: z.coerce.number().int().min(1).max(200).nullable().optional()
+        .describe("New prospects the daily cycle reaches per day; null = the plan's pace. Mailbox capacity and plan allowance still cap it."),
       maxReapproachCycles: z.coerce.number().int().min(1).max(10).optional()
         .describe('Hard cap on rejection cycles before forcing rejected + DNC. Default 3.'),
       unspecifiedRecontactWindowMonths: z.coerce.number().int().min(1).max(24).optional()
@@ -2114,7 +2146,7 @@ export function buildToolRegistry(): ToolDef[] {
         enabled: z.boolean().optional(),
         gapDays: z.array(z.coerce.number().int().min(1).max(90)).min(1).max(5).optional(),
       }).optional()
-        .describe('Follow-up sequence for unanswered prospects. gapDays = relative waits in DAYS before each next touch (default [3,7,7]). Whole-object replace: omitting `enabled` sets it false, disabling follow-ups AND clearing in-progress sequences — pass enabled:true explicitly to keep them on while changing cadence. Turning it on also resumes prospects whose last send is within the sequence length.'),
+        .describe('Follow-up sequence for unanswered prospects. gapDays = relative waits in DAYS before each next touch (default [3]). Whole-object replace: omitting `enabled` sets it false, disabling follow-ups AND clearing in-progress sequences — pass enabled:true explicitly to keep them on while changing cadence. Turning it on also resumes prospects whose last send is within the sequence length.'),
       outboundChannels: z.array(z.enum(OUTBOUND_CHANNELS)).optional()
         .describe('Channels the project is allowed to use for outbound. Default: email only — the browser-driven channels must be enabled explicitly. Empty array pauses automated outbound (manual per-draft send still works).'),
       targetCountries: z.array(z.enum(ALLOWED_SEND_COUNTRIES)).optional()
@@ -2128,7 +2160,7 @@ export function buildToolRegistry(): ToolDef[] {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] }
+      return { content: [{ type: 'text' as const, text: `${JSON.stringify(data, null, 2)}\n${await dailyTargetLine(ctx, projectId)}` }] }
     },
   )
 

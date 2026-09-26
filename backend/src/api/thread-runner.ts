@@ -9,7 +9,7 @@ import { withTenantConnection } from '../db/rls'
 import type { TenantId } from '../domain/ids'
 import { runChatTurn, type ChatEvent, type ChatTurnDeps, type ChatTurnInput } from '../services/chat/agent'
 import { hasUnanswered, listMessages, markRead } from '../services/chat/threads'
-import { withLlmScope } from '../services/llm'
+import { withPaidCallScope } from '../services/paid-calls'
 import { getTenantOwnerUserId } from '../services/tenants'
 import { buildToolExecutor, type InternalDispatch } from './tool-executor'
 import type { Env } from './types'
@@ -138,7 +138,7 @@ export function threadRunner(dispatch: InternalDispatch) {
       const executionCtx: ExecutionContext = { waitUntil: (p) => void background.push(p), passThroughOnException: () => {}, props: {} }
       const tools = buildToolExecutor(this.env, executionCtx, dispatch, { origin: 'chat', userId })
       const deps = { run, signal: this.stop.signal, tenantId: ref.tenantId, userId, env: this.env, tools }
-      await withLlmScope({ tenantId: ref.tenantId, threadId: ref.threadId }, async () => {
+      await withPaidCallScope({ databaseUrl: this.env.DATABASE_URL, tenantId: ref.tenantId, threadId: ref.threadId }, async () => {
         for await (const event of runChatTurn(deps, ref.threadId, input)) {
           if (event.type === 'text_delta') this.text += event.text
           else if (event.type === 'message') this.text = ''

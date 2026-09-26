@@ -49,6 +49,8 @@ import { resolveProject } from './projects'
 import { UNDELIVERABLE } from '../domain/email-deliverability'
 import { deriveReplyCollectionStatus, type ReplyCollectionStatus } from '../domain/attention'
 import { verifyAddressBeforeSend } from './email-verify'
+import { currentPaidCallScope, insertPaidCall } from './paid-calls'
+import { NO_TOKENS } from '../domain/paid-calls'
 import { isMailboxVerdictFresh } from '../domain/email-verification'
 import { DASHBOARD_PERIODS, periodToWindow } from '../domain/dashboard'
 import { requireProspect } from './prospects'
@@ -406,6 +408,7 @@ async function assertProspectContactable(
 async function resolveDeliverableRecipient(
   db: Db,
   tenantId: TenantId,
+  projectId: ProjectId,
   prospectId: number,
   verifyApiKey: string | null,
 ): Promise<ServiceResult<string>> {
@@ -431,6 +434,9 @@ async function resolveDeliverableRecipient(
   const verdict = await verifyAddressBeforeSend(row.email, verifyApiKey, {
     skipMailboxProbe: isMailboxVerdictFresh(row.mailboxVerifiedAt, new Date()),
   })
+  if (verdict.verifierCharged) {
+    await insertPaidCall(db, tenantId, { ...currentPaidCallScope(), projectId }, { op: 'verify', model: 'emailable', tier: 'default', usage: NO_TOKENS })
+  }
   // Both stamps guard on the verified address so a concurrent re-address never
   // inherits this verdict.
   if (verdict.deliverability !== UNDELIVERABLE) {
@@ -1006,6 +1012,7 @@ async function reserveEmailSend(
   const recipient = await resolveDeliverableRecipient(
     db,
     tenantId,
+    projectId,
     input.prospectId,
     ctx.emailVerifyApiKey,
   )
@@ -1494,6 +1501,7 @@ async function reserveDraftSend(
   const recipient = await resolveDeliverableRecipient(
     db,
     tenantId,
+    draft.projectId as ProjectId,
     draft.prospectId,
     ctx.emailVerifyApiKey,
   )

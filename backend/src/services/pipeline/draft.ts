@@ -5,6 +5,7 @@
 import { z } from 'zod'
 import type { Db } from '../../db/connection'
 import type { Channel, OutboundChannel, OutboundMode } from '../../db/schema'
+import type { ReachArm } from '../../domain/cycle-plan'
 import type { ProjectId, TenantId } from '../../domain/ids'
 import type { JobLogEntry, JobParamsOf, JobResult } from '../../domain/jobs'
 import { ok, type ServiceError, type ServiceResult } from '../result'
@@ -48,7 +49,7 @@ export async function listHostedReachable(
   tenantId: TenantId,
   env: HostedEnv,
   projectId: ProjectId,
-  query: ReachableQuery & { excludeProspectIds?: number[] },
+  query: ReachableQuery & { excludeProspectIds?: number[]; arm?: ReachArm },
 ): ReturnType<typeof listReachable> {
   const mode = await getOutboundMode(db, projectId)
   return listReachable(db, tenantId, editionOf(env), projectId, { ...query, channels: hostedChannels(mode) })
@@ -60,13 +61,14 @@ export async function loadDraftBatch(
   env: HostedEnv,
   projectId: ProjectId,
   params: JobParamsOf<'draft'>,
-  draw: { limit: number; excludeProspectIds: number[] },
+  draw: { limit: number; excludeProspectIds: number[]; arm?: ReachArm },
 ): Promise<ServiceResult<DraftBatch>> {
   const compliance = await assertTenantComplianceReady(db, tenantId)
   if (!compliance.ok) return compliance
   const reachable = await listHostedReachable(db, tenantId, env, projectId, {
     limit: draw.limit,
     excludeProspectIds: draw.excludeProspectIds,
+    arm: draw.arm,
     ...(params.prospectIds ? { prospectIds: params.prospectIds } : {}),
   })
   if (!reachable.ok) return reachable

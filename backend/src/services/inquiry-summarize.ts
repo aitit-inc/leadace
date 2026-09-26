@@ -35,6 +35,7 @@ export async function generateSessionSummary(
   }
 
   const llm = await callOpenAIResponses({
+    op: 'inquiry-summarize',
     apiKey: env.OPENAI_API_KEY,
     model: SUMMARIZE_MODEL,
     instructions: buildSummarizeInstructions(trigger),

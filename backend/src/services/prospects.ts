@@ -10,7 +10,6 @@ import {
   formTypeEnum,
   prospectStatusEnum,
   responseTypeEnum,
-  REACHABLE_STATUSES,
   OUTBOUND_CHANNELS,
   prioritySchema,
   priorityCoerceSchema,
@@ -61,6 +60,7 @@ import type { ChannelRank } from '../domain/channel-affinity'
 import { drawExploreSlots } from '../domain/discovery-allocation'
 import { floorRescuedWeights } from '../domain/arm-bandit'
 import type { JobOrigin } from '../domain/jobs'
+import type { ReachArm } from '../domain/cycle-plan'
 
 // Shared by the reachable gate and the byChannel summary so both agree.
 const emailUsableExpr: SQL = and(
@@ -341,6 +341,8 @@ export async function listReachable(
     // total and byChannel still count the whole reachable list.
     channels?: readonly OutboundChannel[]
     excludeProspectIds?: number[]
+    // One arm only, the counts included; all three without it.
+    arm?: ReachArm
   },
 ): Promise<ServiceResult<{
   prospects: ReachableProspect[]
@@ -361,7 +363,7 @@ export async function listReachable(
   if (!resolved.ok) return resolved
   const projectId = resolved.value
 
-  const { limit, prospectIds: onlyProspectIds, channels, excludeProspectIds } = query
+  const { limit, prospectIds: onlyProspectIds, channels, excludeProspectIds, arm } = query
 
   const [quota, mailboxQuota, outboundMode, allowlist, leverConfig, stateRows, activeStrategySlugs] = await Promise.all([
     getRemainingProspectQuota(db, tenantId, edition),
@@ -448,16 +450,30 @@ export async function listReachable(
     ),
   )
 
+  // A 'contacted' prospect is a re-approach only while no follow-up sequence is
+  // in progress: the IS NULL guard keeps the two windows from colliding.
+  const outreachDue = or(isNull(prospects.nextOutreachAfter), lte(prospects.nextOutreachAfter, sql`NOW()`))
+  const armConditions: Record<ReachArm, SQL | undefined> = {
+    first: and(eq(projectProspects.status, 'new'), outreachDue),
+    recycle: or(
+      and(eq(projectProspects.status, 'deferred'), outreachDue),
+      and(
+        eq(projectProspects.status, 'contacted'),
+        isNull(projectProspects.nextFollowupAfter),
+        isNotNull(prospects.nextOutreachAfter),
+        lte(prospects.nextOutreachAfter, sql`NOW()`),
+      ),
+    ),
+    followup: and(
+      eq(projectProspects.status, 'contacted'),
+      isNotNull(projectProspects.nextFollowupAfter),
+      lte(projectProspects.nextFollowupAfter, sql`NOW()`),
+    ),
+  }
+
   // Excludes prospects with in-flight outreach ('pending_review' or a live
   // 'pre_send' — same rule as the quota query, see livePreSend). Index
   // `idx_outreach_dedup` (project_id, prospect_id, status) covers the lookup.
-  //
-  // Status branch:
-  //   - 'new' / 'deferred': reachable when next_outreach_after is NULL or past.
-  //   - 'contacted': reachable when next_followup_after is past (day-scale
-  //     follow-up) OR, only while no sequence is in progress, next_outreach_after
-  //     is past (months-scale recycle). The IS NULL guard on the recycle arm keeps
-  //     the two windows mutually exclusive so they never collide.
   const reachableCondition = and(
     eq(projectProspects.projectId, projectId),
     eq(projectProspects.tenantId, tenantId),
@@ -466,23 +482,7 @@ export async function listReachable(
     eq(projectProspects.qualified, true),
     eq(prospects.doNotContact, false),
     eq(organizations.doNotContact, false),
-    or(
-      and(
-        inArray(projectProspects.status, REACHABLE_STATUSES),
-        or(isNull(prospects.nextOutreachAfter), lte(prospects.nextOutreachAfter, sql`NOW()`)),
-      ),
-      and(
-        eq(projectProspects.status, 'contacted'),
-        isNull(projectProspects.nextFollowupAfter),
-        isNotNull(prospects.nextOutreachAfter),
-        lte(prospects.nextOutreachAfter, sql`NOW()`),
-      ),
-      and(
-        eq(projectProspects.status, 'contacted'),
-        isNotNull(projectProspects.nextFollowupAfter),
-        lte(projectProspects.nextFollowupAfter, sql`NOW()`),
-      ),
-    ),
+    arm ? armConditions[arm] : or(...Object.values(armConditions)),
     channelFilter,
     countryFilter,
     hardCountryFilter,

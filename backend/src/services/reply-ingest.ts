@@ -18,10 +18,12 @@ import { getGmailAccessToken } from '../auth/google'
 import { pollGmailInbox } from './gmail-poll'
 import { pollImapInbox } from './imap-poll'
 import { classifyReply, matchSameDomainReply, type ReplyClassification } from './reply-classify'
-import { withLlmScope, type LlmEnv } from './llm'
+import type { LlmEnv } from './llm'
+import { withPaidCallScope } from './paid-calls'
 import { recordResponse, type RecordResponseInput } from './responses'
 
 type ReplyIngestEnv = LlmEnv & {
+  DATABASE_URL: string
   GMAIL_TOKEN_ENCRYPTION_KEY: string
   GOOGLE_CLIENT_ID: string
   GOOGLE_CLIENT_SECRET: string
@@ -205,9 +207,7 @@ async function matchBySameDomain(
     return row ? [{ outreachLogId: c.outreachLogId, recipient: c.prospectEmail, sentAt: c.sentAt, subject: row.subject, body: row.body }] : []
   })
 
-  const verdict = await withLlmScope({ tenantId }, () =>
-    matchSameDomainReply(env, { fromEmail: reply.fromEmail, subject: reply.subject, bodyText: leadingUnquotedText(reply.bodyText) }, sent),
-  )
+  const verdict = await matchSameDomainReply(env, { fromEmail: reply.fromEmail, subject: reply.subject, bodyText: leadingUnquotedText(reply.bodyText) }, sent)
   if (verdict === null) return null
   summary.sameDomainMatched++
   console.log(`[reply-ingest] same-domain match identity=${identityId} msg=${reply.messageId} outreach=${verdict.outreachLogId}: ${verdict.reason}`)
@@ -366,7 +366,7 @@ async function ingestIdentity(
 
     const classified = det
       ? { responseType: det, sentiment: 'neutral' as const }
-      : (await withLlmScope({ tenantId }, () => classifyReply(env, { subject: reply.subject, bodyText: leadingUnquotedText(reply.bodyText) }))) ??
+      : (await classifyReply(env, { subject: reply.subject, bodyText: leadingUnquotedText(reply.bodyText) })) ??
         { responseType: 'reply' as const, sentiment: 'neutral' as const }
 
     const rawContent = reply.bodyText.trim() || reply.subject || '(no text)'
@@ -432,7 +432,7 @@ export async function runReplyIngest(db: Db, env: ReplyIngestEnv): Promise<Reply
 
   for (const identity of identities) {
     try {
-      await ingestIdentity(db, env, identity, summary)
+      await withPaidCallScope({ databaseUrl: env.DATABASE_URL, tenantId: asTenantId(identity.tenant_id) }, () => ingestIdentity(db, env, identity, summary))
     } catch (e) {
       summary.pollErrors++
       const detail = e instanceof Error ? e.message : String(e)

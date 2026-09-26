@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { shouldBuildFirst, type ReachableSnapshot } from './cycle-plan'
 
-const snap = (r: Partial<ReachableSnapshot>): ReachableSnapshot => ({ deliverable: 0, needsHands: 0, blocked: null, ...r })
+const snap = (r: Partial<ReachableSnapshot>): ReachableSnapshot => ({ deliverable: 0, needsHands: 0, mailboxRemaining: 0, sends: true, blocked: null, ...r })
 
 describe('shouldBuildFirst', () => {
   it('builds first on an empty list', () => {

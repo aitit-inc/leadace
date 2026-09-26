@@ -15,7 +15,9 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { extractionPrompt, extractionSchema, searchPrompt, shapeCandidates } from '../src/services/pipeline/discover'
 import { enrichCandidate } from '../src/services/pipeline/enrich'
-import { callLlmFollowUpJson, callLlmGroundedText, LlmError, withLlmScope } from '../src/services/llm'
+import { callLlmFollowUpJson, callLlmGroundedText, LlmError } from '../src/services/llm'
+import { withPaidCallScope } from '../src/services/paid-calls'
+import type { TenantId } from '../src/domain/ids'
 import { parseIndustryVocabulary, type HostedEnv } from '../src/services/pipeline/context'
 import { utcDateKey } from '../src/domain/time'
 import type { DiscoverCandidate } from '../src/domain/jobs'
@@ -279,7 +281,8 @@ async function measure(plan: (typeof strategies)[number]): Promise<{ rows: Row[]
         const key = `${plan.slug}:${i + k}`
         const [pre, enriched] = await Promise.all([
           precheck(c.websiteUrl),
-          withLlmScope({ tenantId: 'probe', jobId: key }, () => enrichCandidate(env, c, { procedure, offer, approaches: [plan.approach], channels: ['email'] })),
+          // No database here: the ledger write fails and is logged; the usage line still carries jobId.
+          withPaidCallScope({ databaseUrl: '', tenantId: 'probe' as TenantId, jobId: key }, () => enrichCandidate(env, c, { procedure, offer, approaches: [plan.approach], channels: ['email'] })),
         ])
         const cost = tokenCost(usages.filter((u) => u.jobId === key))
         const outcome = outcomeOf(enriched)

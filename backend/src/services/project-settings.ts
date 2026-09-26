@@ -50,6 +50,7 @@ export const updateSettingsSchema = z
     inquiryCtaType: z.enum(INQUIRY_CTA_TYPES).optional(),
     inquiryCtaUrl: z.url().max(500).refine(isHttpsUrl, HTTPS_ONLY_MSG).nullable().optional(),
     publicScoreboardEnabled: z.boolean().optional(),
+    dailyNewProspects: z.coerce.number().int().min(1).max(200).nullable().optional(),
     // Server-run daily cycle: on/off and the UTC hour the hourly cron starts it.
     // Bounds keep the skill / SaaS UI from pathological values that would
     // either spam (low) or freeze pipelines (very high).
@@ -119,6 +120,7 @@ const settingsCols = {
   inquiryCtaType: projectSettings.inquiryCtaType,
   inquiryCtaUrl: projectSettings.inquiryCtaUrl,
   publicScoreboardEnabled: projectSettings.publicScoreboardEnabled,
+  dailyNewProspects: projectSettings.dailyNewProspects,
   maxReapproachCycles: projectSettings.maxReapproachCycles,
   unspecifiedRecontactWindowMonths: projectSettings.unspecifiedRecontactWindowMonths,
   noResponseRecycleDays: projectSettings.noResponseRecycleDays,
@@ -155,6 +157,7 @@ export type ProjectSettingsRow = {
   // True only for the project GET /api/live is bound to (SHOWCASE_PROJECT_ID);
   // the Web UI shows the publish switch to that project alone.
   publicScoreboardEligible: boolean
+  dailyNewProspects: number | null
   maxReapproachCycles: number
   unspecifiedRecontactWindowMonths: number
   noResponseRecycleDays: number
@@ -514,6 +517,7 @@ export async function updateProjectSettings(
     ...(patch.publicScoreboardEnabled !== undefined
       ? { publicScoreboardEnabled: patch.publicScoreboardEnabled }
       : {}),
+    ...(patch.dailyNewProspects !== undefined ? { dailyNewProspects: patch.dailyNewProspects } : {}),
     ...(patch.maxReapproachCycles !== undefined ? { maxReapproachCycles: patch.maxReapproachCycles } : {}),
     ...(patch.unspecifiedRecontactWindowMonths !== undefined ? { unspecifiedRecontactWindowMonths: patch.unspecifiedRecontactWindowMonths } : {}),
     ...(patch.noResponseRecycleDays !== undefined ? { noResponseRecycleDays: patch.noResponseRecycleDays } : {}),

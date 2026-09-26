@@ -64,7 +64,9 @@ export type DiscoverCandidate = z.infer<typeof discoverCandidateSchema>
 export const jobParamsSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('daily_cycle'),
-    outboundCount: z.number().int().min(1).max(200).default(30),
+    // New prospects to reach today; due follow-ups and re-approaches go out on top.
+    outboundCount: z.number().int().min(1).max(200).optional()
+      .describe("Only when the person names a number for this run; omit it to use the project's daily number."),
   }),
   z.object({
     kind: z.literal('discover'),

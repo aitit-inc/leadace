@@ -41,7 +41,7 @@ A skill that automatically runs a full day of sales activities. All phases are e
 ## Arguments
 
 - Project ID: `$0` (required)
-- Outbound count: `$1` (default: 30)
+- Outbound count: `$1` (default: the daily number of new prospects `get_project_settings` reports, capped at what it says can go out a day)
 
 ## Steps
 
@@ -194,7 +194,7 @@ Run in any of the following cases:
 - Remaining list (step 5 total - consumed in step 6) is less than 3x the outbound count
 - Batch success rate check in step 6 determined that contact replenishment is needed
 
-Set the target count the same as the outbound count (`$1`, default 30). Aim to meet the target in terms of **reachable count**, not registration count (collect more candidates to account for those without contact info).
+Set the target count the same as the outbound count. Aim to meet the target in terms of **reachable count**, not registration count (collect more candidates to account for those without contact info).
 
 Since the build-list skill internally launches sub-agents, it cannot be called directly from daily-cycle (nesting constraint). Instead, run each phase of build-list as individual sub-agents:
 

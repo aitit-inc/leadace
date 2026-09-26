@@ -1,5 +1,5 @@
 import { request, type RequestFetch } from '../api';
-import type { ProjectSettings } from '$lib/types/project-settings';
+import type { DailyTarget, ProjectSettings } from '$lib/types/project-settings';
 
 export function getProjectSettings<T = ProjectSettings>(
   projectId: string,
@@ -9,6 +9,19 @@ export function getProjectSettings<T = ProjectSettings>(
   return request<T>(fetchFn, {
     method: 'GET',
     path: `/projects/${projectId}/settings`,
+    auth: 'required',
+    token,
+  });
+}
+
+export function getDailyTarget(
+  projectId: string,
+  fetchFn: RequestFetch = fetch,
+  token?: string,
+): Promise<DailyTarget> {
+  return request<DailyTarget>(fetchFn, {
+    method: 'GET',
+    path: `/projects/${projectId}/daily-target`,
     auth: 'required',
     token,
   });

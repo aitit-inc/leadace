@@ -1,11 +1,13 @@
 import OpenAI, { toFile } from 'openai'
+import type { AutoParseableTextFormat } from 'openai/lib/parser'
 import { zodTextFormat } from 'openai/helpers/zod'
 import type { FunctionTool, Response, ResponseCreateParamsNonStreaming, ResponseInputItem, ResponseOutputText } from 'openai/resources/responses/responses'
 import { z } from 'zod'
-import { LlmError, logUsage, type Citation, type GroundedText } from './common'
+import type { LlmModel } from '../../domain/paid-calls'
+import { LlmError, recordUsage, type Citation, type GroundedText } from './common'
 
 export type OpenAIRoute = {
-  model: string
+  model: LlmModel
   timeoutMs: number
   // A flex attempt the provider cannot serve, or past this deadline, gets one
   // standard attempt with timeoutMs, so the half price costs at most this much
@@ -56,11 +58,6 @@ function toLlmError(e: unknown, call: OpenAICall, tier: Tier, timeoutMs: number,
     console.error('OpenAI response body failed', { op: call.op, tier, elapsedMs, detail: e.message })
     return new LlmError('upstream LLM request failed', 502, true)
   }
-  // responses.parse runs JSON.parse and the zod schema on the answer.
-  if (e instanceof SyntaxError || e instanceof z.ZodError) {
-    console.error('OpenAI structured output did not parse', { op: call.op, elapsedMs, detail: e.message.slice(0, 300) })
-    return new LlmError('upstream LLM output did not match the schema', 502)
-  }
   throw e
 }
 
@@ -77,7 +74,7 @@ async function attempt<R extends Response>(call: OpenAICall, tier: Tier, timeout
   } catch (e) {
     throw toLlmError(e, call, tier, timeoutMs, deadline, Date.now() - startedAt)
   }
-  logOpenAIUsage(call, response, tier, Date.now() - startedAt)
+  await recordOpenAIUsage(call, response, tier, Date.now() - startedAt)
   if (response.status !== 'completed') {
     console.error('OpenAI response incomplete', { op: call.op, status: response.status, reason: response.incomplete_details?.reason })
     throw new LlmError(`upstream LLM response ${response.status ?? 'without status'}`, 502)
@@ -95,14 +92,14 @@ async function withTier<R extends Response>(call: OpenAICall, send: Send<R>): Pr
   }
 }
 
-function logOpenAIUsage(call: OpenAICall, response: Response, tier: Tier, elapsedMs: number): void {
+export function recordOpenAIUsage(call: Pick<OpenAICall, 'op' | 'model'>, response: Response, tier: Tier, elapsedMs: number): Promise<void> {
   const u = response.usage
   // web_search_call items also cover page opens, which the Usage dashboard
   // does not bill — counting every item ran 42% high against it (2026-09-20).
   const searches = response.output.flatMap((o) => (o.type === 'web_search_call' && o.action?.type === 'search' ? [o.action] : []))
   const queries = searches.flatMap((a) => a.queries ?? (a.query === undefined ? [] : [a.query]))
   const reasoning = u?.output_tokens_details.reasoning_tokens ?? 0
-  logUsage(
+  return recordUsage(
     { op: call.op, model: call.model, tier: response.service_tier ?? tier, elapsedMs },
     {
       input: u?.input_tokens ?? 0,
@@ -182,7 +179,7 @@ async function parseOpenAIJson<T>(args: OpenAIJsonArgs<T>, extras: JsonRequestEx
   const client = clientOf(args)
   const format = zodTextFormat(args.schema, args.op.replace(/[^a-zA-Z0-9_-]/g, '_'))
   const response = await withTier(args, (tier, signal) =>
-    client.responses.parse(
+    client.responses.create(
       {
         model: args.model,
         input: args.prompt,
@@ -195,12 +192,24 @@ async function parseOpenAIJson<T>(args: OpenAIJsonArgs<T>, extras: JsonRequestEx
       { signal },
     ),
   )
-  // null when the model refused instead of answering.
-  if (response.output_parsed === null) {
-    console.error('OpenAI structured output missing', { op: args.op, id: response.id })
+  return { value: parsedOutput(args, format, response), response }
+}
+
+// Parsed only once the call's usage is recorded: an answer that does not
+// parse was still billed.
+function parsedOutput<T>(call: OpenAICall, format: AutoParseableTextFormat<T>, response: Response): T {
+  // Empty when the model refused instead of answering.
+  if (response.output_text.trim() === '') {
+    console.error('OpenAI structured output missing', { op: call.op, id: response.id })
     throw new LlmError('upstream LLM returned no structured output', 502)
   }
-  return { value: response.output_parsed, response }
+  try {
+    return format.$parseRaw(response.output_text)
+  } catch (e) {
+    if (!(e instanceof SyntaxError || e instanceof z.ZodError)) throw e
+    console.error('OpenAI structured output did not parse', { op: call.op, id: response.id, detail: e.message.slice(0, 300) })
+    throw new LlmError('upstream LLM output did not match the schema', 502)
+  }
 }
 
 export async function callOpenAIJson<T>(args: OpenAIJsonArgs<T>): Promise<T> {
@@ -300,17 +309,17 @@ export async function* streamOpenAIChat(args: OpenAICall & ChatRequest): AsyncGe
           yield { type: 'text', text: event.delta }
           break
         case 'response.completed':
-          logOpenAIUsage(args, event.response, 'default', Date.now() - startedAt)
+          await recordOpenAIUsage(args, event.response, 'default', Date.now() - startedAt)
           yield { type: 'completed', responseId: event.response.id, calls: callsOf(args, event.response) }
           return
         // Cut off (the output cap): the person has read the text, so it stands
         // like a stopped answer; the response is not continued.
         case 'response.incomplete':
-          logOpenAIUsage(args, event.response, 'default', Date.now() - startedAt)
+          await recordOpenAIUsage(args, event.response, 'default', Date.now() - startedAt)
           console.warn('OpenAI response incomplete', { op: args.op, reason: event.response.incomplete_details?.reason })
           return
         case 'response.failed':
-          logOpenAIUsage(args, event.response, 'default', Date.now() - startedAt)
+          await recordOpenAIUsage(args, event.response, 'default', Date.now() - startedAt)
           console.error('OpenAI response failed', { op: args.op, code: event.response.error?.code, detail: event.response.error?.message })
           throw new LlmError('upstream LLM response failed', 502)
       }

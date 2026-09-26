@@ -11,7 +11,7 @@ import type { Db } from '../db/connection'
 import { withTenantConnection, type TenantRun } from '../db/rls'
 import { runKey } from '../domain/schedules'
 import { runChatTurn } from '../services/chat/agent'
-import { withLlmScope } from '../services/llm'
+import { withPaidCallScope } from '../services/paid-calls'
 import { unattendedTools } from '../services/chat/unattended'
 import { appendMessage, createThread, titleFromMessage } from '../services/chat/threads'
 import { notify, notifyCtxOf } from '../services/notifications'
@@ -60,7 +60,7 @@ async function runOne(env: Env, ctx: ExecutionContext, dispatch: InternalDispatc
   }
 
   let failure: string | null = null
-  await withLlmScope({ tenantId: schedule.tenantId, threadId }, async () => {
+  await withPaidCallScope({ databaseUrl: env.DATABASE_URL, tenantId: schedule.tenantId, threadId }, async () => {
     for await (const event of runChatTurn(deps, threadId, { kind: 'instruction', message: instruction })) {
       if (event.type === 'error') failure = event.message
     }
