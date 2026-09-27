@@ -49,6 +49,72 @@ The subjects under test are the production prompts in
 project. CI compiles `eval/` and `sim/` but never runs them — every run here
 is by hand.
 
+## Cycle eval: cost per billable prospect, pass after pass
+
+`cycle.ts` grades discover on what the goal is stated in (#718 block 3, #819):
+what production pays per prospect it bills, and whether that holds as passes
+pile up. It exists because this harness's precision, measured on the targets
+it was tuned on, picked a model that halved supply (#791).
+
+- A pass is production's: all strategies searched in parallel on the notes
+  the pass started with, extracted serially, deduped against every domain
+  earlier passes registered, enriched on the email channel alone (a new
+  project's default). Billable is `verdictOf` as production bills it; each
+  billable prospect pays one address verification. Cost is `paidCallCostUsd`,
+  the table `paid_calls` bills with, so the number reads beside production's.
+- Every strategy the spec has runs, zero-yield ones included: production pays
+  for them too.
+- Fit is judged blind. `judge` pools the billable prospects of every arm; the
+  judge gets the domain, its snapshot and the frozen spec, never the arm or
+  the candidate's claims. `audit` draws one in ten for a person to re-judge,
+  and a person's verdict wins in `score`. An arm passes when it is cheaper per
+  billable prospect over the passes and its fit rate is not below `prod`'s.
+
+Arms: `prod` is production as it is. The #819 comparison ran two more,
+`gather` and `gather2` (PR #821); `gather` won and became production on
+2026-09-27, so `cycle.prod/` directories written before then hold the search
+that judged as it went. Compare against them in a fresh target directory.
+
+### Targets
+
+Chosen by a fixed procedure before any result was seen, from sellers the
+harness was never tuned on — never a hand pick:
+
+- US (6): the yc-oss mirror of the YC directory
+  (`yc-oss.github.io/api/companies/all.json`), Active, US region, team 2–50,
+  one per industry — Healthcare, Industrials, Real Estate and Construction,
+  Fintech, Education, B2B (minus the Engineering, Infrastructure, Security,
+  Sales and Marketing subindustries, the software buyers the old LeadAce ICP
+  was). Candidates in `random.Random(819)` shuffle order of the id-sorted list.
+- JP (2): the J-Startup list (`j-startup.go.jp/startups/`), slugs in
+  `random.Random(819)` shuffle order.
+- The first in order that sells to organizations numbering at least in the
+  hundreds, judged from its one-line description, is taken. A site
+  `draft_strategy_from_url` cannot read is passed over for the next.
+
+Condition variants (`flint-a|b|c`, `flint-jp-a|b|c`) keep one seller and vary
+only how strict the Target is — an attribute alone, a published signal, a dated
+event — through the notes a person would type beside the URL, so what a
+condition costs to supply is measured apart from who the seller is.
+
+Specs are drafted with `eval/draft.ts`, production's `draftStrategyFromUrl`
+against the local database (the production workspace's daily draft cap stays
+untouched; keep local master documents seeded). Each spec is exactly what it
+answers for the homepage, with no notes unless a variant: `business`,
+`salesStrategy` and every discovery strategy verbatim, `targetCountries` empty
+(the project default), 10 per strategy (the per-search floor).
+
+```bash
+npx tsx eval/cycle.ts run   <target> --arm prod --passes 5
+npx tsx eval/cycle.ts judge <target>   # snapshots + judge.queue.json (blind order)
+npx tsx eval/cycle.ts audit <target>   # audit.sample.json; verdicts go in audit.json
+npx tsx eval/cycle.ts score <target>
+```
+
+Written under `eval/data.local/<target>/cycle.<arm>/p<n>/`: one file per
+search, extraction and enriched domain, then `pass.json` once the pass is
+complete, so a rerun buys only what is missing.
+
 ## Running
 
 ```bash

@@ -1,7 +1,7 @@
 import type { OpenAIRoute } from './openai'
 
 export type JsonOp = 'draft' | 'evaluate' | 'journal' | 'reply-classify' | 'reply-domain-match'
-export type PagesJsonOp = 'enrich.site' | 'enrich.pages' | 'enrich.claims' | 'enrich.events' | 'enrich.events.pages' | 'strategy-draft.site' | 'strategy-draft'
+export type PagesJsonOp = 'enrich.site' | 'enrich.pages' | 'enrich.judge' | 'enrich.events' | 'enrich.events.pages' | 'strategy-draft.site' | 'strategy-draft'
 export type GroundedTextOp = 'discover.search' | 'strategy-draft.competitors'
 export type FollowUpJsonOp = 'discover.extract' | 'strategy-draft.competitors.extract'
 
@@ -25,7 +25,7 @@ export const OPENAI_ROUTES: Record<JsonOp | PagesJsonOp | GroundedTextOp | Follo
   'reply-domain-match': { model: 'gpt-6-luna', timeoutMs: 60_000, flexTimeoutMs: null, maxOutputTokens: 2_048 },
   'enrich.site': { model: 'gpt-6-luna', timeoutMs: 90_000, flexTimeoutMs: 60_000, maxOutputTokens: 8_192 },
   'enrich.pages': { model: 'gpt-6-luna', timeoutMs: 90_000, flexTimeoutMs: 60_000, maxOutputTokens: 8_192 },
-  'enrich.claims': { model: 'gpt-6-luna', timeoutMs: 90_000, flexTimeoutMs: 60_000, maxOutputTokens: 8_192 },
+  'enrich.judge': { model: 'gpt-6-luna', timeoutMs: 90_000, flexTimeoutMs: 60_000, maxOutputTokens: 8_192 },
   // Also read inside draft's one-shot send step (10 min), before composing.
   'enrich.events': { model: 'gpt-6-luna', timeoutMs: 60_000, flexTimeoutMs: 30_000, maxOutputTokens: 8_192 },
   'enrich.events.pages': { model: 'gpt-6-luna', timeoutMs: 60_000, flexTimeoutMs: 30_000, maxOutputTokens: 8_192 },
