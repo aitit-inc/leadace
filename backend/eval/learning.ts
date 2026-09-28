@@ -1,7 +1,7 @@
 // Criterion H — learning velocity — read out of production's own record.
 //
 // The targeting bandit learns from rewardSum, which by default weights a
-// negative reply at zero (domain/reward.ts), so a segment that answers "no,
+// negative reply at zero (domain/loop/reaction.ts), so a segment that answers "no,
 // because X" scores the same as one that never answers. This counts every
 // signal a send came back with, weighted or not.
 //

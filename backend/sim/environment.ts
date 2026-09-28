@@ -1,10 +1,11 @@
 // The subjects under test are the production domain functions imported below;
 // this loop only replays the service-layer orchestration and is valid while
-// these mirrors of backend/src/services hold:
-// - tick (levers.ts): computeArmWeights over active slugs, archives applied
-//   immediately, ordering scores materialized into the whole standing pool;
-//   rows registered after the tick keep the schema default 1.0 until the next
-//   tick. Vitals rng re-seeded with the same string every tick (not date-keyed).
+// these mirrors of backend/src (services and domain/loop/decide.ts) hold:
+// - tick (services/loop/learn.ts → domain/loop/decide.ts): computeArmWeights
+//   over active slugs, archives applied immediately, ordering scores
+//   materialized into the whole standing pool; rows registered after the tick
+//   keep the schema default 1.0 until the next tick. Vitals rng re-seeded
+//   with the same string every tick (not date-keyed).
 // - inflow (getLeverStateById + build-list): floor-rescued largest-remainder
 //   plan; shortfall stays unfilled.
 // - outflow (prospects.ts): exploit lane = ORDER BY ordering_score DESC,
@@ -12,25 +13,23 @@
 //   stratum (archived-slug rows land there), stratum shortfall falls back to
 //   a fully random draw. No strategy stagnation rotation (#357 deferral), no
 //   replenishment (the LLM side is out of simulation scope).
-// - forgetting (evaluations.ts): the production band `sent_at ∈ [now−W−L, now−W)`
+// - forgetting (services/loop/observe.ts): the production band `sent_at ∈ [now−W−L, now−W)`
 //   equals mature-day ∈ [now−L, now). rewardLookbackDays feeds the bandit arms
 //   and targeting lifts; the futility window is a sim-first candidate
 //   (SimParams); resetStatsAtDay replays the manual measurementsSince wipe.
 
+import { seededRng, type ArmStat } from '../src/domain/loop/bandit'
+import { computeArmWeights } from '../src/domain/loop/options'
+import { assessVitals, type VitalsVerdict } from '../src/domain/loop/frame'
 import {
-  computeArmWeights,
-  floorRescuedWeights,
-  seededRng,
-  type ArmStat,
-} from '../src/domain/arm-bandit'
-import { assessVitals, type VitalsVerdict } from '../src/domain/vital-signs'
-import { apportionLargestRemainder, drawExploreSlots } from '../src/domain/discovery-allocation'
-import {
+  apportionLargestRemainder,
   computeAxisLifts,
+  drawExploreSlots,
+  floorRescuedWeights,
   overallMeanReward,
   type TargetingAxisStat,
-} from '../src/domain/targeting-score'
-import type { LeverConfig } from '../src/domain/lever-config'
+} from '../src/domain/loop/allocation'
+import type { LeverConfig } from '../src/domain/loop/config'
 
 export type StrategyTruth = {
   // Ground-truth P(countable reply | delivered); deliveryFactor multiplies it.

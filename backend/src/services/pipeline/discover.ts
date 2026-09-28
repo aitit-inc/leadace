@@ -18,7 +18,7 @@ import {
 } from '../../domain/jobs'
 import { ok, err, type ServiceResult } from '../result'
 import { callLlmFollowUpJson, callLlmGroundedText, LlmError, type Citation, type GroundedText } from '../llm'
-import { getLeverStateById } from '../levers'
+import { getLeverStateById } from '../loop/policy'
 import { loadProjectOutboundAllowlist } from '../project-settings'
 import { checkProspectDedup } from '../prospect-import'
 import { discoveryPausedReason, getRemainingProspectQuota } from '../plan-limits'

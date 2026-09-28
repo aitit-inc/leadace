@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { INQUIRY_OUTCOMES, type InquiryOutcome, type responseTypeEnum, type sentimentEnum } from '../db/schema'
+import { INQUIRY_OUTCOMES, type InquiryOutcome, type responseTypeEnum, type sentimentEnum } from '../../db/schema'
 
 type ResponseType = (typeof responseTypeEnum.enumValues)[number]
 type Sentiment = (typeof sentimentEnum.enumValues)[number]

@@ -1,12 +1,12 @@
 import { Hono } from 'hono'
 import { zValidator } from '../zvalidator'
+import { runLeverTick } from '../../services/loop/learn'
 import {
-  runLeverTick,
   getLeverState,
   getLeverDecisionsHistory,
   leverDecisionsHistoryQuerySchema,
   leverStateQuerySchema,
-} from '../../services/levers'
+} from '../../services/loop/policy'
 import { projectRefParamSchema } from '../../services/projects'
 import { respondWithError } from '../respond'
 import type { Env, Variables } from '../types'

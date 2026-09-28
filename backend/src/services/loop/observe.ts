@@ -1,6 +1,11 @@
-import { sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, isNotNull, isNull, sql } from 'drizzle-orm'
 import {
+  discoveryStrategies,
   INQUIRY_OUTCOMES,
+  leverDecisions,
+  messageVariants,
+  projectProspects,
+  prospects,
   responseTypeEnum,
   sentimentEnum,
   type Channel,
@@ -9,19 +14,20 @@ import {
   type InquiryOutcome,
   type OutreachStatus,
   type ProspectStatus,
-} from '../db/schema'
-import type { Db } from '../db/connection'
-import type { ProjectId, ProjectRef, TenantId } from '../domain/ids'
-import { inquiryRewardByKey, replyReward, REWARDED_INQUIRY_OUTCOMES } from '../domain/reward'
-import { coarseIndustry, type CoarseIndustry } from '../domain/coarse-industry'
-import { type LeverConfig } from '../domain/lever-config'
-import type { TargetingAxisStat } from '../domain/targeting-score'
-import type { VariantStat } from '../domain/message-bandit'
-import type { ChannelFineStat } from '../domain/channel-affinity'
-import { loadLeverConfig } from './project-settings'
-import { ok, type ServiceResult } from './result'
-import { resolveProject } from './projects'
-import { projectTargetExpr } from './prospects'
+} from '../../db/schema'
+import type { Db } from '../../db/connection'
+import type { ProjectId, ProjectRef, TenantId } from '../../domain/ids'
+import { inquiryRewardByKey, replyReward, REWARDED_INQUIRY_OUTCOMES } from '../../domain/loop/reaction'
+import { coarseIndustry, type CoarseIndustry } from '../../domain/coarse-industry'
+import { type LeverConfig } from '../../domain/loop/config'
+import type { ChannelFineStat, TargetingAxisStat, TargetingStats } from '../../domain/loop/allocation'
+import type { VariantStat } from '../../domain/loop/options'
+import type { TickEvidence } from '../../domain/loop/decide'
+import { loadLeverConfig } from '../project-settings'
+import { ok, type ServiceResult } from '../result'
+import { resolveProject } from '../projects'
+import { projectTargetExpr } from '../prospects'
+import { getActiveStrategySlugs } from '../discovery-strategies'
 
 // Through the prod transaction pooler (Supavisor, prepare:false) postgres-js
 // can't read column type OIDs, so raw db.execute returns numeric/timestamp
@@ -80,7 +86,7 @@ export type ProjectStatsResult = {
 // total even when one send draws two countable replies — else responses>total
 // throws in wilsonBounds. `rewardSum` deliberately sums over every countable
 // reply row (graded reward per reply event). `NOT IN ('bounce','auto_reply')`
-// mirrors NON_COUNTABLE in domain/reward.ts — keep the two in sync.
+// mirrors NON_COUNTABLE in domain/loop/reaction.ts — keep the two in sync.
 export async function getVariantStats(
   db: Db,
   projectId: ProjectId,
@@ -162,7 +168,7 @@ export async function getVariantStats(
 
 // COUNT(DISTINCT replied send) keeps responses ≤ total (two replies to one send
 // would otherwise overflow the rate and throw in wilsonBounds). `NOT IN
-// ('bounce','auto_reply')` mirrors NON_COUNTABLE in domain/reward.ts.
+// ('bounce','auto_reply')` mirrors NON_COUNTABLE in domain/loop/reaction.ts.
 export async function getChannelStats(
   db: Db,
   projectId: ProjectId,
@@ -206,13 +212,6 @@ export async function getChannelStats(
     entry.responses = Number(row.responses)
   }
   return Array.from(agg.values())
-}
-
-export type TargetingStats = {
-  industry: TargetingAxisStat[] // coarse-folded
-  employeeBand: TargetingAxisStat[]
-  country: TargetingAxisStat[]
-  discoveryStrategy: TargetingAxisStat[]
 }
 
 // Bounced sends are excluded from denominator AND rewards: for targeting a
@@ -685,3 +684,117 @@ export async function getProjectStats(
   })
 }
 
+export async function loadActiveVariantIds(db: Db, projectId: ProjectId): Promise<string[]> {
+  const rows = await db
+    .select({ variantId: messageVariants.variantId })
+    .from(messageVariants)
+    .where(and(eq(messageVariants.projectId, projectId), isNull(messageVariants.archivedAt)))
+    .orderBy(asc(messageVariants.variantId))
+  return rows.map((r) => r.variantId)
+}
+
+// A stagnation rotation frees a slot for a fresh angle; it stays "unfulfilled"
+// until either a new variant row is created after it (evaluate seeds fresh
+// slugs, so createdAt marks that) or the active pool grows back past its
+// post-rotation size (a user un-archiving an arm refills the slot without a
+// new row — the system must not wedge on that override). A later archive can
+// flip a count-fulfilled rotation back to unfulfilled; that fails safe by
+// re-raising replenishment. While unfulfilled, no further rotation fires and
+// needsReplenishment stays raised even at targetActiveArms.
+export async function hasUnfulfilledRotation(
+  db: Db,
+  projectId: ProjectId,
+  activeCount: number,
+): Promise<boolean> {
+  const [lastRotation] = await db
+    .select({ createdAt: leverDecisions.createdAt, decision: leverDecisions.decision })
+    .from(leverDecisions)
+    .where(and(
+      eq(leverDecisions.projectId, projectId),
+      sql`${leverDecisions.decision} @> ${JSON.stringify({ subject: { archived: [{ reason: 'stagnation' }] } })}::jsonb`,
+    ))
+    .orderBy(desc(leverDecisions.cycleDate))
+    .limit(1)
+  if (!lastRotation) return false
+  const postRotationCount =
+    lastRotation.decision.subject.samples.length - lastRotation.decision.subject.archived.length
+  if (activeCount > postRotationCount) return false
+  const [fresh] = await db
+    .select({ id: messageVariants.id })
+    .from(messageVariants)
+    .where(and(
+      eq(messageVariants.projectId, projectId),
+      gt(messageVariants.createdAt, lastRotation.createdAt),
+    ))
+    .limit(1)
+  return !fresh
+}
+
+// Prior-UTC-day registration counts per strategy — the plan-compliance record
+// (§ the tick journals what actually flowed in against yesterday's batchPlan).
+// Derived from project_prospects.created_at × prospects.discovery_strategy,
+// restricted to this project's registry (archived included — a slug planned
+// yesterday may be archived today; a provenance slug carried in by a
+// cross-project link is not an arm here and stays out, matching the bandit's
+// registry ∩ stats rule). A persistent gap between plan and registrations
+// marks a strategy the LLM cannot execute (exhausted or non-existent angle).
+async function loadPriorDayRegistrations(
+  db: Db,
+  projectId: ProjectId,
+  cycleDate: string,
+): Promise<Record<string, number>> {
+  const rows = await db
+    .select({ slug: prospects.discoveryStrategy, count: sql<number>`COUNT(*)::int` })
+    .from(projectProspects)
+    .innerJoin(prospects, eq(prospects.id, projectProspects.prospectId))
+    .innerJoin(discoveryStrategies, and(
+      eq(discoveryStrategies.projectId, projectProspects.projectId),
+      eq(discoveryStrategies.slug, prospects.discoveryStrategy),
+    ))
+    .where(and(
+      eq(projectProspects.projectId, projectId),
+      projectTargetExpr,
+      isNotNull(prospects.discoveryStrategy),
+      sql`${projectProspects.createdAt} >= ((${cycleDate}::date - 1)::timestamp AT TIME ZONE 'UTC')`,
+      sql`${projectProspects.createdAt} < ((${cycleDate}::date)::timestamp AT TIME ZONE 'UTC')`,
+    ))
+    .groupBy(prospects.discoveryStrategy)
+  return Object.fromEntries(rows.map((r) => [r.slug!, Number(r.count)]))
+}
+
+export async function observeTick(db: Db, projectId: ProjectId, config: LeverConfig, cycleDate: string): Promise<TickEvidence> {
+  const activeIds = await loadActiveVariantIds(db, projectId)
+  const statsMap = new Map((await getVariantStats(db, projectId, config, true)).map((s) => [s.variantId, s]))
+  const targeting = await getTargetingStats(db, projectId, config, true)
+  // A stats slug outside the active registry stays baseline-only (e.g. carried
+  // in by a cross-project link).
+  const activeSlugs = await getActiveStrategySlugs(db, projectId)
+  const strategyStats = new Map(
+    targeting.discoveryStrategy
+      .filter((s): s is typeof s & { value: string } => s.value !== null)
+      .map((s) => [s.value, s]),
+  )
+  const recent = await db
+    .select({ decision: leverDecisions.decision })
+    .from(leverDecisions)
+    .where(eq(leverDecisions.projectId, projectId))
+    .orderBy(desc(leverDecisions.cycleDate))
+    .limit(config.stagnationTicks - 1)
+  return {
+    // Active set only → archived excluded; an active-but-unsent variant is total 0.
+    variants: activeIds.map(
+      (id) => statsMap.get(id) ?? { variantId: id, total: 0, responses: 0, rewardSum: 0 },
+    ),
+    strategies: activeSlugs.map((slug) => ({
+      armId: slug,
+      total: strategyStats.get(slug)?.total ?? 0,
+      rewardSum: strategyStats.get(slug)?.rewardSum ?? 0,
+    })),
+    channel: await getChannelStats(db, projectId, config),
+    targeting,
+    futility: await getFutilityStats(db, projectId, config),
+    registrations: await loadPriorDayRegistrations(db, projectId, cycleDate),
+    recentSubjects: recent.map((h) => h.decision.subject),
+    unfulfilledRotation: await hasUnfulfilledRotation(db, projectId, activeIds.length),
+  }
+}

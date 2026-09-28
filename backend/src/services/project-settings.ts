@@ -21,7 +21,7 @@ import { ALLOWED_SEND_COUNTRIES } from '../domain/country'
 import { composeFooterBlock, replyUnsubscribeFooterLine } from '../domain/inquiry-footer'
 import { localeSchema, type Locale } from '../domain/locale'
 import { loadTenantSettings, localizeComplianceIdentity } from './tenants'
-import { leverConfigSchema, leverConfigPatchSchema, leverConfigInvariantViolation, type LeverConfig } from '../domain/lever-config'
+import { leverConfigSchema, leverConfigPatchSchema, leverConfigInvariantViolation, type LeverConfig } from '../domain/loop/config'
 import {
   followUpSequenceSchema,
   followUpSequencePatchSchema,

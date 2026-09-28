@@ -11,7 +11,6 @@ import {
   buildJournal,
   buildSegments,
   buildTrend,
-  parseLearnings,
   periodToWindow,
   replyRate,
   toKpi,
@@ -22,15 +21,15 @@ import {
   type DashboardSummary,
   type SegmentCount,
   type DecisionMakerReferral,
-  type LearningEntry,
   type NotRelevantNote,
   type RejectionQuote,
 } from '../domain/dashboard'
+import { parseLearnings, type LearningEntry } from '../domain/loop/learnings'
 import type { RejectionRecontactWindow } from '../db/schema'
 import { ok, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { loadProjectOutboundAllowlist } from './project-settings'
-import { getLeverDecisionsHistory, getLeverStateById } from './levers'
+import { getLeverDecisionsHistory, getLeverStateById } from './loop/policy'
 import { listMessageVariantsById, type MessageVariantRow } from './message-variants'
 import { REVISIT_STRATEGY_SUGGESTION_KIND } from './suggestions'
 import { getRejectionFeedbackSummaryById } from './responses'

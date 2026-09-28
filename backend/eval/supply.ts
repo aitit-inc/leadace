@@ -1,7 +1,7 @@
 // Criterion C — supply durability — read out of production's own journal.
 //
 // The daily lever tick already records, per strategy, how many prospects
-// yesterday's plan brought in (services/levers.ts § loadPriorDayRegistrations),
+// yesterday's plan brought in (services/loop/observe.ts § loadPriorDayRegistrations),
 // and a persistent gap between plan and registrations marks the failure this
 // measures: a strategy the LLM cannot execute. So the decay curve needs a read,
 // not a synthetic run.

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { seededRng } from './arm-bandit'
-import { assessVitals, type FutilityParams } from './vital-signs'
+import { seededRng } from './bandit'
+import { assessVitals, type FutilityParams } from './frame'
 
 const PARAMS: FutilityParams = {
   futilitySurvivalRate: 0.01,

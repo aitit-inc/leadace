@@ -1,6 +1,7 @@
 // Assembled from what the dashboard already computed. No LLM call: the email
 // and the dashboard must never disagree about a number.
-import type { DashboardSummary, JournalEvent, LearningEntry, SegmentAxis } from './dashboard'
+import type { DashboardSummary, JournalEvent, SegmentAxis } from './dashboard'
+import type { LearningEntry } from './loop/learnings'
 
 // A digest covers whole UTC days, [sinceDay, today): the day is all the
 // resolution a journal event or a learnings entry carries, so reporting a day
@@ -140,26 +141,4 @@ export function buildDigest(input: DigestInput): Digest | null {
         : `${input.projectName}: no change since ${input.sinceDay}`,
     body,
   }
-}
-
-// An entry the evaluate stage has tombstoned (#744): '- [retired] [date] claim — evidence: …'.
-const RETIRED_LINE = /^\[retired\]\s*(?:\[\d{4}-\d{2}-\d{2}\]\s*)?(.+)$/i
-
-function retiredClaims(log: string | null): Set<string> {
-  const out = new Set<string>()
-  if (!log) return out
-  for (const raw of log.split('\n')) {
-    const m = RETIRED_LINE.exec(raw.trim().replace(/^[-*]\s+/, ''))
-    if (!m) continue
-    const [claim] = m[1]!.split(/\s*[—–-]+\s*evidence:\s*/i)
-    out.add(claim!.trim())
-  }
-  return out
-}
-
-// A tombstone keeps the entry's text, so the claims that turned up between the
-// two versions of the log are what was un-learned since.
-export function newlyRetiredClaims(before: string | null, after: string | null): string[] {
-  const was = retiredClaims(before)
-  return Array.from(retiredClaims(after)).filter((c) => !was.has(c))
 }

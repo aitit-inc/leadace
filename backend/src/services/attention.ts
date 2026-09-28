@@ -6,7 +6,7 @@ import {
   type AttentionInput,
   type AttentionItem,
 } from '../domain/attention'
-import type { VitalsAssessment } from '../domain/vital-signs'
+import type { VitalsAssessment } from '../domain/loop/frame'
 import type { Edition } from '../domain/edition'
 import type { TenantId } from '../domain/ids'
 import { getPlanInfo } from './billing'

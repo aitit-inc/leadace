@@ -1,6 +1,7 @@
-// The daily cycle (daily-cycle/SKILL.md, server-side): evaluate → lever tick →
-// follow-ups → new prospects, searching again whenever the list runs out →
-// re-approaches → journal → the digest that reports what changed.
+// The daily cycle (daily-cycle/SKILL.md, server-side): learn (evaluate → lever
+// tick) → act (follow-ups → new prospects, searching again whenever the list
+// runs out → re-approaches) → report (journal → the digest that reports what
+// changed).
 // Each stage is the same code a standalone job runs; this file only decides
 // the order and the counts.
 import { NonRetryableError } from 'cloudflare:workflows'
@@ -9,7 +10,7 @@ import { nextCycleStep, type CycleStop, type DiscoveryUnavailable, type LastRoun
 import { resolveDailyTarget, runnableNewProspects, shortfallReason } from '../domain/daily-target'
 import { loadDailyNewProspects, loadPlanPace } from '../services/daily-target'
 import { sendCycleDigest } from '../services/digest'
-import { runLeverTick } from '../services/levers'
+import { runLeverTick } from '../services/loop/learn'
 import { notifyCtxOf } from '../services/notifications'
 import { getActiveStrategySlugs } from '../services/discovery-strategies'
 import { discoveryPausedReason, getRemainingProspectQuota } from '../services/plan-limits'
@@ -47,26 +48,48 @@ async function reachableSnapshot(ctx: StageCtx, name: string): Promise<Reachable
   }))
 }
 
-export async function runDailyCycle(ctx: StageCtx, params: JobParamsOf<'daily_cycle'>): Promise<Extract<JobResult, { kind: 'daily_cycle' }>> {
-  const { tenantId, projectId } = ctx.job
+type CycleLog = {
+  stages: CycleDigest['stages']
+  decisions: string[]
+  stage: (kind: JobKind, summary: string) => Promise<void>
+  decide: (text: string) => Promise<void>
+}
+
+function cycleLog(ctx: StageCtx): CycleLog {
   const stages: CycleDigest['stages'] = []
   const decisions: string[] = []
-  const planCompliance: StrategyPlanCompliance[] = []
-  const stage = async (kind: JobKind, summary: string) => {
-    const n = stages.push({ kind, summary })
-    await logStep(ctx, `stage:${n}`, [{ kind: 'stage', stage: kind, summary }])
+  return {
+    stages,
+    decisions,
+    stage: async (kind, summary) => {
+      const n = stages.push({ kind, summary })
+      await logStep(ctx, `stage:${n}`, [{ kind: 'stage', stage: kind, summary }])
+    },
+    decide: async (text) => {
+      const n = decisions.push(text)
+      await logStep(ctx, `decision:${n}`, [{ kind: 'decision', text }])
+    },
   }
-  const decide = async (text: string) => {
-    const n = decisions.push(text)
-    await logStep(ctx, `decision:${n}`, [{ kind: 'decision', text }])
-  }
+}
+
+export async function runDailyCycle(ctx: StageCtx, params: JobParamsOf<'daily_cycle'>): Promise<Extract<JobResult, { kind: 'daily_cycle' }>> {
+  const log = cycleLog(ctx)
 
   await ctx.step.do('compliance', STEP_RETRY, () => tenantTx(ctx, async (db) => {
-    const ready = await assertTenantComplianceReady(db, tenantId)
+    const ready = await assertTenantComplianceReady(db, ctx.job.tenantId)
     if (!ready.ok) throw new NonRetryableError(`${ready.error}${typeof ready.detail === 'string' ? ` — ${ready.detail}` : ''}`)
     return true
   }))
 
+  await learn(ctx, log)
+  const planCompliance = await act(ctx, params, log)
+  await report(ctx, log)
+
+  return { kind: 'daily_cycle', summary: log.stages.map((s) => `${s.kind}: ${s.summary}`).join(' | '), planCompliance }
+}
+
+async function learn(ctx: StageCtx, { stage, decide }: CycleLog): Promise<void> {
+  const { tenantId, projectId } = ctx.job
   await stage('evaluate', await advisory(() => evaluateStage(ctx)))
 
   const tick = await ctx.step.do('lever-tick', STEP_RETRY, () => tenantTx(ctx, async (db) => {
@@ -75,7 +98,11 @@ export async function runDailyCycle(ctx: StageCtx, params: JobParamsOf<'daily_cy
   }))
   await decide(tick.ran ? `lever tick ran (archived ${tick.archived}${tick.vitals ? `, vitals ${tick.vitals}` : ''})` : 'lever tick already ran today')
   if (tick.vitals === 'futile') await decide('FUTILE vitals: recent mature sends draw no interest — check deliverability and targeting')
+}
 
+async function act(ctx: StageCtx, params: JobParamsOf<'daily_cycle'>, { stage, decide }: CycleLog): Promise<StrategyPlanCompliance[]> {
+  const { tenantId, projectId } = ctx.job
+  const planCompliance: StrategyPlanCompliance[] = []
   const hasStrategies = await ctx.step.do('strategies', STEP_RETRY, () =>
     tenantTx(ctx, async (db) => (await getActiveStrategySlugs(db, projectId)).length > 0),
   )
@@ -155,9 +182,13 @@ export async function runDailyCycle(ctx: StageCtx, params: JobParamsOf<'daily_cy
     const reapproached = await draftStage(ctx, { kind: 'draft', count: mailboxLeft }, 'draft:recycle', 'recycle')
     if (tried(reapproached) > 0 || reapproached.needsHands > 0) await stage('draft', `Re-approaches: ${reapproached.summary}`)
   }
+  return planCompliance
+}
 
-  const digest: CycleDigest = { stages, decisions }
-  await stage('journal', await advisory(() => journalStage(ctx, digest)))
+async function report(ctx: StageCtx, log: CycleLog): Promise<void> {
+  const { tenantId, projectId } = ctx.job
+  const digest: CycleDigest = { stages: log.stages, decisions: log.decisions }
+  await log.stage('journal', await advisory(() => journalStage(ctx, digest)))
 
   // Advisory like the journal: a report that could not go out must not fail the
   // day it reports on.
@@ -174,6 +205,4 @@ export async function runDailyCycle(ctx: StageCtx, params: JobParamsOf<'daily_cy
     if (failure) console.warn(`[cycle] digest failed project=${projectId}: ${failure}`)
     return true
   })
-
-  return { kind: 'daily_cycle', summary: stages.map((s) => `${s.kind}: ${s.summary}`).join(' | '), planCompliance }
 }

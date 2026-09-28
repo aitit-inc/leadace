@@ -7,7 +7,7 @@ import {
   replyReward,
   REWARDED_INQUIRY_OUTCOMES,
   rewardWeightsSchema,
-} from './reward'
+} from './reaction'
 
 describe('countableReply', () => {
   it('counts human responses', () => {

@@ -1,4 +1,4 @@
-import { PBEST_SAMPLES, sampleBeta } from './arm-bandit'
+import { PBEST_SAMPLES, sampleBeta } from './bandit'
 
 export type VitalsVerdict = 'ok' | 'insufficient' | 'futile'
 

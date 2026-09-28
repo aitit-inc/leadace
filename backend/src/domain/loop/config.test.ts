@@ -4,7 +4,7 @@ import {
   leverConfigPatchSchema,
   leverConfigInvariantViolation,
   defaultLeverConfig,
-} from './lever-config'
+} from './config'
 
 describe('leverConfigSchema', () => {
   it('parses an empty object into the neutral-prior defaults', () => {

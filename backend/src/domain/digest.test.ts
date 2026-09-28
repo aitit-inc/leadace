@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildDigest, newlyRetiredClaims, type DigestInput } from './digest'
+import { buildDigest, type DigestInput } from './digest'
 import type { DashboardSummary } from './dashboard'
 
 const emptySummary: DashboardSummary = {
@@ -114,26 +114,5 @@ describe('buildDigest', () => {
     expect(digest?.body).toContain('Industry: Software tech 11.9% (5/42) · Hardware industrial 4.5% (2/44)')
     expect(digest?.body).toContain('Why 20 said no: Not relevant 40%')
     expect(digest?.body).toContain('  "No Salesforce sync" — Taro, Acme Inc.')
-  })
-})
-
-describe('newlyRetiredClaims', () => {
-  const before = [
-    '# Learnings',
-    '- [targeting] [2026-09-01] SaaS under 50 replies twice as often — evidence: metric=x, n=40',
-    '- [retired] [2026-08-02] An older mistake — evidence: metric=y, n=10',
-  ].join('\n')
-
-  it('returns the claims tombstoned since the earlier version', () => {
-    const after = before.replace('[targeting] [2026-09-01]', '[retired] [2026-09-01]')
-    expect(newlyRetiredClaims(before, after)).toEqual(['SaaS under 50 replies twice as often'])
-  })
-
-  it('ignores tombstones that were already there', () => {
-    expect(newlyRetiredClaims(before, before)).toEqual([])
-  })
-
-  it('treats every tombstone as new when there is no earlier version', () => {
-    expect(newlyRetiredClaims(null, before)).toEqual(['An older mistake'])
   })
 })

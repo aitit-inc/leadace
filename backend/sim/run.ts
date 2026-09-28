@@ -4,7 +4,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { leverConfigSchema, type LeverConfigPatch } from '../src/domain/lever-config'
+import { leverConfigSchema, type LeverConfigPatch } from '../src/domain/loop/config'
 import { incidentWindowOf, oracleTrajectory, runScenario, type Scenario } from './environment'
 import { aggregate, extractRunMetrics, type AggregateRow } from './metrics'
 import { banditScenarios, futilityScenarios } from './scenarios'

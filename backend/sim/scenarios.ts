@@ -8,7 +8,7 @@ import type { Scenario } from './environment'
 
 const DAYS = 180
 const SENDS_PER_DAY = 10
-const BATCH_SIZE = 30 // keep in sync with DEFAULT_BATCH_PLAN_SIZE (levers.ts)
+const BATCH_SIZE = 30 // keep in sync with DEFAULT_BATCH_PLAN_SIZE (services/loop/policy.ts)
 const BOUNCE = 0.062
 
 const base = {

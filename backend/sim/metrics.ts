@@ -1,4 +1,4 @@
-import type { LeverConfig } from '../src/domain/lever-config'
+import type { LeverConfig } from '../src/domain/loop/config'
 import { incidentWindowOf, type RunResult, type Scenario } from './environment'
 
 export type RunMetrics = {

@@ -16,9 +16,11 @@ before adding an endpoint.
 ```
 routes/    HTTP adapter: bind URL → service, validate input, map result to HTTP
 services/  Orchestration + DB I/O + external APIs
-  pipeline/  Hosted-agent stages (discover / enrich / draft / evaluate / journal / strategy-draft): LLM calls + existing services
+  loop/      The learning loop's I/O: observe (records → evidence), policy (the current policy as acts and views read it), change (writes a decision), propose (the LLM step, evaluate), learn (a tick: observe → decide → claim → apply)
+  pipeline/  Hosted-agent stages (discover / enrich / draft / journal / strategy-draft): LLM calls + existing services
   chat/      Hosted chat agent: thread store, system prompt, the OpenAI function-calling loop
 domain/    Branded types, state machines, pure rules. No I/O.
+  loop/      The learning loop's rules by layer: frame (outer), options (middle), allocation (inner), decide (outer → middle → inner, pure); reaction (the reward), config, bandit math, learnings format
 db/        drizzle schema (single source of truth). No repository layer.
 tools/     The agent tool surface shared by the MCP worker and the chat agent; each tool calls the API through an injected callApi
 jobs/      Cloudflare Workflow entrypoint + stage runners: puts pipeline stages into steps
@@ -34,7 +36,7 @@ jobs/      Cloudflare Workflow entrypoint + stage runners: puts pipeline stages 
 | `jobs/` | `services/`, `db/connection`, `db/rls`, `domain/`, `api/types` (types only), `cloudflare:workers` / `cloudflare:workflows` | `routes/`, `api/*` runtime, `hono` |
 
 Hosted-agent specifics:
-- A stage in `services/pipeline/` is a service: `(db, tenantId, env, projectId, …)` → `ServiceResult`. It never knows whether a Workflow step or a chat turn invoked it. Every LLM call goes through `services/llm` by op name with a zod schema as the response constraint (`callLlmJson` / `callLlmPagesJson`); the op's model, tier, timeout and token budget live in `services/llm/routes.ts`, never at the call site. A stage that reads pages treats an empty `retrievedUrls` as "nothing was read". The one exception is search grounding, which answers text: `callLlmGroundedText` returns it, and `callLlmFollowUpJson` continues from that search with the schema.
+- A stage in `services/pipeline/` (and the loop's LLM step, `services/loop/propose.ts`) is a service: `(db, tenantId, env, projectId, …)` → `ServiceResult`. It never knows whether a Workflow step or a chat turn invoked it. Every LLM call goes through `services/llm` by op name with a zod schema as the response constraint (`callLlmJson` / `callLlmPagesJson`); the op's model, tier, timeout and token budget live in `services/llm/routes.ts`, never at the call site. A stage that reads pages treats an empty `retrievedUrls` as "nothing was read". The one exception is search grounding, which answers text: `callLlmGroundedText` returns it, and `callLlmFollowUpJson` continues from that search with the schema.
 - `jobs/` wraps stages in `step.do` — all side effects inside a step, step results serializable, one step per prospect where sends happen (`step.sleep` spaces them). The job path has no request transaction: a DB-only step body runs inside `tenantTx` (= `withTenantConnection`), and a pipeline stage that interleaves model calls with writes wraps each mutating service call in `runWithRls` on its own — one call, one transaction, RLS on — never the model call. `strategy-draft.ts` is request-served and must not (its caller's transaction is already open).
 - Workflows reruns any step from its start (engine restart, timeout) and may not stop the old run first, so every step must be safe to rerun: a rerun redoes at most one unit — one paid call or one prospect. A stage declares its units through `Checkpoint` (`services/pipeline/context.ts`); `jobs/` makes each one a step. Make each write idempotent through a DB guard, never by turning retries off: an outreach row a job writes (send reservation, skip, draft) is claimed with `claimForJob` in the same transaction as the write, and a rerun reports the row found by `lastTouchSince`; other writes rely on their own guard (`batchRegister`'s dedup, `sendDraft`'s status-conditioned update). A step result holds ids, counts, decisions and paid model output — never a copy of a record (document, settings, prospect): results are capped at 1 MiB and replayed as they were, so the step that needs a record reads it. Code between steps reruns on every replay, so progress writes go inside the step.
 - `Variables.caller` is `'browser' | 'agent'`: an MCP token or the chat's in-process dispatch (marked with the per-isolate token in `api/internal-dispatch.ts`, which no outside client can present) is an agent and only ever loses privileges (approved playbooks only, UI-only settings and workspace identity refused). `Variables.origin` (`ui | mcp | chat`) is the jobs ledger's `started_by`.
@@ -138,7 +140,7 @@ Never measure an axis on the sends the ordering produced from that same axis:
 the arm the ordering prefers is then compared against its own leftovers, and no
 amount of data exposes the bias (#478). Measure such an axis on the lever's
 random exploration slots only, or do not compute the metric at all. A metric
-withdrawn for this reason is listed in `domain/learnings.ts`, so the learnings
+withdrawn for this reason is listed in `domain/loop/learnings.ts`, so the learnings
 resting on it retire themselves on the next evaluate.
 
 ## Value builders

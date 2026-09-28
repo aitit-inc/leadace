@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { zValidator } from '../zvalidator'
-import { getProjectStats } from '../../services/evaluations'
+import { getProjectStats } from '../../services/loop/observe'
 import { projectRefParamSchema } from '../../services/projects'
 import { respondWithError } from '../respond'
 import type { Env, Variables } from '../types'

@@ -43,7 +43,7 @@
 #     with the other leg provably false
 #
 # The pure decision math (Beta sampling, P(best), floor, archive gate) is unit-
-# tested in backend/src/domain/message-bandit.test.ts; this harness covers the
+# tested in backend/src/domain/loop/options.test.ts; this harness covers the
 # DB-coupled wiring those tests can't: the SQL aggregate, RLS, the atomic tick,
 # and idempotency. Mature sends are backdated via psql (the API always stamps
 # sent_at=now, which is never reply-mature).

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { rewardWeightsSchema, rewardWeightsPatchSchema, defaultRewardWeights } from './reward'
+import { rewardWeightsSchema, rewardWeightsPatchSchema, defaultRewardWeights } from './reaction'
 
 const minSamplePerArm = z.number().int().min(1)
 const rewardWindowDays = z.number().int().min(1)

@@ -1,19 +1,17 @@
 import { describe, it, expect } from 'vitest'
+import { seededRng, type ArmStat } from './bandit'
 import {
-  wilsonBounds,
-  seededRng,
-  computePBest,
+  computeArmWeights,
+  computeVariantPBest,
   computeVariantWeights,
-  prepareDrawDistribution,
-  weightedDraw,
   isFlatTick,
   isStagnant,
   applyRotation,
   type StagnationTick,
   type VariantStat,
   type WeightDecision,
-} from './message-bandit'
-import { defaultLeverConfig, type LeverConfig } from './lever-config'
+} from './options'
+import { defaultLeverConfig, type LeverConfig } from './config'
 
 const cfg = (over: Partial<LeverConfig> = {}): LeverConfig => ({ ...defaultLeverConfig, ...over })
 const arm = (variantId: string, total: number, rewardSum: number): VariantStat => ({
@@ -24,71 +22,53 @@ const arm = (variantId: string, total: number, rewardSum: number): VariantStat =
 })
 const sum = (w: Record<string, number>): number => Object.values(w).reduce((a, b) => a + b, 0)
 
-describe('wilsonBounds', () => {
-  it('n=0 → maximal ignorance {0,1}', () => {
-    expect(wilsonBounds(0, 0)).toEqual({ lower: 0, upper: 1 })
+const armStat = (armId: string, total = 0, rewardSum = 0): ArmStat => ({ armId, total, rewardSum })
+
+const params = { minSamplePerArm: 30, archiveThreshold: 0.05, weightFloor: 0.1 }
+
+describe('computeArmWeights archive gate', () => {
+  it('unsent arms never archive the only measured arm (n=154 with 3 replies vs three at n=0)', () => {
+    const { toArchive, weights } = computeArmWeights(
+      [armStat('measured', 154, 3), armStat('u1'), armStat('u2'), armStat('u3')],
+      params,
+      seededRng('s'),
+    )
+    expect(toArchive).toEqual([])
+    expect(weights['measured']!).toBeGreaterThanOrEqual(0.1)
   })
-  it('zero successes → lower exactly 0', () => {
-    const { lower, upper } = wilsonBounds(0, 30)
-    expect(lower).toBe(0)
-    expect(upper).toBeGreaterThan(0)
+
+  it('a mature loser is still archived against a mature winner while an unsent arm is present', () => {
+    const { toArchive, weights } = computeArmWeights(
+      [armStat('loser', 100, 0), armStat('winner', 100, 20), armStat('fresh')],
+      params,
+      seededRng('s'),
+    )
+    expect(toArchive.map((a) => a.armId)).toEqual(['loser'])
+    expect(toArchive[0]!.pBest).toBeLessThan(0.05)
+    expect(Object.keys(weights).sort()).toEqual(['fresh', 'winner'])
   })
-  it('all successes → upper exactly 1', () => {
-    const { lower, upper } = wilsonBounds(30, 30)
-    expect(upper).toBe(1)
-    expect(lower).toBeLessThan(1)
-  })
-  it('bounds always ordered and within [0,1]', () => {
-    for (const [s, n] of [[1, 1], [3, 10], [50, 100], [1, 50], [499, 1000]] as const) {
-      const { lower, upper } = wilsonBounds(s, n)
-      expect(lower).toBeLessThanOrEqual(upper)
-      expect(lower).toBeGreaterThanOrEqual(0)
-      expect(upper).toBeLessThanOrEqual(1)
-      expect(lower).toBeLessThanOrEqual(s / n)
-      expect(upper).toBeGreaterThanOrEqual(s / n)
-    }
-  })
-  it('throws on invalid input', () => {
-    expect(() => wilsonBounds(5, 3)).toThrow()
-    expect(() => wilsonBounds(-1, 10)).toThrow()
+
+  it('all-mature: the verdict and archived[].pBest use the returned pBest, not a re-roll', () => {
+    const arms = [armStat('a', 200, 60), armStat('b', 200, 2), armStat('c', 200, 40)]
+    const { pBest, toArchive } = computeArmWeights(arms, params, seededRng('s'))
+    expect(toArchive.map((t) => t.armId)).toEqual(['b'])
+    expect(toArchive[0]!.pBest).toBe(pBest['b'])
+    expect(Object.values(pBest).reduce((acc, x) => acc + x, 0)).toBeCloseTo(1, 10)
   })
 })
 
-describe('seededRng', () => {
-  it('same seed → identical sequence', () => {
-    const a = seededRng('2026-07-14:proj1')
-    const b = seededRng('2026-07-14:proj1')
-    for (let i = 0; i < 100; i++) expect(a()).toBe(b())
-  })
-  it('different seeds → different sequences', () => {
-    const a = seededRng('2026-07-14:proj1')
-    const b = seededRng('2026-07-15:proj1')
-    const va = Array.from({ length: 10 }, () => a())
-    const vb = Array.from({ length: 10 }, () => b())
-    expect(va).not.toEqual(vb)
-  })
-  it('values stay in [0, 1)', () => {
-    const rng = seededRng('range-check')
-    for (let i = 0; i < 1000; i++) {
-      const v = rng()
-      expect(v).toBeGreaterThanOrEqual(0)
-      expect(v).toBeLessThan(1)
-    }
-  })
-})
-
-describe('computePBest', () => {
+describe('computeVariantPBest', () => {
   it('no arms → empty; single arm → certainty', () => {
-    expect(computePBest([], seededRng('s'))).toEqual({})
-    expect(computePBest([arm('a', 100, 50)], seededRng('s'))).toEqual({ a: 1 })
+    expect(computeVariantPBest([], seededRng('s'))).toEqual({})
+    expect(computeVariantPBest([arm('a', 100, 50)], seededRng('s'))).toEqual({ a: 1 })
   })
   it('sums to 1 and favors the clearly better arm', () => {
-    const p = computePBest([arm('a', 100, 50), arm('b', 100, 5)], seededRng('s'))
+    const p = computeVariantPBest([arm('a', 100, 50), arm('b', 100, 5)], seededRng('s'))
     expect(sum(p)).toBeCloseTo(1, 10)
     expect(p['a']!).toBeGreaterThan(0.95)
   })
   it('no data → roughly uniform (R5: nothing to favor)', () => {
-    const p = computePBest([arm('a', 0, 0), arm('b', 0, 0), arm('c', 0, 0)], seededRng('s'))
+    const p = computeVariantPBest([arm('a', 0, 0), arm('b', 0, 0), arm('c', 0, 0)], seededRng('s'))
     for (const id of ['a', 'b', 'c']) {
       expect(p[id]!).toBeGreaterThan(0.25)
       expect(p[id]!).toBeLessThan(0.42)
@@ -96,7 +76,7 @@ describe('computePBest', () => {
   })
   it('multi-reply rewardSum above total is clamped, not a crash', () => {
     // One send can draw several countable replies: rewardSum 15 on total 10.
-    const p = computePBest([arm('a', 10, 15), arm('b', 10, 2)], seededRng('s'))
+    const p = computeVariantPBest([arm('a', 10, 15), arm('b', 10, 2)], seededRng('s'))
     expect(Number.isFinite(p['a']!)).toBe(true)
     expect(sum(p)).toBeCloseTo(1, 10)
     expect(p['a']!).toBeGreaterThan(p['b']!)
@@ -173,79 +153,6 @@ describe('computeVariantWeights (Thompson)', () => {
     expect(toArchive.length).toBe(1)
     // b and c both tie at P(best) ≈ 0 — the posterior-mean tie-break sheds the weaker b.
     expect(toArchive[0]!.variantId).toBe('b')
-  })
-})
-
-describe('prepareDrawDistribution', () => {
-  it('no stored row → uniform', () => {
-    expect(prepareDrawDistribution(['a', 'b'], {}, cfg())).toEqual({ a: 0.5, b: 0.5 })
-  })
-  it('empty active set → empty', () => {
-    expect(prepareDrawDistribution([], { a: 1 }, cfg())).toEqual({})
-  })
-  it('new active arm gets the weight floor until the next tick', () => {
-    const d = prepareDrawDistribution(['a', 'b', 'c'], { a: 0.8, b: 0.2 }, cfg())
-    expect(d['c']!).toBeCloseTo(0.1 / 1.1, 10)
-    expect(d['a']!).toBeGreaterThan(d['b']!)
-    expect(sum(d)).toBeCloseTo(1, 10)
-  })
-  it('stored arms no longer active are dropped and mass redistributes', () => {
-    const d = prepareDrawDistribution(['a', 'b'], { a: 0.5, b: 0.3, c: 0.2 }, cfg())
-    expect(d['c']).toBeUndefined()
-    expect(sum(d)).toBeCloseTo(1, 10)
-    expect(d['a']! / d['b']!).toBeCloseTo(0.5 / 0.3, 6)
-  })
-  it('disjoint stored/active → effectively uniform', () => {
-    const d = prepareDrawDistribution(['x', 'y'], { a: 1 }, cfg())
-    expect(d['x']!).toBeCloseTo(0.5, 10)
-    expect(d['y']!).toBeCloseTo(0.5, 10)
-  })
-  it('drifted stored weights renormalize', () => {
-    const d = prepareDrawDistribution(['a', 'b'], { a: 2, b: 2 }, cfg())
-    expect(sum(d)).toBeCloseTo(1, 10)
-    expect(d['a']!).toBeCloseTo(0.5, 10)
-  })
-  it('respects a deliberate 0 weight', () => {
-    const d = prepareDrawDistribution(['a', 'b'], { a: 1, b: 0 }, cfg())
-    expect(d['b']).toBe(0)
-    expect(d['a']).toBe(1)
-  })
-  it('corrupt stored value falls back to the floor', () => {
-    const d = prepareDrawDistribution(['a', 'b'], { a: Number.NaN, b: 0.5 }, cfg())
-    expect(Number.isFinite(d['a']!)).toBe(true)
-    expect(sum(d)).toBeCloseTo(1, 10)
-  })
-  it('single active arm → weight 1', () => {
-    expect(prepareDrawDistribution(['a'], { a: 0.9, b: 0.1 }, cfg())).toEqual({ a: 1 })
-  })
-})
-
-describe('weightedDraw', () => {
-  it('rng=0 → first positive-weight arm', () => {
-    expect(weightedDraw({ a: 0.3, b: 0.7 }, () => 0)).toBe('a')
-  })
-  it('rng→1 → last arm (float-sum fall-through)', () => {
-    expect(weightedDraw({ a: 0.3, b: 0.7 }, () => 0.9999999)).toBe('b')
-  })
-  it('cumulative boundary picks the upper side', () => {
-    expect(weightedDraw({ a: 0.5, b: 0.5 }, () => 0.5)).toBe('b')
-  })
-  it('single arm always returned', () => {
-    expect(weightedDraw({ a: 1 }, () => 0.42)).toBe('a')
-  })
-  it('zero-weight arm is unreachable', () => {
-    expect(weightedDraw({ a: 0, b: 1 }, () => 0)).toBe('b')
-  })
-  it('empty distribution throws', () => {
-    expect(() => weightedDraw({}, () => 0)).toThrow()
-  })
-  it('empirical frequencies track the weights', () => {
-    const rng = seededRng('draw-frequency')
-    const counts: Record<string, number> = { a: 0, b: 0 }
-    const N = 20000
-    for (let i = 0; i < N; i++) counts[weightedDraw({ a: 0.25, b: 0.75 }, rng)]!++
-    expect(counts['a']! / N).toBeGreaterThan(0.22)
-    expect(counts['a']! / N).toBeLessThan(0.28)
   })
 })
 

@@ -19,7 +19,7 @@ export interface EvaluationMetrics {
   inquiryOutcomeCounts: Record<InquiryOutcome, number>;
 }
 
-/** Mirrors backend `services/evaluations.ts` DailyActivity. */
+/** Mirrors backend `services/loop/observe.ts` DailyActivity. */
 export interface DailyActivity {
   date: string;
   sent: number;

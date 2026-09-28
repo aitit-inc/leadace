@@ -1,8 +1,8 @@
 # Parameter-calibration simulation harness
 
 Offline calibration for the discovery-strategy bandit and futility vitals.
-The subjects under test are the production domain functions (`arm-bandit.ts`,
-`vital-signs.ts`, `discovery-allocation.ts`, `targeting-score.ts`) imported
+The subjects under test are the production domain functions in
+`src/domain/loop/` (`bandit.ts`, `options.ts`, `allocation.ts`, `frame.ts`) imported
 directly — no reimplementation — driven through a synthetic finite-pool market
 calibrated to measured production values. Latest sweep results and the
 defaults recommendations: [REPORT.md](./REPORT.md).
@@ -30,7 +30,7 @@ when an input changed.
 
 1. **A parameter change is under consideration** — add the candidate values
    to the variant lists in `run.ts`, sweep, and compare against REPORT.md
-   before touching the defaults in `lever-config.ts` (or a per-project
+   before touching the defaults in `domain/loop/config.ts` (or a per-project
    `leverConfig` override).
 2. **The measured environment moved** — the constants in `scenarios.ts`
    (reply rate, bounce rate, foldering factor, sends/day) are production
@@ -38,11 +38,13 @@ when an input changed.
    them first, then re-verify even unchanged defaults. Example: the futility
    survival line currently sits exactly on the measured ~1% healthy reply
    rate; if that rate moves, the futility conclusions must be redrawn.
-3. **The mechanism changed** — domain-function changes flow in automatically
-   through the imports, but `environment.ts` mirrors the service-layer
-   orchestration by hand (the contract is listed in its header comment). If
-   the wiring in `levers.ts` / `prospects.ts` changes, update the mirror
-   first or the numbers are silently wrong.
+3. **The mechanism changed** — changes to the imported domain functions
+   (`bandit.ts`, `options.ts`, `allocation.ts`, `frame.ts`, `config.ts`) flow in
+   automatically, but `environment.ts` mirrors the tick wiring in
+   `domain/loop/decide.ts` (seeds, floors, rotation gating) and the
+   service-layer orchestration by hand (the contract is listed in its header
+   comment). If `domain/loop/decide.ts`, `services/loop/` or `prospects.ts`
+   changes, update the mirror first or the numbers are silently wrong.
 
 ## What the simulation answers — and what it cannot
 
