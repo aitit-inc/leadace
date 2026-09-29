@@ -994,7 +994,7 @@ export function buildToolRegistry(): ToolDef[] {
         weights: Record<string, number>
         archived: Array<{ variantId: string; reason?: string }>
         samples: Array<{ variantId: string; total: number }>
-        channelAffinity: Record<string, Array<{ channel: string; rate: number; total: number; responses: number }>>
+        channelAffinity: Record<string, Array<{ channel: string; rate: number; total: number; rewardSum: number }>>
         targetingLifts: Record<string, unknown> | null
         needsReplenishment: boolean
         discovery: { weights: Record<string, number>; archived: Array<{ slug: string }> } | null
@@ -1800,7 +1800,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_eval_data',
-    'Evaluation statistics for a project: response rates, channel performance, sentiment breakdown, discoveryStrategyResponseRate (per discovery strategy; reply metrics count mature sends only while its bounce metrics span all sends — the early source-quality read; the null bucket is prospects without recorded provenance), targeting observation axes (industryResponseRate by coarse bucket / sizeResponseRate by employee band / countryResponseRate — these also count mature sends only, older than the reply-maturity window), inquiry-landing outcome counts, respondedMessages, and a data-sufficiency check. Reply rates exclude bounces/auto-replies; per-bucket bounces + bounceRate are a threaded-only lower bound.',
+    'Evaluation statistics for a project: kpi (mature sends with positive / interested counts and rates), response rates, channel performance, sentiment breakdown, discoveryStrategyResponseRate (per discovery strategy; reply metrics count mature sends only while its bounce metrics span all sends — the early source-quality read; the null bucket is prospects without recorded provenance), targeting observation axes (industryResponseRate by coarse bucket / sizeResponseRate by employee band / countryResponseRate — these also count mature sends only, older than the reply-maturity window), inquiry-landing outcome counts, respondedMessages, and a data-sufficiency check. Each rate bucket has positive / positiveRate and interested / interestedRate (each send counted once, by its strongest reaction; interested includes positive) beside the reply rate responses / rate (rejections included, bounces/auto-replies excluded); per-bucket bounces + bounceRate are a threaded-only lower bound.',
     { projectId: z.string().min(1).describe('Project name or ID') },
     async ({ projectId }, ctx) => {
       const { ok, data } = await ctx.callApi('GET', `/projects/${encodeURIComponent(projectId)}/stats`, null)

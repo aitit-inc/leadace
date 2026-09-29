@@ -38,7 +38,7 @@ export const PRIORITY_MULTIPLIERS: Readonly<Record<1 | 2 | 3 | 4 | 5, number>> =
 
 const clampLift = (v: number): number => Math.min(LIFT_MAX, Math.max(LIFT_MIN, v))
 
-// rewardSum sums per-signal rewards, so one send drawing several exceeds total.
+// Each send scores at most 1 (domain/loop/reaction); the clamp guards a stat that breaks that.
 const clampReward = (rewardSum: number, total: number): number => Math.min(Math.max(rewardSum, 0), total)
 
 // Add-one smoothing keeps r0 > 0 and stable at tiny n. Clamped per bucket, or
@@ -122,22 +122,22 @@ export type ChannelFineStat = {
   channel: Channel
   industry: string | null
   total: number
-  responses: number
+  rewardSum: number
 }
 
 export type ChannelCoarseStat = {
   channel: Channel
   coarse: CoarseIndustry
   total: number
-  responses: number
+  rewardSum: number
 }
 
-// Array order is the ranking; rate/total/responses are for transparency only.
+// Array order is the ranking; rate/total/rewardSum are for transparency only.
 export type ChannelRank = {
   channel: Channel
   rate: number
   total: number
-  responses: number
+  rewardSum: number
 }
 
 // An absent bucket means "no measured preference, use policy order".
@@ -151,9 +151,9 @@ export function aggregateByCoarse(rows: ChannelFineStat[]): ChannelCoarseStat[] 
     const entry = byKey.get(key)
     if (entry) {
       entry.total += r.total
-      entry.responses += r.responses
+      entry.rewardSum += r.rewardSum
     } else {
-      byKey.set(key, { channel: r.channel, coarse, total: r.total, responses: r.responses })
+      byKey.set(key, { channel: r.channel, coarse, total: r.total, rewardSum: r.rewardSum })
     }
   }
   return Array.from(byKey.values())
@@ -177,19 +177,19 @@ export function computeChannelAffinity(
   for (const [coarse, list] of byBucket) {
     out[coarse] = [...list]
       .sort((a, b) => {
-        const la = wilsonBounds(a.responses, a.total).lower
-        const lb = wilsonBounds(b.responses, b.total).lower
+        const la = wilsonBounds(a.rewardSum, a.total).lower
+        const lb = wilsonBounds(b.rewardSum, b.total).lower
         if (lb !== la) return lb - la
-        const ra = a.responses / a.total
-        const rb = b.responses / b.total
+        const ra = a.rewardSum / a.total
+        const rb = b.rewardSum / b.total
         if (rb !== ra) return rb - ra
         return a.channel < b.channel ? -1 : a.channel > b.channel ? 1 : 0
       })
       .map((s) => ({
         channel: s.channel,
-        rate: Math.round((s.responses / s.total) * 1000) / 10,
+        rate: Math.round((s.rewardSum / s.total) * 1000) / 10,
         total: s.total,
-        responses: s.responses,
+        rewardSum: s.rewardSum,
       }))
   }
   return out

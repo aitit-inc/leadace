@@ -866,10 +866,11 @@ const SCENARIOS = [
       const digestBody = q(
         [
           'Northwind outbound — last 30 days',
-          'Contacted 122 prospects · reply rate 7.4% (was 6.1%) · engaged 9 · won 2',
+          'Contacted 122 prospects · positive 1.6% (was 0.8%) · with interest 5.7% (was 4.9%) · engaged 9 · won 2',
           '',
           'What the market is telling you',
-          'Industry: Software tech 11.9% (5/42) · Hardware industrial 4.5% (2/44)',
+          'Positive / with interest, of the prospects contacted:',
+          'Industry: Software tech 4.8% / 11.9% of 42 · Hardware industrial 0% / 4.5% of 44',
           'Why 21 said no: Not relevant 43% · Budget 24% · Feature gap 19%',
           '',
           'What changed since 2026-09-11',
@@ -891,7 +892,7 @@ const SCENARIOS = [
   },
   {
     name: 'dashboard',
-    summary: 'The dashboard of a project with a month of outreach behind it',
+    summary: 'The dashboard and evaluations of a project with a month of outreach behind it',
     stack: 'self-host',
     setup: async (ctx) => {
       const projectId = await seedProject(ctx, { name: 'SpeechMonster', settings: { outboundMode: 'send' } });
@@ -908,6 +909,12 @@ const SCENARIOS = [
           ],
         },
         {
+          name: 'learning',
+          path: '/dashboard',
+          scrollTo: 'text=Recent decisions',
+          expect: ['positive / with interest', 'Leading subject line'],
+        },
+        {
           name: 'segments',
           path: '/dashboard',
           scrollTo: 'h3:has-text("What the market is telling you")',
@@ -918,6 +925,13 @@ const SCENARIOS = [
           path: '/dashboard',
           click: 'button[aria-label="Other ways to run this"]',
           expect: 'Copy Claude Code command',
+        },
+        { name: 'evaluations', path: '/evaluations', expect: ['Current Metrics', 'With interest', 'By message angle'] },
+        {
+          name: 'evaluations-replies',
+          path: '/evaluations',
+          click: 'button:has-text("All replies")',
+          expect: ['Response rate', 'a No included'],
         },
       ];
     },

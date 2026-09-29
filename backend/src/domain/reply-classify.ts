@@ -66,3 +66,13 @@ export function leadingUnquotedText(bodyText: string): string {
   }
   return lines.join('\n').trim()
 }
+
+// Every line the sender wrote, wherever it sits: a bottom-posted or inline
+// answer comes after the quote, so a cut at the first quoted line would lose it.
+export function unquotedText(bodyText: string): string {
+  return bodyText
+    .split(/\r?\n/)
+    .filter((line) => !line.trim().startsWith('>'))
+    .join('\n')
+    .trim()
+}

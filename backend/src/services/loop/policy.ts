@@ -34,6 +34,8 @@ export type LeverStateVariant = {
   variantId: string
   total: number
   responses: number
+  positive: number
+  interested: number
   mature: boolean
   weight: number | null
 }
@@ -92,8 +94,8 @@ export async function getLeverStateById(
   const config = await loadLeverConfig(db, projectId)
   const activeIds = await loadActiveVariantIds(db, projectId)
   const statsMap = new Map((await getVariantStats(db, projectId, config, true)).map((s) => [s.variantId, s]))
-  // Live flag so /evaluate, which runs before the tick, reads the current pool
-  // state rather than yesterday's decision. Includes a rotation-freed slot
+  // Live flag so /evaluate reads the current pool state whether or not today's
+  // tick has run (the plugin's cycle still evaluates first). Includes a rotation-freed slot
   // still awaiting its fresh angle (pool at target but one arm was rotated out).
   const needsReplenishment = await computeNeedsReplenishment(db, projectId, activeIds.length, config)
 
@@ -126,6 +128,8 @@ export async function getLeverStateById(
       variantId: id,
       total,
       responses: s?.responses ?? 0,
+      positive: s?.positive ?? 0,
+      interested: s?.interested ?? 0,
       mature: total >= config.minSamplePerArm,
       weight: weights ? weights[id] ?? null : null,
     }

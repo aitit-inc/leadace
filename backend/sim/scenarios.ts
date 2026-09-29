@@ -5,6 +5,9 @@
 // dogfooding volume.
 
 import type { Scenario } from './environment'
+import type { OptionsScenario } from './options'
+import type { SupplyProfile } from './supply'
+import type { FrameScenario } from './frame-signal'
 
 const DAYS = 180
 const SENDS_PER_DAY = 10
@@ -136,5 +139,87 @@ export const futilityScenarios: Scenario[] = [
       { fromDay: 60, factor: 0.1 },
       { fromDay: 180, factor: 1 },
     ],
+  },
+]
+
+// ---- #793 learning-loop experiments ----
+// Market from the 2026-09-27 premise: 10 and 20 new sends a day, reactions
+// settle in 14 days, positive rate 3% (SpeechMonster), 0.3% (LeadAce), 0%
+// (AIRolePlay); options within 2× of each other.
+
+const OPTION_SPREAD = 1 / 3
+
+const optionsScenario = (
+  layer: OptionsScenario['layer'],
+  sendsPerDay: number,
+  baseRate: number,
+  breakthroughShare = 0,
+): OptionsScenario => ({
+  name: `${layer === 'message' ? 'msg' : 'strat'}-${sendsPerDay}/d-${baseRate * 100}%${breakthroughShare > 0 ? `-bt${breakthroughShare * 100}%` : ''}`,
+  layer,
+  sendsPerDay,
+  baseRate,
+  spread: OPTION_SPREAD,
+  breakthroughShare,
+  horizonDays: 360,
+})
+
+export const optionsScenarios: OptionsScenario[] = [
+  optionsScenario('message', 10, 0.03),
+  optionsScenario('message', 20, 0.03),
+  optionsScenario('message', 10, 0.003),
+  optionsScenario('message', 10, 0),
+  optionsScenario('strategy', 10, 0.03),
+  optionsScenario('strategy', 20, 0.03),
+  // One new option in ten doubles the rate.
+  optionsScenario('message', 10, 0.03, 0.1),
+  optionsScenario('message', 20, 0.03, 0.1),
+]
+
+// Reachable-per-pass means: 0–2 measured after #822, mostly 0.
+const steady = (mean: number): SupplyProfile => ({ name: `steady-${mean}`, meanAt: () => mean, spentFrom: null })
+// Declines linearly to 0 by pass 5, like shinden-retailer-registry (15→12→11→1→0 new).
+const depleting = (start: number): SupplyProfile => ({
+  name: `depleting-${start}`,
+  meanAt: (pass) => Math.max(0, start * (1 - pass / 5)),
+  spentFrom: 5,
+})
+
+export const supplyProfiles: SupplyProfile[] = [
+  { name: 'dead', meanAt: () => 0, spentFrom: 0 },
+  depleting(1),
+  depleting(3),
+  steady(0.15),
+  steady(0.3),
+  steady(0.6),
+  steady(1),
+  steady(2),
+]
+
+const frameScenario = (sendsPerDay: number, rate: number): FrameScenario => ({
+  name: `${sendsPerDay}/d-${rate * 100}%`,
+  sendsPerDay,
+  phases: [{ fromDay: 0, rate }],
+  horizonDays: 180,
+  settleDays: 14,
+})
+
+export const frameScenarios: FrameScenario[] = [
+  frameScenario(10, 0.03),
+  frameScenario(10, 0.02),
+  frameScenario(10, 0.015),
+  // At the floor itself: firing here is the price of checking every day.
+  frameScenario(10, 0.01),
+  frameScenario(10, 0.003),
+  frameScenario(10, 0),
+  frameScenario(20, 0.03),
+  frameScenario(20, 0.003),
+  // The user switches from a bad frame to a good one on day 90.
+  {
+    name: '10/d-0.3%→3%@90',
+    sendsPerDay: 10,
+    phases: [{ fromDay: 0, rate: 0.003 }, { fromDay: 90, rate: 0.03 }],
+    horizonDays: 270,
+    settleDays: 14,
   },
 ]

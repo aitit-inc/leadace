@@ -36,18 +36,22 @@ export interface LearningEntry {
   evidence: string | null;
 }
 
-export interface LearningAngle {
+// Percentages of the sends or prospects counted: positive, and positive or interest.
+export interface ReactionRates {
+  positiveRate: number;
+  interestedRate: number;
+}
+
+export interface LearningAngle extends ReactionRates {
   variantId: string;
   label: string | null;
   total: number;
-  responses: number;
-  replyRate: number;
   mature: boolean;
   leader: boolean;
 }
 
 export interface DashboardLearning {
-  bestSubject: { pattern: string; replyRate: number; mature: boolean; n: number } | null;
+  bestSubject: (ReactionRates & { pattern: string; mature: boolean; n: number }) | null;
   angles: LearningAngle[];
   needsNewAngle: boolean;
   state: 'learning' | 'optimizing';
@@ -102,11 +106,9 @@ export interface DashboardRejections {
 
 export type SegmentAxis = 'industry' | 'employeeBand' | 'country' | 'discoveryStrategy';
 
-export interface SegmentRow {
+export interface SegmentRow extends ReactionRates {
   value: string;
   sent: number;
-  replied: number;
-  replyRate: number;
 }
 
 export interface DashboardSegment {
@@ -134,6 +136,11 @@ export interface DashboardActivityEvent {
   detail: string | null;
 }
 
+export interface RateChange {
+  previous: number;
+  current: number;
+}
+
 export interface DashboardSummary {
   period: DashboardPeriod;
   kpis: {
@@ -145,7 +152,7 @@ export interface DashboardSummary {
   };
   funnel: FunnelStage[];
   trend: DashboardTrendPoint[];
-  replyRateTrend: { previous: number; current: number };
+  reactionRates: { positive: RateChange; interested: RateChange };
   learning: DashboardLearning;
   journal: JournalEvent[];
   lastCycleDate: string | null;

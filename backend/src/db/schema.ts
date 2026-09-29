@@ -270,8 +270,14 @@ export type RejectionFeedbackV1 = {
   tenant_signature?: string
 }
 
+// Sends whose strongest reaction was positive, and positive or interest
+// (domain/loop/reaction). Rates are percentages of the bucket's total.
+type Reactions = { positive: number; positiveRate: number; interested: number; interestedRate: number }
+
 export type EvaluationMetrics = {
   totalOutreach: number
+  // The KPI: mature sends (older than the reward window) and their reactions.
+  kpi: { matureSent: number } & Reactions
   channelCounts: Array<{ channel: string; count: number }>
   responseCounts: { totalResponses: number; uniqueResponders: number }
   sentimentBreakdown: Array<{ sentiment: string; responseType: string; count: number }>
@@ -280,21 +286,21 @@ export type EvaluationMetrics = {
     total: number
     responses: number
     rate: number
-  }>
+  } & Reactions>
   statusCounts: Array<{ status: string; count: number }>
   channelResponseRate: Array<{
     channel: string
     total: number
     responses: number
     rate: number
-  }>
+  } & Reactions>
   channelByIndustry: Array<{
     channel: string
     industry: string | null
     total: number
     responses: number
     rate: number
-  }>
+  } & Reactions>
   // active=false covers archived variants and sends whose variant no longer
   // has a registry row — either way the arm is not in play.
   variantResponseRate: Array<{
@@ -305,7 +311,7 @@ export type EvaluationMetrics = {
     responses: number
     rate: number
     meanReward: number
-  }>
+  } & Reactions>
   // strategy=null bucket = sends to prospects without recorded provenance.
   discoveryStrategyResponseRate: Array<{
     strategy: string | null
@@ -314,7 +320,7 @@ export type EvaluationMetrics = {
     rate: number
     bounces: number
     bounceRate: number
-  }>
+  } & Reactions>
   // Targeting observation axes. Unlike the axes above these count mature sends
   // only (older than the reward window); industry is coarse buckets — fine
   // doesn't statistically resolve at this send volume.
@@ -325,7 +331,7 @@ export type EvaluationMetrics = {
     rate: number
     bounces: number
     bounceRate: number
-  }>
+  } & Reactions>
   sizeResponseRate: Array<{
     employeeBand: EmployeeBand
     total: number
@@ -333,8 +339,8 @@ export type EvaluationMetrics = {
     rate: number
     bounces: number
     bounceRate: number
-  }>
-  // COALESCE(prospect.country, organization.country) — send-guardrail precedence.
+  } & Reactions>
+  // Prospect country, else organization country, upper-cased — send-guardrail precedence.
   countryResponseRate: Array<{
     country: string | null
     total: number
@@ -342,7 +348,7 @@ export type EvaluationMetrics = {
     rate: number
     bounces: number
     bounceRate: number
-  }>
+  } & Reactions>
   // Inquiry-landing outcomes per project. Captures self-serve conversions
   // ('signup_clicked') and chat-only engagement ('inquired') that the
   // response-axis metrics above miss — responses are written for

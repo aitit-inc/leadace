@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { parseEmailMessage } from './email-message'
-import { detectDeterministicType, leadingUnquotedText } from './reply-classify'
+import { detectDeterministicType, leadingUnquotedText, unquotedText } from './reply-classify'
 
 const classify = (raw: string) => detectDeterministicType(parseEmailMessage(raw))
 
@@ -112,5 +112,19 @@ describe('leadingUnquotedText', () => {
     expect(leadingUnquotedText('Thanks!\r\nCan we meet next week?\r\n\r\n> quoted history')).toBe(
       'Thanks!\nCan we meet next week?',
     )
+  })
+})
+
+describe('unquotedText', () => {
+  it('keeps a bottom-posted answer below the quote', () => {
+    expect(unquotedText('> Our pitch\r\n> more pitch\r\n\r\nNot for us, thanks.')).toBe('Not for us, thanks.')
+  })
+
+  it('keeps inline answers and drops the quoted lines between them', () => {
+    expect(unquotedText('> Do you run outbound?\nYes, weekly.\n> Would a call help?\nNot now.')).toBe('Yes, weekly.\nNot now.')
+  })
+
+  it('returns empty when every line is quoted', () => {
+    expect(unquotedText('> On Mon someone wrote:\n> hello')).toBe('')
   })
 })

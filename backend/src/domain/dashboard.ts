@@ -2,6 +2,7 @@ import type { Channel, RejectionRecontactWindow } from '../db/schema'
 import type { AttentionItem } from './attention'
 import { coarseIndustry } from './coarse-industry'
 import type { LearningEntry } from './loop/learnings'
+import { sendReaction, type Reaction, type ReactionLevel } from './loop/reaction'
 
 export const DASHBOARD_PERIODS = ['7d', '30d', 'all'] as const
 export type DashboardPeriod = (typeof DASHBOARD_PERIODS)[number]
@@ -22,18 +23,20 @@ export type FunnelStage = {
 
 export type DashboardTrendPoint = { date: string; sent: number; responses: number }
 
-export type LearningAngle = {
+// Percentages of the sends or prospects counted: positive, and positive or
+// interest (domain/loop/reaction).
+export type ReactionRates = { positiveRate: number; interestedRate: number }
+
+export type LearningAngle = ReactionRates & {
   variantId: string
   label: string | null
   total: number
-  responses: number
-  replyRate: number
   mature: boolean
   leader: boolean
 }
 
 export type DashboardLearning = {
-  bestSubject: { pattern: string; replyRate: number; mature: boolean; n: number } | null
+  bestSubject: (ReactionRates & { pattern: string; mature: boolean; n: number }) | null
   angles: LearningAngle[]
   needsNewAngle: boolean
   state: 'learning' | 'optimizing'
@@ -153,18 +156,19 @@ export type DashboardRejections = {
 const SEGMENT_AXES = ['industry', 'employeeBand', 'country', 'discoveryStrategy'] as const
 export type SegmentAxis = (typeof SEGMENT_AXES)[number]
 
-export type SegmentRow = { value: string; sent: number; replied: number; replyRate: number }
+export type SegmentRow = ReactionRates & { value: string; sent: number }
 export type DashboardSegment = { axis: SegmentAxis; rows: SegmentRow[] }
 
 // A glance, not a table: past the top few, near-identical rates read as noise.
 const SEGMENT_ROWS_PER_AXIS = 3
 
-export type SegmentCount = { axis: SegmentAxis; value: string | null; sent: number; replied: number }
+export type ReactedCounts = { positive: number; interested: number }
+export type SegmentCount = ReactedCounts & { axis: SegmentAxis; value: string | null; sent: number }
 
 // Observational: the lever already orders sends by these axes, so a row is where
-// replies came from, not a controlled comparison.
+// reactions came from, not a controlled comparison.
 export function buildSegments(counts: SegmentCount[], minSends: number): DashboardSegment[] {
-  const byAxis: Record<SegmentAxis, Map<string, { sent: number; replied: number }>> = {
+  const byAxis: Record<SegmentAxis, Map<string, ReactedCounts & { sent: number }>> = {
     industry: new Map(),
     employeeBand: new Map(),
     country: new Map(),
@@ -178,22 +182,28 @@ export function buildSegments(counts: SegmentCount[], minSends: number): Dashboa
     // names no segment either.
     if (c.axis === 'industry' && value === 'other') continue
     const bucket = byAxis[c.axis]
-    const held = bucket.get(value) ?? { sent: 0, replied: 0 }
-    bucket.set(value, { sent: held.sent + c.sent, replied: held.replied + c.replied })
+    const held = bucket.get(value) ?? { sent: 0, positive: 0, interested: 0 }
+    bucket.set(value, { sent: held.sent + c.sent, positive: held.positive + c.positive, interested: held.interested + c.interested })
   }
   return SEGMENT_AXES.flatMap((axis) => {
     const rows = Array.from(byAxis[axis], ([value, n]) => ({
       value,
       sent: n.sent,
-      replied: n.replied,
-      replyRate: replyRate(n.replied, n.sent),
+      positiveRate: percentOf(n.positive, n.sent),
+      interestedRate: percentOf(n.interested, n.sent),
     }))
       .filter((r) => r.sent >= minSends)
-      .sort((a, b) => b.replyRate - a.replyRate || b.sent - a.sent || (a.value < b.value ? -1 : 1))
+      .sort(
+        (a, b) =>
+          b.positiveRate - a.positiveRate ||
+          b.interestedRate - a.interestedRate ||
+          b.sent - a.sent ||
+          (a.value < b.value ? -1 : 1),
+      )
       .slice(0, SEGMENT_ROWS_PER_AXIS)
     // An axis needs two buckets over the floor to say anything: a single row has
     // nothing to be compared against, and with the rest of the sends below the
-    // floor it sits close to the project's own reply rate anyway.
+    // floor it sits close to the project's own rates anyway.
     return rows.length > 1 ? [{ axis, rows }] : []
   })
 }
@@ -231,7 +241,9 @@ export type DashboardSummary = {
   }
   funnel: FunnelStage[]
   trend: DashboardTrendPoint[]
-  replyRateTrend: { previous: number; current: number }
+  // Prospects whose strongest reaction in the window was positive, and positive
+  // or interest, as a percentage of those approached in it.
+  reactionRates: { positive: RateChange; interested: RateChange }
   learning: DashboardLearning
   journal: JournalEvent[]
   // Newest lever-tick cycle date (all-time, not window-bound); null = no tick has ever run.
@@ -295,9 +307,31 @@ export function buildFunnel(counts: FunnelCounts, inquiryLandingEnabled: boolean
   })
 }
 
-export function replyRate(numerator: number, denominator: number): number {
+export function percentOf(numerator: number, denominator: number): number {
   if (denominator <= 0) return 0
   return Math.round((numerator / denominator) * 1000) / 10
+}
+
+export type RateChange = { previous: number; current: number }
+
+export type ProspectReaction = { prospectId: number; reaction: Reaction }
+
+// A prospect counts once, by the strongest reaction any of its sends drew.
+export function prospectLevels(rows: readonly ProspectReaction[]): Map<number, ReactionLevel> {
+  const byProspect = new Map<number, Reaction[]>()
+  for (const { prospectId, reaction } of rows) byProspect.set(prospectId, [...(byProspect.get(prospectId) ?? []), reaction])
+  return new Map(Array.from(byProspect, ([prospectId, reactions]) => [prospectId, sendReaction(reactions).level]))
+}
+
+// `interested` counts the positive ones too.
+export function levelCounts(levels: Iterable<ReactionLevel>): ReactedCounts {
+  let positive = 0
+  let interested = 0
+  for (const level of levels) {
+    if (level === 'positive') positive++
+    if (level !== 'none') interested++
+  }
+  return { positive, interested }
 }
 
 export const TREND_DAYS = 30

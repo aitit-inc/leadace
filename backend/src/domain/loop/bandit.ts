@@ -56,10 +56,10 @@ export function sampleBeta(alpha: number, beta: number, rng: () => number): numb
 export const PBEST_SAMPLES = 10_000
 
 // P(best) per arm under Beta(1 + s, 1 + total − s), s = clamp(rewardSum, 0, total).
-// The clamp is load-bearing: rewardSum sums per-reply rewards, so one send with
-// several countable replies can exceed total — unclamped, the second shape
-// parameter goes non-positive. Treating fractional reward as Bernoulli successes
-// is a deliberate approximation (fine for ~2x-resolution goals, not exact Thompson).
+// Each send scores at most 1 (domain/loop/reaction), so rewardSum ≤ total; the
+// clamp keeps the second shape parameter positive should a stat break that.
+// Treating fractional reward as Bernoulli successes is a deliberate
+// approximation (fine for ~2x-resolution goals, not exact Thompson).
 export function computePBest(
   arms: ArmStat[],
   rng: () => number,

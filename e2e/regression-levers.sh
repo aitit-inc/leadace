@@ -5,8 +5,8 @@
 #     → PROMOTE + AUDIT, with pBest surfaced on the tick and the decision
 #   - idempotency: a second tick the same UTC day reports ran=false and does
 #     not re-apply (the (project_id, cycle_date) unique is the claim)
-#   - multi-reply clamp: rewardSum above total (v1 gets 2 replies per send)
-#     must not break the Beta posterior
+#   - multi-reply: a send with two replies scores once, by its strongest
+#     reaction (v1 gets 2 replies per send)
 #   - archiving a P(best)-dominated variant while keeping ≥2 active
 #   - lever_state weights surfaced by get_lever_state; pick draws from them
 #   - bodyApproach round-trips through upsert → pick
@@ -193,10 +193,8 @@ ins_replies() { # variant, count
 ins_sends v1 60; ins_replies v1 36
 ins_sends v2 60; ins_replies v2 5
 ins_sends v3 50
-# Multi-reply clamp: give v1's 36 replied sends a SECOND countable reply.
-# responses must count distinct replied SENDS (36), not reply rows (72), and
-# rewardSum lands at 72 > 60 total — the Beta posterior must clamp it instead
-# of going non-positive on the second shape parameter.
+# Multi-reply: give v1's 36 replied sends a SECOND countable reply. responses
+# and rewardSum must count replied SENDS (36), not reply rows (72).
 ins_replies v1 36
 say "inserted 170 sends + 41 replies (+36 duplicate replies on v1 for the distinct-count regression)"
 
@@ -234,6 +232,7 @@ T1="$(api POST "/api/projects/$PROJECT_ID/run-lever-tick")"
 assert_eq "tick1 ran"                "$(echo "$T1" | jq -r '.ran')" "true"
 assert_eq "tick1 measures v1 sends"  "$(echo "$T1" | jq -r '.samples[] | select(.variantId=="v1") | .total')" "60"
 assert_eq "tick1 measures v1 replies" "$(echo "$T1" | jq -r '.samples[] | select(.variantId=="v1") | .responses')" "36"
+assert_eq "tick1 scores each v1 send once" "$(echo "$T1" | jq -r '.samples[] | select(.variantId=="v1") | .rewardSum')" "36"
 assert_eq "tick1 archived exactly v3" "$(echo "$T1" | jq -rc '[.archived[].variantId]')" '["v3"]'
 # v2 and v3 both sit at P(best) ~0 (candidates), but the ≥2-active floor caps
 # archiving to one; the posterior-mean tie-break sheds the weaker v3 (0/50).

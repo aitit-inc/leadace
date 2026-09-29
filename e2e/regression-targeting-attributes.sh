@@ -12,18 +12,23 @@
 #      one software_tech bucket), sizeResponseRate, countryResponseRate
 #      (prospect.country overrides organization.country) — and all three
 #      count mature sends only (a fresh send is invisible until it is older
-#      than the reward window).
+#      than the reward window). Each bucket and the kpi also carry the
+#      reactions: a send counts once, by its strongest reaction.
 #
 # Seed: 4 prospects/orgs, 4 'sent' email logs on a dedicated dummy identity.
 # L1-L3 are backdated 15 days (mature, rewardWindowDays default 14); L4 stays
-# fresh. L1/L3 get a message_id (threadable); L1 draws a reply, L3 a bounce.
+# fresh. L1/L3 get a message_id (threadable); L1 draws a neutral and a
+# positive reply, L3 a bounce. P3's country is stored lower-case.
 #
 #   axis           expected buckets (mature sends only)
 #   industry       software_tech {total 2, responses 1}   <- P1 'B2B SaaS' + P2 'AI / ML'
 #                  vertical_tech {total 1, bounces 1, bounceRate 100}  <- P3 'FinTech'
 #   size           11-50 {total 2, responses 1}, 201+ {total 1, bounces 1}
 #                  and NO 'unknown' bucket (L4's org is 'unknown' but immature)
-#   country        US {total 2}, JP {total 1}  <- P2's prospect-level JP wins over org US
+#   country        US {total 2}, JP {total 1}  <- P2's prospect-level JP wins over org US;
+#                  P3's 'us' folds into US
+#   reactions      kpi {matureSent 3, positive 1, interested 1}; software_tech
+#                  {positive 1, positiveRate 50}; vertical_tech {positive 0}
 #
 # Curl-only, no Claude session. Cleans up.
 #
@@ -91,9 +96,9 @@ send_email() { # prospectId → outreach_log id
     | jq -r '.id // ""'
 }
 
-record_response() { # outreachLogId responseType
-  api POST /api/responses "$(jq -nc --argjson lid "$1" --arg rt "$2" \
-    '{outreachLogId:$lid, channel:"email", content:("e2e "+$rt), sentiment:"neutral", responseType:$rt}')" >/dev/null
+record_response() { # outreachLogId responseType [sentiment]
+  api POST /api/responses "$(jq -nc --argjson lid "$1" --arg rt "$2" --arg s "${3:-neutral}" \
+    '{outreachLogId:$lid, channel:"email", content:("e2e "+$rt), sentiment:$s, responseType:$rt}')" >/dev/null
 }
 
 require_jq
@@ -242,8 +247,10 @@ L1="$(send_email "$P_A")"; L2="$(send_email "$P_B")"; L3="$(send_email "$P_C")";
 psql_local "UPDATE outreach_logs SET sent_at = now() - interval '15 days' WHERE id IN ($L1,$L2,$L3);" > /dev/null
 psql_local "UPDATE outreach_logs SET message_id='<$RUN_TAG-'||id||'@example.com>' WHERE id IN ($L1,$L3);" > /dev/null
 record_response "$L1" reply
+record_response "$L1" reply positive
 record_response "$L3" bounce
-say "logs: mature=$L1,$L2,$L3 fresh=$L4; reply on L1, bounce on L3"
+psql_local "UPDATE prospects SET country = 'us' WHERE id = $P_C;" > /dev/null
+say "logs: mature=$L1,$L2,$L3 fresh=$L4; two replies on L1, bounce on L3"
 
 step "Test C: observation axes on GET /projects/:id/stats"
 STATS="$(api GET "/api/projects/$PROJECT_ID/stats")"
@@ -253,10 +260,16 @@ VERT="$(echo "$STATS" | jq -c '.metrics.industryResponseRate[]? | select(.indust
 assert_eq "software_tech folds two fine labels: total=2" "$(echo "$SOFT" | jq -r '.total')" "2"
 assert_eq "software_tech responses=1" "$(echo "$SOFT" | jq -r '.responses')" "1"
 assert_eq "software_tech rate=50" "$(echo "$SOFT" | jq -r '.rate')" "50"
+assert_eq "software_tech positive=1 (L1's two replies count once, by the positive)" "$(echo "$SOFT" | jq -r '.positive')" "1"
+assert_eq "software_tech positiveRate=50" "$(echo "$SOFT" | jq -r '.positiveRate')" "50"
+assert_eq "software_tech interested=1 (includes the positive)" "$(echo "$SOFT" | jq -r '.interested')" "1"
 assert_eq "vertical_tech total=1" "$(echo "$VERT" | jq -r '.total')" "1"
 assert_eq "vertical_tech responses=0 (bounce is not a reply)" "$(echo "$VERT" | jq -r '.responses')" "0"
 assert_eq "vertical_tech bounces=1" "$(echo "$VERT" | jq -r '.bounces')" "1"
 assert_eq "vertical_tech bounceRate=100 (threadable denominator)" "$(echo "$VERT" | jq -r '.bounceRate')" "100"
+assert_eq "vertical_tech positive=0 (a bounce is no reaction)" "$(echo "$VERT" | jq -r '.positive')" "0"
+assert_eq "kpi counts mature sends and their reactions" \
+  "$(echo "$STATS" | jq -rc '.metrics.kpi | [.matureSent, .positive, .interested]')" "[3,1,1]"
 assert_eq "no 'other' industry bucket (fresh L4 is immature)" \
   "$(echo "$STATS" | jq -r '[.metrics.industryResponseRate[]? | select(.industry == "other")] | length')" "0"
 
@@ -270,7 +283,8 @@ assert_eq "no 'unknown' band bucket (fresh L4 is immature)" \
 
 US="$(echo "$STATS" | jq -c '.metrics.countryResponseRate[]? | select(.country == "US") // empty')"
 JP="$(echo "$STATS" | jq -c '.metrics.countryResponseRate[]? | select(.country == "JP") // empty')"
-assert_eq "US total=2 (L1,L3)" "$(echo "$US" | jq -r '.total')" "2"
+assert_eq "US total=2 (L1, and L3 whose 'us' folds in)" "$(echo "$US" | jq -r '.total')" "2"
+assert_eq "US positive=1" "$(echo "$US" | jq -r '.positive')" "1"
 assert_eq "US responses=1" "$(echo "$US" | jq -r '.responses')" "1"
 assert_eq "JP total=1 (prospect country overrides org US)" "$(echo "$JP" | jq -r '.total')" "1"
 

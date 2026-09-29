@@ -140,7 +140,7 @@ const quantile = (sorted: number[], q: number): number =>
 
 // Nulls (event never happened) are excluded from quantiles; the companion
 // *Frac/*Rate column carries how often the event happened at all.
-const stats = (values: (number | null)[]): { p50: number | null; p90: number | null; mean: number | null } => {
+export const stats = (values: (number | null)[]): { p50: number | null; p90: number | null; mean: number | null } => {
   const xs = values.filter((v): v is number => v !== null).sort((a, b) => a - b)
   if (xs.length === 0) return { p50: null, p90: null, mean: null }
   return {

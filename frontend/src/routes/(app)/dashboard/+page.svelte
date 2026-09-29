@@ -7,6 +7,7 @@
     DashboardPeriod,
     FunnelStageKey,
     JournalEvent,
+    RateChange,
     SegmentAxis,
   } from '$lib/types/dashboard';
   import type { FunnelStageFilter } from '$lib/types/outreach';
@@ -127,7 +128,7 @@
   }
   let trendMax = $derived(Math.max(1, ...(summary?.trend ?? []).map((t) => t.sent)));
   let hasTrendActivity = $derived((summary?.trend ?? []).some((t) => t.sent > 0 || t.responses > 0));
-  // Reply rate is the selected-window KPI, independent of the fixed 30-day trend bars below it.
+  // The reaction rates are the selected-window KPI, independent of the fixed 30-day trend bars below them.
   let hasReplyData = $derived((summary?.kpis.approached.current ?? 0) > 0);
   let rejectionMax = $derived(Math.max(1, ...(summary?.rejections.topReasons ?? []).map((r) => r.percentage)));
 
@@ -188,6 +189,18 @@
 <svelte:head>
   <title>Home · LeadAce</title>
 </svelte:head>
+
+{#snippet rateChange(label: string, change: RateChange)}
+  <span class="flex items-center gap-2">
+    <span class="text-text-muted">{label}</span>
+    <span class="font-semibold tabular-nums text-text">{change.previous}% → {change.current}%</span>
+    {#if change.current >= change.previous}
+      <TrendingUp size={14} class="text-inbound" />
+    {:else}
+      <TrendingDown size={14} class="text-danger" />
+    {/if}
+  </span>
+{/snippet}
 
 {#if summary}
   {@const approached = summary.kpis.approached.current}
@@ -354,16 +367,10 @@
             </div>
           </div>
           {#if hasReplyData}
-            <div class="mb-4 flex items-center gap-2 text-sm">
-              <span class="text-text-muted">Reply rate · {data.period === 'all' ? 'all-time' : data.period}</span>
-              <span class="font-semibold tabular-nums text-text">
-                {summary.replyRateTrend.previous}% → {summary.replyRateTrend.current}%
-              </span>
-              {#if summary.replyRateTrend.current >= summary.replyRateTrend.previous}
-                <TrendingUp size={14} class="text-inbound" />
-              {:else}
-                <TrendingDown size={14} class="text-danger" />
-              {/if}
+            <div class="mb-4 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm">
+              <span class="text-text-muted">{data.period === 'all' ? 'All-time' : data.period}</span>
+              {@render rateChange('Positive', summary.reactionRates.positive)}
+              {@render rateChange('With interest', summary.reactionRates.interested)}
             </div>
           {/if}
           {#if hasTrendActivity}
@@ -433,7 +440,9 @@
               </li>
               {#if summary.learning.angles.length > 0}
                 <li class="border-t border-border pt-4">
-                  <p class="text-xs font-semibold text-text-muted">Testing now</p>
+                  <p class="flex justify-between gap-2 text-xs font-semibold text-text-muted">
+                    Testing now<span class="font-normal">positive / with interest</span>
+                  </p>
                   <ul class="mt-2 space-y-1.5">
                     {#each summary.learning.angles as angle}
                       <li class="flex items-baseline justify-between gap-2">
@@ -442,7 +451,9 @@
                           {#if angle.leader}<span class="chip ml-1 bg-inbound/15 text-inbound">Leading</span>{/if}
                         </span>
                         <span class="shrink-0 text-xs tabular-nums text-text-secondary">
-                          {angle.total} {angle.total === 1 ? 'send' : 'sends'} · {angle.mature ? `${angle.replyRate}%` : 'maturing'}
+                          {angle.total} {angle.total === 1 ? 'send' : 'sends'} · {angle.mature
+                            ? `${angle.positiveRate}% / ${angle.interestedRate}%`
+                            : 'maturing'}
                         </span>
                       </li>
                     {/each}
@@ -456,7 +467,7 @@
                     “{summary.learning.bestSubject.pattern}”
                   </p>
                   <p class="text-xs tabular-nums text-inbound">
-                    {summary.learning.bestSubject.replyRate}% reply rate · {summary.learning.bestSubject.n} sends{summary.learning.bestSubject.mature ? ' · winning' : ' · still testing'}
+                    {summary.learning.bestSubject.positiveRate}% positive · {summary.learning.bestSubject.interestedRate}% with interest · {summary.learning.bestSubject.n} sends{summary.learning.bestSubject.mature ? ' · winning' : ' · still testing'}
                   </p>
                 </li>
               {/if}
@@ -514,8 +525,8 @@
           </div>
           {#if summary.segments.length > 0}
             <p class="mb-3 text-sm text-text-muted">
-              Reply rate among the prospects contacted in this period. The AI already prioritises by
-              these, so read it as where replies came from, not as a test.
+              Positive / with interest, among the prospects contacted in this period. The AI already
+              prioritises by these, so read it as where reactions came from, not as a test.
             </p>
             <ul class="mb-5 space-y-3">
               {#each summary.segments as segment}
@@ -529,7 +540,7 @@
                           {label}
                         </span>
                         <span class="shrink-0 text-xs tabular-nums text-text-secondary">
-                          {row.replyRate}% · {row.replied}/{row.sent} replied
+                          {row.positiveRate}% / {row.interestedRate}% of {row.sent}
                         </span>
                       </li>
                     {/each}

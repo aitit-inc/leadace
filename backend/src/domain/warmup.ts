@@ -1,4 +1,4 @@
-import { replyRate } from './dashboard'
+import { percentOf } from './dashboard'
 
 export interface WarmupConfig {
   startPerDay: number
@@ -124,7 +124,7 @@ export function mailboxBounceWindow(counts: MailboxBounceCounts = NO_SENDS_IN_WI
   return {
     bounceWindowDays: BOUNCE_RATE_WINDOW_DAYS,
     ...counts,
-    bounceRate: replyRate(counts.bounced, counts.sentInWindow),
+    bounceRate: percentOf(counts.bounced, counts.sentInWindow),
   }
 }
 

@@ -50,7 +50,7 @@ describe('pickChannel', () => {
           ...base,
           email: 'a@acme.example',
           contactFormUrl: 'https://acme.example/contact',
-          channelAffinity: [{ channel: 'form', rate: 5, total: 40, responses: 2 }, { channel: 'email', rate: 1, total: 100, responses: 1 }],
+          channelAffinity: [{ channel: 'form', rate: 5, total: 40, rewardSum: 2 }, { channel: 'email', rate: 1, total: 100, rewardSum: 1 }],
         },
         ALL,
         'draft',

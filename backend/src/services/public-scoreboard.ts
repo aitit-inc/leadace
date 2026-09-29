@@ -4,7 +4,7 @@ import { projectDocuments, projectSettings, projects } from '../db/schema'
 import type { Db } from '../db/connection'
 import type { Edition } from '../domain/edition'
 import type { ProjectId } from '../domain/ids'
-import { replyRate } from '../domain/dashboard'
+import { percentOf } from '../domain/dashboard'
 import { ok, err, type ServiceResult } from './result'
 import { startOfTodayUtc } from './plan-limits'
 
@@ -213,15 +213,15 @@ async function computeScoreboard(
     daysActive: daysActiveSince(totals.first_sent_day, now),
     sent: { today: num(totals.sent_today), total: sentTotal },
     replies: { total: num(totals.replied), positive: num(totals.positive) },
-    replyRate: replyRate(num(totals.replied), sentTotal),
+    replyRate: percentOf(num(totals.replied), sentTotal),
     recent: {
       days: LIVE_RECENT_DAYS,
       sent: sentRecent,
-      replyRate: replyRate(num(totals.replied_recent), sentRecent),
+      replyRate: percentOf(num(totals.replied_recent), sentRecent),
     },
     delivered: sentTotal - num(totals.bounced_all),
     bounced: num(totals.bounced_all),
-    bounceRate: replyRate(num(totals.bounced), num(totals.bounce_eligible)),
+    bounceRate: percentOf(num(totals.bounced), num(totals.bounce_eligible)),
     signups: signups ? { today: num(signups.today), total: num(signups.total) } : null,
     daily: buildDaily(sentByDay, repliesByDay, now),
     journal: journalRow

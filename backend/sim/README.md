@@ -1,11 +1,20 @@
 # Parameter-calibration simulation harness
 
-Offline calibration for the discovery-strategy bandit and futility vitals.
-The subjects under test are the production domain functions in
-`src/domain/loop/` (`bandit.ts`, `options.ts`, `allocation.ts`, `frame.ts`) imported
-directly — no reimplementation — driven through a synthetic finite-pool market
-calibrated to measured production values. Latest sweep results and the
-defaults recommendations: [REPORT.md](./REPORT.md).
+Offline calibration for the learning loop. The subjects under test are the
+production domain functions in `src/domain/loop/` (`bandit.ts`, `options.ts`,
+`allocation.ts`, `frame.ts`, `decide.ts`) imported directly — no
+reimplementation — driven through synthetic markets calibrated to measured
+production values. Sweep 1 results (bandit, futility): [REPORT.md](./REPORT.md).
+
+Experiments:
+- `bandit`, `futility` (`environment.ts`): the discovery-strategy bandit and the
+  futility vitals over a finite prospect pool (sweep 1).
+- `options` (`options.ts`): the middle and inner layers of #793 — which options
+  run, which are dropped or brought back, how sends split. `current` calls
+  `decide()`; `proposed` runs the candidate rules in `proposed.ts`, which move
+  into `domain/loop` once their values are chosen.
+- `supply` (`supply.ts`): when a discovery strategy counts as exhausted.
+- `frame` (`frame-signal.ts`): when the outer layer proposes rethinking the frame.
 
 Non-deploy asset, like `scripts/probe-*.ts`: outside the Worker bundle and
 the main `tsc` project. CI compiles it so a rename in `src/` cannot break it
@@ -16,9 +25,10 @@ question comes up.
 
 ```bash
 cd backend
-npx tsx sim/run.ts                # both experiments, full seed counts
+npx tsx sim/run.ts                # every experiment, full seed counts
 npx tsx sim/run.ts --quick        # iteration mode
-npx tsx sim/run.ts --experiment=bandit|futility --seeds=N --samples=N
+npx tsx sim/run.ts --experiment=bandit|futility|options|supply|frame --seeds=N --samples=N
+npx tsx sim/run.ts --experiment=options --only=current,proposed   # one process per row set
 npx tsc --noEmit -p sim           # typecheck
 ```
 

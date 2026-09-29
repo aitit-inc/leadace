@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { newlyRetiredClaims, parseLearnings, retireWithdrawnMetricEntries } from './learnings'
+import { keepNewestRetired, newlyRetiredClaims, parseLearnings, retireWithdrawnMetricEntries, stampNewRetirements } from './learnings'
 
 describe('retireWithdrawnMetricEntries', () => {
   it('tombstones an entry citing a withdrawn metric', () => {
@@ -136,5 +136,62 @@ describe('newlyRetiredClaims', () => {
 
   it('treats every tombstone as new when there is no earlier version', () => {
     expect(newlyRetiredClaims(null, before)).toEqual(['An older mistake'])
+  })
+})
+
+describe('keepNewestRetired', () => {
+  const log = [
+    '# Learnings Log',
+    '- [body] [2026-09-24] active claim — evidence: metric=a, n=40',
+    '- [retired] [2026-08-25] oldest — evidence: metric=b, n=30',
+    '- [retired] [discovery] [2026-09-09] newest — evidence: metric=c, n=30',
+    '- [retired] [2026-08-31] middle — evidence: metric=d, n=30',
+  ].join('\n')
+
+  it('drops the oldest tombstones past the limit and keeps everything else in place', () => {
+    expect(keepNewestRetired(log, 2)).toBe(
+      [
+        '# Learnings Log',
+        '- [body] [2026-09-24] active claim — evidence: metric=a, n=40',
+        '- [retired] [discovery] [2026-09-09] newest — evidence: metric=c, n=30',
+        '- [retired] [2026-08-31] middle — evidence: metric=d, n=30',
+      ].join('\n'),
+    )
+  })
+
+  it('leaves a log within the limit untouched', () => {
+    expect(keepNewestRetired(log, 3)).toBe(log)
+  })
+})
+
+describe('stampNewRetirements', () => {
+  const before = [
+    '- [body] [2026-08-01] proof-led wins — evidence: metric=a, n=40',
+    '- [targeting] [2026-08-02] 1-10 respond more — evidence: metric=b, n=40',
+    '- [retired] [2026-07-01] old claim — evidence: metric=c, n=30',
+  ].join('\n')
+
+  it('dates a newly retired entry by the day it was retired, and leaves earlier tombstones alone', () => {
+    const after = before.replace('- [body] [2026-08-01]', '- [retired] [2026-08-01]')
+    expect(stampNewRetirements(before, after, '2026-09-29')).toBe(
+      [
+        '- [retired] [2026-09-29] proof-led wins — evidence: metric=a, n=40',
+        '- [targeting] [2026-08-02] 1-10 respond more — evidence: metric=b, n=40',
+        '- [retired] [2026-07-01] old claim — evidence: metric=c, n=30',
+      ].join('\n'),
+    )
+  })
+
+  it('adds the date to a tombstone written without one', () => {
+    expect(stampNewRetirements(null, '- [retired] undated claim', '2026-09-29')).toBe('- [retired] [2026-09-29] undated claim')
+  })
+
+  it('keeps a just-retired old claim past newer tombstones', () => {
+    const tombstones = ['- [retired] [2026-09-10] x', '- [retired] [2026-09-11] y']
+    const prior = ['- [body] [2026-08-01] proof-led wins', ...tombstones].join('\n')
+    const retired = prior.replace('- [body]', '- [retired]')
+    expect(keepNewestRetired(stampNewRetirements(prior, retired, '2026-09-29'), 2)).toBe(
+      ['- [retired] [2026-09-29] proof-led wins', '- [retired] [2026-09-11] y'].join('\n'),
+    )
   })
 })

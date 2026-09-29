@@ -151,6 +151,7 @@ export function computeVariantWeights(
   arms: VariantStat[],
   config: LeverConfig,
   rng: () => number,
+  samples: number = PBEST_SAMPLES,
 ): WeightDecision {
   return toVariantDecision(computeArmWeights(
     arms.map(toArm),
@@ -160,6 +161,7 @@ export function computeVariantWeights(
       weightFloor: config.messageWeightFloor,
     },
     rng,
+    samples,
   ))
 }
 

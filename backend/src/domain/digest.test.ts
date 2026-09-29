@@ -13,7 +13,7 @@ const emptySummary: DashboardSummary = {
   },
   funnel: [],
   trend: [],
-  replyRateTrend: { previous: 0, current: 0 },
+  reactionRates: { positive: { previous: 0, current: 0 }, interested: { previous: 0, current: 0 } },
   learning: { bestSubject: null, angles: [], needsNewAngle: false, state: 'learning', log: [] },
   journal: [],
   lastCycleDate: null,
@@ -73,11 +73,14 @@ describe('buildDigest', () => {
     const digest = buildDigest(
       input({
         today: '2026-09-21',
-        summary: { kpis: { ...emptySummary.kpis, approached: { current: 40, previous: 30, deltaPct: 33 } } },
+        summary: {
+          kpis: { ...emptySummary.kpis, approached: { current: 40, previous: 30, deltaPct: 33 } },
+          reactionRates: { positive: { previous: 3.3, current: 2.5 }, interested: { previous: 6.7, current: 7.5 } },
+        },
       }),
     )
     expect(digest?.subject).toBe('Acme: no change since 2026-09-14')
-    expect(digest?.body).toContain('Contacted 40 prospects')
+    expect(digest?.body).toContain('Contacted 40 prospects · positive 2.5% (was 3.3%) · with interest 7.5% (was 6.7%) · engaged 0 · won 0')
     expect(digest?.body).toContain('Nothing — the system kept running on what it already learned.')
   })
 
@@ -94,8 +97,8 @@ describe('buildDigest', () => {
             {
               axis: 'industry',
               rows: [
-                { value: 'software_tech', sent: 42, replied: 5, replyRate: 11.9 },
-                { value: 'hardware_industrial', sent: 44, replied: 2, replyRate: 4.5 },
+                { value: 'software_tech', sent: 42, positiveRate: 4.8, interestedRate: 11.9 },
+                { value: 'hardware_industrial', sent: 44, positiveRate: 0, interestedRate: 4.5 },
               ],
             },
           ],
@@ -111,7 +114,9 @@ describe('buildDigest', () => {
         },
       }),
     )
-    expect(digest?.body).toContain('Industry: Software tech 11.9% (5/42) · Hardware industrial 4.5% (2/44)')
+    expect(digest?.body).toContain(
+      'Positive / with interest, of the prospects contacted:\nIndustry: Software tech 4.8% / 11.9% of 42 · Hardware industrial 0% / 4.5% of 44',
+    )
     expect(digest?.body).toContain('Why 20 said no: Not relevant 40%')
     expect(digest?.body).toContain('  "No Salesforce sync" — Taro, Acme Inc.')
   })

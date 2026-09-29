@@ -19,7 +19,9 @@
 # the list, once in the KPI), the period window (a 60-day-old send is out of
 # period=30d, in all-time), inquiryOutcome surfacing on list rows, the stage
 # set the funnel chain reports (this project has the inquiry landing on, so
-# 'reached' participates), and 400 on an invalid stage value.
+# 'reached' participates), 400 on an invalid stage value, and the reaction
+# rates: approached prospects counted once by their strongest reaction
+# (domain/loop/reaction), positive and positive-or-interest.
 #
 # Runs against the local stack (localhost:8787 API + 54322 Postgres).
 # Snapshots + restores tenant compliance (shared state). Curl-only, cleans up.
@@ -216,6 +218,10 @@ assert_eq "delivered=4 (P_BOUNCE's only send bounced)" "$KPI_DELIVERED" "4"
 assert_eq "reached=1" "$KPI_REACHED" "1"
 assert_eq "engaged=3" "$KPI_ENGAGED" "3"
 assert_eq "won=1" "$KPI_WON" "1"
+assert_eq "positive rate=40 (P_REPLY's positive reply, P_WON's meeting; of 5 approached)" \
+  "$(echo "$DASH" | jq -r '.reactionRates.positive.current')" "40"
+assert_eq "rate with interest=60 (adds P_INQ's chat; the bounce is no reaction)" \
+  "$(echo "$DASH" | jq -r '.reactionRates.interested.current')" "60"
 
 step "drill-down lists agree with the KPIs (distinct prospects per stage)"
 stage_list() { api GET "/api/projects/$PROJECT_ID/outreach/recent?stage=$1&period=30d"; }

@@ -62,14 +62,19 @@ export function parseLearnings(content: string | null): LearningEntry[] {
 // An entry the evaluate stage has tombstoned (#744): '- [retired] [date] claim — evidence: …'.
 const RETIRED_LINE = /^\[retired\]\s*(?:\[\d{4}-\d{2}-\d{2}\]\s*)?(.+)$/i
 
+function retiredClaim(line: string): string | null {
+  const m = RETIRED_LINE.exec(line.trim().replace(/^[-*]\s+/, ''))
+  if (!m) return null
+  const [claim] = m[1]!.split(/\s*[—–-]+\s*evidence:\s*/i)
+  return claim!.trim()
+}
+
 function retiredClaims(log: string | null): Set<string> {
   const out = new Set<string>()
   if (!log) return out
   for (const raw of log.split('\n')) {
-    const m = RETIRED_LINE.exec(raw.trim().replace(/^[-*]\s+/, ''))
-    if (!m) continue
-    const [claim] = m[1]!.split(/\s*[—–-]+\s*evidence:\s*/i)
-    out.add(claim!.trim())
+    const claim = retiredClaim(raw)
+    if (claim !== null) out.add(claim)
   }
   return out
 }
@@ -79,4 +84,37 @@ function retiredClaims(log: string | null): Set<string> {
 export function newlyRetiredClaims(before: string | null, after: string | null): string[] {
   const was = retiredClaims(before)
   return Array.from(retiredClaims(after)).filter((c) => !was.has(c))
+}
+
+const ENTRY_DATE = /\d{4}-\d{2}-\d{2}/
+
+// Retiring keeps the claim's own date; a tombstone dated the day it was
+// retired is what lets keepNewestRetired keep the recent ones.
+export function stampNewRetirements(before: string | null, after: string, today: string): string {
+  const was = retiredClaims(before)
+  return after
+    .split('\n')
+    .map((line) => {
+      const claim = retiredClaim(line)
+      if (claim === null || was.has(claim)) return line
+      return ENTRY_DATE.test(line) ? line.replace(ENTRY_DATE, today) : line.replace(/\[retired\]/i, `[retired] [${today}]`)
+    })
+    .join('\n')
+}
+
+// Tombstones exist so a claim does not come straight back; the newest ones are
+// enough for that, and keeping every one would grow the log without bound.
+export function keepNewestRetired(log: string, keep: number): string {
+  const lines = log.split('\n')
+  const retired = lines
+    .map((line, i) => ({ i, date: ENTRY_DATE.exec(line)?.[0] ?? '', isRetired: retiredClaim(line) !== null }))
+    .filter((l) => l.isRetired)
+  if (retired.length <= keep) return log
+  const dropped = new Set(
+    retired
+      .sort((a, b) => b.date.localeCompare(a.date) || a.i - b.i)
+      .slice(keep)
+      .map((l) => l.i),
+  )
+  return lines.filter((_, i) => !dropped.has(i)).join('\n')
 }

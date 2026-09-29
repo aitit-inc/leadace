@@ -1,5 +1,5 @@
-// The daily cycle (daily-cycle/SKILL.md, server-side): learn (evaluate → lever
-// tick) → act (follow-ups → new prospects, searching again whenever the list
+// The daily cycle (daily-cycle/SKILL.md, server-side): learn (lever tick →
+// evaluate) → act (follow-ups → new prospects, searching again whenever the list
 // runs out → re-approaches) → report (journal → the digest that reports what
 // changed).
 // Each stage is the same code a standalone job runs; this file only decides
@@ -88,16 +88,18 @@ export async function runDailyCycle(ctx: StageCtx, params: JobParamsOf<'daily_cy
   return { kind: 'daily_cycle', summary: log.stages.map((s) => `${s.kind}: ${s.summary}`).join(' | '), planCompliance }
 }
 
+// The tick decides first, so evaluate reads today's decision and fills a slot
+// it freed the same day, before the sends that would use it.
 async function learn(ctx: StageCtx, { stage, decide }: CycleLog): Promise<void> {
   const { tenantId, projectId } = ctx.job
-  await stage('evaluate', await advisory(() => evaluateStage(ctx)))
-
   const tick = await ctx.step.do('lever-tick', STEP_RETRY, () => tenantTx(ctx, async (db) => {
     const t = unwrap(await runLeverTick(db, tenantId, projectId))
     return { ran: t.ran, archived: t.archived.length, vitals: t.vitals?.verdict ?? null }
   }))
   await decide(tick.ran ? `lever tick ran (archived ${tick.archived}${tick.vitals ? `, vitals ${tick.vitals}` : ''})` : 'lever tick already ran today')
   if (tick.vitals === 'futile') await decide('FUTILE vitals: recent mature sends draw no interest — check deliverability and targeting')
+
+  await stage('evaluate', await advisory(() => evaluateStage(ctx)))
 }
 
 async function act(ctx: StageCtx, params: JobParamsOf<'daily_cycle'>, { stage, decide }: CycleLog): Promise<StrategyPlanCompliance[]> {

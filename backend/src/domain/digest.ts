@@ -1,6 +1,6 @@
 // Assembled from what the dashboard already computed. No LLM call: the email
 // and the dashboard must never disagree about a number.
-import type { DashboardSummary, JournalEvent, SegmentAxis } from './dashboard'
+import type { DashboardSummary, JournalEvent, RateChange, SegmentAxis } from './dashboard'
 import type { LearningEntry } from './loop/learnings'
 
 // A digest covers whole UTC days, [sinceDay, today): the day is all the
@@ -84,18 +84,19 @@ function digestChanges(input: DigestInput): string[] {
 
 function resultsLine(summary: DashboardSummary): string {
   const { approached, engaged, won } = summary.kpis
-  const { current, previous } = summary.replyRateTrend
-  const replyRate = `${current}%${approached.previous > 0 ? ` (was ${previous}%)` : ''}`
-  return `Contacted ${approached.current} prospect${approached.current === 1 ? '' : 's'} · reply rate ${replyRate} · engaged ${engaged.current} · won ${won.current}`
+  const rate = ({ current, previous }: RateChange) => `${current}%${approached.previous > 0 ? ` (was ${previous}%)` : ''}`
+  const { positive, interested } = summary.reactionRates
+  return `Contacted ${approached.current} prospect${approached.current === 1 ? '' : 's'} · positive ${rate(positive)} · with interest ${rate(interested)} · engaged ${engaged.current} · won ${won.current}`
 }
 
 function marketSection(summary: DashboardSummary): string[] {
-  const lines = summary.segments.map((s) => {
+  const segments = summary.segments.map((s) => {
     const rows = s.rows
-      .map((r) => `${s.axis === 'industry' ? humanize(r.value) : r.value} ${r.replyRate}% (${r.replied}/${r.sent})`)
+      .map((r) => `${s.axis === 'industry' ? humanize(r.value) : r.value} ${r.positiveRate}% / ${r.interestedRate}% of ${r.sent}`)
       .join(' · ')
     return `${SEGMENT_AXIS_LABELS[s.axis]}: ${rows}`
   })
+  const lines = segments.length > 0 ? ['Positive / with interest, of the prospects contacted:', ...segments] : []
   const { rejections } = summary
   if (rejections.topReasons.length > 0) {
     const reasons = rejections.topReasons

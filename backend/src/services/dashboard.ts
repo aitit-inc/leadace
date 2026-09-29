@@ -1,6 +1,14 @@
 import { z } from 'zod'
-import { and, desc, eq, sql } from 'drizzle-orm'
-import { outreachLogs, projectDocuments, projectSettings } from '../db/schema'
+import { and, desc, eq, gte, inArray, notInArray, sql } from 'drizzle-orm'
+import {
+  inquirySessions,
+  organizations,
+  outreachLogs,
+  projectDocuments,
+  projectSettings,
+  prospects,
+  responses,
+} from '../db/schema'
 import type { Db } from '../db/connection'
 import type { Edition } from '../domain/edition'
 import type { ProjectRef, TenantId } from '../domain/ids'
@@ -11,20 +19,24 @@ import {
   buildJournal,
   buildSegments,
   buildTrend,
+  levelCounts,
+  percentOf,
   periodToWindow,
-  replyRate,
+  prospectLevels,
   toKpi,
   trendWindowStartIso,
   type DashboardActivityKind,
   type DashboardLearning,
   type DashboardRejections,
   type DashboardSummary,
+  type ProspectReaction,
   type SegmentCount,
   type DecisionMakerReferral,
   type NotRelevantNote,
   type RejectionQuote,
 } from '../domain/dashboard'
 import { parseLearnings, type LearningEntry } from '../domain/loop/learnings'
+import { NON_COUNTABLE_RESPONSE_TYPES, REWARDED_INQUIRY_OUTCOMES } from '../domain/loop/reaction'
 import type { RejectionRecontactWindow } from '../db/schema'
 import { ok, type ServiceResult } from './result'
 import { resolveProject } from './projects'
@@ -53,8 +65,6 @@ const RECENT_ACTIVITY_LIMIT = 8
 const RECENT_ACTIVITY_CANDIDATES = 50
 
 type WindowCountRow = { current: string | number; previous: string | number }
-
-type SegmentCountRow = { axis: SegmentCount['axis']; value: string | null; sent: string | number; replied: string | number }
 
 // Through the prod transaction pooler (prepare:false) postgres-js can't read column type
 // OIDs, so raw db.execute returns int/timestamp columns as strings — numeric reads below use
@@ -89,7 +99,8 @@ export async function getDashboardSummary(
     reachedRows,
     engagedRows,
     wonRows,
-    replyResponderRows,
+    replyRows,
+    sessionRows,
     hotLeadsRows,
     dailySentRows,
     dailyResponseRows,
@@ -97,7 +108,7 @@ export async function getDashboardSummary(
     escalationRows,
     pendingDraftsRows,
     learningsRows,
-    segmentRows,
+    contactedRows,
     outboundAllowlist,
     leverRes,
     leverHistoryRes,
@@ -179,15 +190,31 @@ export async function getDashboardSummary(
         COUNT(DISTINCT pid) FILTER (WHERE ts >= ${curIso}::timestamptz)::int AS current,
         COUNT(DISTINCT pid) FILTER (WHERE ts >= ${prevIso}::timestamptz AND ts < ${curIso}::timestamptz)::int AS previous
       FROM ev`),
-    // distinct prospects who replied (countable) in the window — numerator for "Reply rate" as a
-    // % of approached prospects. DISTINCT + status='sent' mirrors the approached denominator's unit.
-    raw<WindowCountRow>(sql`
-      SELECT
-        COUNT(DISTINCT ol.prospect_id) FILTER (WHERE r.received_at >= ${curIso}::timestamptz)::int AS current,
-        COUNT(DISTINCT ol.prospect_id) FILTER (WHERE r.received_at >= ${prevIso}::timestamptz AND r.received_at < ${curIso}::timestamptz)::int AS previous
-      FROM responses r JOIN outreach_logs ol ON ol.id = r.outreach_log_id
-      WHERE ol.project_id = ${projectId} AND ol.status = 'sent' AND r.response_type NOT IN ('bounce', 'auto_reply')
-        AND r.received_at >= ${prevIso}::timestamptz`),
+    // Every reaction to the project's sends and when it came: the rates count
+    // the window's, a segment a contacted prospect's whenever it came.
+    db
+      .select({
+        prospectId: outreachLogs.prospectId,
+        at: responses.receivedAt,
+        responseType: responses.responseType,
+        sentiment: responses.sentiment,
+      })
+      .from(responses)
+      .innerJoin(outreachLogs, eq(outreachLogs.id, responses.outreachLogId))
+      .where(and(
+        eq(outreachLogs.projectId, projectId),
+        eq(outreachLogs.status, 'sent'),
+        notInArray(responses.responseType, [...NON_COUNTABLE_RESPONSE_TYPES]),
+      )),
+    db
+      .select({ prospectId: outreachLogs.prospectId, at: inquirySessions.openedAt, outcome: inquirySessions.outcome })
+      .from(inquirySessions)
+      .innerJoin(outreachLogs, eq(outreachLogs.id, inquirySessions.outreachLogId))
+      .where(and(
+        eq(outreachLogs.projectId, projectId),
+        eq(outreachLogs.status, 'sent'),
+        inArray(inquirySessions.outcome, [...REWARDED_INQUIRY_OUTCOMES]),
+      )),
     // hot leads = distinct prospects who requested a meeting in the last 7 days (fixed).
     // Self-serve signups (signup_clicked) are excluded — this card routes to /responses
     // (the meeting/reply queue), where a signup wouldn't appear.
@@ -234,37 +261,20 @@ export async function getDashboardSummary(
       .where(and(eq(projectDocuments.projectId, projectId), eq(projectDocuments.slug, 'learnings')))
       .orderBy(desc(projectDocuments.createdAt))
       .limit(1),
-    // Reply rate per segment on the reply-rate KPI's unit: prospects contacted in
-    // the window, counted once, credited with a reply whenever it arrived.
-    raw<SegmentCountRow>(sql`
-      WITH contacted AS (
-        SELECT DISTINCT ol.prospect_id AS pid
-        FROM outreach_logs ol
-        WHERE ol.project_id = ${projectId} AND ol.status = 'sent' AND ol.sent_at >= ${curIso}::timestamptz
-      ), replied AS (
-        SELECT DISTINCT ol.prospect_id AS pid
-        FROM responses r JOIN outreach_logs ol ON ol.id = r.outreach_log_id
-        WHERE ol.project_id = ${projectId} AND r.response_type NOT IN ('bounce', 'auto_reply')
-          AND ol.prospect_id IN (SELECT pid FROM contacted)
-      ), base AS (
-        SELECT
-          NULLIF(TRIM(p.industry), '') AS industry,
-          o.employee_band::text AS band,
-          COALESCE(p.country, o.country) AS country,
-          p.discovery_strategy AS strategy,
-          EXISTS (SELECT 1 FROM replied x WHERE x.pid = c.pid) AS replied
-        FROM contacted c
-          JOIN prospects p ON p.id = c.pid
-          JOIN organizations o ON o.id = p.organization_id
-      )
-      SELECT v.axis, v.value, COUNT(*)::int AS sent, COUNT(*) FILTER (WHERE base.replied)::int AS replied
-      FROM base, LATERAL (VALUES
-        ('industry', base.industry),
-        ('employeeBand', base.band),
-        ('country', base.country),
-        ('discoveryStrategy', base.strategy)
-      ) AS v(axis, value)
-      GROUP BY v.axis, v.value`),
+    // Segments are on the rates' unit: prospects contacted in the window, counted once.
+    db
+      .selectDistinct({
+        prospectId: prospects.id,
+        industry: prospects.industry,
+        employeeBand: organizations.employeeBand,
+        prospectCountry: prospects.country,
+        organizationCountry: organizations.country,
+        strategy: prospects.discoveryStrategy,
+      })
+      .from(outreachLogs)
+      .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
+      .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
+      .where(and(eq(outreachLogs.projectId, projectId), eq(outreachLogs.status, 'sent'), gte(outreachLogs.sentAt, curStart))),
     loadProjectOutboundAllowlist(db, projectId),
     getLeverStateById(db, tenantId, projectId),
     getLeverDecisionsHistory(db, tenantId, projectId, JOURNAL_WINDOW_DAYS),
@@ -323,8 +333,36 @@ export async function getDashboardSummary(
     new Date(now.getTime() - JOURNAL_WINDOW_DAYS * DAY_MS).toISOString().slice(0, 10),
   )
   const rejections = buildRejections(rejectionRes.value)
+
+  const reactions: Array<ProspectReaction & { at: Date }> = [
+    ...replyRows.map(({ prospectId, at, responseType, sentiment }) => ({
+      prospectId,
+      at,
+      reaction: { kind: 'reply' as const, responseType, sentiment },
+    })),
+    ...sessionRows.map(({ prospectId, at, outcome }) => ({ prospectId, at, reaction: { kind: 'inquiry' as const, outcome } })),
+  ]
+  const reactedIn = (from: Date, before?: Date) =>
+    levelCounts(prospectLevels(reactions.filter((r) => r.at >= from && (before === undefined || r.at < before))).values())
+  const reactedNow = reactedIn(curStart)
+  const reactedBefore = reactedIn(prevStart, curStart)
+  // Capped at 100 like the funnel: reactions to earlier-window sends can exceed in-window approached.
+  const rateChange = (current: number, previous: number) => ({
+    current: Math.min(100, percentOf(current, approached.current)),
+    previous: Math.min(100, percentOf(previous, approached.previous)),
+  })
+
+  const levels = prospectLevels(reactions)
   const segments = buildSegments(
-    segmentRows.map((r) => ({ axis: r.axis, value: r.value, sent: Number(r.sent), replied: Number(r.replied) })),
+    contactedRows.flatMap((p): SegmentCount[] => {
+      const counted = { sent: 1, ...levelCounts([levels.get(p.prospectId) ?? 'none']) }
+      return [
+        { axis: 'industry', value: p.industry?.trim() || null, ...counted },
+        { axis: 'employeeBand', value: p.employeeBand, ...counted },
+        { axis: 'country', value: p.prospectCountry ?? p.organizationCountry, ...counted },
+        { axis: 'discoveryStrategy', value: p.strategy, ...counted },
+      ]
+    }),
     leverRes.value.minSamplePerArm,
   )
   const recentActivity = recentRes.value.logs
@@ -348,10 +386,9 @@ export async function getDashboardSummary(
     kpis: { approached, delivered, reached, engaged, won },
     funnel,
     trend,
-    replyRateTrend: {
-      // Cap at 100 like the funnel: replies lagged from earlier-window sends can exceed in-window approached.
-      current: Math.min(100, replyRate(Number(replyResponderRows[0]?.current ?? 0), approached.current)),
-      previous: Math.min(100, replyRate(Number(replyResponderRows[0]?.previous ?? 0), approached.previous)),
+    reactionRates: {
+      positive: rateChange(reactedNow.positive, reactedBefore.positive),
+      interested: rateChange(reactedNow.interested, reactedBefore.interested),
     },
     learning,
     journal,
@@ -372,18 +409,22 @@ function buildLearning(
 ): DashboardLearning {
   const variantById = new Map(variants.map((v) => [v.variantId, v]))
 
-  // Rank by bandit weight when present, else mature reply rate; skip 0-send arms (a 0-send "leader" is noise).
+  const rates = (v: LeverStateLike['variants'][number]) => ({
+    positiveRate: percentOf(v.positive, v.total),
+    interestedRate: percentOf(v.interested, v.total),
+  })
+  // Rank by bandit weight when present, else positive then interest rate; skip 0-send arms (a 0-send "leader" is noise).
   const ranked = [...lever.variants].sort((a, b) => {
     if (lever.weights) return (b.weight ?? 0) - (a.weight ?? 0)
-    const ra = a.total > 0 ? a.responses / a.total : 0
-    const rb = b.total > 0 ? b.responses / b.total : 0
-    return rb - ra
+    const ra = rates(a)
+    const rb = rates(b)
+    return rb.positiveRate - ra.positiveRate || rb.interestedRate - ra.interestedRate
   })
   const pick = ranked.find((v) => v.total > 0) ?? null
   const bestSubject = pick
     ? {
         pattern: variantById.get(pick.variantId)?.subjectPattern ?? pick.variantId,
-        replyRate: replyRate(pick.responses, pick.total),
+        ...rates(pick),
         mature: pick.mature,
         n: pick.total,
       }
@@ -393,8 +434,7 @@ function buildLearning(
     variantId: v.variantId,
     label: variantById.get(v.variantId)?.label ?? null,
     total: v.total,
-    responses: v.responses,
-    replyRate: replyRate(v.responses, v.total),
+    ...rates(v),
     mature: v.mature,
     leader: pick !== null && v.variantId === pick.variantId,
   }))

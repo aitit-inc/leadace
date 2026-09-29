@@ -1,5 +1,5 @@
 import type { LeverDecisionPayload } from '../../db/schema'
-import { seededRng, type ArmStat } from './bandit'
+import { PBEST_SAMPLES, seededRng, type ArmStat } from './bandit'
 import type { LeverConfig } from './config'
 import { assessVitals } from './frame'
 import {
@@ -43,7 +43,14 @@ export type TickDecision = {
   payload: Required<LeverDecisionPayload>
 }
 
-export function decide(evidence: TickEvidence, config: LeverConfig, cycleDate: string, projectId: string): TickDecision {
+// `samples` is lowered only by the offline simulation (sim/), for speed.
+export function decide(
+  evidence: TickEvidence,
+  config: LeverConfig,
+  cycleDate: string,
+  projectId: string,
+  samples: number = PBEST_SAMPLES,
+): TickDecision {
   const { variants: arms, strategies: strategyArms, targeting: targetingStats } = evidence
 
   // Own seeded stream, like discovery: the vitals Monte Carlo must not shift
@@ -52,10 +59,10 @@ export function decide(evidence: TickEvidence, config: LeverConfig, cycleDate: s
   // seed lets identical data flip futile⇄ok at the confidence boundary
   // (measured: 298 zero-reply sends → pDead 0.9503 one day, 0.9498 the next)
   // and the attention alert would flicker without new evidence.
-  const vitals = assessVitals(evidence.futility, config, seededRng(`vitals:${projectId}`))
+  const vitals = assessVitals(evidence.futility, config, seededRng(`vitals:${projectId}`), samples)
 
   const rng = seededRng(`${cycleDate}:${projectId}`)
-  let decision = computeVariantWeights(arms, config, rng)
+  let decision = computeVariantWeights(arms, config, rng, samples)
 
   // Stagnation rotation: only when today has no dominance archive (an archive
   // IS movement) and no earlier rotation is still awaiting its fresh angle.
@@ -90,6 +97,7 @@ export function decide(evidence: TickEvidence, config: LeverConfig, cycleDate: s
       weightFloor: config.strategyWeightFloor,
     },
     seededRng(`${cycleDate}:${projectId}:discovery`),
+    samples,
   )
 
   const channelStats = aggregateByCoarse(evidence.channel)

@@ -8,7 +8,34 @@
     if (d === 0) return '0%';
     return ((n / d) * 100).toFixed(1) + '%';
   }
+
+  // The reply rate counts a No as a reply, so it sits behind a switch.
+  const RATE_VIEWS = [
+    { key: 'reactions', label: 'Reactions' },
+    { key: 'replies', label: 'All replies' },
+  ] as const;
+  let rateView = $state<(typeof RATE_VIEWS)[number]['key']>('reactions');
 </script>
+
+{#snippet rateHeads()}
+  {#if rateView === 'reactions'}
+    <span class="text-right text-xs font-semibold text-text-muted">Positive</span>
+    <span class="text-right text-xs font-semibold text-text-muted">With interest</span>
+  {:else}
+    <span class="text-right text-xs font-semibold text-text-muted">Resp.</span>
+    <span class="text-right text-xs font-semibold text-text-muted">Rate</span>
+  {/if}
+{/snippet}
+
+{#snippet rateCells(row: { total: number; responses: number; positive: number; interested: number })}
+  {#if rateView === 'reactions'}
+    <span class="text-right tabular-nums text-text">{pct(row.positive, row.total)}</span>
+    <span class="text-right tabular-nums text-text">{pct(row.interested, row.total)}</span>
+  {:else}
+    <span class="text-right tabular-nums text-text-secondary">{row.responses}</span>
+    <span class="text-right tabular-nums text-text">{pct(row.responses, row.total)}</span>
+  {/if}
+{/snippet}
 
 <h2 class="mb-6 font-display text-2xl font-semibold tracking-tight text-text">Evaluations</h2>
 
@@ -16,27 +43,66 @@
   <EmptyState message="No data available" />
 {:else}
   {@const stats = data.stats}
+  {@const kpi = stats.metrics.kpi}
   {@const replyTone = stats.metrics.responseCounts.totalResponses > 0 ? 'text-inbound' : 'text-text'}
   <section class="mb-10 space-y-3">
-    <h3 class="font-display text-lg font-semibold text-text">Current Metrics</h3>
+    <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+      <h3 class="font-display text-lg font-semibold text-text">Current Metrics</h3>
+      <div class="ml-auto inline-flex rounded-full bg-surface-2 p-0.5" role="group" aria-label="Rates">
+        {#each RATE_VIEWS as v}
+          <button
+            type="button"
+            onclick={() => (rateView = v.key)}
+            aria-pressed={rateView === v.key}
+            class="rounded-full px-3 py-1 text-sm transition-colors {rateView === v.key
+              ? 'bg-surface font-semibold text-text'
+              : 'text-text-secondary hover:text-text'}"
+          >
+            {v.label}
+          </button>
+        {/each}
+      </div>
+    </div>
+    <p class="text-sm text-text-muted">
+      {#if rateView === 'reactions'}
+        Positive counts meetings, positive replies and sign-ups. With interest adds neutral replies and chats.
+      {:else}
+        Every reply counts, a No included.
+      {/if}
+    </p>
 
     <div class="grid grid-cols-2 gap-px overflow-hidden rounded-2xl bg-border md:grid-cols-4">
       <div class="bg-surface p-5">
         <p class="font-display text-3xl font-semibold tracking-tight tabular-nums text-text">{stats.metrics.totalOutreach}</p>
         <p class="mt-1 text-sm text-text-secondary">Total outreach</p>
       </div>
-      <div class="bg-surface p-5">
-        <p class="font-display text-3xl font-semibold tracking-tight tabular-nums {replyTone}">
-          {stats.metrics.responseCounts.totalResponses}
-        </p>
-        <p class="mt-1 text-sm text-text-secondary">Responses</p>
-      </div>
-      <div class="bg-surface p-5">
-        <p class="font-display text-3xl font-semibold tracking-tight tabular-nums {replyTone}">
-          {pct(stats.metrics.responseCounts.totalResponses, stats.metrics.totalOutreach)}
-        </p>
-        <p class="mt-1 text-sm text-text-secondary">Response rate</p>
-      </div>
+      {#if rateView === 'reactions'}
+        <div class="bg-surface p-5">
+          <p class="font-display text-3xl font-semibold tracking-tight tabular-nums {kpi.positive > 0 ? 'text-inbound' : 'text-text'}">
+            {pct(kpi.positive, kpi.matureSent)}
+          </p>
+          <p class="mt-1 text-sm tabular-nums text-text-secondary">Positive · {kpi.positive} of {kpi.matureSent} matured</p>
+        </div>
+        <div class="bg-surface p-5">
+          <p class="font-display text-3xl font-semibold tracking-tight tabular-nums {kpi.interested > 0 ? 'text-inbound' : 'text-text'}">
+            {pct(kpi.interested, kpi.matureSent)}
+          </p>
+          <p class="mt-1 text-sm tabular-nums text-text-secondary">With interest · {kpi.interested} of {kpi.matureSent} matured</p>
+        </div>
+      {:else}
+        <div class="bg-surface p-5">
+          <p class="font-display text-3xl font-semibold tracking-tight tabular-nums {replyTone}">
+            {stats.metrics.responseCounts.totalResponses}
+          </p>
+          <p class="mt-1 text-sm text-text-secondary">Responses</p>
+        </div>
+        <div class="bg-surface p-5">
+          <p class="font-display text-3xl font-semibold tracking-tight tabular-nums {replyTone}">
+            {pct(stats.metrics.responseCounts.totalResponses, stats.metrics.totalOutreach)}
+          </p>
+          <p class="mt-1 text-sm text-text-secondary">Response rate</p>
+        </div>
+      {/if}
       <div class="bg-surface p-5">
         <p class="font-display text-3xl font-semibold tracking-tight {stats.dataSufficiency.sufficient ? 'text-inbound' : 'text-warning'}">
           {stats.dataSufficiency.sufficient ? 'Yes' : 'No'}
@@ -51,13 +117,11 @@
         <div class="grid grid-cols-[1fr_60px_70px_60px] md:grid-cols-[1fr_80px_80px_80px] gap-2 text-sm">
           <span class="text-xs font-semibold text-text-muted">Channel</span>
           <span class="text-right text-xs font-semibold text-text-muted">Sent</span>
-          <span class="text-right text-xs font-semibold text-text-muted">Resp.</span>
-          <span class="text-right text-xs font-semibold text-text-muted">Rate</span>
+          {@render rateHeads()}
           {#each stats.metrics.channelResponseRate as ch}
             <span class="truncate text-text">{ch.channel}</span>
             <span class="text-right tabular-nums text-text-secondary">{ch.total}</span>
-            <span class="text-right tabular-nums text-text-secondary">{ch.responses}</span>
-            <span class="text-right tabular-nums text-text">{pct(ch.responses, ch.total)}</span>
+            {@render rateCells(ch)}
           {/each}
         </div>
       </div>
@@ -70,14 +134,12 @@
           <span class="text-xs font-semibold text-text-muted">Industry</span>
           <span class="text-xs font-semibold text-text-muted">Channel</span>
           <span class="text-right text-xs font-semibold text-text-muted">Sent</span>
-          <span class="text-right text-xs font-semibold text-text-muted">Resp.</span>
-          <span class="text-right text-xs font-semibold text-text-muted">Rate</span>
+          {@render rateHeads()}
           {#each stats.metrics.channelByIndustry as ci}
             <span class="truncate text-text">{ci.industry ?? 'Unclassified'}</span>
             <span class="truncate text-text-secondary">{ci.channel}</span>
             <span class="text-right tabular-nums text-text-secondary">{ci.total}</span>
-            <span class="text-right tabular-nums text-text-secondary">{ci.responses}</span>
-            <span class="text-right tabular-nums text-text">{pct(ci.responses, ci.total)}</span>
+            {@render rateCells(ci)}
           {/each}
         </div>
         <p class="mt-3 text-xs text-text-muted">Rates on small Sent counts are noisy — weigh by Sent.</p>
@@ -90,13 +152,11 @@
         <div class="grid grid-cols-[1fr_60px_70px_60px] md:grid-cols-[1fr_80px_80px_80px] gap-2 text-sm">
           <span class="text-xs font-semibold text-text-muted">Industry</span>
           <span class="text-right text-xs font-semibold text-text-muted">Sent</span>
-          <span class="text-right text-xs font-semibold text-text-muted">Resp.</span>
-          <span class="text-right text-xs font-semibold text-text-muted">Rate</span>
+          {@render rateHeads()}
           {#each stats.metrics.industryResponseRate as ind}
             <span class="truncate text-text">{ind.industry}</span>
             <span class="text-right tabular-nums text-text-secondary">{ind.total}</span>
-            <span class="text-right tabular-nums text-text-secondary">{ind.responses}</span>
-            <span class="text-right tabular-nums text-text">{pct(ind.responses, ind.total)}</span>
+            {@render rateCells(ind)}
           {/each}
         </div>
       </div>
@@ -108,13 +168,11 @@
         <div class="grid grid-cols-[1fr_60px_70px_60px] md:grid-cols-[1fr_80px_80px_80px] gap-2 text-sm">
           <span class="text-xs font-semibold text-text-muted">Employees</span>
           <span class="text-right text-xs font-semibold text-text-muted">Sent</span>
-          <span class="text-right text-xs font-semibold text-text-muted">Resp.</span>
-          <span class="text-right text-xs font-semibold text-text-muted">Rate</span>
+          {@render rateHeads()}
           {#each stats.metrics.sizeResponseRate as s}
             <span class="tabular-nums text-text">{s.employeeBand}</span>
             <span class="text-right tabular-nums text-text-secondary">{s.total}</span>
-            <span class="text-right tabular-nums text-text-secondary">{s.responses}</span>
-            <span class="text-right tabular-nums text-text">{pct(s.responses, s.total)}</span>
+            {@render rateCells(s)}
           {/each}
         </div>
       </div>
@@ -126,13 +184,11 @@
         <div class="grid grid-cols-[1fr_60px_70px_60px] md:grid-cols-[1fr_80px_80px_80px] gap-2 text-sm">
           <span class="text-xs font-semibold text-text-muted">Country</span>
           <span class="text-right text-xs font-semibold text-text-muted">Sent</span>
-          <span class="text-right text-xs font-semibold text-text-muted">Resp.</span>
-          <span class="text-right text-xs font-semibold text-text-muted">Rate</span>
+          {@render rateHeads()}
           {#each stats.metrics.countryResponseRate as c}
             <span class="text-text">{c.country ?? 'Unknown'}</span>
             <span class="text-right tabular-nums text-text-secondary">{c.total}</span>
-            <span class="text-right tabular-nums text-text-secondary">{c.responses}</span>
-            <span class="text-right tabular-nums text-text">{pct(c.responses, c.total)}</span>
+            {@render rateCells(c)}
           {/each}
         </div>
       </div>
@@ -144,14 +200,12 @@
         <div class="grid grid-cols-[1fr_52px_52px_52px_60px] md:grid-cols-[1fr_70px_70px_70px_80px] gap-2 text-sm">
           <span class="text-xs font-semibold text-text-muted">Strategy</span>
           <span class="text-right text-xs font-semibold text-text-muted">Sent</span>
-          <span class="text-right text-xs font-semibold text-text-muted">Resp.</span>
-          <span class="text-right text-xs font-semibold text-text-muted">Rate</span>
+          {@render rateHeads()}
           <span class="text-right text-xs font-semibold text-text-muted">Bounce</span>
           {#each stats.metrics.discoveryStrategyResponseRate as d}
             <span class="truncate text-text">{d.strategy ?? 'Unattributed'}</span>
             <span class="text-right tabular-nums text-text-secondary">{d.total}</span>
-            <span class="text-right tabular-nums text-text-secondary">{d.responses}</span>
-            <span class="text-right tabular-nums text-text">{pct(d.responses, d.total)}</span>
+            {@render rateCells(d)}
             <span class="text-right tabular-nums text-text-secondary">{d.bounceRate.toFixed(1)}%</span>
           {/each}
         </div>
@@ -166,8 +220,7 @@
           <span class="text-xs font-semibold text-text-muted">Angle</span>
           <span class="text-xs font-semibold text-text-muted">Status</span>
           <span class="text-right text-xs font-semibold text-text-muted">Sent</span>
-          <span class="text-right text-xs font-semibold text-text-muted">Resp.</span>
-          <span class="text-right text-xs font-semibold text-text-muted">Rate</span>
+          {@render rateHeads()}
           <span class="text-right text-xs font-semibold text-text-muted">Reward/send</span>
           {#each stats.metrics.variantResponseRate as v}
             <span class="min-w-0">
@@ -176,8 +229,7 @@
             </span>
             <span class={v.active ? 'text-text' : 'text-text-muted'}>{v.active ? 'Active' : 'Archived'}</span>
             <span class="text-right tabular-nums text-text-secondary">{v.total}</span>
-            <span class="text-right tabular-nums text-text-secondary">{v.responses}</span>
-            <span class="text-right tabular-nums text-text">{pct(v.responses, v.total)}</span>
+            {@render rateCells(v)}
             <span class="text-right tabular-nums text-text">{v.meanReward.toFixed(2)}</span>
           {/each}
         </div>
@@ -190,13 +242,11 @@
         <div class="grid grid-cols-[1fr_60px_70px_60px] md:grid-cols-[1fr_80px_80px_80px] gap-2 text-sm">
           <span class="text-xs font-semibold text-text-muted">Priority</span>
           <span class="text-right text-xs font-semibold text-text-muted">Sent</span>
-          <span class="text-right text-xs font-semibold text-text-muted">Resp.</span>
-          <span class="text-right text-xs font-semibold text-text-muted">Rate</span>
+          {@render rateHeads()}
           {#each stats.metrics.priorityResponseRate as pr}
             <span class="tabular-nums text-text">P{pr.priority}</span>
             <span class="text-right tabular-nums text-text-secondary">{pr.total}</span>
-            <span class="text-right tabular-nums text-text-secondary">{pr.responses}</span>
-            <span class="text-right tabular-nums text-text">{pct(pr.responses, pr.total)}</span>
+            {@render rateCells(pr)}
           {/each}
         </div>
       </div>

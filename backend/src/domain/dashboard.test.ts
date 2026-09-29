@@ -5,8 +5,10 @@ import {
   buildSegments,
   buildTrend,
   computeDeltaPct,
+  levelCounts,
+  percentOf,
   periodToWindow,
-  replyRate,
+  prospectLevels,
   trendWindowStartIso,
   type SegmentAxis,
   type SegmentCount,
@@ -87,12 +89,34 @@ describe('trendWindowStartIso', () => {
   })
 })
 
-describe('replyRate', () => {
+describe('percentOf', () => {
   it('is a one-decimal percentage of approached', () => {
-    expect(replyRate(12, 142)).toBe(8.5)
+    expect(percentOf(12, 142)).toBe(8.5)
   })
   it('is 0 when nothing was approached', () => {
-    expect(replyRate(0, 0)).toBe(0)
+    expect(percentOf(0, 0)).toBe(0)
+  })
+})
+
+describe('prospectLevels', () => {
+  const reply = (prospectId: number, sentiment: 'positive' | 'neutral' | 'negative') => ({
+    prospectId,
+    reaction: { kind: 'reply' as const, responseType: 'reply' as const, sentiment },
+  })
+
+  it('scores a prospect once, by the strongest reaction across its sends', () => {
+    const levels = prospectLevels([
+      reply(1, 'neutral'),
+      reply(1, 'positive'),
+      reply(2, 'positive'),
+      reply(2, 'positive'),
+      reply(3, 'neutral'),
+      reply(4, 'negative'),
+      { prospectId: 4, reaction: { kind: 'inquiry', outcome: 'signup_clicked' } },
+      reply(5, 'negative'),
+    ])
+    expect(Object.fromEntries(levels)).toEqual({ 1: 'positive', 2: 'positive', 3: 'interest', 4: 'positive', 5: 'none' })
+    expect(levelCounts(levels.values())).toEqual({ positive: 3, interested: 4 })
   })
 })
 
@@ -187,11 +211,12 @@ describe('buildJournal', () => {
 })
 
 describe('buildSegments', () => {
-  const count = (axis: SegmentAxis, value: string | null, sent: number, replied: number): SegmentCount => ({
+  const count = (axis: SegmentAxis, value: string | null, sent: number, positive: number, interested = positive): SegmentCount => ({
     axis,
     value,
     sent,
-    replied,
+    positive,
+    interested,
   })
 
   it('keeps only buckets that reached the lever sample floor, best rate first', () => {
@@ -205,23 +230,28 @@ describe('buildSegments', () => {
     )
     expect(industry?.axis).toBe('industry')
     expect(industry?.rows).toEqual([
-      { value: 'vertical_tech', sent: 20, replied: 4, replyRate: 20 },
-      { value: 'software_tech', sent: 40, replied: 4, replyRate: 10 },
+      { value: 'vertical_tech', sent: 20, positiveRate: 20, interestedRate: 20 },
+      { value: 'software_tech', sent: 40, positiveRate: 10, interestedRate: 10 },
     ])
+  })
+
+  it('breaks a positive-rate tie on the rate with interest', () => {
+    const [country] = buildSegments([count('country', 'US', 40, 0, 2), count('country', 'JP', 20, 0, 4)], 10)
+    expect(country?.rows.map((r) => r.value)).toEqual(['JP', 'US'])
   })
 
   it('folds fine industries into their coarse bucket before gating', () => {
     const [industry] = buildSegments(
       [
         count('industry', 'B2B SaaS', 6, 1),
-        count('industry', 'AI / ML', 6, 1),
+        count('industry', 'AI / ML', 6, 0, 1),
         count('industry', 'Hardware / IoT / Robotics', 20, 1),
       ],
       10,
     )
     expect(industry?.rows).toEqual([
-      { value: 'software_tech', sent: 12, replied: 2, replyRate: 16.7 },
-      { value: 'hardware_industrial', sent: 20, replied: 1, replyRate: 5 },
+      { value: 'software_tech', sent: 12, positiveRate: 8.3, interestedRate: 16.7 },
+      { value: 'hardware_industrial', sent: 20, positiveRate: 5, interestedRate: 5 },
     ])
   })
 
