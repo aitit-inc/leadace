@@ -16,11 +16,11 @@ before adding an endpoint.
 ```
 routes/    HTTP adapter: bind URL → service, validate input, map result to HTTP
 services/  Orchestration + DB I/O + external APIs
-  loop/      The learning loop's I/O: observe (records → evidence), policy (the current policy as acts and views read it), change (writes a decision), propose (the LLM step, evaluate), learn (a tick: observe → decide → claim → apply)
+  loop/      The learning loop's I/O: observe (records → evidence), policy (the current policy as acts and views read it), change (the policy's only writer: every change lands with its `policy_changes` log row; the log's reads live beside it), propose (the LLM step, evaluate), learn (a tick: observe → decide → claim → apply)
   pipeline/  Hosted-agent stages (discover / enrich / draft / journal / strategy-draft): LLM calls + existing services
   chat/      Hosted chat agent: thread store, system prompt, the OpenAI function-calling loop
 domain/    Branded types, state machines, pure rules. No I/O.
-  loop/      The learning loop's rules by layer: frame (outer), options (middle), allocation (inner), decide (outer → middle → inner, pure); reaction (the reward), config, bandit math, learnings format
+  loop/      The learning loop's rules by layer: frame (outer), options (middle), allocation (inner), decide (outer → middle → inner, pure); reaction (the reward), config, bandit math, learnings format, change (the policy-change log's rows)
 db/        drizzle schema (single source of truth). No repository layer.
 tools/     The agent tool surface shared by the MCP worker and the chat agent; each tool calls the API through an injected callApi
 jobs/      Cloudflare Workflow entrypoint + stage runners: puts pipeline stages into steps

@@ -11,7 +11,9 @@ import { keepNewestRetired, retireWithdrawnMetricEntries, stampNewRetirements } 
 import type { JobResult } from '../../domain/jobs'
 import { ok, err, type ServiceResult } from '../result'
 import { callLlmJson, LlmError } from '../llm'
-import { getProposeEvidence, type Archival, type AxisBucket, type ProposeEvidence, type ReactionCounts } from './observe'
+import { getProposeEvidence, type AxisBucket, type ProposeEvidence, type ReactionCounts } from './observe'
+import type { OptionArchival } from './change'
+import { changeReasonSchema } from '../../domain/loop/change'
 import { loadLeverConfig } from '../project-settings'
 import { getRejectionFeedbackSummaryById } from '../responses'
 import { getLeverStateById, type LeverStateView } from './policy'
@@ -31,17 +33,18 @@ const evaluationSchema = z.object({
   report: z.string().min(1),
   // Full replacement documents, or null to leave them unchanged.
   learnings: z.string().nullable(),
-  salesStrategy: z.string().nullable(),
+  salesStrategy: z.object({ content: z.string().min(1), why: changeReasonSchema }).nullable(),
   newVariant: z
     .object({
       variantId: variantIdSchema,
       subjectPattern: z.string().min(1).max(80),
       bodyApproach: z.string().min(1).max(2000),
       label: z.string().min(1).max(120),
+      why: changeReasonSchema,
     })
     .nullable(),
   strategyUpserts: z.array(
-    z.object({ slug: discoveryStrategySchema, approach: z.string().min(1).max(2000), archived: z.boolean() }),
+    z.object({ slug: discoveryStrategySchema, approach: z.string().min(1).max(2000), archived: z.boolean(), why: changeReasonSchema }),
   ),
   suggestions: z.array(
     z.object({
@@ -63,8 +66,11 @@ const counted = (c: ReactionCounts): string =>
   `n=${c.n} · positive ${c.positive} (${pct(c.positive, c.n)}) · interested ${c.interested} (${pct(c.interested, c.n)})`
 const weighed = (weight: number | undefined, pBest: number | undefined): string =>
   `w=${weight?.toFixed(2) ?? '-'} p=${pBest?.toFixed(2) ?? '-'}`
-const status = (o: { addedOn: string; archived: Archival | null }, active: string): string =>
-  o.archived === null ? `active since ${o.addedOn} ${active}` : `archived ${o.archived.on} (${o.archived.reason})`
+const ARCHIVED_BY = { ace: 'by you', user: 'by the person' } as const
+const archivedWhy = (a: OptionArchival): string =>
+  a.actor === null ? '' : a.actor === 'rule' ? ` (${a.reason})` : ` ${ARCHIVED_BY[a.actor]}${a.reason ? `: ${JSON.stringify(a.reason)}` : ''}`
+const status = (o: { addedOn: string; archived: OptionArchival | null }, active: string): string =>
+  o.archived === null ? `active since ${o.addedOn} ${active}` : `archived ${o.archived.day}${archivedWhy(o.archived)}`
 const axis = (buckets: AxisBucket[]): string => buckets.map((b) => `${b.value ?? '(none)'} ${counted(b)}`).join('; ') || 'none'
 
 function measuredData(e: ProposeEvidence, lever: LeverStateView): string {
@@ -156,11 +162,12 @@ ${draftReviewSection(reviews) ?? '(nothing corrected)'}
 - KPI: the positive rate; interested is weaker, for when positives are too few.
 - Data sufficient is ${sufficient} (${evidence.settled} settled sends). When false: report only — learnings, salesStrategy and newVariant must be null, strategyUpserts and suggestions empty (except a strategy that no longer exists or cannot select for the Prerequisites, which may be archived).
 - Stability: change only on patterns repeated across cycles; if the last change cannot be measured yet, change nothing more.
-- salesStrategy: return the full document with only Target (Primary / Secondary / Prerequisites / Not a fit), KPI and Search Keywords changed, or null. Adjust within the frame; never write a frame change (offer, market, industry, country, channel — past sends no longer apply). Judge Target as a premise (can they use and buy it?) before the positive rate. A wrong-prospect call in Draft review tells you the Target: when it names a kind of organization, reflect it in "Not a fit".
+- salesStrategy: return { content: the full document with only Target (Primary / Secondary / Prerequisites / Not a fit), KPI and Search Keywords changed, why }, or null. Adjust within the frame; never write a frame change (offer, market, industry, country, channel — past sends no longer apply). Judge Target as a premise (can they use and buy it?) before the positive rate. A wrong-prospect call in Draft review tells you the Target: when it names a kind of organization, reflect it in "Not a fit".
 - learnings: return the full log with reconciled entries, or null. Write gate for a new entry: a cited metric with n ≥ ${lever.value.minSamplePerArm}, a pattern that repeated. Retire entries whose direction no longer reproduces by replacing their tag with [retired]. Keep ≤ 15 active entries. Draft review carries no metric, so it never becomes an entry. Stage tags: [targeting] [body] [timing] [channel] [discovery].
-- newVariant: only when today's tick asks for one (${lever.value.needsReplenishment}) — one angle most different from every listed one (subject pattern ≤ 80 chars using only {{org}} / {{name}} / {{signal}} placeholders, a 2–5 line body approach, a label) on a fresh slug like gen_${utcDateKey().replace(/-/g, '')}; otherwise null.
-- strategyUpserts: archive (archived: true, approach echoed unchanged) only on evidence the tick cannot see — clearly elevated bounces, an approach that cannot select for the Prerequisites, or a dead source. Register 1–2 fresh strategies (new kebab-case slug, 2–5 line approach: where / how to search and why it should work, preferring sources where the Prerequisites are observable) only when new strategies are needed (${lever.value.discovery.needsReplenishment}) or the premise check reoriented the Target. Never reuse a slug for a different idea.
+- newVariant: only when today's tick asks for one (${lever.value.needsReplenishment}) — one angle most different from every listed one (subject pattern ≤ 80 chars using only {{org}} / {{name}} / {{signal}} placeholders, a 2–5 line body approach, a label, why: how it differs from the listed ones) on a fresh slug like gen_${utcDateKey().replace(/-/g, '')}; otherwise null.
+- strategyUpserts: archive (archived: true, approach echoed unchanged) only on evidence the tick cannot see — clearly elevated bounces, an approach that cannot select for the Prerequisites, or a dead source. Register 1–2 fresh strategies (new kebab-case slug, 2–5 line approach: where / how to search and why it should work, preferring sources where the Prerequisites are observable) only when new strategies are needed (${lever.value.discovery.needsReplenishment}) or the premise check reoriented the Target. Never reuse a slug for a different idea. why: the evidence for an archive, the hypothesis for a new strategy.
 - suggestions: only actions the person alone can do — kind "${ADD_MEANS_SUGGESTION_KIND}" for a means needing account setup (dedupeKey = the tentative strategy slug), kind "${REVISIT_STRATEGY_SUGGESTION_KIND}" (dedupeKey e.g. cross-channel-slump) when low performance persists across every channel and strategy through repeated rotations, or for a frame change. instruction = the next action as one sentence addressed to Ace.
+- why: one short line, kept in the change log the person reads.
 - report (markdown): key KPIs; inquiry-landing conversions when any outcome is non-zero; changes since the last cycle; discovery strategy performance (skip when no send carries a slug); suggestions recorded; findings; improvements applied; tactical rejection signals (distribution, recontact queue, decision-maker referrals) when total > 0; lever observability (leading options with w / p and maturity at n ≥ ${lever.value.minSamplePerArm}, archived options — "rotated" is for freshness, not a loser; "none yet" without data); next actions. Never imply progress the numbers do not show.`
 
   let out: z.infer<typeof evaluationSchema>
@@ -181,12 +188,14 @@ ${draftReviewSection(reviews) ?? '(nothing corrected)'}
   }
   if (sufficient) {
     const { salesStrategy: newStrategy, newVariant } = out
-    if (newStrategy !== null && newStrategy !== docs.value.salesStrategy) {
-      const r = await runWithRls(db, tenantId, (tx) => saveDocument(tx, tenantId, STAGE_CALLER, env, { id: projectId, slug: 'sales_strategy' }, { content: newStrategy }))
+    if (newStrategy !== null && newStrategy.content !== docs.value.salesStrategy) {
+      const r = await runWithRls(db, tenantId, (tx) =>
+        saveDocument(tx, tenantId, STAGE_CALLER, env, { id: projectId, slug: 'sales_strategy' }, { content: newStrategy.content, reason: newStrategy.why }))
       if (r.ok) wrote.push('sales_strategy')
     }
     if (newVariant && lever.value.needsReplenishment && !variants.value.variants.some((v) => v.variantId === newVariant.variantId)) {
-      const r = await runWithRls(db, tenantId, (tx) => upsertMessageVariant(tx, tenantId, projectId, newVariant))
+      const { why, ...variant } = newVariant
+      const r = await runWithRls(db, tenantId, (tx) => upsertMessageVariant(tx, tenantId, STAGE_CALLER, projectId, { ...variant, reason: why }))
       if (r.ok) wrote.push(`variant ${newVariant.variantId}`)
     }
     for (const s of out.suggestions) {
@@ -199,7 +208,8 @@ ${draftReviewSection(reviews) ?? '(nothing corrected)'}
     const isNew = !known.has(u.slug)
     if (isNew && (!sufficient || !lever.value.discovery.needsReplenishment)) continue
     if (!isNew && !u.archived) continue
-    const r = await runWithRls(db, tenantId, (tx) => upsertDiscoveryStrategy(tx, tenantId, projectId, u))
+    const { why, ...strategy } = u
+    const r = await runWithRls(db, tenantId, (tx) => upsertDiscoveryStrategy(tx, tenantId, STAGE_CALLER, projectId, { ...strategy, reason: why }))
     if (r.ok) wrote.push(`${u.archived ? 'archived' : 'registered'} strategy ${u.slug}`)
   }
 

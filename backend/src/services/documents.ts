@@ -15,6 +15,8 @@ import { resolveAddMeansSuggestion } from './suggestions'
 import { PUBLIC_JOURNAL_SLUG } from './public-scoreboard'
 import { redactPublicJournal } from './public-journal'
 import type { OpenAIEnv } from './openai'
+import { applyDocumentChange } from './loop/change'
+import { authorOf, changeReasonSchema, isDocumentTarget } from '../domain/loop/change'
 
 // public_journal: one version per daily cycle, served on /live while the
 // project's publicScoreboardEnabled setting is on.
@@ -37,6 +39,8 @@ export type DocumentHistoryQuery = z.infer<typeof documentHistoryQuerySchema>
 
 export const saveDocumentSchema = z.object({
   content: z.string().min(1),
+  // Kept in the change log for business / sales_strategy.
+  reason: changeReasonSchema.optional(),
 })
 export type SaveDocumentInput = z.infer<typeof saveDocumentSchema>
 
@@ -193,22 +197,24 @@ export async function saveDocument(
   if (!content.ok) return content
 
   const approvedAt = caller === 'browser' ? new Date() : null
-  const [doc] = await db
-    .insert(projectDocuments)
-    .values({ tenantId, projectId, slug, content: content.value, approvedAt })
-    .returning({
-      id: projectDocuments.id,
-      createdAt: projectDocuments.createdAt,
-      approvedAt: projectDocuments.approvedAt,
-    })
+  const doc = isDocumentTarget(slug)
+    ? await applyDocumentChange(db, tenantId, projectId, slug, content.value, authorOf(caller, input.reason ?? null))
+    : (await db
+        .insert(projectDocuments)
+        .values({ tenantId, projectId, slug, content: content.value, approvedAt })
+        .returning({
+          id: projectDocuments.id,
+          createdAt: projectDocuments.createdAt,
+          approvedAt: projectDocuments.approvedAt,
+        }))[0]!
 
   if (approvedAt) await closeAddMeansSuggestion(db, tenantId, projectId, slug)
 
   return ok({
-    id: doc!.id,
+    id: doc.id,
     slug,
-    createdAt: doc!.createdAt,
-    approvedAt: doc!.approvedAt,
+    createdAt: doc.createdAt,
+    approvedAt: doc.approvedAt,
   })
 }
 

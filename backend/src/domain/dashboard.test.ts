@@ -141,51 +141,29 @@ describe('periodToWindow', () => {
 })
 
 describe('buildJournal', () => {
-  const variants = [
-    { variantId: 'roi-focus', label: 'ROI focus', createdAt: '2026-07-10T09:00:00Z' },
-    { variantId: 'pain-first', label: null, createdAt: '2026-05-01T09:00:00Z' },
-  ]
+  const variants = [{ variantId: 'roi-focus', label: 'ROI focus' }]
 
-  it('maps rotation vs dominance archives and reads pre-Phase-C entries null-safe', () => {
+  it('reports every logged change with who and why, labelling variants only', () => {
     const events = buildJournal(
       [
-        {
-          cycleDate: '2026-07-14',
-          archived: [
-            { variantId: 'pain-first', pBest: 0.05, n: 42, reason: 'stagnation' },
-            { variantId: 'legacy-v1' },
-          ],
-        },
+        { day: '2026-07-14', actor: 'rule', target: 'variant', optionId: 'roi-focus', reason: 'rotated', evidence: { pBest: 0.05, n: 42 } },
+        { day: '2026-07-14', actor: 'ace', target: 'sales_strategy', reason: 'Not a fit: agencies' },
+        { day: '2026-07-13', actor: 'user', target: 'strategy', optionId: 'yc-hn', op: 'restore', reason: null },
       ],
       variants,
       [],
-      '2026-07-12',
+      '2026-07-01',
     )
     expect(events).toEqual([
-      {
-        date: '2026-07-14',
-        kind: 'variant_archived',
-        variantId: 'legacy-v1',
-        label: null,
-        reason: 'dominated',
-        pBest: null,
-        n: null,
-      },
-      {
-        date: '2026-07-14',
-        kind: 'variant_archived',
-        variantId: 'pain-first',
-        label: null,
-        reason: 'stagnation',
-        pBest: 0.05,
-        n: 42,
-      },
+      { date: '2026-07-14', kind: 'rule_archive', target: 'variant', optionId: 'roi-focus', label: 'ROI focus', reason: 'rotated', evidence: { pBest: 0.05, n: 42 } },
+      { date: '2026-07-14', kind: 'document', target: 'sales_strategy', actor: 'ace', reason: 'Not a fit: agencies' },
+      { date: '2026-07-13', kind: 'option', target: 'strategy', optionId: 'yc-hn', label: null, op: 'restore', actor: 'user', reason: null },
     ])
   })
 
-  it('windows variant additions and escalations against windowStartDay', () => {
+  it('windows escalations and puts them after the day\'s changes', () => {
     const events = buildJournal(
-      [],
+      [{ day: '2026-07-12', actor: 'ace', target: 'variant', optionId: 'roi-focus', op: 'add', reason: null }],
       variants,
       [
         { title: 'Revisit strategy', createdAt: '2026-07-12T00:30:00Z' },
@@ -193,20 +171,7 @@ describe('buildJournal', () => {
       ],
       '2026-06-16',
     )
-    expect(events).toEqual([
-      { date: '2026-07-12', kind: 'strategy_escalated', title: 'Revisit strategy' },
-      { date: '2026-07-10', kind: 'variant_added', variantId: 'roi-focus', label: 'ROI focus' },
-    ])
-  })
-
-  it('sorts newest-first with added before archived within a day', () => {
-    const events = buildJournal(
-      [{ cycleDate: '2026-07-10', archived: [{ variantId: 'pain-first', pBest: 0.03, n: 35, reason: 'stagnation' }] }],
-      variants,
-      [],
-      '2026-06-16',
-    )
-    expect(events.map((e) => e.kind)).toEqual(['variant_added', 'variant_archived'])
+    expect(events.map((e) => e.kind)).toEqual(['option', 'strategy_escalated'])
   })
 })
 

@@ -1,10 +1,38 @@
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
-import { discoveryStrategies, leverState, messageVariants } from '../../db/schema'
+// The policy's only writer (#793): every change to an option or a policy
+// document lands with its policy_changes row in the same transaction.
+import { and, desc, eq, gte, inArray, isNull, sql } from 'drizzle-orm'
+import { discoveryStrategies, leverState, messageVariants, policyChanges, projectDocuments } from '../../db/schema'
 import type { Db } from '../../db/connection'
 import type { ProjectId, TenantId } from '../../domain/ids'
 import { LIFT_MIN, LIFT_MAX, type TargetingAxisLift } from '../../domain/loop/allocation'
 import type { TickDecision } from '../../domain/loop/decide'
+import {
+  optionOps,
+  type ChangeAuthor,
+  type DocumentTarget,
+  type LoggedChange,
+  type OptionTarget,
+  type RuleArchiveReason,
+} from '../../domain/loop/change'
 import { COARSE_TO_FINES, type CoarseIndustry } from '../../domain/coarse-industry'
+import type { MessageVariantRow, UpsertVariantBody } from '../message-variants'
+import type { DiscoveryStrategyRow, UpsertDiscoveryStrategyBody } from '../discovery-strategies'
+
+type ChangeRow = Omit<typeof policyChanges.$inferInsert, 'id' | 'tenantId' | 'projectId' | 'createdAt'>
+
+async function log(db: Db, tenantId: TenantId, projectId: ProjectId, rows: ChangeRow[]): Promise<void> {
+  if (rows.length === 0) return
+  // Not the column default: now() is the transaction's start, and a write that
+  // waited on the lock would sort before the one it waited for.
+  const createdAt = new Date()
+  await db.insert(policyChanges).values(rows.map((r) => ({ ...r, tenantId, projectId, createdAt })))
+}
+
+// Held to commit, so a concurrent write to the same option or document waits
+// and then reads the state this one left: the ops it logs are its own.
+async function lockTarget(db: Db, projectId: ProjectId, target: string, key: string): Promise<void> {
+  await db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`policy:${projectId}:${target}:${key}`}))`)
+}
 
 function valueLiftCase(column: ReturnType<typeof sql>, lifts: TargetingAxisLift[]): ReturnType<typeof sql> {
   const nullLift = lifts.find((l) => l.value === null)?.lift ?? 1.0
@@ -33,28 +61,46 @@ function industryLiftCase(column: ReturnType<typeof sql>, lifts: TargetingAxisLi
 export async function applyTickDecision(db: Db, tenantId: TenantId, projectId: ProjectId, decision: TickDecision): Promise<void> {
   const { channel: { affinity: channelAffinity }, targeting: { lifts: targetingLifts } } = decision.payload
   const now = new Date()
-  const archiveIds = decision.variants.toArchive.map((a) => a.variantId)
-  if (archiveIds.length > 0) {
-    await db
-      .update(messageVariants)
-      .set({ archivedAt: now, updatedAt: now })
-      .where(and(
-        eq(messageVariants.projectId, projectId),
-        inArray(messageVariants.variantId, archiveIds),
-        isNull(messageVariants.archivedAt),
-      ))
-  }
-  const strategyArchiveSlugs = decision.strategies.toArchive.map((a) => a.armId)
-  if (strategyArchiveSlugs.length > 0) {
-    await db
-      .update(discoveryStrategies)
-      .set({ archivedAt: now, updatedAt: now })
-      .where(and(
-        eq(discoveryStrategies.projectId, projectId),
-        inArray(discoveryStrategies.slug, strategyArchiveSlugs),
-        isNull(discoveryStrategies.archivedAt),
-      ))
-  }
+  // Sorted, so two writers taking several locks cannot deadlock.
+  const variantIds = decision.variants.toArchive.map((a) => a.variantId).sort()
+  const strategySlugs = decision.strategies.toArchive.map((a) => a.armId).sort()
+  for (const id of variantIds) await lockTarget(db, projectId, 'variant', id)
+  for (const slug of strategySlugs) await lockTarget(db, projectId, 'strategy', slug)
+  const archivedVariants = variantIds.length === 0 ? [] : await db
+    .update(messageVariants)
+    .set({ archivedAt: now, updatedAt: now })
+    .where(and(
+      eq(messageVariants.projectId, projectId),
+      inArray(messageVariants.variantId, variantIds),
+      isNull(messageVariants.archivedAt),
+    ))
+    .returning({ id: messageVariants.variantId })
+  const archivedStrategies = strategySlugs.length === 0 ? [] : await db
+    .update(discoveryStrategies)
+    .set({ archivedAt: now, updatedAt: now })
+    .where(and(
+      eq(discoveryStrategies.projectId, projectId),
+      inArray(discoveryStrategies.slug, strategySlugs),
+      isNull(discoveryStrategies.archivedAt),
+    ))
+    .returning({ id: discoveryStrategies.slug })
+  // Only what this tick archived: an option someone archived since the tick
+  // observed it is theirs.
+  const did = (rows: Array<{ id: string }>, id: string): boolean => rows.some((r) => r.id === id)
+  await log(db, tenantId, projectId, [
+    ...decision.variants.toArchive.filter((a) => did(archivedVariants, a.variantId)).map(({ variantId, pBest, n, reason }) => ({
+      target: 'variant' as const,
+      optionId: variantId,
+      ruleReason: reason === 'stagnation' ? ('rotated' as const) : ('lost' as const),
+      evidence: { pBest, n },
+    })),
+    ...decision.strategies.toArchive.filter((a) => did(archivedStrategies, a.armId)).map(({ armId, pBest, n }) => ({
+      target: 'strategy' as const,
+      optionId: armId,
+      ruleReason: 'lost' as const,
+      evidence: { pBest, n },
+    })),
+  ].map((a) => ({ ...a, op: 'archive' as const, actor: 'rule' as const })))
   await db
     .insert(leverState)
     .values({
@@ -90,4 +136,192 @@ export async function applyTickDecision(db: Db, tenantId: TenantId, projectId: P
     JOIN organizations o ON o.id = p.organization_id
     WHERE pp.prospect_id = p.id AND pp.project_id = ${projectId}
   `)
+}
+
+type VariantWrite = Omit<UpsertVariantBody, 'reason'>
+
+export const variantCols = {
+  variantId: messageVariants.variantId,
+  subjectPattern: messageVariants.subjectPattern,
+  bodyApproach: messageVariants.bodyApproach,
+  label: messageVariants.label,
+  archivedAt: messageVariants.archivedAt,
+  createdAt: messageVariants.createdAt,
+  updatedAt: messageVariants.updatedAt,
+}
+
+const variantState = (v: Pick<MessageVariantRow, 'subjectPattern' | 'bodyApproach' | 'label' | 'archivedAt'>) => ({
+  archived: v.archivedAt !== null,
+  content: { subjectPattern: v.subjectPattern, bodyApproach: v.bodyApproach, label: v.label },
+})
+
+export async function applyVariantChange(
+  db: Db,
+  tenantId: TenantId,
+  projectId: ProjectId,
+  body: VariantWrite,
+  by: ChangeAuthor,
+): Promise<MessageVariantRow | null> {
+  await lockTarget(db, projectId, 'variant', body.variantId)
+  const [before] = await db
+    .select(variantCols)
+    .from(messageVariants)
+    .where(and(eq(messageVariants.projectId, projectId), eq(messageVariants.variantId, body.variantId)))
+  const now = new Date()
+  const archivedAt = body.archived ? now : null
+  const [row] = await db
+    .insert(messageVariants)
+    .values({
+      tenantId,
+      projectId,
+      variantId: body.variantId,
+      subjectPattern: body.subjectPattern,
+      bodyApproach: body.bodyApproach ?? null,
+      label: body.label ?? null,
+      archivedAt,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: [messageVariants.projectId, messageVariants.variantId],
+      set: {
+        subjectPattern: body.subjectPattern,
+        ...(body.bodyApproach !== undefined ? { bodyApproach: body.bodyApproach } : {}),
+        ...(body.label !== undefined ? { label: body.label } : {}),
+        ...(body.archived !== undefined ? { archivedAt } : {}),
+        updatedAt: now,
+      },
+    })
+    .returning(variantCols)
+  if (!row) return null
+  const ops = optionOps(before ? variantState(before) : null, variantState(row))
+  await log(db, tenantId, projectId, ops.map((op) => ({ target: 'variant' as const, optionId: row.variantId, op, ...by })))
+  return row
+}
+
+type StrategyWrite = Omit<UpsertDiscoveryStrategyBody, 'reason'>
+
+export const strategyCols = {
+  slug: discoveryStrategies.slug,
+  approach: discoveryStrategies.approach,
+  archivedAt: discoveryStrategies.archivedAt,
+  createdAt: discoveryStrategies.createdAt,
+  updatedAt: discoveryStrategies.updatedAt,
+}
+
+const strategyState = (s: Pick<DiscoveryStrategyRow, 'approach' | 'archivedAt'>) => ({
+  archived: s.archivedAt !== null,
+  content: { approach: s.approach },
+})
+
+export async function applyStrategyChange(
+  db: Db,
+  tenantId: TenantId,
+  projectId: ProjectId,
+  body: StrategyWrite,
+  by: ChangeAuthor,
+): Promise<DiscoveryStrategyRow | null> {
+  await lockTarget(db, projectId, 'strategy', body.slug)
+  const [before] = await db
+    .select(strategyCols)
+    .from(discoveryStrategies)
+    .where(and(eq(discoveryStrategies.projectId, projectId), eq(discoveryStrategies.slug, body.slug)))
+  const now = new Date()
+  const archivedAt = body.archived === true ? now : null
+  const [row] = await db
+    .insert(discoveryStrategies)
+    .values({ tenantId, projectId, slug: body.slug, approach: body.approach, archivedAt, createdAt: now, updatedAt: now })
+    .onConflictDoUpdate({
+      target: [discoveryStrategies.projectId, discoveryStrategies.slug],
+      set: { approach: body.approach, archivedAt, updatedAt: now },
+    })
+    .returning(strategyCols)
+  if (!row) return null
+  const ops = optionOps(before ? strategyState(before) : null, strategyState(row))
+  await log(db, tenantId, projectId, ops.map((op) => ({ target: 'strategy' as const, optionId: row.slug, op, ...by })))
+  return row
+}
+
+type DocumentVersion = { id: number; createdAt: Date; approvedAt: Date | null }
+
+// A version the person saved is approved as they saved it; see projectDocuments.approvedAt.
+export async function applyDocumentChange(
+  db: Db,
+  tenantId: TenantId,
+  projectId: ProjectId,
+  target: DocumentTarget,
+  content: string,
+  by: ChangeAuthor,
+): Promise<DocumentVersion> {
+  await lockTarget(db, projectId, target, '')
+  const [latest] = await db
+    .select({ content: projectDocuments.content })
+    .from(projectDocuments)
+    .where(and(eq(projectDocuments.projectId, projectId), eq(projectDocuments.slug, target)))
+    .orderBy(desc(projectDocuments.createdAt), desc(projectDocuments.id))
+    .limit(1)
+  const [doc] = await db
+    .insert(projectDocuments)
+    .values({ tenantId, projectId, slug: target, content, approvedAt: by.actor === 'user' ? new Date() : null })
+    .returning({ id: projectDocuments.id, createdAt: projectDocuments.createdAt, approvedAt: projectDocuments.approvedAt })
+  if (latest?.content !== content) await log(db, tenantId, projectId, [{ target, op: 'update', ...by }])
+  return doc!
+}
+
+const utcDay = (at: Date): string => at.toISOString().slice(0, 10)
+
+export type OptionArchival =
+  | { day: string; actor: 'rule'; reason: RuleArchiveReason }
+  | { day: string; actor: ChangeAuthor['actor']; reason: string | null }
+  | { day: string; actor: null; reason: null }
+
+const changeCols = {
+  target: policyChanges.target,
+  optionId: policyChanges.optionId,
+  op: policyChanges.op,
+  actor: policyChanges.actor,
+  reason: policyChanges.reason,
+  ruleReason: policyChanges.ruleReason,
+  evidence: policyChanges.evidence,
+  createdAt: policyChanges.createdAt,
+}
+
+export async function lastArchivals(db: Db, projectId: ProjectId, target: OptionTarget, optionIds: string[]): Promise<Map<string, OptionArchival>> {
+  if (optionIds.length === 0) return new Map()
+  const rows = await db
+    .selectDistinctOn([policyChanges.optionId], changeCols)
+    .from(policyChanges)
+    .where(and(
+      eq(policyChanges.projectId, projectId),
+      eq(policyChanges.target, target),
+      eq(policyChanges.op, 'archive'),
+      inArray(policyChanges.optionId, optionIds),
+    ))
+    .orderBy(policyChanges.optionId, desc(policyChanges.createdAt), desc(policyChanges.id))
+  return new Map(rows.map((r): [string, OptionArchival] => {
+    const day = utcDay(r.createdAt)
+    if (r.actor !== 'rule') return [r.optionId!, { day, actor: r.actor, reason: r.reason }]
+    if (r.ruleReason === null) throw new Error(`Invariant: rule archive of ${r.optionId} without its reason`)
+    return [r.optionId!, { day, actor: r.actor, reason: r.ruleReason }]
+  }))
+}
+
+// Newest first.
+export async function listChanges(db: Db, projectId: ProjectId, since: Date): Promise<LoggedChange[]> {
+  const rows = await db
+    .select(changeCols)
+    .from(policyChanges)
+    .where(and(eq(policyChanges.projectId, projectId), gte(policyChanges.createdAt, since)))
+    .orderBy(desc(policyChanges.createdAt), desc(policyChanges.id))
+  return rows.map((r): LoggedChange => {
+    const day = utcDay(r.createdAt)
+    if (r.target === 'business' || r.target === 'sales_strategy') {
+      if (r.actor === 'rule') throw new Error(`Invariant: rule change to ${r.target}`)
+      return { day, actor: r.actor, target: r.target, reason: r.reason }
+    }
+    if (r.optionId === null) throw new Error(`Invariant: ${r.target} change row without an option`)
+    if (r.actor !== 'rule') return { day, actor: r.actor, target: r.target, optionId: r.optionId, op: r.op, reason: r.reason }
+    if (r.ruleReason === null) throw new Error(`Invariant: rule archive of ${r.optionId} without its reason`)
+    return { day, actor: r.actor, target: r.target, optionId: r.optionId, reason: r.ruleReason, evidence: r.evidence }
+  })
 }

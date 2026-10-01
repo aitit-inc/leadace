@@ -112,19 +112,37 @@
       : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
   }
 
-  function journalText(e: JournalEvent): { text: string; detail: string | null } {
-    if (e.kind === 'variant_added') {
-      return { text: `Started testing a new angle “${e.label ?? e.variantId}”`, detail: null };
+  const OPTION_VERBS = {
+    variant: {
+      ace: { add: 'Started testing a new angle', update: 'Rewrote the angle', archive: 'Retired the angle', restore: 'Brought back the angle' },
+      user: { add: 'You added the angle', update: 'You edited the angle', archive: 'You retired the angle', restore: 'You brought back the angle' },
+    },
+    strategy: {
+      ace: { add: 'Started searching via', update: 'Changed the search', archive: 'Stopped searching via', restore: 'Resumed searching via' },
+      user: { add: 'You added the search', update: 'You edited the search', archive: 'You stopped the search', restore: 'You resumed the search' },
+    },
+  } as const;
+  const DOCUMENT_NAMES = { sales_strategy: 'the sales strategy', business: 'the business profile' } as const;
+
+  function journalText(e: JournalEvent): { text: string; detail: string | null; why: string | null } {
+    switch (e.kind) {
+      case 'strategy_escalated':
+        return { text: `Flagged for your review: ${e.title}`, detail: null, why: null };
+      case 'document': {
+        const name = DOCUMENT_NAMES[e.target];
+        return { text: e.actor === 'user' ? `You edited ${name}` : `Adjusted ${name}`, detail: null, why: e.reason };
+      }
+      case 'option':
+        return { text: `${OPTION_VERBS[e.target][e.actor][e.op]} “${e.label ?? e.optionId}”`, detail: null, why: e.reason };
+      case 'rule_archive': {
+        const name = `“${e.label ?? e.optionId}”`;
+        const detail = e.evidence ? `win chance ${Math.round(e.evidence.pBest * 100)}% · ${e.evidence.n} sends` : null;
+        if (e.reason === 'rotated') return { text: `Swapped out ${name} — results stayed flat`, detail, why: null };
+        return e.target === 'variant'
+          ? { text: `Retired ${name} — a stronger angle won`, detail, why: null }
+          : { text: `Stopped searching via ${name} — another search did better`, detail, why: null };
+      }
     }
-    if (e.kind === 'variant_archived') {
-      const name = e.label ?? e.variantId;
-      const detail =
-        e.pBest !== null && e.n !== null ? `win chance ${Math.round(e.pBest * 100)}% · ${e.n} sends` : null;
-      return e.reason === 'stagnation'
-        ? { text: `Swapped out “${name}” — results stayed flat`, detail }
-        : { text: `Retired “${name}” — a stronger angle won`, detail };
-    }
-    return { text: `Flagged for your review: ${e.title}`, detail: null };
   }
   let trendMax = $derived(Math.max(1, ...(summary?.trend ?? []).map((t) => t.sent)));
   let hasTrendActivity = $derived((summary?.trend ?? []).some((t) => t.sent > 0 || t.responses > 0));
@@ -481,6 +499,7 @@
                         <span class="w-12 shrink-0 text-xs tabular-nums text-text-muted">{fmtDay(event.date)}</span>
                         <span class="min-w-0 break-words text-text-secondary">
                           {j.text}{#if j.detail}{' '}<span class="text-text-muted">({j.detail})</span>{/if}
+                          {#if j.why}<span class="mt-0.5 block text-xs text-text-muted">{j.why}</span>{/if}
                         </span>
                       </li>
                     {/each}

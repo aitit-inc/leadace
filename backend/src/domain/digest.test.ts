@@ -53,12 +53,24 @@ describe('buildDigest', () => {
 
   it('reports a change once the day it happened is complete, and not again after', () => {
     const journal: DashboardSummary['journal'] = [
-      { date: '2026-09-18', kind: 'variant_added', variantId: 'v2', label: 'Cost saving' },
+      { date: '2026-09-18', kind: 'option', target: 'variant', optionId: 'v2', label: 'Cost saving', op: 'add', actor: 'ace', reason: null },
     ]
     // The day it happened is still in progress: the rest of it is unreported.
     expect(buildDigest(input({ today: '2026-09-18', summary: { journal } }))).toBeNull()
     expect(buildDigest(input({ today: '2026-09-19', summary: { journal } }))?.body).toContain('New angle: Cost saving')
     expect(buildDigest(input({ sinceDay: '2026-09-19', today: '2026-09-20', summary: { journal } }))).toBeNull()
+  })
+
+  it('says who changed what and why', () => {
+    const journal: DashboardSummary['journal'] = [
+      { date: '2026-09-18', kind: 'rule_archive', target: 'strategy', optionId: 'yc-hn', label: null, reason: 'lost', evidence: { pBest: 0.01, n: 74 } },
+      { date: '2026-09-18', kind: 'option', target: 'strategy', optionId: 'yc-hn', label: null, op: 'restore', actor: 'user', reason: 'still the best source' },
+      { date: '2026-09-18', kind: 'document', target: 'sales_strategy', actor: 'ace', reason: 'Not a fit: agencies' },
+    ]
+    const body = buildDigest(input({ today: '2026-09-19', summary: { journal } }))?.body ?? ''
+    expect(body).toContain('Search strategy retired: yc-hn (another strategy won)')
+    expect(body).toContain('Search strategy back: yc-hn (by you) — still the best source')
+    expect(body).toContain('Sales strategy adjusted — Not a fit: agencies')
   })
 
   it('leads with what was un-learned and counts it as a change', () => {

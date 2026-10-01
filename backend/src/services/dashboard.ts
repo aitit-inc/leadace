@@ -41,7 +41,8 @@ import type { RejectionRecontactWindow } from '../db/schema'
 import { ok, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { loadProjectOutboundAllowlist } from './project-settings'
-import { getLeverDecisionsHistory, getLeverStateById } from './loop/policy'
+import { getLeverStateById } from './loop/policy'
+import { listChanges } from './loop/change'
 import { listMessageVariantsById, type MessageVariantRow } from './message-variants'
 import { REVISIT_STRATEGY_SUGGESTION_KIND } from './suggestions'
 import { getRejectionFeedbackSummaryById } from './responses'
@@ -86,6 +87,7 @@ export async function getDashboardSummary(
   const curIso = curStart.toISOString()
   const prevIso = prevStart.toISOString()
   const hotSinceIso = new Date(now.getTime() - HOT_LEADS_WINDOW_DAYS * DAY_MS).toISOString()
+  const journalStartDay = new Date(now.getTime() - JOURNAL_WINDOW_DAYS * DAY_MS).toISOString().slice(0, 10)
   const trendSinceIso = trendWindowStartIso(now)
   const windowDays = query.period === '7d' ? 7 : query.period === '30d' ? 30 : undefined
 
@@ -111,7 +113,7 @@ export async function getDashboardSummary(
     contactedRows,
     outboundAllowlist,
     leverRes,
-    leverHistoryRes,
+    changes,
     variantsRes,
     rejectionRes,
     recentRes,
@@ -245,8 +247,8 @@ export async function getDashboardSummary(
     // ::text so a direct (non-pooler) connection can't hand back a Date.
     raw<{ last: string | null }>(sql`
       SELECT MAX(cycle_date)::text AS last FROM lever_decisions WHERE project_id = ${projectId}`),
-    // Day-based cutoff matching the lever_decisions history window, so the
-    // journal's first UTC day is complete instead of rolling-instant-truncated.
+    // Day-based cutoff matching the change log's window, so the journal's
+    // first UTC day is complete instead of rolling-instant-truncated.
     raw<{ title: string; createdAt: string | Date }>(sql`
       SELECT title, created_at AS "createdAt" FROM suggestions
       WHERE project_id = ${projectId} AND kind = ${REVISIT_STRATEGY_SUGGESTION_KIND}
@@ -277,7 +279,7 @@ export async function getDashboardSummary(
       .where(and(eq(outreachLogs.projectId, projectId), eq(outreachLogs.status, 'sent'), gte(outreachLogs.sentAt, curStart))),
     loadProjectOutboundAllowlist(db, projectId),
     getLeverStateById(db, tenantId, projectId),
-    getLeverDecisionsHistory(db, tenantId, projectId, JOURNAL_WINDOW_DAYS),
+    listChanges(db, projectId, new Date(`${journalStartDay}T00:00:00Z`)),
     listMessageVariantsById(db, tenantId, projectId),
     getRejectionFeedbackSummaryById(db, tenantId, projectId, {
       scope: 'all',
@@ -292,7 +294,6 @@ export async function getDashboardSummary(
 
   // One-by-one (not a loop) so each result narrows to its ok branch for the build below.
   if (!leverRes.ok) return leverRes
-  if (!leverHistoryRes.ok) return leverHistoryRes
   if (!variantsRes.ok) return variantsRes
   if (!rejectionRes.ok) return rejectionRes
   if (!recentRes.ok) return recentRes
@@ -326,12 +327,7 @@ export async function getDashboardSummary(
     variantsRes.value.variants,
     parseLearnings(learningsRows[0]?.content ?? null),
   )
-  const journal = buildJournal(
-    leverHistoryRes.value.decisions,
-    variantsRes.value.variants,
-    escalationRows,
-    new Date(now.getTime() - JOURNAL_WINDOW_DAYS * DAY_MS).toISOString().slice(0, 10),
-  )
+  const journal = buildJournal(changes, variantsRes.value.variants, escalationRows, journalStartDay)
   const rejections = buildRejections(rejectionRes.value)
 
   const reactions: Array<ProspectReaction & { at: Date }> = [

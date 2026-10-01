@@ -20,6 +20,7 @@ import { SERVER_VERSION } from '../mcp/version'
 import { JOB_KINDS, JOB_STATUSES, jobParamsSchema, type JobKind, type JobLogLine, type JobParams, type JobResult, type StrategyPlanCompliance } from '../domain/jobs'
 import { DAYS_OF_WEEK, daysSchema, hourSchema, promptSchema, timezoneSchema } from '../domain/schedules'
 import { applyStrategyDraftSchema, strategyDraftInputSchema } from '../domain/strategy-draft'
+import { changeReasonSchema } from '../domain/loop/change'
 
 // MIN_PLUGIN_VERSION is the gate: any plugin older than this MUST be told to
 // run `/plugin update leadace@leadace` because backend behavior assumes the
@@ -215,6 +216,8 @@ export type ToolDef = {
   readOnly: boolean
   handler: (args: Record<string, unknown>, ctx: ToolCtx) => Promise<ToolCallResult> | ToolCallResult
 }
+
+const changeReason = changeReasonSchema.optional().describe('Why, in one line; kept in the change log.')
 
 // Building the tool schemas once per isolate keeps the MCP fetch path off the
 // Worker CPU limit — per-request rebuild used to exceed Free's 10 ms ceiling.
@@ -901,6 +904,7 @@ export function buildToolRegistry(): ToolDef[] {
       bodyApproach: z.string().min(1).max(2000).nullable().optional().describe('Angle brief (2-5 lines: structure / tone / CTA type / length / opener policy) the body is written from; null clears it, leaving the email guidelines alone to shape the body.'),
       label: z.string().min(1).max(120).nullable().optional().describe('Human-readable display label; null clears it.'),
       archived: z.boolean().optional().describe('Omit to leave the archived state unchanged; false un-archives.'),
+      reason: changeReason,
     },
     async (input, ctx) => {
       const { projectId, ...body } = input
@@ -955,6 +959,7 @@ export function buildToolRegistry(): ToolDef[] {
       slug: discoveryStrategySchema.describe('Kebab-case arm id, stable for life — renaming orphans its measured history.'),
       approach: z.string().min(1).max(2000).describe('Where/how to search and why it should work (2-5 lines). Platform-specific procedures belong in the playbook_<slug> document, not here.'),
       archived: z.boolean().optional().describe('true archives; omit or false lands the strategy active.'),
+      reason: changeReason,
     },
     async (input, ctx) => {
       const { projectId, ...body } = input
@@ -1895,9 +1900,10 @@ export function buildToolRegistry(): ToolDef[] {
       projectId: z.string().min(1).describe('Project name or ID'),
       slug: z.string().describe('Document slug: "business", "sales_strategy", "search_notes", "learnings", "public_journal", or "playbook_<strategy-slug>"'),
       content: z.string().describe('Full markdown content of the document'),
+      reason: changeReason.describe('Why, in one line; kept in the change log for business and sales_strategy.'),
     },
-    async ({ projectId, slug, content }, ctx) => {
-      const { ok, data } = await ctx.callApi('PUT', `/projects/${encodeURIComponent(projectId)}/documents/${slug}`, { content })
+    async ({ projectId, slug, content, reason }, ctx) => {
+      const { ok, data } = await ctx.callApi('PUT', `/projects/${encodeURIComponent(projectId)}/documents/${slug}`, { content, reason })
       if (!ok) {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }

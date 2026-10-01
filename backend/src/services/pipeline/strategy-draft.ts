@@ -198,12 +198,12 @@ export async function applyStrategyDraft(
     saved.push(slug)
   }
   for (const s of input.discoveryStrategies) {
-    const r = await upsertDiscoveryStrategy(db, tenantId, projectId, s)
+    const r = await upsertDiscoveryStrategy(db, tenantId, STAGE_CALLER, projectId, s)
     if (!r.ok) return r
     saved.push(`strategy ${s.slug}`)
   }
   for (const v of input.messageVariants) {
-    const r = await upsertMessageVariant(db, tenantId, projectId, v)
+    const r = await upsertMessageVariant(db, tenantId, STAGE_CALLER, projectId, v)
     if (!r.ok) return r
     saved.push(`variant ${v.variantId}`)
   }

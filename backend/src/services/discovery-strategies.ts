@@ -6,12 +6,15 @@ import { discoveryStrategySchema, type ProjectId, type ProjectRef, type TenantId
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { loadLeverConfig } from './project-settings'
+import { applyStrategyChange, strategyCols } from './loop/change'
+import { authorOf, changeReasonSchema } from '../domain/loop/change'
 
 export const upsertDiscoveryStrategyBodySchema = z
   .object({
     slug: discoveryStrategySchema,
     approach: z.string().min(1).max(2000),
     archived: z.boolean().optional(),
+    reason: changeReasonSchema.optional(),
   })
   .strict()
 export type UpsertDiscoveryStrategyBody = z.infer<typeof upsertDiscoveryStrategyBodySchema>
@@ -22,14 +25,6 @@ export type DiscoveryStrategyRow = {
   archivedAt: Date | null
   createdAt: Date
   updatedAt: Date
-}
-
-const strategyCols = {
-  slug: discoveryStrategies.slug,
-  approach: discoveryStrategies.approach,
-  archivedAt: discoveryStrategies.archivedAt,
-  createdAt: discoveryStrategies.createdAt,
-  updatedAt: discoveryStrategies.updatedAt,
 }
 
 export async function listDiscoveryStrategies(
@@ -68,6 +63,7 @@ export async function getActiveStrategySlugs(db: Db, projectId: ProjectId): Prom
 export async function upsertDiscoveryStrategy(
   db: Db,
   tenantId: TenantId,
+  caller: 'browser' | 'agent',
   projectRef: ProjectRef,
   body: UpsertDiscoveryStrategyBody,
 ): Promise<ServiceResult<DiscoveryStrategyRow>> {
@@ -96,30 +92,8 @@ export async function upsertDiscoveryStrategy(
     }
   }
 
-  const now = new Date()
-  const archivedAt = body.archived === true ? now : null
-
-  const [row] = await db
-    .insert(discoveryStrategies)
-    .values({
-      tenantId,
-      projectId,
-      slug: body.slug,
-      approach: body.approach,
-      archivedAt,
-      createdAt: now,
-      updatedAt: now,
-    })
-    .onConflictDoUpdate({
-      target: [discoveryStrategies.projectId, discoveryStrategies.slug],
-      set: {
-        approach: body.approach,
-        archivedAt,
-        updatedAt: now,
-      },
-    })
-    .returning(strategyCols)
-
+  const { reason, ...write } = body
+  const row = await applyStrategyChange(db, tenantId, projectId, write, authorOf(caller, reason ?? null))
   if (!row) return err('INTERNAL_ERROR', 'Failed to upsert discovery strategy')
   return ok(row)
 }

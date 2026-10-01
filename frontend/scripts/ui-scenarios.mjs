@@ -345,6 +345,7 @@ function seedThread(ctx, { projectId, title, userText, modelText, toolName, args
 const DASH_PROOF = 'rst_20260715_b';
 const DASH_SINGLE = 'rst_20260715_d';
 const DASH_SUBJECT = 'Three minutes a day: AI practice that makes you clearer';
+const DASH_TARGET_WHY = 'Added large universities to Not a fit: 201+ staff reply 1.9% (n=53) against 9.2% at 11-50 (n=120)';
 // Days 0..27 of the 30-day window; the last two days are the named sends below.
 const DASH_BY_DAY = [8, 9, 9, 8, 0, 0, 0, 7, 8, 7, 6, 8, 9, 14, 3, 0, 0, 0, 5, 7, 7, 0, 0, 0, 9, 6, 0, 0];
 const DASH_PREV_TOTAL = 133;
@@ -579,6 +580,17 @@ function seedDashboardFixture(ctx, projectId) {
     `INSERT INTO lever_decisions (tenant_id, project_id, cycle_date, decision) VALUES
      (${q(tenant)}, ${q(projectId)}, ${q(ymd(now - 7 * DAY))}, ${q(JSON.stringify(cycleRetire))}::jsonb),
      (${q(tenant)}, ${q(projectId)}, ${q(ymd(now))}, ${q(JSON.stringify(cycleToday))}::jsonb);`,
+  );
+  // The journal is the change log: the angles' adds predate its 30-day
+  // window, so it shows the two the tick retired and one target adjustment.
+  psql(
+    `INSERT INTO policy_changes (tenant_id, project_id, target, option_id, op, actor, reason, rule_reason, evidence, created_at) VALUES
+     ${[DASH_PROOF, DASH_SINGLE, 'rst_20260715_a', 'rst_20260715_c']
+       .map((id) => `(${q(tenant)}, ${q(projectId)}, 'variant', ${q(id)}, 'add', 'ace', NULL, NULL, NULL, ${q(born)})`)
+       .join(',\n     ')},
+     (${q(tenant)}, ${q(projectId)}, 'variant', 'rst_20260715_a', 'archive', 'rule', NULL, 'lost', '{"pBest":0.02,"n":30}'::jsonb, ${q(retiredAt)}),
+     (${q(tenant)}, ${q(projectId)}, 'variant', 'rst_20260715_c', 'archive', 'rule', NULL, 'lost', '{"pBest":0.01,"n":32}'::jsonb, ${q(retiredAt)}),
+     (${q(tenant)}, ${q(projectId)}, 'sales_strategy', NULL, 'update', 'ace', ${q(DASH_TARGET_WHY)}, NULL, NULL, ${q(iso(now - 3 * DAY))});`,
   );
   const learnings = DASH_LEARNINGS.map((line) =>
     line.replace(/\[D-(\d+)\]/, (_, d) => `[${ymd(now - Number(d) * DAY)}]`),

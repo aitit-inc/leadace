@@ -33,6 +33,7 @@ import { ok, type ServiceResult } from '../result'
 import { resolveProject } from '../projects'
 import { projectTargetExpr } from '../prospects'
 import { getActiveStrategySlugs } from '../discovery-strategies'
+import { lastArchivals, type OptionArchival } from './change'
 
 // Through the prod transaction pooler (Supavisor, prepare:false) postgres-js
 // can't read column type OIDs, so raw db.execute returns numeric/timestamp
@@ -632,17 +633,13 @@ export async function getProjectStats(
 
 export type ReactionCounts = { n: number; positive: number; interested: number }
 
-// 'lost' / 'rotated' when the tick archived the option (its lever_decisions
-// row that day); 'other' when evaluate or the person did.
-export type Archival = { on: string; reason: 'lost' | 'rotated' | 'other' }
-
 export type VariantEvidence = ReactionCounts & {
   variantId: string
   addedOn: string
   label: string | null
   subjectPattern: string
   bodyApproach: string | null
-  archived: Archival | null
+  archived: OptionArchival | null
 }
 
 export type StrategyEvidence = ReactionCounts & {
@@ -652,7 +649,7 @@ export type StrategyEvidence = ReactionCounts & {
   // Threadable email sends only: a form or SNS send cannot bounce.
   bounced: number
   bounceEligible: number
-  archived: Archival | null
+  archived: OptionArchival | null
 }
 
 export type EvidenceAxis = 'industry' | 'size' | 'country' | 'channel' | 'priority'
@@ -758,8 +755,7 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
 
   const dayOf = (at: Date): string => at.toISOString().slice(0, 10)
   const recentIds = recent.map((r) => r.outreachLogId)
-  const archiveDays = [...archivedVariants, ...archivedStrategies].map((o) => dayOf(o.archivedAt!))
-  const [replyRows, sessionRows, tickRows] = await Promise.all([
+  const [replyRows, sessionRows, variantArchivals, strategyArchivals] = await Promise.all([
     recentIds.length === 0
       ? []
       : db.select({
@@ -780,11 +776,8 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
       ? []
       : db.select({ outreachLogId: inquirySessions.outreachLogId, outcome: inquirySessions.outcome })
           .from(inquirySessions).where(inArray(inquirySessions.outreachLogId, recentIds)),
-    // Only the days the listed options were archived: the tick's row that day says why.
-    archiveDays.length === 0
-      ? []
-      : db.select({ cycleDate: leverDecisions.cycleDate, decision: leverDecisions.decision })
-          .from(leverDecisions).where(and(eq(leverDecisions.projectId, projectId), inArray(leverDecisions.cycleDate, archiveDays))),
+    lastArchivals(db, projectId, 'variant', archivedVariants.map((v) => v.id)),
+    lastArchivals(db, projectId, 'strategy', archivedStrategies.map((st) => st.id)),
   ])
 
   const withReactions = (n: number, t: ReactionTotals | undefined): ReactionCounts => ({ n, positive: t?.positive ?? 0, interested: t?.interested ?? 0 })
@@ -796,16 +789,9 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
   }
   const priorityBucket = (priority: number | null): string | null => (priority === null ? null : String(priority))
 
-  const archival = (id: string, at: Date | null, layer: 'variant' | 'strategy'): Archival | null => {
-    if (at === null) return null
-    const on = dayOf(at)
-    const tick = tickRows.find((row) => row.cycleDate === on)?.decision
-    if (layer === 'variant') {
-      const hit = tick?.subject.archived.find((a) => a.variantId === id)
-      return { on, reason: hit ? (hit.reason === 'stagnation' ? 'rotated' : 'lost') : 'other' }
-    }
-    return { on, reason: tick?.discovery?.archived.some((a) => a.slug === id) ? 'lost' : 'other' }
-  }
+  // An option archived by a Worker that predates the log has no row: the day is all that is known.
+  const archival = (archivals: Map<string, OptionArchival>, id: string, at: Date | null): OptionArchival | null =>
+    at === null ? null : archivals.get(id) ?? { day: dayOf(at), actor: null, reason: null }
 
   const variantN = new Map(variantRows.map((r) => [r.variantId, r.n]))
   const variantReactions = reactionsBy(reacted, (r) => r.variantId, config.reward)
@@ -856,7 +842,7 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
       label: v.label,
       subjectPattern: v.subjectPattern,
       bodyApproach: v.bodyApproach,
-      archived: archival(v.id, v.archivedAt, 'variant'),
+      archived: archival(variantArchivals, v.id, v.archivedAt),
       ...withReactions(variantN.get(v.id) ?? 0, variantReactions.get(v.id)),
     })),
     strategies: [...activeStrategies, ...archivedStrategies].map((st) => ({
@@ -865,7 +851,7 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
       approach: st.approach,
       bounced: bouncedBy.get(st.id) ?? 0,
       bounceEligible: eligibleBy.get(st.id) ?? 0,
-      archived: archival(st.id, st.archivedAt, 'strategy'),
+      archived: archival(strategyArchivals, st.id, st.archivedAt),
       ...withReactions(strategyN.get(st.id) ?? 0, strategyReactions.get(st.id)),
     })),
     axes: {

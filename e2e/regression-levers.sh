@@ -131,7 +131,7 @@ restore_and_exit() {
   echo "=== teardown ===" >&2
   if [[ -n "${PROJECT_ID:-}" ]]; then
     api DELETE "/api/projects/$PROJECT_ID" > /dev/null || true
-    say "deleted project $PROJECT_ID (cascades variants / outreach / responses / lever_state / lever_decisions)"
+    say "deleted project $PROJECT_ID (cascades variants / outreach / responses / lever_state / lever_decisions / policy_changes)"
   fi
   if [[ -n "${PROJECT_ID2:-}" ]]; then
     api DELETE "/api/projects/$PROJECT_ID2" > /dev/null || true
@@ -327,6 +327,41 @@ assert_eq "history newest cycleDate is a bare date (no ISO time component)" \
 # Default window applies when days omitted (no 400, returns the same history).
 LD0="$(api GET "/api/projects/$PROJECT_ID/lever-decisions")"
 assert_eq "history default window returns the decision" "$(echo "$LD0" | jq -r '.decisions | length >= 1')" "true"
+
+step "policy_changes: one row per change, with who and why"
+log_rows() { # target, option_id → "op:actor:reason" lines, oldest first
+  psql_local "SELECT op || ':' || actor || ':' || COALESCE(rule_reason::text, reason, '-') FROM policy_changes
+              WHERE project_id='$PROJECT_ID' AND target='$1' AND option_id IS NOT DISTINCT FROM NULLIF('$2', '') ORDER BY id;" | paste -sd, -
+}
+# The e2e token is a person's (not an MCP or chat agent), so API writes are the user's.
+assert_eq "seeded variants logged as the user's adds" "$(log_rows variant v1)" "add:user:-"
+assert_eq "tick archive of v3 logged as the rule's, reason lost" "$(log_rows variant v3)" "add:user:-,archive:rule:lost"
+assert_eq "rule archive keeps its evidence" \
+  "$(psql_local "SELECT (evidence->>'pBest')::float < 0.05 AND (evidence->>'n')::int = 50 FROM policy_changes WHERE project_id='$PROJECT_ID' AND option_id='v3' AND op='archive';")" "t"
+V9='{variantId:"v9", subjectPattern:"Hello {{org}} — v9", label:"v9"}'
+api PUT "/api/projects/$PROJECT_ID/message-variants" "$(jq -nc "$V9 + {reason:\"e2e: a fresh angle\"}")" > /dev/null
+api PUT "/api/projects/$PROJECT_ID/message-variants" "$(jq -nc "$V9")" > /dev/null
+api PUT "/api/projects/$PROJECT_ID/message-variants" "$(jq -nc "$V9 + {subjectPattern:\"Hi {{org}} — v9\"}")" > /dev/null
+api PUT "/api/projects/$PROJECT_ID/message-variants" "$(jq -nc "$V9 + {subjectPattern:\"Hi {{org}} — v9\", archived:true, reason:\"e2e: retire\"}")" > /dev/null
+assert_eq "v9: add, edit, archive — the unchanged re-send logs nothing" "$(log_rows variant v9)" \
+  "add:user:e2e: a fresh angle,update:user:-,archive:user:e2e: retire"
+api PUT "/api/projects/$PROJECT_ID/message-variants" "$(jq -nc '{variantId:"v8", subjectPattern:"Hello {{org}} — v8", archived:true}')" > /dev/null
+assert_eq "an option created archived is added and archived" "$(log_rows variant v8)" "add:user:-,archive:user:-"
+api PUT "/api/projects/$PROJECT_ID/discovery-strategies" "$(jq -nc '{slug:"s2", approach:"e2e: unsent strategy", archived:true}')" > /dev/null
+api PUT "/api/projects/$PROJECT_ID/discovery-strategies" "$(jq -nc '{slug:"s2", approach:"e2e: unsent strategy", reason:"e2e: back"}')" > /dev/null
+assert_eq "s2: add, archive, restore" "$(log_rows strategy s2)" "add:user:-,archive:user:-,restore:user:e2e: back"
+api PUT "/api/projects/$PROJECT_ID/documents/sales_strategy" "$(jq -nc '{content:"# Strategy v1", reason:"e2e: first draft"}')" > /dev/null
+api PUT "/api/projects/$PROJECT_ID/documents/sales_strategy" "$(jq -nc '{content:"# Strategy v1"}')" > /dev/null
+assert_eq "sales_strategy: one update per new content" "$(log_rows sales_strategy '')" "update:user:e2e: first draft"
+count_rows() { psql_local "SELECT count(*) FROM policy_changes WHERE project_id='$PROJECT_ID';"; }
+BEFORE="$(count_rows)"
+api PUT "/api/projects/$PROJECT_ID/documents/search_notes" "$(jq -nc '{content:"notes"}')" > /dev/null
+assert_eq "search_notes is not policy: no row" "$(count_rows)" "$BEFORE"
+DASH="$(api GET "/api/projects/$PROJECT_ID/dashboard")"
+assert_eq "dashboard journal leads with today's sales_strategy edit" \
+  "$(echo "$DASH" | jq -rc '.journal[0] | [.kind, .target, .actor, .reason]')" '["document","sales_strategy","user","e2e: first draft"]'
+assert_eq "dashboard journal carries the tick's archive of v3" \
+  "$(echo "$DASH" | jq -r '[.journal[] | select(.kind == "rule_archive" and .optionId == "v3")] | length')" "1"
 
 step "get_outbound_targets surfaces per-prospect channel affinity"
 RT="$(api GET "/api/projects/$PROJECT_ID/prospects/reachable?limit=10")"

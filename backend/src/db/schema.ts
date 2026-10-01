@@ -25,6 +25,7 @@ import type { Locale } from '../domain/locale'
 import type { ChannelAffinityMap, ChannelCoarseStat, TargetingAxisStat, TargetingLifts } from '../domain/loop/allocation'
 import type { CoarseIndustry } from '../domain/coarse-industry'
 import type { VitalsAssessment } from '../domain/loop/frame'
+import { POLICY_ACTORS, POLICY_OPS, POLICY_TARGETS, RULE_ARCHIVE_REASONS, type ArchiveEvidence } from '../domain/loop/change'
 import type { MailboxSendRefusal } from '../domain/warmup'
 import type { PaidCallModel } from '../domain/paid-calls'
 import type { JobLogLine, JobParams, JobProgress, JobResult } from '../domain/jobs'
@@ -1156,6 +1157,38 @@ export const leverDecisions = pgTable('lever_decisions', {
     name: 'fk_lever_decision_project_tenant',
   }).onDelete('cascade'),
   index('idx_lever_decisions_tenant').on(table.tenantId),
+])
+
+export const policyTargetEnum = pgEnum('policy_target', POLICY_TARGETS)
+export const policyOpEnum = pgEnum('policy_op', POLICY_OPS)
+export const policyActorEnum = pgEnum('policy_actor', POLICY_ACTORS)
+export const policyRuleReasonEnum = pgEnum('policy_rule_reason', RULE_ARCHIVE_REASONS)
+
+// Append-only; written only by services/loop/change.ts.
+export const policyChanges = pgTable('policy_changes', {
+  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  projectId: text('project_id').notNull(),
+  target: policyTargetEnum('target').notNull(),
+  optionId: text('option_id'),
+  op: policyOpEnum('op').notNull(),
+  actor: policyActorEnum('actor').notNull(),
+  reason: text('reason'),
+  ruleReason: policyRuleReasonEnum('rule_reason'),
+  evidence: jsonb('evidence').$type<ArchiveEvidence>(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  index('idx_policy_changes_project_created').on(table.projectId, table.createdAt),
+  foreignKey({
+    columns: [table.projectId, table.tenantId],
+    foreignColumns: [projects.id, projects.tenantId],
+    name: 'fk_policy_change_project_tenant',
+  }).onDelete('cascade'),
+  index('idx_policy_changes_tenant').on(table.tenantId),
+  check('chk_policy_changes_option_id', sql`(${table.target} IN ('variant', 'strategy')) = (${table.optionId} IS NOT NULL)`),
+  check('chk_policy_changes_rule', sql`(${table.actor} = 'rule') = (${table.ruleReason} IS NOT NULL)`),
 ])
 
 export const responses = pgTable('responses', {

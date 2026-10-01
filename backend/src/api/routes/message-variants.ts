@@ -37,6 +37,7 @@ messageVariantsRouter.put(
     const result = await upsertMessageVariant(
       c.get('db'),
       c.get('tenantId'),
+      c.get('caller'),
       c.req.valid('param').id,
       c.req.valid('json'),
     )

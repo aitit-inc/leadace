@@ -60,14 +60,23 @@ function learningLine(e: LearningEntry): string {
   return `Learned [${e.stage}]: ${e.claim}`
 }
 
+const OPTION_HEAD = {
+  variant: { add: 'New angle', update: 'Angle edited', archive: 'Angle retired', restore: 'Angle back' },
+  strategy: { add: 'New search strategy', update: 'Search strategy edited', archive: 'Search strategy retired', restore: 'Search strategy back' },
+} as const
+const DOCUMENT_HEAD = { sales_strategy: 'Sales strategy adjusted', business: 'Business profile updated' } as const
+
 function journalLine(e: JournalEvent): string {
+  const by = (actor: 'ace' | 'user', reason: string | null): string => `${actor === 'user' ? ' (by you)' : ''}${reason ? ` — ${reason}` : ''}`
   switch (e.kind) {
-    case 'variant_added':
-      return `New angle: ${e.label ?? e.variantId}`
-    case 'variant_archived':
-      return `Angle retired: ${e.label ?? e.variantId} (${e.reason === 'stagnation' ? 'no traction' : 'another angle won'})`
     case 'strategy_escalated':
       return `Discovery strategy raised: ${e.title}`
+    case 'document':
+      return `${DOCUMENT_HEAD[e.target]}${by(e.actor, e.reason)}`
+    case 'option':
+      return `${OPTION_HEAD[e.target][e.op]}: ${e.label ?? e.optionId}${by(e.actor, e.reason)}`
+    case 'rule_archive':
+      return `${OPTION_HEAD[e.target].archive}: ${e.label ?? e.optionId} (${e.reason === 'rotated' ? 'no traction' : `another ${e.target === 'variant' ? 'angle' : 'strategy'} won`})`
   }
 }
 

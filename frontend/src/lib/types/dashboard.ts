@@ -61,14 +61,24 @@ export interface DashboardLearning {
 export type JournalEvent =
   | {
       date: string;
-      kind: 'variant_archived';
-      variantId: string;
+      kind: 'rule_archive';
+      target: 'variant' | 'strategy';
+      optionId: string;
       label: string | null;
-      reason: 'stagnation' | 'dominated';
-      pBest: number | null;
-      n: number | null;
+      reason: 'lost' | 'rotated';
+      evidence: { pBest: number; n: number } | null;
     }
-  | { date: string; kind: 'variant_added'; variantId: string; label: string | null }
+  | {
+      date: string;
+      kind: 'option';
+      target: 'variant' | 'strategy';
+      optionId: string;
+      label: string | null;
+      op: 'add' | 'update' | 'archive' | 'restore';
+      actor: 'ace' | 'user';
+      reason: string | null;
+    }
+  | { date: string; kind: 'document'; target: 'business' | 'sales_strategy'; actor: 'ace' | 'user'; reason: string | null }
   | { date: string; kind: 'strategy_escalated'; title: string };
 
 export type RejectionRecontactWindow = 'never' | '3_months' | '6_months' | '12_months' | 'unspecified';

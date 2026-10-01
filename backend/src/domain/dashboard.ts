@@ -2,6 +2,7 @@ import type { Channel, RejectionRecontactWindow } from '../db/schema'
 import type { AttentionItem } from './attention'
 import { coarseIndustry } from './coarse-industry'
 import type { LearningEntry } from './loop/learnings'
+import type { ArchiveEvidence, ChangeAuthor, DocumentTarget, LoggedChange, OptionOp, OptionTarget, RuleArchiveReason } from './loop/change'
 import { sendReaction, type Reaction, type ReactionLevel } from './loop/reaction'
 
 export const DASHBOARD_PERIODS = ['7d', '30d', 'all'] as const
@@ -46,80 +47,41 @@ export type DashboardLearning = {
 export const JOURNAL_WINDOW_DAYS = 30
 
 export type JournalEvent =
-  | {
-      date: string
-      kind: 'variant_archived'
-      variantId: string
-      label: string | null
-      reason: 'stagnation' | 'dominated'
-      pBest: number | null
-      n: number | null
-    }
-  | { date: string; kind: 'variant_added'; variantId: string; label: string | null }
+  | { date: string; kind: 'rule_archive'; target: OptionTarget; optionId: string; label: string | null; reason: RuleArchiveReason; evidence: ArchiveEvidence | null }
+  | { date: string; kind: 'option'; target: OptionTarget; optionId: string; label: string | null; op: OptionOp; actor: ChangeAuthor['actor']; reason: string | null }
+  | { date: string; kind: 'document'; target: DocumentTarget; actor: ChangeAuthor['actor']; reason: string | null }
   | { date: string; kind: 'strategy_escalated'; title: string }
 
-export type JournalDecisionDay = {
-  cycleDate: string
-  archived: Array<{ variantId: string; pBest?: number; n?: number; reason?: 'stagnation' }>
-}
-export type JournalVariantRow = { variantId: string; label: string | null; createdAt: Date | string }
 export type JournalEscalation = { title: string; createdAt: Date | string }
 
 const utcDay = (d: Date | string): string => new Date(d).toISOString().slice(0, 10)
 
-const JOURNAL_KIND_ORDER: Record<JournalEvent['kind'], number> = {
-  variant_added: 0,
-  variant_archived: 1,
-  strategy_escalated: 2,
-}
-
-// Only days where the arm set changed (or an escalation was raised) produce an
-// event — routine tick reweighting is internal state, not a decision to report.
+// Newest first; within a day the log's order, then the escalations.
 export function buildJournal(
-  decisions: JournalDecisionDay[],
-  variants: JournalVariantRow[],
+  changes: LoggedChange[],
+  variants: Array<{ variantId: string; label: string | null }>,
   escalations: JournalEscalation[],
   windowStartDay: string,
 ): JournalEvent[] {
   const labelById = new Map(variants.map((v) => [v.variantId, v.label]))
-  const events: JournalEvent[] = []
-
-  for (const day of decisions) {
-    for (const a of day.archived) {
-      events.push({
-        date: day.cycleDate,
-        kind: 'variant_archived',
-        variantId: a.variantId,
-        label: labelById.get(a.variantId) ?? null,
-        reason: a.reason === 'stagnation' ? 'stagnation' : 'dominated',
-        // Pre-Phase-C rows carry Wilson-era fields instead of pBest/n — read null-safe.
-        pBest: typeof a.pBest === 'number' ? a.pBest : null,
-        n: typeof a.n === 'number' ? a.n : null,
-      })
+  const label = (target: OptionTarget, optionId: string): string | null =>
+    target === 'variant' ? labelById.get(optionId) ?? null : null
+  const events = changes.map((c): JournalEvent => {
+    if (c.actor === 'rule') {
+      const { target, optionId, reason, evidence } = c
+      return { date: c.day, kind: 'rule_archive', target, optionId, label: label(target, optionId), reason, evidence }
     }
-  }
-  for (const v of variants) {
-    const day = utcDay(v.createdAt)
-    if (day >= windowStartDay) {
-      events.push({ date: day, kind: 'variant_added', variantId: v.variantId, label: v.label })
+    if ('optionId' in c) {
+      const { target, optionId, op, actor, reason } = c
+      return { date: c.day, kind: 'option', target, optionId, label: label(target, optionId), op, actor, reason }
     }
-  }
-  for (const e of escalations) {
-    const day = utcDay(e.createdAt)
-    if (day >= windowStartDay) {
-      events.push({ date: day, kind: 'strategy_escalated', title: e.title })
-    }
-  }
-
-  return events.sort((a, b) => {
-    const byDate = a.date < b.date ? 1 : a.date > b.date ? -1 : 0
-    if (byDate !== 0) return byDate
-    const byKind = JOURNAL_KIND_ORDER[a.kind] - JOURNAL_KIND_ORDER[b.kind]
-    if (byKind !== 0) return byKind
-    const ak = a.kind !== 'strategy_escalated' ? a.variantId : a.title
-    const bk = b.kind !== 'strategy_escalated' ? b.variantId : b.title
-    return ak < bk ? -1 : ak > bk ? 1 : 0
+    return { date: c.day, kind: 'document', target: c.target, actor: c.actor, reason: c.reason }
   })
+  const raised = escalations
+    .map((e) => ({ date: utcDay(e.createdAt), kind: 'strategy_escalated' as const, title: e.title }))
+    .filter((e) => e.date >= windowStartDay)
+    .sort((a, b) => (a.title < b.title ? -1 : a.title > b.title ? 1 : 0))
+  return [...events, ...raised].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
 }
 
 export type RejectionQuote = {
