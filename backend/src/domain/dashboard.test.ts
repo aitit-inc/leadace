@@ -146,7 +146,7 @@ describe('buildJournal', () => {
   it('reports every logged change with who and why, labelling variants only', () => {
     const events = buildJournal(
       [
-        { day: '2026-07-14', actor: 'rule', target: 'variant', optionId: 'roi-focus', reason: 'rotated', evidence: { pBest: 0.05, n: 42 } },
+        { day: '2026-07-14', actor: 'rule', target: 'variant', optionId: 'roi-focus', op: 'archive', reason: 'rotated', evidence: { pBest: 0.05, n: 42 } },
         { day: '2026-07-14', actor: 'ace', target: 'sales_strategy', reason: 'Not a fit: agencies' },
         { day: '2026-07-13', actor: 'user', target: 'strategy', optionId: 'yc-hn', op: 'restore', reason: null },
       ],

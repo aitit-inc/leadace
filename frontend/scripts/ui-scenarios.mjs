@@ -538,12 +538,13 @@ function seedDashboardFixture(ctx, projectId) {
   // "started testing a new angle" lines the screenshot does not have.
   const born = iso(now - 70 * DAY);
   const retiredAt = iso(now - 7 * DAY);
+  const restoredAt = iso(now - 2 * DAY);
   psql(
     `INSERT INTO message_variants (tenant_id, project_id, variant_id, subject_pattern, label, body_approach, created_at, updated_at, archived_at) VALUES
      (${q(tenant)}, ${q(projectId)}, ${q(DASH_PROOF)}, ${q(DASH_SUBJECT)}, 'Proof-led', 'Lead with a measured result.', ${q(born)}, ${q(born)}, NULL),
      (${q(tenant)}, ${q(projectId)}, ${q(DASH_SINGLE)}, ${q('One question about your speaking programme')}, 'Single-question', 'Ask one question, nothing else.', ${q(born)}, ${q(born)}, NULL),
      (${q(tenant)}, ${q(projectId)}, 'rst_20260715_a', ${q('The gap in most speaking programmes')}, 'Problem-direct', 'Name the problem first.', ${q(born)}, ${q(retiredAt)}, ${q(retiredAt)}),
-     (${q(tenant)}, ${q(projectId)}, 'rst_20260715_c', ${q('Something we learned about speaking practice')}, 'Casual peer', 'Peer-to-peer tone.', ${q(born)}, ${q(retiredAt)}, ${q(retiredAt)});`,
+     (${q(tenant)}, ${q(projectId)}, 'rst_20260715_c', ${q('Something we learned about speaking practice')}, 'Casual peer', 'Peer-to-peer tone.', ${q(born)}, ${q(restoredAt)}, NULL);`,
   );
   psql(
     `INSERT INTO lever_state (project_id, tenant_id, variant_weights, updated_at)
@@ -571,9 +572,9 @@ function seedDashboardFixture(ctx, projectId) {
   };
   const cycleToday = {
     subject: {
-      weights: { [DASH_PROOF]: 0.72, [DASH_SINGLE]: 0.28 },
+      weights: { [DASH_PROOF]: 0.58, [DASH_SINGLE]: 0.2, rst_20260715_c: 0.22 },
       archived: [],
-      samples: [sample(DASH_PROOF, 152, 12, 7), sample(DASH_SINGLE, 34, 1, 0.5)],
+      samples: [sample(DASH_PROOF, 152, 12, 7), sample(DASH_SINGLE, 34, 1, 0.5), sample('rst_20260715_c', 48, 4, 3)],
     },
   };
   psql(
@@ -582,7 +583,8 @@ function seedDashboardFixture(ctx, projectId) {
      (${q(tenant)}, ${q(projectId)}, ${q(ymd(now))}, ${q(JSON.stringify(cycleToday))}::jsonb);`,
   );
   // The journal is the change log: the angles' adds predate its 30-day
-  // window, so it shows the two the tick retired and one target adjustment.
+  // window, so it shows the two the tick retired, the one it brought back and
+  // one target adjustment.
   psql(
     `INSERT INTO policy_changes (tenant_id, project_id, target, option_id, op, actor, reason, rule_reason, evidence, created_at) VALUES
      ${[DASH_PROOF, DASH_SINGLE, 'rst_20260715_a', 'rst_20260715_c']
@@ -590,6 +592,7 @@ function seedDashboardFixture(ctx, projectId) {
        .join(',\n     ')},
      (${q(tenant)}, ${q(projectId)}, 'variant', 'rst_20260715_a', 'archive', 'rule', NULL, 'lost', '{"pBest":0.02,"n":30}'::jsonb, ${q(retiredAt)}),
      (${q(tenant)}, ${q(projectId)}, 'variant', 'rst_20260715_c', 'archive', 'rule', NULL, 'lost', '{"pBest":0.01,"n":32}'::jsonb, ${q(retiredAt)}),
+     (${q(tenant)}, ${q(projectId)}, 'variant', 'rst_20260715_c', 'restore', 'rule', NULL, NULL, '{"pBeatsLeader":0.41,"n":48}'::jsonb, ${q(restoredAt)}),
      (${q(tenant)}, ${q(projectId)}, 'sales_strategy', NULL, 'update', 'ace', ${q(DASH_TARGET_WHY)}, NULL, NULL, ${q(iso(now - 3 * DAY))});`,
   );
   const learnings = DASH_LEARNINGS.map((line) =>
@@ -915,7 +918,7 @@ const SCENARIOS = [
           path: '/dashboard',
           expect: [
             '2 meeting requests waiting',
-            'Optimizing across 2 message angles',
+            'Optimizing across 3 message angles',
             'Three minutes a day',
             'Add Wantedly as an outreach means.',
           ],

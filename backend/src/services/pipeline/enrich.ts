@@ -6,7 +6,7 @@
 // reading it again; only a reachable fit is a send target and spends the found
 // allowance.
 import { z } from 'zod'
-import type { Db } from '../../db/connection'
+import type { Db, DbScope } from '../../db/connection'
 import type { ProjectId, TenantId } from '../../domain/ids'
 import { discoverCandidateSchema, isRecentSignal, signalWindowStart, type DiscoverCandidate, type JobLogEntry } from '../../domain/jobs'
 import type { OutboundChannel } from '../../domain/outbound-channel'
@@ -494,7 +494,7 @@ async function readContext(db: Db, tenantId: TenantId, projectId: ProjectId) {
 }
 
 export async function runEnrich(
-  db: Db,
+  withDb: DbScope,
   tenantId: TenantId,
   env: HostedEnv,
   projectId: ProjectId,
@@ -506,7 +506,7 @@ export async function runEnrich(
   const staleLines = stale.map((n) => skippedLine(n, 'stale_shape'))
   // Site reads are the cost; a chunk that starts after the allowance is spent
   // (mid-run, or a standalone enrich job) reads nothing.
-  const paused = await checkpoint('quota', async () => ok(discoveryPausedReason(await getRemainingProspectQuota(db, tenantId, editionOf(env))) !== null))
+  const paused = await checkpoint('quota', async () => ok(discoveryPausedReason(await withDb((db) => getRemainingProspectQuota(db, tenantId, editionOf(env)))) !== null))
   if (paused) {
     console.log({ message: '[enrich] read', candidates: 0, stale_shape: stale.length, plan_limit: candidates.length })
     return ok({ log: [...staleLines, ...candidates.map((c) => skippedLine(c.name, 'plan_limit'))], withEmail: 0 })
@@ -517,7 +517,7 @@ export async function runEnrich(
     const slice = candidates.slice(i, i + CONCURRENCY)
     enriched.push(...(await Promise.all(slice.map((c, k) => checkpoint(`read:${i + k}`, async () => {
       await progress('reading sites', i, candidates.length)
-      return ok(await enrichCandidate(env, c, await readContext(db, tenantId, projectId)))
+      return ok(await enrichCandidate(env, c, await withDb((db) => readContext(db, tenantId, projectId))))
     })))))
   }
 
@@ -542,7 +542,7 @@ export async function runEnrich(
       const reasonOf = new Map(rows.map((r) => [r.input.name, r.skip]))
       for (let i = 0; i < rows.length; i += 100) {
         const prospects = rows.slice(i, i + 100).map((r) => r.input)
-        const result = await runWithRls(db, tenantId, (tx) => batchRegister(tx, tenantId, editionOf(env), { projectId, prospects }, { origin: 'found', verdict }))
+        const result = await withDb((db) => runWithRls(db, tenantId, (tx) => batchRegister(tx, tenantId, editionOf(env), { projectId, prospects }, { origin: 'found', verdict })))
         if (!result.ok) return result
         log.push(
           ...result.value.registered.map((p): JobLogEntry => {

@@ -1,6 +1,6 @@
 // The policy's only writer (#793): every change to an option or a policy
 // document lands with its policy_changes row in the same transaction.
-import { and, desc, eq, gte, inArray, isNull, sql } from 'drizzle-orm'
+import { and, desc, eq, gte, inArray, isNotNull, isNull, max, sql } from 'drizzle-orm'
 import { discoveryStrategies, leverState, messageVariants, policyChanges, projectDocuments } from '../../db/schema'
 import type { Db } from '../../db/connection'
 import type { ProjectId, TenantId } from '../../domain/ids'
@@ -13,6 +13,7 @@ import {
   type LoggedChange,
   type OptionTarget,
   type RuleArchiveReason,
+  type RuleEvidence,
 } from '../../domain/loop/change'
 import { COARSE_TO_FINES, type CoarseIndustry } from '../../domain/coarse-industry'
 import type { MessageVariantRow, UpsertVariantBody } from '../message-variants'
@@ -57,50 +58,57 @@ function industryLiftCase(column: ReturnType<typeof sql>, lifts: TargetingAxisLi
   return sql`(CASE${sql.join(whens, sql``)} ELSE ${otherLift}::float8 END)`
 }
 
+// Archives or restores the options the tick decided on and returns the ones it
+// moved: an option someone moved since the tick observed it is theirs. A
+// restore re-reads the lost set under the lock, so an option a person brought
+// back and archived again in between stays where they left it.
+async function moveOptions<M extends { armId: string }>(db: Db, projectId: ProjectId, target: OptionTarget, moves: M[], to: 'archived' | 'active', now: Date): Promise<M[]> {
+  if (moves.length === 0) return []
+  // Sorted, so two writers taking several locks cannot deadlock.
+  const decided = moves.map((m) => m.armId).sort()
+  for (const id of decided) await lockTarget(db, projectId, target, id)
+  const stillLost = to === 'active' ? new Set(await lostOptionIds(db, projectId, target)) : null
+  const ids = stillLost === null ? decided : decided.filter((id) => stillLost.has(id))
+  if (ids.length === 0) return []
+  const archivedAt = to === 'archived' ? now : null
+  const moved = target === 'variant'
+    ? await db
+        .update(messageVariants)
+        .set({ archivedAt, updatedAt: now })
+        .where(and(
+          eq(messageVariants.projectId, projectId),
+          inArray(messageVariants.variantId, ids),
+          to === 'archived' ? isNull(messageVariants.archivedAt) : isNotNull(messageVariants.archivedAt),
+        ))
+        .returning({ id: messageVariants.variantId })
+    : await db
+        .update(discoveryStrategies)
+        .set({ archivedAt, updatedAt: now })
+        .where(and(
+          eq(discoveryStrategies.projectId, projectId),
+          inArray(discoveryStrategies.slug, ids),
+          to === 'archived' ? isNull(discoveryStrategies.archivedAt) : isNotNull(discoveryStrategies.archivedAt),
+        ))
+        .returning({ id: discoveryStrategies.slug })
+  return moves.filter((m) => moved.some((r) => r.id === m.armId))
+}
+
 // Only for a decision whose lever_decisions row this tick claimed.
 export async function applyTickDecision(db: Db, tenantId: TenantId, projectId: ProjectId, decision: TickDecision): Promise<void> {
   const { channel: { affinity: channelAffinity }, targeting: { lifts: targetingLifts } } = decision.payload
   const now = new Date()
-  // Sorted, so two writers taking several locks cannot deadlock.
-  const variantIds = decision.variants.toArchive.map((a) => a.variantId).sort()
-  const strategySlugs = decision.strategies.toArchive.map((a) => a.armId).sort()
-  for (const id of variantIds) await lockTarget(db, projectId, 'variant', id)
-  for (const slug of strategySlugs) await lockTarget(db, projectId, 'strategy', slug)
-  const archivedVariants = variantIds.length === 0 ? [] : await db
-    .update(messageVariants)
-    .set({ archivedAt: now, updatedAt: now })
-    .where(and(
-      eq(messageVariants.projectId, projectId),
-      inArray(messageVariants.variantId, variantIds),
-      isNull(messageVariants.archivedAt),
-    ))
-    .returning({ id: messageVariants.variantId })
-  const archivedStrategies = strategySlugs.length === 0 ? [] : await db
-    .update(discoveryStrategies)
-    .set({ archivedAt: now, updatedAt: now })
-    .where(and(
-      eq(discoveryStrategies.projectId, projectId),
-      inArray(discoveryStrategies.slug, strategySlugs),
-      isNull(discoveryStrategies.archivedAt),
-    ))
-    .returning({ id: discoveryStrategies.slug })
-  // Only what this tick archived: an option someone archived since the tick
-  // observed it is theirs.
-  const did = (rows: Array<{ id: string }>, id: string): boolean => rows.some((r) => r.id === id)
-  await log(db, tenantId, projectId, [
-    ...decision.variants.toArchive.filter((a) => did(archivedVariants, a.variantId)).map(({ variantId, pBest, n, reason }) => ({
-      target: 'variant' as const,
-      optionId: variantId,
-      ruleReason: reason === 'stagnation' ? ('rotated' as const) : ('lost' as const),
-      evidence: { pBest, n },
-    })),
-    ...decision.strategies.toArchive.filter((a) => did(archivedStrategies, a.armId)).map(({ armId, pBest, n }) => ({
-      target: 'strategy' as const,
-      optionId: armId,
-      ruleReason: 'lost' as const,
-      evidence: { pBest, n },
-    })),
-  ].map((a) => ({ ...a, op: 'archive' as const, actor: 'rule' as const })))
+  const rows: ChangeRow[] = []
+  for (const [target, layer] of [['variant', decision.variants], ['strategy', decision.strategies]] as const) {
+    for (const { armId, ...decided } of await moveOptions(db, projectId, target, layer.toArchive, 'archived', now)) {
+      rows.push('reason' in decided
+        ? { target, optionId: armId, op: 'archive', actor: 'rule', ruleReason: 'rotated', evidence: { pBest: decided.pBest, n: decided.n } }
+        : { target, optionId: armId, op: 'archive', actor: 'rule', ruleReason: 'lost', evidence: decided })
+    }
+    for (const { armId, ...evidence } of await moveOptions(db, projectId, target, layer.toRestore, 'active', now)) {
+      rows.push({ target, optionId: armId, op: 'restore', actor: 'rule', evidence })
+    }
+  }
+  await log(db, tenantId, projectId, rows)
   await db
     .insert(leverState)
     .values({
@@ -110,6 +118,7 @@ export async function applyTickDecision(db: Db, tenantId: TenantId, projectId: P
       strategyWeights: decision.strategies.weights,
       channelAffinity,
       targetingLifts,
+      variantFlatStreak: decision.variants.flatStreak,
       updatedAt: now,
     })
     .onConflictDoUpdate({
@@ -119,6 +128,7 @@ export async function applyTickDecision(db: Db, tenantId: TenantId, projectId: P
         strategyWeights: decision.strategies.weights,
         channelAffinity,
         targetingLifts,
+        variantFlatStreak: decision.variants.flatStreak,
         updatedAt: now,
       },
     })
@@ -306,6 +316,47 @@ export async function lastArchivals(db: Db, projectId: ProjectId, target: Option
   }))
 }
 
+// Options the rule archived as lost and nobody has brought back.
+export async function lostOptionIds(db: Db, projectId: ProjectId, target: OptionTarget): Promise<string[]> {
+  const archived = target === 'variant'
+    ? await db.select({ id: messageVariants.variantId }).from(messageVariants)
+        .where(and(eq(messageVariants.projectId, projectId), isNotNull(messageVariants.archivedAt)))
+    : await db.select({ id: discoveryStrategies.slug }).from(discoveryStrategies)
+        .where(and(eq(discoveryStrategies.projectId, projectId), isNotNull(discoveryStrategies.archivedAt)))
+  const archivals = await lastArchivals(db, projectId, target, archived.map((o) => o.id))
+  return [...archivals].filter(([, a]) => a.actor === 'rule' && a.reason === 'lost').map(([id]) => id).sort()
+}
+
+// When each option last entered the active set.
+export async function optionEntries(db: Db, projectId: ProjectId, target: OptionTarget): Promise<Map<string, Date>> {
+  const rows = await db
+    .select({ optionId: policyChanges.optionId, at: max(policyChanges.createdAt) })
+    .from(policyChanges)
+    .where(and(eq(policyChanges.projectId, projectId), eq(policyChanges.target, target), inArray(policyChanges.op, ['add', 'restore'])))
+    .groupBy(policyChanges.optionId)
+  return new Map(rows.flatMap((r) => (r.optionId === null || r.at === null ? [] : [[r.optionId, r.at] as const])))
+}
+
+export type RuleRestore = { day: string; target: OptionTarget; optionId: string; evidence: RuleEvidence | null }
+
+// What the rule brought back, oldest first.
+export async function ruleRestoresSince(db: Db, projectId: ProjectId, since: Date): Promise<RuleRestore[]> {
+  const rows = await db
+    .select({ target: policyChanges.target, optionId: policyChanges.optionId, evidence: policyChanges.evidence, createdAt: policyChanges.createdAt })
+    .from(policyChanges)
+    .where(and(
+      eq(policyChanges.projectId, projectId),
+      eq(policyChanges.actor, 'rule'),
+      eq(policyChanges.op, 'restore'),
+      gte(policyChanges.createdAt, since),
+    ))
+    .orderBy(policyChanges.createdAt, policyChanges.id)
+  return rows.flatMap((r) =>
+    (r.target === 'variant' || r.target === 'strategy') && r.optionId !== null
+      ? [{ day: utcDay(r.createdAt), target: r.target, optionId: r.optionId, evidence: r.evidence }]
+      : [])
+}
+
 // Newest first.
 export async function listChanges(db: Db, projectId: ProjectId, since: Date): Promise<LoggedChange[]> {
   const rows = await db
@@ -321,7 +372,9 @@ export async function listChanges(db: Db, projectId: ProjectId, since: Date): Pr
     }
     if (r.optionId === null) throw new Error(`Invariant: ${r.target} change row without an option`)
     if (r.actor !== 'rule') return { day, actor: r.actor, target: r.target, optionId: r.optionId, op: r.op, reason: r.reason }
-    if (r.ruleReason === null) throw new Error(`Invariant: rule archive of ${r.optionId} without its reason`)
-    return { day, actor: r.actor, target: r.target, optionId: r.optionId, reason: r.ruleReason, evidence: r.evidence }
+    const rule = { day, actor: r.actor, target: r.target, optionId: r.optionId, evidence: r.evidence }
+    if (r.op === 'restore') return { ...rule, op: r.op }
+    if (r.op !== 'archive' || r.ruleReason === null) throw new Error(`Invariant: rule ${r.op} of ${r.optionId} without an archive reason`)
+    return { ...rule, op: r.op, reason: r.ruleReason }
   })
 }

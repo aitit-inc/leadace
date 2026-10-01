@@ -25,7 +25,7 @@ import type { Locale } from '../domain/locale'
 import type { ChannelAffinityMap, ChannelCoarseStat, TargetingAxisStat, TargetingLifts } from '../domain/loop/allocation'
 import type { CoarseIndustry } from '../domain/coarse-industry'
 import type { VitalsAssessment } from '../domain/loop/frame'
-import { POLICY_ACTORS, POLICY_OPS, POLICY_TARGETS, RULE_ARCHIVE_REASONS, type ArchiveEvidence } from '../domain/loop/change'
+import { POLICY_ACTORS, POLICY_OPS, POLICY_TARGETS, RULE_ARCHIVE_REASONS, type RuleEvidence } from '../domain/loop/change'
 import type { MailboxSendRefusal } from '../domain/warmup'
 import type { PaidCallModel } from '../domain/paid-calls'
 import type { JobLogLine, JobParams, JobProgress, JobResult } from '../domain/jobs'
@@ -1077,17 +1077,16 @@ export const discoveryStrategies = pgTable('discovery_strategies', {
 // message_variants rename and stays — renaming it would only force readers
 // into old/new branching. `pBest` is absent on pre-Phase-C rows, whose
 // `archived` entries carry Wilson-era { leaderLower, armUpper } instead of pBest.
-// `reason: 'stagnation'` marks a rotation archive (absent = dominance archive);
-// hasUnfulfilledRotation queries it by jsonb containment. `discovery` /
-// `configUsed` are absent on pre-strategy-bandit rows; configUsed snapshots the
-// effective config so old decisions replay exactly after config changes.
-// `discovery.registrations` (absent on pre-allocation rows) is the prior UTC
-// day's per-strategy registration counts — the plan-compliance record.
+// `reason: 'stagnation'` marks a rotation archive (absent = lost); an archived
+// entry carries the RuleEvidence the rule decided on. What the rule restored is
+// in policy_changes only. `discovery` / `configUsed` are absent on
+// pre-strategy-bandit rows; configUsed snapshots the effective config so old
+// decisions replay exactly after config changes.
 export type LeverDecisionPayload = {
   subject: {
     weights: Record<string, number>
     pBest?: Record<string, number>
-    archived: Array<{ variantId: string; pBest: number; n: number; reason?: 'stagnation' }>
+    archived: Array<{ variantId: string; reason?: 'stagnation' } & RuleEvidence>
     samples: Array<{ variantId: string; total: number; responses: number; rewardSum: number }>
   }
   channel?: {
@@ -1106,9 +1105,8 @@ export type LeverDecisionPayload = {
   discovery?: {
     weights: Record<string, number>
     pBest: Record<string, number>
-    archived: Array<{ slug: string; pBest: number; n: number }>
+    archived: Array<{ slug: string } & RuleEvidence>
     samples: Array<{ slug: string; total: number; rewardSum: number }>
-    registrations?: Record<string, number>
   }
   vitals?: VitalsAssessment
   configUsed?: LeverConfig
@@ -1129,6 +1127,8 @@ export const leverState = pgTable('lever_state', {
   channelAffinity: jsonb('channel_affinity').$type<ChannelAffinityMap>().notNull().default({}),
   // NULL = no tick has computed lifts yet → listReachable uses neutral defaults.
   targetingLifts: jsonb('targeting_lifts').$type<TargetingLifts>(),
+  // Ticks in a row the variant set has been flat; the rotation's clock.
+  variantFlatStreak: integer('variant_flat_streak').notNull().default(0),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   foreignKey({
@@ -1177,7 +1177,7 @@ export const policyChanges = pgTable('policy_changes', {
   actor: policyActorEnum('actor').notNull(),
   reason: text('reason'),
   ruleReason: policyRuleReasonEnum('rule_reason'),
-  evidence: jsonb('evidence').$type<ArchiveEvidence>(),
+  evidence: jsonb('evidence').$type<RuleEvidence>(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   index('idx_policy_changes_project_created').on(table.projectId, table.createdAt),
@@ -1188,7 +1188,7 @@ export const policyChanges = pgTable('policy_changes', {
   }).onDelete('cascade'),
   index('idx_policy_changes_tenant').on(table.tenantId),
   check('chk_policy_changes_option_id', sql`(${table.target} IN ('variant', 'strategy')) = (${table.optionId} IS NOT NULL)`),
-  check('chk_policy_changes_rule', sql`(${table.actor} = 'rule') = (${table.ruleReason} IS NOT NULL)`),
+  check('chk_policy_changes_rule', sql`(${table.actor} = 'rule' AND ${table.op} = 'archive') = (${table.ruleReason} IS NOT NULL)`),
 ])
 
 export const responses = pgTable('responses', {

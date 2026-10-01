@@ -1,9 +1,9 @@
-import { and, asc, count, countDistinct, desc, eq, exists, gt, gte, inArray, isNotNull, isNull, lt, max, not, notInArray, sql, type SQL } from 'drizzle-orm'
+import { and, asc, count, countDistinct, desc, eq, exists, gte, inArray, isNotNull, isNull, lt, max, not, notInArray, or, sql, type SQL } from 'drizzle-orm'
 import {
   discoveryStrategies,
   INQUIRY_OUTCOMES,
   inquirySessions,
-  leverDecisions,
+  leverState,
   messageVariants,
   organizations,
   outreachLogs,
@@ -26,14 +26,14 @@ import { coarseIndustry, type CoarseIndustry } from '../../domain/coarse-industr
 import { percentOf } from '../../domain/dashboard'
 import { type LeverConfig } from '../../domain/loop/config'
 import type { ChannelFineStat, TargetingAxisStat, TargetingStats } from '../../domain/loop/allocation'
-import type { VariantStat } from '../../domain/loop/options'
 import type { TickEvidence } from '../../domain/loop/decide'
 import { loadLeverConfig } from '../project-settings'
 import { ok, type ServiceResult } from '../result'
 import { resolveProject } from '../projects'
 import { projectTargetExpr } from '../prospects'
 import { getActiveStrategySlugs } from '../discovery-strategies'
-import { lastArchivals, type OptionArchival } from './change'
+import { lastArchivals, lostOptionIds, optionEntries, type OptionArchival } from './change'
+import type { OptionTarget } from '../../domain/loop/change'
 
 // Through the prod transaction pooler (Supavisor, prepare:false) postgres-js
 // can't read column type OIDs, so raw db.execute returns numeric/timestamp
@@ -190,8 +190,21 @@ export type ProjectStatsResult = {
   dailyActivity: DailyActivity[]
 }
 
-// The tick decides on the VariantStat part; the screens also show the reactions.
-type VariantTally = VariantStat & Pick<ReactionTotals, 'positive' | 'interested'>
+// The tick decides on total and rewardSum; the screens also show the reactions.
+type VariantTally = { variantId: string; total: number; responses: number; rewardSum: number } & Pick<ReactionTotals, 'positive' | 'interested'>
+
+function tickWindow(config: LeverConfig, applyLookback: boolean): SQL | undefined {
+  const lookbackDays =
+    applyLookback && config.rewardLookbackDays !== undefined
+      ? config.rewardWindowDays + config.rewardLookbackDays
+      : undefined
+  const epoch = applyLookback ? config.measurementsSince : undefined
+  return and(
+    lt(outreachLogs.sentAt, daysAgo(config.rewardWindowDays)),
+    lookbackDays === undefined ? undefined : gte(outreachLogs.sentAt, daysAgo(lookbackDays)),
+    epoch === undefined ? undefined : gte(outreachLogs.sentAt, dayStart(epoch)),
+  )
+}
 
 export async function getVariantStats(
   db: Db,
@@ -201,17 +214,7 @@ export async function getVariantStats(
   // view to recent data; the all-history display path (getProjectStats) leaves it false.
   applyLookback = false,
 ): Promise<VariantTally[]> {
-  const lookbackDays =
-    applyLookback && config.rewardLookbackDays !== undefined
-      ? config.rewardWindowDays + config.rewardLookbackDays
-      : undefined
-  const epoch = applyLookback ? config.measurementsSince : undefined
-  const window = and(
-    isNotNull(outreachLogs.variantId),
-    lt(outreachLogs.sentAt, daysAgo(config.rewardWindowDays)),
-    lookbackDays === undefined ? undefined : gte(outreachLogs.sentAt, daysAgo(lookbackDays)),
-    epoch === undefined ? undefined : gte(outreachLogs.sentAt, dayStart(epoch)),
-  )
+  const window = and(isNotNull(outreachLogs.variantId), tickWindow(config, applyLookback))
 
   const [totals, replied, reacted] = await Promise.all([
     db.select({ variantId: outreachLogs.variantId, total: count() })
@@ -286,17 +289,7 @@ export async function getTargetingStats(
   config: LeverConfig,
   applyLookback = false,
 ): Promise<TargetingStats> {
-  const lookbackDays =
-    applyLookback && config.rewardLookbackDays !== undefined
-      ? config.rewardWindowDays + config.rewardLookbackDays
-      : undefined
-  const epoch = applyLookback ? config.measurementsSince : undefined
-  const window = and(
-    lt(outreachLogs.sentAt, daysAgo(config.rewardWindowDays)),
-    lookbackDays === undefined ? undefined : gte(outreachLogs.sentAt, daysAgo(lookbackDays)),
-    epoch === undefined ? undefined : gte(outreachLogs.sentAt, dayStart(epoch)),
-    not(bounced(db)),
-  )
+  const window = and(tickWindow(config, applyLookback), not(bounced(db)))
   const [industryRows, bandRows, countryRows, strategyRows, reacted] = await Promise.all([
     db.select({ industry: prospects.industry, total: count() })
       .from(outreachLogs)
@@ -875,110 +868,67 @@ export async function loadActiveVariantIds(db: Db, projectId: ProjectId): Promis
   return rows.map((r) => r.variantId)
 }
 
-// A stagnation rotation frees a slot for a fresh angle; it stays "unfulfilled"
-// until either a new variant row is created after it (evaluate seeds fresh
-// slugs, so createdAt marks that) or the active pool grows back past its
-// post-rotation size (a user un-archiving an arm refills the slot without a
-// new row — the system must not wedge on that override). A later archive can
-// flip a count-fulfilled rotation back to unfulfilled; that fails safe by
-// re-raising replenishment. While unfulfilled, no further rotation fires and
-// needsReplenishment stays raised even at targetActiveArms.
-export async function hasUnfulfilledRotation(
+// An option with no entry on record counts every send.
+async function sendsSinceEntry(
   db: Db,
   projectId: ProjectId,
-  activeCount: number,
-): Promise<boolean> {
-  const [lastRotation] = await db
-    .select({ createdAt: leverDecisions.createdAt, decision: leverDecisions.decision })
-    .from(leverDecisions)
-    .where(and(
-      eq(leverDecisions.projectId, projectId),
-      sql`${leverDecisions.decision} @> ${JSON.stringify({ subject: { archived: [{ reason: 'stagnation' }] } })}::jsonb`,
-    ))
-    .orderBy(desc(leverDecisions.cycleDate))
-    .limit(1)
-  if (!lastRotation) return false
-  const postRotationCount =
-    lastRotation.decision.subject.samples.length - lastRotation.decision.subject.archived.length
-  if (activeCount > postRotationCount) return false
-  const [fresh] = await db
-    .select({ id: messageVariants.id })
-    .from(messageVariants)
-    .where(and(
-      eq(messageVariants.projectId, projectId),
-      gt(messageVariants.createdAt, lastRotation.createdAt),
-    ))
-    .limit(1)
-  return !fresh
-}
-
-// Prior-UTC-day registration counts per strategy — the plan-compliance record
-// (§ the tick journals what actually flowed in against yesterday's batchPlan).
-// Derived from project_prospects.created_at × prospects.discovery_strategy,
-// restricted to this project's registry (archived included — a slug planned
-// yesterday may be archived today; a provenance slug carried in by a
-// cross-project link is not an arm here and stays out, matching the bandit's
-// registry ∩ stats rule). A persistent gap between plan and registrations
-// marks a strategy the LLM cannot execute (exhausted or non-existent angle).
-async function loadPriorDayRegistrations(
-  db: Db,
-  projectId: ProjectId,
-  cycleDate: string,
-): Promise<Record<string, number>> {
+  target: OptionTarget,
+  optionIds: string[],
+  window: SQL | undefined,
+): Promise<Map<string, number>> {
+  if (optionIds.length === 0) return new Map()
+  const entries = await optionEntries(db, projectId, target)
+  const column = target === 'variant' ? outreachLogs.variantId : prospects.discoveryStrategy
+  const sinceEntry = or(...optionIds.map((id) => {
+    const at = entries.get(id)
+    return and(eq(column, id), at === undefined ? undefined : gte(outreachLogs.sentAt, at))
+  }))
   const rows = await db
-    .select({ slug: prospects.discoveryStrategy, count: sql<number>`COUNT(*)::int` })
-    .from(projectProspects)
-    .innerJoin(prospects, eq(prospects.id, projectProspects.prospectId))
-    .innerJoin(discoveryStrategies, and(
-      eq(discoveryStrategies.projectId, projectProspects.projectId),
-      eq(discoveryStrategies.slug, prospects.discoveryStrategy),
-    ))
-    .where(and(
-      eq(projectProspects.projectId, projectId),
-      projectTargetExpr,
-      isNotNull(prospects.discoveryStrategy),
-      sql`${projectProspects.createdAt} >= ((${cycleDate}::date - 1)::timestamp AT TIME ZONE 'UTC')`,
-      sql`${projectProspects.createdAt} < ((${cycleDate}::date)::timestamp AT TIME ZONE 'UTC')`,
-    ))
-    .groupBy(prospects.discoveryStrategy)
-  return Object.fromEntries(rows.map((r) => [r.slug!, Number(r.count)]))
+    .select({ id: column, n: count() })
+    .from(outreachLogs)
+    .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
+    .where(sentBy(projectId, and(window, sinceEntry)))
+    .groupBy(column)
+  return new Map(rows.flatMap((r) => (r.id === null ? [] : [[r.id, r.n] as const])))
 }
 
-export async function observeTick(db: Db, projectId: ProjectId, config: LeverConfig, cycleDate: string): Promise<TickEvidence> {
-  const activeIds = await loadActiveVariantIds(db, projectId)
-  const statsMap = new Map((await getVariantStats(db, projectId, config, true)).map((s) => [s.variantId, s]))
-  const targeting = await getTargetingStats(db, projectId, config, true)
-  // A stats slug outside the active registry stays baseline-only (e.g. carried
-  // in by a cross-project link).
-  const activeSlugs = await getActiveStrategySlugs(db, projectId)
-  const strategyStats = new Map(
+export async function observeTick(db: Db, projectId: ProjectId, config: LeverConfig): Promise<TickEvidence> {
+  const window = tickWindow(config, true)
+  const [activeIds, activeSlugs, variantStats, targeting, lostIds, lostSlugs, [state]] = await Promise.all([
+    loadActiveVariantIds(db, projectId),
+    getActiveStrategySlugs(db, projectId),
+    getVariantStats(db, projectId, config, true),
+    getTargetingStats(db, projectId, config, true),
+    lostOptionIds(db, projectId, 'variant'),
+    lostOptionIds(db, projectId, 'strategy'),
+    db.select({ variantFlatStreak: leverState.variantFlatStreak }).from(leverState).where(eq(leverState.projectId, projectId)),
+  ])
+  const [variantSince, strategySince] = await Promise.all([
+    sendsSinceEntry(db, projectId, 'variant', activeIds, window),
+    sendsSinceEntry(db, projectId, 'strategy', activeSlugs, and(window, not(bounced(db)))),
+  ])
+  const variantOf = new Map(variantStats.map((s) => [s.variantId, s]))
+  // A stats slug outside the registry stays baseline-only (e.g. carried in by
+  // a cross-project link).
+  const strategyOf = new Map(
     targeting.discoveryStrategy
       .filter((s): s is typeof s & { value: string } => s.value !== null)
       .map((s) => [s.value, s]),
   )
-  const recent = await db
-    .select({ decision: leverDecisions.decision })
-    .from(leverDecisions)
-    .where(eq(leverDecisions.projectId, projectId))
-    .orderBy(desc(leverDecisions.cycleDate))
-    .limit(config.stagnationTicks - 1)
+  const variantArm = (id: string) => ({ armId: id, total: variantOf.get(id)?.total ?? 0, rewardSum: variantOf.get(id)?.rewardSum ?? 0 })
+  const strategyArm = (slug: string) => ({ armId: slug, total: strategyOf.get(slug)?.total ?? 0, rewardSum: strategyOf.get(slug)?.rewardSum ?? 0 })
   return {
-    // Active set only → archived excluded; an active-but-unsent variant is total 0.
-    // Only the VariantStat fields: the decision row records these as samples.
-    variants: activeIds.map((id) => {
-      const s = statsMap.get(id)
-      return { variantId: id, total: s?.total ?? 0, responses: s?.responses ?? 0, rewardSum: s?.rewardSum ?? 0 }
-    }),
-    strategies: activeSlugs.map((slug) => ({
-      armId: slug,
-      total: strategyStats.get(slug)?.total ?? 0,
-      rewardSum: strategyStats.get(slug)?.rewardSum ?? 0,
-    })),
+    variants: {
+      active: activeIds.map((id) => ({ ...variantArm(id), responses: variantOf.get(id)?.responses ?? 0, sinceEntry: variantSince.get(id) ?? 0 })),
+      lost: lostIds.map(variantArm),
+      flatStreak: state?.variantFlatStreak ?? 0,
+    },
+    strategies: {
+      active: activeSlugs.map((slug) => ({ ...strategyArm(slug), sinceEntry: strategySince.get(slug) ?? 0 })),
+      lost: lostSlugs.map(strategyArm),
+    },
     channel: await getChannelStats(db, projectId, config),
     targeting,
     futility: await getFutilityStats(db, projectId, config),
-    registrations: await loadPriorDayRegistrations(db, projectId, cycleDate),
-    recentSubjects: recent.map((h) => h.decision.subject),
-    unfulfilledRotation: await hasUnfulfilledRotation(db, projectId, activeIds.length),
   }
 }

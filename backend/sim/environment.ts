@@ -1,7 +1,7 @@
 // The subjects under test are the production domain functions imported below;
 // this loop only replays the service-layer orchestration and is valid while
 // these mirrors of backend/src (services and domain/loop/decide.ts) hold:
-// - tick (services/loop/learn.ts → domain/loop/decide.ts): computeArmWeights
+// - tick (services/loop/learn.ts → domain/loop/decide.ts): decideOptions
 //   over active slugs, archives applied immediately, ordering scores
 //   materialized into the whole standing pool; rows registered after the tick
 //   keep the schema default 1.0 until the next tick. Vitals rng re-seeded
@@ -19,7 +19,7 @@
 //   (SimParams); resetStatsAtDay replays the manual measurementsSince wipe.
 
 import { seededRng, type ArmStat } from '../src/domain/loop/bandit'
-import { computeArmWeights } from '../src/domain/loop/options'
+import { decideOptions } from '../src/domain/loop/options'
 import { assessVitals, type VitalsVerdict } from '../src/domain/loop/frame'
 import {
   apportionLargestRemainder,
@@ -143,6 +143,12 @@ export function runScenario(scenario: Scenario, seed: number, params: SimParams)
 
   const active = new Set(scenario.strategies.map((s) => s.slug))
   const archivedAt: Record<string, number> = {}
+  // Restore days. Grace counts sends made since, which mature rewardWindowDays later.
+  const enteredDay = new Map<string, number>()
+  const sentSince = (slug: string): number => {
+    const entered = enteredDay.get(slug)
+    return entered === undefined ? 0 : entered + config.rewardWindowDays
+  }
   const inventory = new Map(scenario.strategies.map((s) => [s.slug, s.inventory]))
   const stats = new Map(
     scenario.strategies.map((s) => [
@@ -246,18 +252,21 @@ export function runScenario(scenario: Scenario, seed: number, params: SimParams)
         ? (slug: string): DayCount => stats.get(slug)!
         : (slug: string): DayCount => windowStat(slug, day - config.rewardLookbackDays! + 1)
 
-    const activeSlugs = [...active].sort()
-    const arms: ArmStat[] = activeSlugs.map((slug) => {
+    const armOf = (slug: string): ArmStat => {
       const s = armStatOf(slug)
       return { armId: slug, total: s.total, rewardSum: s.replies }
-    })
-    const decision = computeArmWeights(
-      arms,
+    }
+    const decision = decideOptions(
+      [...active].sort().map((slug) => ({ ...armOf(slug), sinceEntry: windowStat(slug, sentSince(slug)).total })),
+      Object.keys(archivedAt).sort().map(armOf),
       {
         minSamplePerArm: config.minSamplePerArm,
         archiveThreshold: config.archiveThreshold,
+        restoreThreshold: config.restoreThreshold,
+        slots: config.targetActiveStrategies,
         weightFloor: config.strategyWeightFloor,
       },
+      null,
       seededRng(`${day}:${seed}:discovery`),
       mcSamples,
     )
@@ -266,6 +275,11 @@ export function runScenario(scenario: Scenario, seed: number, params: SimParams)
       active.delete(a.armId)
       archivedAt[a.armId] = day
       archivedToday.push(a.armId)
+    }
+    for (const r of decision.toRestore) {
+      active.add(r.armId)
+      delete archivedAt[r.armId]
+      enteredDay.set(r.armId, day)
     }
     storedWeights = decision.weights
 

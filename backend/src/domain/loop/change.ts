@@ -15,8 +15,11 @@ type PolicyActor = (typeof POLICY_ACTORS)[number]
 
 export const RULE_ARCHIVE_REASONS = ['lost', 'rotated'] as const
 export type RuleArchiveReason = (typeof RULE_ARCHIVE_REASONS)[number]
-// Absent on archives the tick made before it recorded P(best).
-export type ArchiveEvidence = { pBest: number; n: number }
+// The probability the rule held against its threshold: P(it beats the leader)
+// for a lost or restored option; P(best) among the active set for a rotation
+// and for every archive from before the leader test. Absent on archives the
+// tick made before it recorded any.
+export type RuleEvidence = { n: number } & ({ pBest: number } | { pBeatsLeader: number })
 
 export type ChangeAuthor = { actor: Exclude<PolicyActor, 'rule'>; reason: string | null }
 
@@ -42,10 +45,13 @@ export function optionOps(before: OptionState | null, after: OptionState): Optio
   return Object.keys(after.content).some((k) => before.content[k] !== after.content[k]) ? ['update'] : []
 }
 
-type RuleArchive = { target: OptionTarget; optionId: string; reason: RuleArchiveReason; evidence: ArchiveEvidence | null }
+type RuleChange = { target: OptionTarget; optionId: string; evidence: RuleEvidence | null } & (
+  | { op: 'archive'; reason: RuleArchiveReason }
+  | { op: 'restore' }
+)
 
 // `day` is the UTC day the change was made.
 export type LoggedChange =
-  | ({ day: string; actor: 'rule' } & RuleArchive)
+  | ({ day: string; actor: 'rule' } & RuleChange)
   | { day: string; actor: ChangeAuthor['actor']; target: OptionTarget; optionId: string; op: OptionOp; reason: string | null }
   | { day: string; actor: ChangeAuthor['actor']; target: DocumentTarget; reason: string | null }

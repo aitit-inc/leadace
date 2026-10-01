@@ -1,0 +1,3 @@
+ALTER TABLE "policy_changes" DROP CONSTRAINT "chk_policy_changes_rule";--> statement-breakpoint
+ALTER TABLE "lever_state" ADD COLUMN "variant_flat_streak" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
+ALTER TABLE "policy_changes" ADD CONSTRAINT "chk_policy_changes_rule" CHECK (("policy_changes"."actor" = 'rule' AND "policy_changes"."op" = 'archive') = ("policy_changes"."rule_reason" IS NOT NULL));

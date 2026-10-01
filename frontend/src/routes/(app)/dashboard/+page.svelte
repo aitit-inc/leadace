@@ -124,6 +124,12 @@
   } as const;
   const DOCUMENT_NAMES = { sales_strategy: 'the sales strategy', business: 'the business profile' } as const;
 
+  function evidenceDetail(evidence: Extract<JournalEvent, { kind: 'rule_archive' }>['evidence']): string | null {
+    if (!evidence) return null;
+    const p = 'pBest' in evidence ? evidence.pBest : evidence.pBeatsLeader;
+    return `win chance ${Math.round(p * 100)}% · ${evidence.n} sends`;
+  }
+
   function journalText(e: JournalEvent): { text: string; detail: string | null; why: string | null } {
     switch (e.kind) {
       case 'strategy_escalated':
@@ -136,11 +142,18 @@
         return { text: `${OPTION_VERBS[e.target][e.actor][e.op]} “${e.label ?? e.optionId}”`, detail: null, why: e.reason };
       case 'rule_archive': {
         const name = `“${e.label ?? e.optionId}”`;
-        const detail = e.evidence ? `win chance ${Math.round(e.evidence.pBest * 100)}% · ${e.evidence.n} sends` : null;
+        const detail = evidenceDetail(e.evidence);
         if (e.reason === 'rotated') return { text: `Swapped out ${name} — results stayed flat`, detail, why: null };
         return e.target === 'variant'
           ? { text: `Retired ${name} — a stronger angle won`, detail, why: null }
           : { text: `Stopped searching via ${name} — another search did better`, detail, why: null };
+      }
+      case 'rule_restore': {
+        const name = `“${e.label ?? e.optionId}”`;
+        const detail = evidenceDetail(e.evidence);
+        return e.target === 'variant'
+          ? { text: `Brought back ${name} — its results caught up`, detail, why: null }
+          : { text: `Resumed searching via ${name} — its results caught up`, detail, why: null };
       }
     }
   }

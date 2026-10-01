@@ -3,7 +3,7 @@
 // only work outside a step is reading the row and writing its final status.
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers'
 import type { Env } from '../api/types'
-import { createDb } from '../db/connection'
+import { withDb } from '../db/connection'
 import { withTenantConnection, type TenantRun } from '../db/rls'
 import type { JobResult } from '../domain/jobs'
 import { asTenantId } from '../domain/ids'
@@ -45,13 +45,13 @@ export class LeadAceJobWorkflow extends WorkflowEntrypoint<Env, JobWorkflowParam
     // row: a step retries until it is visible. Every write below is a step
     // too, so a replay after hibernation neither re-marks nor re-notifies.
     const job = await step.do('load', LOAD_RETRY, async () => {
-      const row = await loadJobForRun(createDb(this.env.DATABASE_URL), asTenantId(tenantId), jobId)
+      const row = await withDb(this.env.DATABASE_URL, (db) => loadJobForRun(db, asTenantId(tenantId), jobId))
       if (!row) throw new Error(`jobs row ${jobId} not visible yet for tenant ${tenantId}`)
       return row
     })
     if (job.status === 'cancelled') return
     await step.do('start', async () => {
-      await markJobRunning(createDb(this.env.DATABASE_URL), job.tenantId, job.id)
+      await withDb(this.env.DATABASE_URL, (db) => markJobRunning(db, job.tenantId, job.id))
       return true
     })
 
@@ -78,7 +78,7 @@ export class LeadAceJobWorkflow extends WorkflowEntrypoint<Env, JobWorkflowParam
       })
     }
     await step.do('finish', async () => {
-      await finishJob(createDb(this.env.DATABASE_URL), job.tenantId, job.id, outcome)
+      await withDb(this.env.DATABASE_URL, (db) => finishJob(db, job.tenantId, job.id, outcome))
       return true
     })
     await step.do('notify', async () => {

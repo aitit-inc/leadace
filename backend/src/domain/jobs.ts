@@ -105,9 +105,8 @@ export type JobProgress = {
 }
 
 // One row per planned strategy, so a strategy that was asked for is never
-// absent. Read against the day's registrations it tells "search returned
-// nothing" apart from "enrich dropped them"; registrations alone collapse both
-// to zero.
+// absent. It tells "search returned nothing" apart from "enrich dropped
+// them"; registration counts alone collapse both to zero.
 //   asked       what the search was told to find (the bandit's allocation
 //               lifted to the cycle minimum; the raw allocation stays in
 //               lever_decisions)

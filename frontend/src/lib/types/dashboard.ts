@@ -58,6 +58,10 @@ export interface DashboardLearning {
   log: LearningEntry[];
 }
 
+// P(it beats the leading option) for a lost or restored one; P(best) among the
+// active set for a rotation and for archives from before the leader test.
+type RuleEvidence = { n: number } & ({ pBest: number } | { pBeatsLeader: number });
+
 export type JournalEvent =
   | {
       date: string;
@@ -66,7 +70,15 @@ export type JournalEvent =
       optionId: string;
       label: string | null;
       reason: 'lost' | 'rotated';
-      evidence: { pBest: number; n: number } | null;
+      evidence: RuleEvidence | null;
+    }
+  | {
+      date: string;
+      kind: 'rule_restore';
+      target: 'variant' | 'strategy';
+      optionId: string;
+      label: string | null;
+      evidence: RuleEvidence | null;
     }
   | {
       date: string;

@@ -1,16 +1,14 @@
 // Options experiment (#793): the middle and inner layers — which options run,
-// which are dropped or brought back, and how sends are split among them.
-// `current` calls the production decide(); `proposed` runs the candidate
-// rules in proposed.ts. Both see the same market: the i-th option created in a
-// run has the same true rate under either policy, and its n-th send draws the
-// same outcome (common random numbers), so differences come from the rules.
+// which are dropped or brought back, and how sends are split among them — as
+// the production decide() rules them. Every policy sees the same market: the
+// i-th option created in a run has the same true rate, and its n-th send draws
+// the same outcome (common random numbers), so differences come from the config.
 //
 // Mirrors that hold while these results are read:
 // - An option's evidence is its sends matured rewardWindowDays after sending.
 // - The LLM that writes new options is a draw from the market distribution,
-//   refilling the active set right after the tick (design v2 order: decide →
-//   propose). Current rules refill to the target count; proposed rules to
-//   `slots`, restoring lost options first.
+//   refilling the active set to the target count right after the tick (decide
+//   → propose); the rule restores lost options into free slots first.
 // - Sends are drawn per send from the stored weights; an option added after
 //   the tick enters at the floor (prepareDrawDistribution / floorRescuedWeights).
 // - Strategies are modeled like messages minus the stagnation rotation: their
@@ -18,11 +16,9 @@
 
 import { seededRng, weightedDraw, type ArmStat } from '../src/domain/loop/bandit'
 import { decide, type TickEvidence } from '../src/domain/loop/decide'
-import { applyRotation, isFlatTick, isStagnant, type StagnationTick, type VariantStat } from '../src/domain/loop/options'
+import type { OptionArm } from '../src/domain/loop/options'
 import { floorRescuedWeights } from '../src/domain/loop/allocation'
 import type { LeverConfig } from '../src/domain/loop/config'
-import type { LeverDecisionPayload } from '../src/db/schema'
-import { allocate, judgeLost, pickRestores, type ProposedParams } from './proposed'
 
 export type OptionsScenario = {
   name: string
@@ -39,12 +35,6 @@ export type OptionsScenario = {
   horizonDays: number
 }
 
-export type ProposedRules = Pick<ProposedParams, 'compare' | 'restoreAt' | 'restoreRotated' | 'slots' | 'minActive' | 'capImmature'>
-
-export type OptionsPolicy =
-  | { kind: 'current'; config: LeverConfig }
-  | ({ kind: 'proposed'; config: LeverConfig } & ProposedRules)
-
 type OptionState = 'active' | 'lost' | 'rotated'
 
 type SimOption = {
@@ -53,6 +43,8 @@ type SimOption = {
   state: OptionState
   total: number
   reward: number
+  sinceEntry: number
+  enteredDay: number
   restoredOnce: boolean
   outcome: () => number
 }
@@ -85,35 +77,14 @@ export type OptionsRun = {
 }
 
 const armOf = (o: SimOption): ArmStat => ({ armId: o.id, total: o.total, rewardSum: o.reward })
-const variantOf = (o: SimOption): VariantStat => ({ variantId: o.id, total: o.total, responses: o.reward, rewardSum: o.reward })
+const activeArm = (o: SimOption): OptionArm => ({ ...armOf(o), sinceEntry: o.sinceEntry })
 
-function proposedParams(policy: Extract<OptionsPolicy, { kind: 'proposed' }>, layer: OptionsScenario['layer']): ProposedParams {
-  const { config } = policy
-  return {
-    minSample: config.minSamplePerArm,
-    lostBelow: config.archiveThreshold,
-    restoreAt: policy.restoreAt,
-    restoreRotated: policy.restoreRotated,
-    slots: policy.slots,
-    compare: policy.compare,
-    minActive: policy.minActive,
-    weightFloor: layer === 'message' ? config.messageWeightFloor : config.strategyWeightFloor,
-    capImmature: policy.capImmature,
-  }
-}
-
-export function runOptions(scenario: OptionsScenario, seed: number, policy: OptionsPolicy, samples: number): OptionsRun {
-  const { config } = policy
+export function runOptions(scenario: OptionsScenario, seed: number, config: LeverConfig, samples: number): OptionsRun {
   const key = `${scenario.name}:${seed}`
   const marketRng = seededRng(`market:${key}`)
   const allocRng = seededRng(`alloc:${key}`)
   const floor = scenario.layer === 'message' ? config.messageWeightFloor : config.strategyWeightFloor
-  const target =
-    policy.kind === 'proposed'
-      ? policy.slots
-      : scenario.layer === 'message'
-        ? config.targetActiveArms
-        : config.targetActiveStrategies
+  const target = scenario.layer === 'message' ? config.targetActiveArms : config.targetActiveStrategies
 
   const options: SimOption[] = []
   const byId = new Map<string, SimOption>()
@@ -129,6 +100,8 @@ export function runOptions(scenario: OptionsScenario, seed: number, policy: Opti
       state: 'active',
       total: 0,
       reward: 0,
+      sinceEntry: 0,
+      enteredDay: 0,
       restoredOnce: false,
       outcome: () => (rng() < rate ? 1 : 0),
     }
@@ -174,15 +147,15 @@ export function runOptions(scenario: OptionsScenario, seed: number, policy: Opti
   }
 
   let weights: Record<string, number> = {}
-  const recentSubjects: LeverDecisionPayload['subject'][] = []
-  const stagnation: StagnationTick[] = []
+  let flatStreak = 0
   const pending: { day: number; option: SimOption; reward: number }[] = []
 
   for (let day = 0; day < scenario.horizonDays; day++) {
     while (pending.length > 0 && day - pending[0]!.day >= config.rewardWindowDays) {
-      const { option, reward } = pending.shift()!
+      const { day: sentDay, option, reward } = pending.shift()!
       option.total += 1
       option.reward += reward
+      if (sentDay >= option.enteredDay) option.sinceEntry += 1
     }
 
     const matureActive = active().filter((o) => o.total >= config.minSamplePerArm)
@@ -193,68 +166,33 @@ export function runOptions(scenario: OptionsScenario, seed: number, policy: Opti
       if (leader.rate === Math.max(...matureActive.map((o) => o.rate))) run.leaderRightDays += 1
     }
 
-    if (policy.kind === 'current') {
-      const running = active()
-      const evidence: TickEvidence = {
-        variants: scenario.layer === 'message' ? running.map(variantOf) : [],
-        strategies: scenario.layer === 'strategy' ? running.map(armOf) : [],
-        channel: [],
-        targeting: { industry: [], employeeBand: [], country: [], discoveryStrategy: [] },
-        futility: { sends: 0, engaged: 0 },
-        registrations: {},
-        recentSubjects: [...recentSubjects],
-        unfulfilledRotation: false,
-      }
-      const decision = decide(evidence, config, String(day), key, samples)
-      if (scenario.layer === 'message') {
-        const rotated = decision.variants.toArchive.filter((a) => a.reason === 'stagnation').map((a) => a.variantId)
-        const lost = decision.variants.toArchive.filter((a) => a.reason !== 'stagnation').map((a) => a.variantId)
-        archive(lost, 'lost')
-        archive(rotated, 'rotated')
-        weights = decision.variants.weights
-        recentSubjects.unshift(decision.payload.subject)
-        recentSubjects.length = Math.min(recentSubjects.length, config.stagnationTicks - 1)
-      } else {
-        archive(decision.strategies.toArchive.map((a) => a.armId), 'lost')
-        weights = decision.strategies.weights
-      }
-      while (active().length < target) {
-        create()
-        run.created += 1
-      }
-    } else {
-      const params = proposedParams(policy, scenario.layer)
-      const rng = seededRng(`${day}:${key}:proposed`)
-      const lostPool = options.filter((o) => o.state === 'lost' || (params.restoreRotated && o.state === 'rotated'))
-      const judged = judgeLost(active().map(armOf), lostPool.map(armOf), params, rng, samples)
-      archive(judged.lost, 'lost')
-
-      if (scenario.layer === 'message' && judged.lost.length === 0) {
-        const { pBest } = allocate(active().map(armOf), params, rng, samples)
-        const running = active().map(variantOf)
-        stagnation.unshift({ variantIds: running.map((v) => v.variantId), flat: isFlatTick(running, pBest, params.minSample) })
-        stagnation.length = Math.min(stagnation.length, config.stagnationTicks)
-        if (isStagnant(stagnation, config.stagnationTicks)) {
-          const rotation = applyRotation(running, { weights: {}, pBest, toArchive: [] }, config)
-          archive(rotation.toArchive.map((a) => a.variantId), 'rotated')
-          stagnation.length = 0
-        }
-      } else {
-        stagnation.length = 0
-      }
-
-      const free = params.slots - active().length
-      for (const id of pickRestores(lostPool.map(armOf), judged.pMature, params, free)) {
-        const o = byId.get(id)!
-        o.state = 'active'
-        o.restoredOnce = true
-        run.restores += 1
-      }
-      weights = allocate(active().map(armOf), params, rng, samples).weights
-      while (active().length < params.slots) {
-        create()
-        run.created += 1
-      }
+    const lost = options.filter((o) => o.state === 'lost').map(armOf)
+    const evidence: TickEvidence = {
+      variants: scenario.layer === 'message'
+        ? { active: active().map((o) => ({ ...activeArm(o), responses: o.reward })), lost, flatStreak }
+        : { active: [], lost: [], flatStreak: 0 },
+      strategies: scenario.layer === 'strategy' ? { active: active().map(activeArm), lost } : { active: [], lost: [] },
+      channel: [],
+      targeting: { industry: [], employeeBand: [], country: [], discoveryStrategy: [] },
+      futility: { sends: 0, engaged: 0 },
+    }
+    const decision = decide(evidence, config, String(day), key, samples)
+    const layer = scenario.layer === 'message' ? decision.variants : decision.strategies
+    archive(layer.toArchive.filter((a) => !('reason' in a)).map((a) => a.armId), 'lost')
+    archive(layer.toArchive.filter((a) => 'reason' in a).map((a) => a.armId), 'rotated')
+    for (const { armId } of layer.toRestore) {
+      const o = byId.get(armId)!
+      o.state = 'active'
+      o.sinceEntry = 0
+      o.enteredDay = day
+      o.restoredOnce = true
+      run.restores += 1
+    }
+    weights = layer.weights
+    flatStreak = layer.flatStreak
+    while (active().length < target) {
+      create()
+      run.created += 1
     }
 
     const running = active()

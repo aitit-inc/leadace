@@ -3,7 +3,6 @@ import { z } from 'zod'
 import { leverDecisions, leverState, type LeverDecisionPayload } from '../../db/schema'
 import type { Db } from '../../db/connection'
 import type { ProjectId, ProjectRef, TenantId } from '../../domain/ids'
-import type { ArchiveDecision, VariantStat } from '../../domain/loop/options'
 import type { VitalsAssessment } from '../../domain/loop/frame'
 import {
   apportionLargestRemainder,
@@ -17,18 +16,8 @@ import { ok, type ServiceResult } from '../result'
 import { resolveProject } from '../projects'
 import { loadLeverConfig } from '../project-settings'
 import { listDiscoveryStrategiesById } from '../discovery-strategies'
-import { getVariantStats, hasUnfulfilledRotation, loadActiveVariantIds } from './observe'
-
-export async function computeNeedsReplenishment(
-  db: Db,
-  projectId: ProjectId,
-  activeCount: number,
-  config: { targetActiveArms: number; maxActiveArms: number },
-): Promise<boolean> {
-  if (activeCount < config.targetActiveArms) return true
-  if (activeCount >= config.maxActiveArms) return false
-  return hasUnfulfilledRotation(db, projectId, activeCount)
-}
+import { getVariantStats, loadActiveVariantIds } from './observe'
+import { ruleRestoresSince, type RuleRestore } from './change'
 
 export type LeverStateVariant = {
   variantId: string
@@ -69,8 +58,7 @@ export type LeverStateView = {
     needsReplenishment: boolean
   }
   todaysDecision: LeverDecisionPayload | null
-  // Active variants below targetActiveArms, or a stagnation rotation freed a
-  // slot that is still unfilled → /evaluate supplies a fresh angle.
+  // Active variants below targetActiveArms → /evaluate supplies a fresh angle.
   needsReplenishment: boolean
 }
 
@@ -95,9 +83,8 @@ export async function getLeverStateById(
   const activeIds = await loadActiveVariantIds(db, projectId)
   const statsMap = new Map((await getVariantStats(db, projectId, config, true)).map((s) => [s.variantId, s]))
   // Live flag so /evaluate reads the current pool state whether or not today's
-  // tick has run (the plugin's cycle still evaluates first). Includes a rotation-freed slot
-  // still awaiting its fresh angle (pool at target but one arm was rotated out).
-  const needsReplenishment = await computeNeedsReplenishment(db, projectId, activeIds.length, config)
+  // tick has run (the plugin's cycle still evaluates first).
+  const needsReplenishment = activeIds.length < config.targetActiveArms
 
   const [stateRow] = await db
     .select({
@@ -182,8 +169,10 @@ export type LeverDecisionsHistoryQuery = z.infer<typeof leverDecisionsHistoryQue
 export type LeverDecisionHistoryEntry = {
   cycleDate: string
   weights: Record<string, number>
-  archived: ArchiveDecision[]
-  samples: VariantStat[]
+  archived: LeverDecisionPayload['subject']['archived']
+  // What that day's tick brought back, variants and strategies, as logged.
+  restored: RuleRestore[]
+  samples: LeverDecisionPayload['subject']['samples']
   channelAffinity: ChannelAffinityMap
   // null on pre-Phase-B decisions.
   targetingLifts: TargetingLifts | null
@@ -212,11 +201,14 @@ export async function getLeverDecisionsHistory(
       sql`${leverDecisions.cycleDate} >= (now() AT TIME ZONE 'UTC')::date - make_interval(days => ${days})`,
     ))
     .orderBy(desc(leverDecisions.cycleDate))
+  const oldest = rows.at(-1)
+  const restores = oldest ? await ruleRestoresSince(db, projectId, new Date(`${oldest.cycleDate}T00:00:00Z`)) : []
 
   const decisions = rows.map((r) => ({
     cycleDate: r.cycleDate,
     weights: r.decision.subject.weights,
     archived: r.decision.subject.archived,
+    restored: restores.filter((x) => x.day === r.cycleDate),
     samples: r.decision.subject.samples,
     channelAffinity: r.decision.channel?.affinity ?? {},
     targetingLifts: r.decision.targeting?.lifts ?? null,

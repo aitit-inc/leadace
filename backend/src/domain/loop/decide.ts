@@ -2,17 +2,7 @@ import type { LeverDecisionPayload } from '../../db/schema'
 import { PBEST_SAMPLES, seededRng, type ArmStat } from './bandit'
 import type { LeverConfig } from './config'
 import { assessVitals } from './frame'
-import {
-  applyRotation,
-  computeArmWeights,
-  computeVariantWeights,
-  isFlatTick,
-  isStagnant,
-  type ArmWeightDecision,
-  type StagnationTick,
-  type VariantStat,
-  type WeightDecision,
-} from './options'
+import { decideOptions, type OptionArm, type OptionsDecision } from './options'
 import {
   aggregateByCoarse,
   computeAxisLifts,
@@ -23,23 +13,24 @@ import {
   type TargetingStats,
 } from './allocation'
 
-// Options are the active set only.
+// `lost` = options the rule archived as lost and nobody has brought back.
 export type TickEvidence = {
-  variants: VariantStat[]
-  strategies: ArmStat[]
+  variants: {
+    // `responses` is journaled beside the decision, never decided on.
+    active: Array<OptionArm & { responses: number }>
+    lost: ArmStat[]
+    // Days in a row the variant set had been flat as of the last tick.
+    flatStreak: number
+  }
+  strategies: { active: OptionArm[]; lost: ArmStat[] }
   channel: ChannelFineStat[]
   targeting: TargetingStats
   futility: { sends: number; engaged: number }
-  // Journaled beside the decision, never decided on.
-  registrations: Record<string, number>
-  // Newest first, up to stagnationTicks - 1 prior days.
-  recentSubjects: LeverDecisionPayload['subject'][]
-  unfulfilledRotation: boolean
 }
 
 export type TickDecision = {
-  variants: WeightDecision
-  strategies: ArmWeightDecision
+  variants: OptionsDecision
+  strategies: OptionsDecision
   payload: Required<LeverDecisionPayload>
 }
 
@@ -51,7 +42,7 @@ export function decide(
   projectId: string,
   samples: number = PBEST_SAMPLES,
 ): TickDecision {
-  const { variants: arms, strategies: strategyArms, targeting: targetingStats } = evidence
+  const { variants, strategies, targeting: targetingStats } = evidence
 
   // Own seeded stream, like discovery: the vitals Monte Carlo must not shift
   // the variant/discovery draws a replay would recompute. Deliberately NOT
@@ -61,41 +52,29 @@ export function decide(
   // and the attention alert would flicker without new evidence.
   const vitals = assessVitals(evidence.futility, config, seededRng(`vitals:${projectId}`), samples)
 
-  const rng = seededRng(`${cycleDate}:${projectId}`)
-  let decision = computeVariantWeights(arms, config, rng, samples)
-
-  // Stagnation rotation: only when today has no dominance archive (an archive
-  // IS movement) and no earlier rotation is still awaiting its fresh angle.
-  if (decision.toArchive.length === 0) {
-    const todayTick: StagnationTick = {
-      variantIds: arms.map((a) => a.variantId),
-      flat: isFlatTick(arms, decision.pBest, config.minSamplePerArm),
-    }
-    if (todayTick.flat) {
-      const ticks: StagnationTick[] = [
-        todayTick,
-        ...evidence.recentSubjects.map((subject) => ({
-          variantIds: subject.samples.map((s) => s.variantId),
-          flat:
-            subject.archived.length === 0 &&
-            isFlatTick(subject.samples, subject.pBest, config.minSamplePerArm),
-        })),
-      ]
-      if (isStagnant(ticks, config.stagnationTicks) && !evidence.unfulfilledRotation) {
-        decision = applyRotation(arms, decision, config)
-      }
-    }
+  const rule = {
+    minSamplePerArm: config.minSamplePerArm,
+    archiveThreshold: config.archiveThreshold,
+    // A stored override from before restoreThreshold existed may sit above it;
+    // the same score must never both archive and restore.
+    restoreThreshold: Math.max(config.restoreThreshold, config.archiveThreshold),
   }
-
+  const decision = decideOptions(
+    variants.active,
+    variants.lost,
+    { ...rule, slots: config.targetActiveArms, weightFloor: config.messageWeightFloor },
+    { flatStreak: variants.flatStreak, stagnationDays: config.stagnationTicks },
+    seededRng(`${cycleDate}:${projectId}`),
+    samples,
+  )
   // Its own seeded stream so a discovery decision replays without re-running
-  // the variant Monte Carlo.
-  const discoveryDecision = computeArmWeights(
-    strategyArms,
-    {
-      minSamplePerArm: config.minSamplePerArm,
-      archiveThreshold: config.archiveThreshold,
-      weightFloor: config.strategyWeightFloor,
-    },
+  // the variant Monte Carlo. Strategies never rotate: a flat set of sources
+  // is not a reason to drop one.
+  const discoveryDecision = decideOptions(
+    strategies.active,
+    strategies.lost,
+    { ...rule, slots: config.targetActiveStrategies, weightFloor: config.strategyWeightFloor },
+    null,
     seededRng(`${cycleDate}:${projectId}:discovery`),
     samples,
   )
@@ -116,15 +95,19 @@ export function decide(
     variants: decision,
     strategies: discoveryDecision,
     payload: {
-      subject: { weights: decision.weights, pBest: decision.pBest, archived: decision.toArchive, samples: arms },
+      subject: {
+        weights: decision.weights,
+        pBest: decision.pBest,
+        archived: decision.toArchive.map(({ armId, ...rest }) => ({ variantId: armId, ...rest })),
+        samples: variants.active.map(({ armId, total, responses, rewardSum }) => ({ variantId: armId, total, responses, rewardSum })),
+      },
       channel: { affinity: channelAffinity, samples: channelStats },
       targeting: { lifts: targetingLifts, samples: targetingStats },
       discovery: {
         weights: discoveryDecision.weights,
         pBest: discoveryDecision.pBest,
-        archived: discoveryDecision.toArchive.map(({ armId, pBest, n }) => ({ slug: armId, pBest, n })),
-        samples: strategyArms.map(({ armId, total, rewardSum }) => ({ slug: armId, total, rewardSum })),
-        registrations: evidence.registrations,
+        archived: discoveryDecision.toArchive.map(({ armId, ...evidence }) => ({ slug: armId, ...evidence })),
+        samples: strategies.active.map(({ armId, total, rewardSum }) => ({ slug: armId, total, rewardSum })),
       },
       vitals,
       configUsed: config,

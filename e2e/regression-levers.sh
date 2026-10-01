@@ -7,16 +7,14 @@
 #     not re-apply (the (project_id, cycle_date) unique is the claim)
 #   - multi-reply: a send with two replies scores once, by its strongest
 #     reaction (v1 gets 2 replies per send)
-#   - archiving a P(best)-dominated variant while keeping ≥2 active
+#   - archiving a variant unlikely to beat the leader while keeping ≥2 active
 #   - lever_state weights surfaced by get_lever_state; pick draws from them
 #   - bodyApproach round-trips through upsert → pick
 #   - active cap: an upsert that would exceed maxActiveArms is refused (400)
 #   - explicit-variant override + archived-id fall-through on pick
 #   - needsReplenishment: true whenever active arms < targetActiveArms (after
 #     the tick archives, on the idempotent echo, on the live get_lever_state
-#     recompute, and for a single-variant pool); the stagnation-rotation
-#     bullet below covers the other cause — an unfulfilled rotation with the
-#     pool at targetActiveArms
+#     recompute, and for a single-variant pool)
 #   - rewardLookbackDays forgetting window: the tick path narrows getVariantStats
 #     to the recent band, while the all-history /stats display stays unwindowed
 #   - strategy bandit (PR-B): the tick weighs the active discovery-strategy
@@ -27,20 +25,18 @@
 #   - allocation (PR-C): get_lever_state discovery.batchPlan apportions the
 #     requested batchSize (default 30) across active strategies by the tick's
 #     weights (largest remainder — counts always sum to batchSize; an active
-#     strategy the tick hasn't weighed yet enters at the floor share), and the
-#     tick journals the prior UTC day's per-strategy registration counts as
-#     discovery.registrations (registry-scoped plan-compliance record)
+#     strategy the tick hasn't weighed yet enters at the floor share)
 #   - vitals (PR-D): the tick journals the futility check over mature
 #     non-bounced email sends (channel-scoped, epoch-cut, NOT lookback-cut);
 #     a futile verdict on a project's newest decision surfaces as an
 #     outreach_futility item on the tenant-wide /me/attention feed while an
 #     ok verdict stays silent
-#   - stagnation rotation: after a seeded streak of flat prior decisions
-#     (all arms mature, max P(best) < 0.5, same arm set), the tick archives the
-#     weakest arm with reason "stagnation" and needsReplenishment stays raised
-#     at targetActiveArms until the slot is refilled — either fulfillment leg
-#     (pool growth past post-rotation size / a fresh variant row) is pinned
-#     with the other leg provably false
+#   - stagnation rotation: a variant set flat (all arms proven, max P(best)
+#     < 0.5) for stagnationTicks ticks in a row sheds its weakest arm with
+#     reason "stagnation", and the count starts over
+#   - restore and grace: an option the rule archived as lost comes back once
+#     its results catch up and a slot is free, logged as the rule's restore,
+#     and is not archived again on its old record while in its grace
 #
 # The pure decision math (Beta sampling, P(best), floor, archive gate) is unit-
 # tested in backend/src/domain/loop/options.test.ts; this harness covers the
@@ -120,6 +116,7 @@ PROJECT_ID2=""
 PROJECT_ID3=""
 PROJECT_ID4=""
 PROJECT_ID5=""
+PROJECT_ID6=""
 restore_and_exit() {
   local rc=$?
   if [[ "$SKIP_CLEANUP" == "1" ]]; then
@@ -148,6 +145,10 @@ restore_and_exit() {
   if [[ -n "${PROJECT_ID5:-}" ]]; then
     api DELETE "/api/projects/$PROJECT_ID5" > /dev/null || true
     say "deleted futility project $PROJECT_ID5"
+  fi
+  if [[ -n "${PROJECT_ID6:-}" ]]; then
+    api DELETE "/api/projects/$PROJECT_ID6" > /dev/null || true
+    say "deleted restore project $PROJECT_ID6"
   fi
   psql_local "DELETE FROM prospects WHERE tenant_id = '$TENANT_ID' AND email LIKE 'contact@$RUN_TAG%';" > /dev/null || true
   psql_local "DELETE FROM organizations WHERE tenant_id = '$TENANT_ID' AND domain LIKE '$RUN_TAG%';" > /dev/null || true
@@ -223,9 +224,17 @@ assert_eq "strategy s2 registered active" "$(echo "$R" | jq -r '.slug + ":" + (.
 # All backdated sends attribute to s1 through the prospect's provenance column;
 # s2 enters the bandit at total 0 (the floor keeps it drawable).
 psql_local "UPDATE prospects SET discovery_strategy='s1' WHERE id=$PROSPECT_ID;" > /dev/null
-# Backdate the project link into yesterday's UTC window so the tick's
-# registrations journal (prior-day per-strategy counts) has one row to find.
-psql_local "UPDATE project_prospects SET created_at = now() - interval '1 day' WHERE project_id='$PROJECT_ID' AND prospect_id=$PROSPECT_ID;" > /dev/null
+
+# The rule judges an option on its sends since it entered the active set, and
+# an option enters when its add is logged: backdate the log past the sends.
+backdate_log() { # project
+  psql_local "UPDATE policy_changes SET created_at = now() - interval '60 days' WHERE project_id='$1';" > /dev/null
+}
+# The tick is idempotent per UTC day; dropping the day's row lets it decide again.
+forget_tick() { # project
+  psql_local "DELETE FROM lever_decisions WHERE project_id='$1' AND cycle_date = (now() AT TIME ZONE 'UTC')::date;" > /dev/null
+}
+backdate_log "$PROJECT_ID"
 
 step "run_lever_tick #1 (real decision)"
 T1="$(api POST "/api/projects/$PROJECT_ID/run-lever-tick")"
@@ -234,9 +243,9 @@ assert_eq "tick1 measures v1 sends"  "$(echo "$T1" | jq -r '.samples[] | select(
 assert_eq "tick1 measures v1 replies" "$(echo "$T1" | jq -r '.samples[] | select(.variantId=="v1") | .responses')" "36"
 assert_eq "tick1 scores each v1 send once" "$(echo "$T1" | jq -r '.samples[] | select(.variantId=="v1") | .rewardSum')" "36"
 assert_eq "tick1 archived exactly v3" "$(echo "$T1" | jq -rc '[.archived[].variantId]')" '["v3"]'
-# v2 and v3 both sit at P(best) ~0 (candidates), but the ≥2-active floor caps
-# archiving to one; the posterior-mean tie-break sheds the weaker v3 (0/50).
-assert_eq "tick1 archived entry carries pBest below threshold" "$(echo "$T1" | jq -r '.archived[0].pBest < 0.05')" "true"
+# v2 and v3 both score ~0 against the leader v1 (candidates), but the ≥2-active
+# floor caps archiving to one; the posterior-mean tie-break sheds the weaker v3 (0/50).
+assert_eq "tick1 archived entry carries its score below the threshold" "$(echo "$T1" | jq -r '.archived[0].pBeatsLeader < 0.02')" "true"
 assert_eq "tick1 dropped v3 from weights" "$(echo "$T1" | jq -r '.weights | has("v3")')" "false"
 assert_eq "tick1 leader v1 outweighs v2" "$(echo "$T1" | jq -r '.weights.v1 > .weights.v2')" "true"
 assert_eq "tick1 pBest strongly favors v1 (36/60 vs 5/60)" "$(echo "$T1" | jq -r '.pBest.v1 > 0.9')" "true"
@@ -249,15 +258,15 @@ assert_eq "tick1 software_tech ranks email then form" "$(echo "$T1" | jq -rc '[.
 # must supply a fresh angle.
 assert_eq "tick1 needsReplenishment (2 active < target 3)" "$(echo "$T1" | jq -r '.needsReplenishment')" "true"
 # Strategy bandit: registry ∩ stats. s1 carries every non-bounced send (230,
-# reward rate ~0.35); unsent s2 sits on the uniform prior (mean 0.5), so
-# Thompson optimism favors it until it accumulates sends — same as a fresh
-# message variant. Neither is archivable (s2 immature, ≥2-active floor).
+# reward rate ~0.35); unsent s2 sits on the uniform prior (mean 0.5) and would
+# take most of the weight, but an unproven option is capped at an even share of
+# the slots (1/3), and the proven s1 takes the rest. Neither is archivable (s2
+# unproven, ≥2-active floor).
 assert_eq "tick1 strategy s1 sample total = 230" "$(echo "$T1" | jq -r '.discovery.samples[] | select(.slug=="s1") | .total')" "230"
-assert_eq "tick1 unsent s2 gets the uniform-prior optimism" "$(echo "$T1" | jq -r '.discovery.weights.s2 > .discovery.weights.s1')" "true"
+assert_eq "tick1 unsent s2 is capped at an even share of the slots" "$(echo "$T1" | jq -r '.discovery.weights.s2 * 3 | . > 0.999 and . < 1.001')" "true"
 assert_eq "tick1 measured s1 keeps a positive weight" "$(echo "$T1" | jq -r '.discovery.weights.s1 > 0.1')" "true"
 assert_eq "tick1 no strategy archived" "$(echo "$T1" | jq -rc '[.discovery.archived[].slug]')" '[]'
 assert_eq "tick1 needsStrategyReplenishment (2 active < target 3)" "$(echo "$T1" | jq -r '.needsStrategyReplenishment')" "true"
-assert_eq "tick1 journals yesterday's registration for s1" "$(echo "$T1" | jq -r '.discovery.registrations.s1')" "1"
 # Vitals: 170 mature email sends (the 60 form sends are out of scope), 41
 # engaged sends (v1's duplicate replies count once), healthy rate → ok.
 assert_eq "tick1 vitals counts mature email sends" "$(echo "$T1" | jq -r '.vitals.sends')" "170"
@@ -271,7 +280,7 @@ assert_eq "tick2 echoes same archived" "$(echo "$T2" | jq -rc '[.archived[].vari
 # Live recompute from the current active count (2 < 3), not the frozen decision.
 assert_eq "tick2 echoes needsReplenishment" "$(echo "$T2" | jq -r '.needsReplenishment')" "true"
 assert_eq "tick2 echoes recorded pBest" "$(echo "$T2" | jq -r '.pBest.v1 > 0.9')" "true"
-assert_eq "tick2 echoes recorded strategy weights" "$(echo "$T2" | jq -r '.discovery.weights.s2 > .discovery.weights.s1')" "true"
+assert_eq "tick2 echoes recorded strategy weights" "$(echo "$T2" | jq -r '.discovery.weights.s1 > .discovery.weights.s2')" "true"
 assert_eq "tick2 echoes recorded vitals" "$(echo "$T2" | jq -r '.vitals.verdict')" "ok"
 
 step "get_lever_state"
@@ -286,7 +295,7 @@ assert_eq "state channel affinity present" "$(echo "$LS" | jq -r '.channelAffini
 # reads this before the tick runs.
 assert_eq "state needsReplenishment (live recompute)" "$(echo "$LS" | jq -r '.needsReplenishment')" "true"
 # lever_state.strategy_weights surfaced through the discovery block.
-assert_eq "state strategy weights persisted" "$(echo "$LS" | jq -r '.discovery.weights.s2 > .discovery.weights.s1')" "true"
+assert_eq "state strategy weights persisted" "$(echo "$LS" | jq -r '.discovery.weights.s1 > .discovery.weights.s2')" "true"
 assert_eq "state discovery needsReplenishment" "$(echo "$LS" | jq -r '.discovery.needsReplenishment')" "true"
 assert_eq "state todaysDecision records configUsed" "$(echo "$LS" | jq -r '.todaysDecision.configUsed.minSamplePerArm')" "30"
 # batchPlan: largest-remainder apportionment over the tick's weights — counts
@@ -295,7 +304,7 @@ assert_eq "state batchPlan defaults to a 30-batch plan" "$(echo "$LS" | jq -r '[
 LSB="$(api GET "/api/projects/$PROJECT_ID/lever-state?batchSize=10")"
 assert_eq "batchPlan counts sum to the requested batchSize" "$(echo "$LSB" | jq -r '[.discovery.batchPlan[].count] | add')" "10"
 assert_eq "batchPlan covers exactly the active strategies" "$(echo "$LSB" | jq -rc '[.discovery.batchPlan[].slug] | sort')" '["s1","s2"]'
-assert_eq "batchPlan favors the heavier-weighted s2" "$(echo "$LSB" | jq -r '(.discovery.batchPlan | map(select(.slug=="s2"))[0].count) >= (.discovery.batchPlan | map(select(.slug=="s1"))[0].count)')" "true"
+assert_eq "batchPlan favors the heavier-weighted s1" "$(echo "$LSB" | jq -r '(.discovery.batchPlan | map(select(.slug=="s1"))[0].count) >= (.discovery.batchPlan | map(select(.slug=="s2"))[0].count)')" "true"
 BADQ="$(api GET "/api/projects/$PROJECT_ID/lever-state?batchSize=abc")"
 assert_eq "malformed batchSize is a 400" "$(echo "$BADQ" | jq -r 'has("error")')" "true"
 # Registry drift: a strategy registered AFTER the tick has no stored weight yet
@@ -337,7 +346,7 @@ log_rows() { # target, option_id → "op:actor:reason" lines, oldest first
 assert_eq "seeded variants logged as the user's adds" "$(log_rows variant v1)" "add:user:-"
 assert_eq "tick archive of v3 logged as the rule's, reason lost" "$(log_rows variant v3)" "add:user:-,archive:rule:lost"
 assert_eq "rule archive keeps its evidence" \
-  "$(psql_local "SELECT (evidence->>'pBest')::float < 0.05 AND (evidence->>'n')::int = 50 FROM policy_changes WHERE project_id='$PROJECT_ID' AND option_id='v3' AND op='archive';")" "t"
+  "$(psql_local "SELECT (evidence->>'pBeatsLeader')::float < 0.02 AND (evidence->>'n')::int = 50 FROM policy_changes WHERE project_id='$PROJECT_ID' AND option_id='v3' AND op='archive';")" "t"
 V9='{variantId:"v9", subjectPattern:"Hello {{org}} — v9", label:"v9"}'
 api PUT "/api/projects/$PROJECT_ID/message-variants" "$(jq -nc "$V9 + {reason:\"e2e: a fresh angle\"}")" > /dev/null
 api PUT "/api/projects/$PROJECT_ID/message-variants" "$(jq -nc "$V9")" > /dev/null
@@ -500,11 +509,10 @@ BADCFG="$(api PUT "/api/projects/$PROJECT_ID4/settings" "$(jq -nc '{leverConfig:
 assert_eq "target>cap lever config refused" "$(echo "$BADCFG" | jq -r '.error // ""')" "Invalid lever config"
 
 # Stagnation rotation. A third project: 4 arms with mature, statistically flat
-# data (40 sends each, 6/6/6/5 replies → max P(best) ≈ 0.29 < 0.5, weakest s4
-# ≈ 0.14 — above the 0.05 dominance gate, so only the rotation can archive it),
-# plus 6 seeded flat prior decisions = a 7-tick streak at the default
-# stagnationTicks. The tick must rotate out s4 and keep needsReplenishment
-# raised at targetActiveArms until the freed slot is refilled.
+# data (40 sends each, 6/6/6/5 replies → max P(best) ≈ 0.29 < 0.5; the weakest
+# s4 still beats the leader about one time in three, far above the lost gate,
+# so only the rotation can archive it), and a seeded streak of 6 flat ticks —
+# today's makes stagnationTicks 7. The tick must rotate out s4.
 step "stagnation: third project + 4 flat mature arms"
 CREATE3="$(api POST /api/projects "$(jq -nc --arg n "$PROJECT_NAME stag" '{name:$n}')")"
 PROJECT_ID3="$(echo "$CREATE3" | jq -r '.id // ""')"
@@ -526,60 +534,90 @@ ins_stag() { # variant, sends, replies
 ins_stag s1 40 6; ins_stag s2 40 6; ins_stag s3 40 6; ins_stag s4 40 5
 say "inserted 160 sends + 23 replies (flat: no arm can reach P(best) >= 0.5)"
 
-step "seed 6 flat prior decisions (streak = 6 history + today = stagnationTicks 7)"
-STAG_DECISION='{"subject":{"weights":{"s1":0.3,"s2":0.3,"s3":0.25,"s4":0.15},"pBest":{"s1":0.3,"s2":0.3,"s3":0.25,"s4":0.15},"archived":[],"samples":[{"variantId":"s1","total":40,"responses":6,"rewardSum":6},{"variantId":"s2","total":40,"responses":6,"rewardSum":6},{"variantId":"s3","total":40,"responses":6,"rewardSum":6},{"variantId":"s4","total":40,"responses":5,"rewardSum":5}]}}'
-for i in 1 2 3 4 5 6; do
-  psql_local "INSERT INTO lever_decisions (tenant_id, project_id, cycle_date, decision)
-              VALUES ('$TENANT_ID', '$PROJECT_ID3', (now() AT TIME ZONE 'UTC')::date - $i, '$STAG_DECISION'::jsonb);" > /dev/null
-done
-say "seeded lever_decisions for the previous 6 UTC days"
+backdate_log "$PROJECT_ID3"
+psql_local "INSERT INTO lever_state (tenant_id, project_id, variant_flat_streak) VALUES ('$TENANT_ID', '$PROJECT_ID3', 6);" > /dev/null
 
 step "run_lever_tick rotates out the weakest arm"
 TS1="$(api POST "/api/projects/$PROJECT_ID3/run-lever-tick")"
 assert_eq "stag tick ran" "$(echo "$TS1" | jq -r '.ran')" "true"
 assert_eq "stag tick archived exactly s4" "$(echo "$TS1" | jq -rc '[.archived[].variantId]')" '["s4"]'
 assert_eq "stag archive carries reason stagnation" "$(echo "$TS1" | jq -r '.archived[0].reason // ""')" "stagnation"
-assert_eq "stag archived pBest above the dominance gate" "$(echo "$TS1" | jq -r '.archived[0].pBest >= 0.05')" "true"
+assert_eq "stag archived pBest above the lost gate" "$(echo "$TS1" | jq -r '.archived[0].pBest >= 0.02')" "true"
 assert_eq "stag weights drop s4" "$(echo "$TS1" | jq -r '.weights | has("s4")')" "false"
 assert_eq "stag pBest keeps the full arm set" "$(echo "$TS1" | jq -r '.pBest | has("s4")')" "true"
-assert_eq "stag tick needsReplenishment (rotation slot unfilled)" "$(echo "$TS1" | jq -r '.needsReplenishment')" "true"
+# 4 → 3 active: at targetActiveArms, so nothing asks for a fresh angle.
+assert_eq "stag tick needsReplenishment false (3 active = target)" "$(echo "$TS1" | jq -r '.needsReplenishment')" "false"
+assert_eq "rotation logged as the rule's, reason rotated" \
+  "$(psql_local "SELECT op || ':' || actor || ':' || rule_reason FROM policy_changes WHERE project_id='$PROJECT_ID3' AND option_id='s4' ORDER BY id DESC LIMIT 1;")" "archive:rule:rotated"
 
-step "needsReplenishment stays raised at targetActiveArms until fulfillment"
-# 3 active == targetActiveArms — the naive below-target signal is false, so
-# this asserts the unfulfilled-rotation derivation specifically.
-LS3="$(api GET "/api/projects/$PROJECT_ID3/lever-state")"
-assert_eq "state 3 active after rotation" "$(echo "$LS3" | jq -r '.variants | length')" "3"
-assert_eq "state needsReplenishment raised by unfulfilled rotation" "$(echo "$LS3" | jq -r '.needsReplenishment')" "true"
-# Widen the cap so the cleared-side assertions below are decided by the
-# fulfillment legs, never the active >= maxActiveArms short-circuit.
-psql_local "UPDATE project_settings SET lever_config = '{\"maxActiveArms\": 5}'::jsonb WHERE project_id = '$PROJECT_ID3';" > /dev/null
-
-step "count-growth fulfillment: un-archiving refills the slot without a fresh row"
-S4B="$(api PUT "/api/projects/$PROJECT_ID3/message-variants" "$(jq -nc '{variantId:"s4", subjectPattern:"Hey {{org}} — s4", archived:false}')")"
-assert_eq "s4 un-archived (no new row created)" "$(echo "$S4B" | jq -r '.archivedAt')" "null"
-LS3B="$(api GET "/api/projects/$PROJECT_ID3/lever-state")"
-assert_eq "pool growth past post-rotation size clears the flag (no fresh row exists)" "$(echo "$LS3B" | jq -r '.needsReplenishment')" "false"
-# Re-archiving drops the pool back to post-rotation size: the count leg is
-# live, and with still no fresh row the rotation flips back to unfulfilled.
-api PUT "/api/projects/$PROJECT_ID3/message-variants" "$(jq -nc '{variantId:"s4", subjectPattern:"Hey {{org}} — s4", archived:true}')" > /dev/null
-LS3C="$(api GET "/api/projects/$PROJECT_ID3/lever-state")"
-assert_eq "re-archive re-raises the flag (count leg is live)" "$(echo "$LS3C" | jq -r '.needsReplenishment')" "true"
-
-step "fresh-row fulfillment: a new slug clears it even at post-rotation size"
-S5="$(api PUT "/api/projects/$PROJECT_ID3/message-variants" "$(jq -nc '{variantId:"s5", subjectPattern:"Hey {{org}} — s5", label:"s5"}')")"
-assert_eq "fresh variant s5 upserted" "$(echo "$S5" | jq -r '.variantId // ""')" "s5"
-# Archive an original arm so the pool sits exactly at post-rotation size:
-# the count leg is false, so only the fresh-row leg can clear the flag.
-api PUT "/api/projects/$PROJECT_ID3/message-variants" "$(jq -nc '{variantId:"s1", subjectPattern:"Hey {{org}} — s1", archived:true}')" > /dev/null
-LS3D="$(api GET "/api/projects/$PROJECT_ID3/lever-state")"
-assert_eq "state 3 active again (s2, s3, s5)" "$(echo "$LS3D" | jq -r '.variants | length')" "3"
-assert_eq "fresh s5 clears the flag at post-rotation size (fresh-row leg)" "$(echo "$LS3D" | jq -r '.needsReplenishment')" "false"
+assert_eq "rotation starts the flat count over" "$(psql_local "SELECT variant_flat_streak FROM lever_state WHERE project_id='$PROJECT_ID3';")" "0"
 
 step "idempotent echo keeps the rotation marker"
 TS2="$(api POST "/api/projects/$PROJECT_ID3/run-lever-tick")"
 assert_eq "stag tick2 ran=false" "$(echo "$TS2" | jq -r '.ran')" "false"
 assert_eq "stag tick2 echoes reason stagnation" "$(echo "$TS2" | jq -r '.archived[0].reason // ""')" "stagnation"
-assert_eq "stag tick2 needsReplenishment false (fulfilled)" "$(echo "$TS2" | jq -r '.needsReplenishment')" "false"
+
+step "the next flat tick only counts"
+forget_tick "$PROJECT_ID3"
+TS1B="$(api POST "/api/projects/$PROJECT_ID3/run-lever-tick")"
+assert_eq "stag re-tick ran" "$(echo "$TS1B" | jq -r '.ran')" "true"
+assert_eq "stag re-tick archives nothing" "$(echo "$TS1B" | jq -rc '[.archived[].variantId]')" '[]'
+assert_eq "stag re-tick counts one flat day" "$(psql_local "SELECT variant_flat_streak FROM lever_state WHERE project_id='$PROJECT_ID3';")" "1"
+assert_eq "the rule does not bring back what it rotated out" "$(echo "$TS1B" | jq -rc '[.restored[].optionId]')" '[]'
+
+
+# Restore and grace. A sixth project: r1 and r2 at 6/40, r3 at 0/40 → r3 is
+# lost. Its sends then draw replies (6/40), so it matches the leader and takes
+# the free slot back. The replies vanish again: on its record r3 would be lost,
+# but it has no send since it re-entered, so the rule leaves it.
+step "restore: sixth project, r3 lost then caught up"
+CREATE6="$(api POST /api/projects "$(jq -nc --arg n "$PROJECT_NAME restore" '{name:$n}')")"
+PROJECT_ID6="$(echo "$CREATE6" | jq -r '.id // ""')"
+[[ -n "$PROJECT_ID6" ]] || { echo "create-project(6) failed: $CREATE6" >&2; exit 1; }
+say "project_id6=$PROJECT_ID6"
+for v in r1 r2 r3; do
+  api PUT "/api/projects/$PROJECT_ID6/message-variants" "$(jq -nc --arg id "$v" '{variantId:$id, subjectPattern:("Yo {{org}} — "+$id), label:$id}')" > /dev/null
+done
+ins_restore() { # variant, sends
+  psql_local "INSERT INTO outreach_logs (tenant_id, project_id, prospect_id, channel, body, status, sent_at, variant_id)
+              SELECT '$TENANT_ID', '$PROJECT_ID6', $PROSPECT_ID, 'email', 'e2e', 'sent', now() - interval '30 days', '$1'
+              FROM generate_series(1, $2);" > /dev/null
+}
+reply_restore() { # variant, replies
+  psql_local "INSERT INTO responses (tenant_id, outreach_log_id, channel, content, sentiment, response_type, received_at)
+              SELECT tenant_id, id, 'email', 'e2e', 'positive', 'reply', now() - interval '29 days'
+              FROM outreach_logs WHERE project_id='$PROJECT_ID6' AND variant_id='$1' ORDER BY id LIMIT $2;" > /dev/null
+}
+ins_restore r1 40; reply_restore r1 6
+ins_restore r2 40; reply_restore r2 6
+ins_restore r3 40
+backdate_log "$PROJECT_ID6"
+TR1="$(api POST "/api/projects/$PROJECT_ID6/run-lever-tick")"
+assert_eq "restore tick1 archives r3 as lost" "$(echo "$TR1" | jq -rc '[.archived[] | .variantId + ":" + (.reason // "lost")]')" '["r3:lost"]'
+
+step "restore: r3's results catch up → the rule brings it back"
+reply_restore r3 6
+forget_tick "$PROJECT_ID6"
+TR2="$(api POST "/api/projects/$PROJECT_ID6/run-lever-tick")"
+assert_eq "restore tick2 restores r3" "$(echo "$TR2" | jq -rc '[.restored[] | .target + ":" + .optionId]')" '["variant:r3"]'
+assert_eq "restore tick2 score at or above the restore threshold" "$(echo "$TR2" | jq -r '.restored[0].evidence.pBeatsLeader >= 0.3')" "true"
+assert_eq "the same-day replay reports the restore from the log" \
+  "$(api POST "/api/projects/$PROJECT_ID6/run-lever-tick" | jq -rc '[.ran, (.restored | length)]')" '[false,1]'
+assert_eq "the decision history carries the day's restore" \
+  "$(api GET "/api/projects/$PROJECT_ID6/lever-decisions?days=1" | jq -rc '[.decisions[0].restored[].optionId]')" '["r3"]'
+assert_eq "restore tick2 weighs r3 again" "$(echo "$TR2" | jq -r '.weights | has("r3")')" "true"
+assert_eq "r3 is active again" "$(api GET "/api/projects/$PROJECT_ID6/lever-state" | jq -r '.variants | length')" "3"
+assert_eq "restore logged as the rule's, with its evidence and no archive reason" \
+  "$(psql_local "SELECT op || ':' || actor || ':' || COALESCE(rule_reason::text, '-') || ':' || (evidence->>'n') FROM policy_changes WHERE project_id='$PROJECT_ID6' AND option_id='r3' ORDER BY id DESC LIMIT 1;")" "restore:rule:-:40"
+assert_eq "dashboard journal carries the rule's restore" \
+  "$(api GET "/api/projects/$PROJECT_ID6/dashboard" | jq -r '[.journal[] | select(.kind == "rule_restore" and .optionId == "r3")] | length')" "1"
+
+step "grace: r3's record turns bad again, but it has no send since it re-entered"
+psql_local "DELETE FROM responses WHERE outreach_log_id IN (SELECT id FROM outreach_logs WHERE project_id='$PROJECT_ID6' AND variant_id='r3');" > /dev/null
+forget_tick "$PROJECT_ID6"
+TR3="$(api POST "/api/projects/$PROJECT_ID6/run-lever-tick")"
+assert_eq "grace tick sees r3 at 0/40" "$(echo "$TR3" | jq -r '.samples[] | select(.variantId=="r3") | .rewardSum')" "0"
+assert_eq "grace tick archives nothing" "$(echo "$TR3" | jq -rc '[.archived[].variantId]')" '[]'
 
 # Futility (vitals). A fifth project: 600 mature zero-reply email sends put
 # P(rate < 1%) ≈ 0.998 past the 0.99 confidence gate. The verdict reads a

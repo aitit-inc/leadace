@@ -10,9 +10,8 @@ Experiments:
 - `bandit`, `futility` (`environment.ts`): the discovery-strategy bandit and the
   futility vitals over a finite prospect pool (sweep 1).
 - `options` (`options.ts`): the middle and inner layers of #793 — which options
-  run, which are dropped or brought back, how sends split. `current` calls
-  `decide()`; `proposed` runs the candidate rules in `proposed.ts`, which move
-  into `domain/loop` once their values are chosen.
+  run, which are dropped or brought back, how sends split — as `decide()` rules
+  them; each row moves one config value from the defaults.
 - `supply` (`supply.ts`): when a discovery strategy counts as exhausted.
 - `frame` (`frame-signal.ts`): when the outer layer proposes rethinking the frame.
 
@@ -28,7 +27,7 @@ cd backend
 npx tsx sim/run.ts                # every experiment, full seed counts
 npx tsx sim/run.ts --quick        # iteration mode
 npx tsx sim/run.ts --experiment=bandit|futility|options|supply|frame --seeds=N --samples=N
-npx tsx sim/run.ts --experiment=options --only=current,proposed   # one process per row set
+npx tsx sim/run.ts --experiment=options --only=default,tau=0.05   # one process per row set
 npx tsc --noEmit -p sim           # typecheck
 ```
 
@@ -70,7 +69,7 @@ truth.
 
 The online half of the same PDCA loop. Every tick journals its full decision
 into `lever_decisions` — weights, P(best), archives with reasons and sample
-sizes, per-arm stats, prior-day registrations vs the batch plan, vitals, and
+sizes, per-arm stats, vitals, and
 `configUsed` (the effective config snapshot) — with seeded RNG, so any past
 decision replays exactly. Periodically (quarterly at ~10 sends/day; the
 volume bounds statistical power) pull `get_lever_decisions` and check:
@@ -79,8 +78,9 @@ volume bounds statistical power) pull `get_lever_decisions` and check:
   survivors. History is never deleted, so this stays computable.
 - **Futility false fires**: the verdict series vs replies that arrived
   later; REPORT.md carries the simulated expectation to compare against.
-- **Plan adherence / depletion**: sustained gaps between journaled
-  registrations and the batch plan mark an unexecutable strategy.
+- **Plan adherence / depletion**: sustained gaps between a strategy's
+  registrations (`project_prospects.created_at` by `prospects.discovery_strategy`)
+  and the batch plan (`jobs.result.planCompliance`) mark an unexecutable strategy.
 - Explore-lane cost can only be approximated (sends carry no lane tag);
   add instrumentation only if a review shows it is actually needed.
 

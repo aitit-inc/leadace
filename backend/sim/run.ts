@@ -8,7 +8,7 @@ import { leverConfigSchema, type LeverConfigPatch } from '../src/domain/loop/con
 import { incidentWindowOf, oracleTrajectory, runScenario, type Scenario } from './environment'
 import { aggregate, extractRunMetrics, type AggregateRow } from './metrics'
 import { banditScenarios, frameScenarios, futilityScenarios, optionsScenarios, supplyProfiles } from './scenarios'
-import { aggregateOptions, runOptions, type OptionsPolicy, type ProposedRules } from './options'
+import { aggregateOptions, runOptions } from './options'
 import { aggregateSupply, runSupply, type ExhaustRule } from './supply'
 import { aggregateFrame, runFrame, type FrameSignalParams } from './frame-signal'
 
@@ -54,35 +54,20 @@ const futilityVariants: ConfigVariant[] = [
   { label: 'epoch@repair', patch: {}, sim: { resetAtRepair: true } },
 ]
 
-// #793 middle layer. `proposed` runs the candidate rules (proposed.ts); the
-// config patch carries N (minSamplePerArm) and τ (archiveThreshold) for both.
-type OptionsVariant = {
-  label: string
-  patch: LeverConfigPatch
-  proposed?: ProposedRules
-}
-
-// Chosen from the 2026-09-28 sweep (#793): the leader test, τ = 0.02, N and
-// minActive unchanged; each row below moves one value.
-const PROPOSED = { compare: 'leader', restoreAt: 0.3, restoreRotated: false, slots: 3, minActive: 2, capImmature: true } as const
-const PROPOSED_PATCH: LeverConfigPatch = { archiveThreshold: 0.02 }
+// #793 middle layer: decide() under the defaults chosen from the 2026-09-28
+// sweep, and one value moved per row.
+type OptionsVariant = { label: string; patch: LeverConfigPatch }
 
 const optionsVariants: OptionsVariant[] = [
-  { label: 'current', patch: {} },
-  { label: 'proposed', patch: PROPOSED_PATCH, proposed: PROPOSED },
-  { label: 'compare=pool', patch: PROPOSED_PATCH, proposed: { ...PROPOSED, compare: 'pool' } },
-  { label: 'slots=2', patch: PROPOSED_PATCH, proposed: { ...PROPOSED, slots: 2, minActive: 1 } },
-  { label: 'slots=4', patch: PROPOSED_PATCH, proposed: { ...PROPOSED, slots: 4 } },
-  { label: 'N=60', patch: { ...PROPOSED_PATCH, minSamplePerArm: 60 }, proposed: PROPOSED },
-  { label: 'tau=0.01', patch: { archiveThreshold: 0.01 }, proposed: PROPOSED },
-  { label: 'tau=0.05', patch: { archiveThreshold: 0.05 }, proposed: PROPOSED },
-  { label: 'restore=0.1', patch: PROPOSED_PATCH, proposed: { ...PROPOSED, restoreAt: 0.1 } },
-  { label: 'restore=0.5', patch: PROPOSED_PATCH, proposed: { ...PROPOSED, restoreAt: 0.5 } },
-  { label: 'no-restore', patch: PROPOSED_PATCH, proposed: { ...PROPOSED, restoreAt: 2 } },
-  { label: 'restore-rotated', patch: PROPOSED_PATCH, proposed: { ...PROPOSED, restoreRotated: true } },
-  { label: 'rotate-after-30d', patch: { ...PROPOSED_PATCH, stagnationTicks: 30 }, proposed: PROPOSED },
-  { label: 'no-rotation', patch: { ...PROPOSED_PATCH, stagnationTicks: 100_000 }, proposed: PROPOSED },
-  { label: 'no-cap', patch: PROPOSED_PATCH, proposed: { ...PROPOSED, capImmature: false } },
+  { label: 'default', patch: {} },
+  { label: 'slots=4', patch: { targetActiveArms: 4, targetActiveStrategies: 4 } },
+  { label: 'N=60', patch: { minSamplePerArm: 60 } },
+  { label: 'tau=0.01', patch: { archiveThreshold: 0.01 } },
+  { label: 'tau=0.05', patch: { archiveThreshold: 0.05 } },
+  { label: 'restore=0.1', patch: { restoreThreshold: 0.1 } },
+  { label: 'restore=0.5', patch: { restoreThreshold: 0.5 } },
+  { label: 'rotate-after-30d', patch: { stagnationTicks: 30 } },
+  { label: 'no-rotation', patch: { stagnationTicks: 100_000 } },
 ]
 
 const supplyRules: ExhaustRule[] = [
@@ -236,10 +221,9 @@ if (experiment === 'options' || experiment === 'all') {
   const rows: ResultRow[] = []
   for (const variant of optionsVariants.filter((v) => keep(v.label))) {
     const config = leverConfigSchema.parse(variant.patch)
-    const policy: OptionsPolicy = variant.proposed ? { kind: 'proposed', config, ...variant.proposed } : { kind: 'current', config }
     for (const scenario of optionsScenarios) {
       const started = Date.now()
-      const runs = Array.from({ length: optionsSeeds }, (_, seed) => runOptions(scenario, seed, policy, mcSamples))
+      const runs = Array.from({ length: optionsSeeds }, (_, seed) => runOptions(scenario, seed, config, mcSamples))
       rows.push({ variant: variant.label, scenario: scenario.name, metrics: aggregateOptions(runs, scenario) })
       console.error(`[options] ${variant.label} × ${scenario.name}: ${optionsSeeds} seeds in ${((Date.now() - started) / 1000).toFixed(1)}s`)
     }

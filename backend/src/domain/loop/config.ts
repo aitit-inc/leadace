@@ -7,6 +7,7 @@ const rewardLookbackDays = z.number().int().min(1)
 const priorStrength = z.number().min(1)
 const explorationShare = z.number().min(0).max(1)
 const archiveThreshold = z.number().min(0).max(1)
+const restoreThreshold = z.number().min(0).max(1)
 const targetActiveArms = z.number().int().min(2)
 const maxActiveArms = z.number().int().min(2)
 const targetActiveStrategies = z.number().int().min(2)
@@ -22,7 +23,8 @@ const futilityLookbackDays = z.number().int().min(1)
 
 // R5 safety device: defaults make every lever behave like today until enough data accrues.
 export const leverConfigSchema = z.object({
-  // Archive gate for the message bandit (P(best) < threshold on n >= minSamplePerArm).
+  // Sends an option needs before the rule judges it, counted over all its
+  // history and again since it last entered the active set.
   minSamplePerArm: minSamplePerArm.default(30),
   rewardWindowDays: rewardWindowDays.default(14),
   // Forgetting window (opt-in). When set, the tick weighs only the most recent
@@ -37,17 +39,22 @@ export const leverConfigSchema = z.object({
   // Random share of each outbound batch. 0 would make the ordering a de-facto
   // selection gate: low-scored buckets never send again and early flukes self-seal.
   explorationShare: explorationShare.default(0.2),
-  archiveThreshold: archiveThreshold.default(0.05),
-  // Below target → needsReplenishment (evaluate supplies one fresh angle);
-  // above max → upsert of a new active variant is refused.
+  // A judged option is lost below archiveThreshold and comes back at
+  // restoreThreshold, both P(it beats the leader); the gap keeps one from
+  // flipping in and out (values: sim sweep of 2026-09-28, #793).
+  archiveThreshold: archiveThreshold.default(0.02),
+  restoreThreshold: restoreThreshold.default(0.3),
+  // The rule and Ace fill up to target (below it → needsReplenishment, and an
+  // unproven option's weight is capped at 1/target); a person may add up to
+  // max, past which an upsert of a new active option is refused.
   targetActiveArms: targetActiveArms.default(3),
   maxActiveArms: maxActiveArms.default(4),
   targetActiveStrategies: targetActiveStrategies.default(3),
   maxActiveStrategies: maxActiveStrategies.default(6),
   messageWeightFloor: messageWeightFloor.default(0.1),
   strategyWeightFloor: strategyWeightFloor.default(0.1),
-  // Flat-tick streak length (all arms mature, max P(best) < the ceiling) that
-  // triggers the stagnation rotation.
+  // Days in a row the variant set must be flat (all arms judged, max P(best) <
+  // the ceiling) before it rotates its weakest arm out.
   stagnationTicks: stagnationTicks.default(7),
   // Epoch cut: tick-path aggregates ignore sends before this UTC date (a prior
   // regime, e.g. pre-deliverability-repair). Orthogonal to rewardLookbackDays.
@@ -66,13 +73,17 @@ export const defaultLeverConfig: LeverConfig = leverConfigSchema.parse({})
 
 // Write-path guard only — the read path stays lenient so a stored override
 // keeps loading if a later default change violates it (the tick must not throw
-// on read). target > max would wedge needsReplenishment against the upsert cap.
+// on read). target > max would wedge needsReplenishment against the upsert cap;
+// restore <= archive would flip an option in and out every day.
 export function leverConfigInvariantViolation(config: LeverConfig): string | null {
   if (config.targetActiveArms > config.maxActiveArms) {
     return `targetActiveArms (${config.targetActiveArms}) must not exceed maxActiveArms (${config.maxActiveArms})`
   }
   if (config.targetActiveStrategies > config.maxActiveStrategies) {
     return `targetActiveStrategies (${config.targetActiveStrategies}) must not exceed maxActiveStrategies (${config.maxActiveStrategies})`
+  }
+  if (config.restoreThreshold <= config.archiveThreshold) {
+    return `restoreThreshold (${config.restoreThreshold}) must exceed archiveThreshold (${config.archiveThreshold})`
   }
   return null
 }
@@ -86,6 +97,7 @@ export const leverConfigPatchSchema = z.object({
   priorStrength: priorStrength.optional(),
   explorationShare: explorationShare.optional(),
   archiveThreshold: archiveThreshold.optional(),
+  restoreThreshold: restoreThreshold.optional(),
   targetActiveArms: targetActiveArms.optional(),
   maxActiveArms: maxActiveArms.optional(),
   targetActiveStrategies: targetActiveStrategies.optional(),

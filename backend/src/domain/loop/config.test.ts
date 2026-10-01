@@ -14,7 +14,8 @@ describe('leverConfigSchema', () => {
       reward: { meetingRequest: 1, positiveReply: 1, neutralReply: 0.5, negativeReply: 0, inquiryChatEngaged: 0.5, inquirySignupClicked: 1 },
       priorStrength: 25,
       explorationShare: 0.2,
-      archiveThreshold: 0.05,
+      archiveThreshold: 0.02,
+      restoreThreshold: 0.3,
       targetActiveArms: 3,
       maxActiveArms: 4,
       targetActiveStrategies: 3,
@@ -85,6 +86,11 @@ describe('leverConfigInvariantViolation (write-path cross-field guard)', () => {
   it('flags a strategy target above its cap', () => {
     expect(leverConfigInvariantViolation(effective({ targetActiveStrategies: 7 }))).toContain('targetActiveStrategies')
     expect(leverConfigInvariantViolation(effective({ maxActiveStrategies: 2 }))).toContain('targetActiveStrategies')
+  })
+
+  it('flags a restore threshold that does not clear the archive threshold', () => {
+    expect(leverConfigInvariantViolation(effective({ archiveThreshold: 0.3 }))).toContain('restoreThreshold')
+    expect(leverConfigInvariantViolation(effective({ restoreThreshold: 0.01 }))).toContain('restoreThreshold')
   })
 
   it('accepts target equal to the cap (boundary)', () => {

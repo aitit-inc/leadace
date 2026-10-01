@@ -8,7 +8,7 @@ import {
   UNDELIVERABLE,
   type DomainRecords,
 } from '../domain/email-deliverability'
-import { createDb } from '../db/connection'
+import { withDb } from '../db/connection'
 import { prospects, type EmailDeliverability } from '../db/schema'
 import type { TenantId } from '../domain/ids'
 
@@ -114,7 +114,7 @@ export async function resolveEmailDeliverability(
 
 // Background (ctx.waitUntil) stamp: resolve verdicts off the request path and
 // persist only the addresses that prove undeliverable. Best-effort and
-// fail-open — a failure here leaves rows 'unknown' (accepted). Uses createDb()
+// fail-open — a failure here leaves rows 'unknown' (accepted). Uses withDb()
 // (no request RLS txn in scope) and scopes the write by tenant_id.
 export async function stampEmailDeliverability(
   databaseUrl: string,
@@ -126,8 +126,7 @@ export async function stampEmailDeliverability(
     const verdicts = await resolveEmailDeliverability(emails)
     const undeliverable = [...verdicts].filter(([, v]) => v === UNDELIVERABLE).map(([e]) => e)
     if (undeliverable.length === 0) return
-    const db = createDb(databaseUrl)
-    await db
+    await withDb(databaseUrl, (db) => db
       .update(prospects)
       .set({ emailDeliverability: UNDELIVERABLE })
       .where(
@@ -136,7 +135,7 @@ export async function stampEmailDeliverability(
           inArray(prospects.email, undeliverable),
           ne(prospects.emailDeliverability, UNDELIVERABLE),
         ),
-      )
+      ))
   } catch (e) {
     console.error('[deliverability] background stamp failed', e)
   }

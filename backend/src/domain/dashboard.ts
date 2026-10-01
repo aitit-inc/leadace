@@ -2,7 +2,7 @@ import type { Channel, RejectionRecontactWindow } from '../db/schema'
 import type { AttentionItem } from './attention'
 import { coarseIndustry } from './coarse-industry'
 import type { LearningEntry } from './loop/learnings'
-import type { ArchiveEvidence, ChangeAuthor, DocumentTarget, LoggedChange, OptionOp, OptionTarget, RuleArchiveReason } from './loop/change'
+import type { ChangeAuthor, DocumentTarget, LoggedChange, OptionOp, OptionTarget, RuleArchiveReason, RuleEvidence } from './loop/change'
 import { sendReaction, type Reaction, type ReactionLevel } from './loop/reaction'
 
 export const DASHBOARD_PERIODS = ['7d', '30d', 'all'] as const
@@ -47,7 +47,8 @@ export type DashboardLearning = {
 export const JOURNAL_WINDOW_DAYS = 30
 
 export type JournalEvent =
-  | { date: string; kind: 'rule_archive'; target: OptionTarget; optionId: string; label: string | null; reason: RuleArchiveReason; evidence: ArchiveEvidence | null }
+  | { date: string; kind: 'rule_archive'; target: OptionTarget; optionId: string; label: string | null; reason: RuleArchiveReason; evidence: RuleEvidence | null }
+  | { date: string; kind: 'rule_restore'; target: OptionTarget; optionId: string; label: string | null; evidence: RuleEvidence | null }
   | { date: string; kind: 'option'; target: OptionTarget; optionId: string; label: string | null; op: OptionOp; actor: ChangeAuthor['actor']; reason: string | null }
   | { date: string; kind: 'document'; target: DocumentTarget; actor: ChangeAuthor['actor']; reason: string | null }
   | { date: string; kind: 'strategy_escalated'; title: string }
@@ -68,8 +69,9 @@ export function buildJournal(
     target === 'variant' ? labelById.get(optionId) ?? null : null
   const events = changes.map((c): JournalEvent => {
     if (c.actor === 'rule') {
-      const { target, optionId, reason, evidence } = c
-      return { date: c.day, kind: 'rule_archive', target, optionId, label: label(target, optionId), reason, evidence }
+      const { target, optionId, evidence } = c
+      const event = { date: c.day, target, optionId, label: label(target, optionId), evidence }
+      return c.op === 'archive' ? { ...event, kind: 'rule_archive', reason: c.reason } : { ...event, kind: 'rule_restore' }
     }
     if ('optionId' in c) {
       const { target, optionId, op, actor, reason } = c

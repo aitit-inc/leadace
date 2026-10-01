@@ -2,7 +2,6 @@ import { and, eq } from 'drizzle-orm'
 import { leverDecisions, type LeverDecisionPayload } from '../../db/schema'
 import type { Db } from '../../db/connection'
 import type { ProjectRef, TenantId } from '../../domain/ids'
-import type { ArchiveDecision, VariantStat } from '../../domain/loop/options'
 import type { VitalsAssessment } from '../../domain/loop/frame'
 import type { ChannelAffinityMap, ChannelCoarseStat, TargetingLifts } from '../../domain/loop/allocation'
 import { decide } from '../../domain/loop/decide'
@@ -10,8 +9,7 @@ import { ok, type ServiceResult } from '../result'
 import { resolveProject } from '../projects'
 import { loadLeverConfig } from '../project-settings'
 import { observeTick } from './observe'
-import { applyTickDecision } from './change'
-import { computeNeedsReplenishment } from './policy'
+import { applyTickDecision, ruleRestoresSince, type RuleRestore } from './change'
 
 export type LeverTickResult = {
   ran: boolean
@@ -20,8 +18,10 @@ export type LeverTickResult = {
   weights: Record<string, number>
   // null on ran:false replays of pre-Phase-C decisions.
   pBest: Record<string, number> | null
-  archived: ArchiveDecision[]
-  samples: VariantStat[]
+  archived: LeverDecisionPayload['subject']['archived']
+  // What the day's tick brought back, variants and strategies, as logged.
+  restored: RuleRestore[]
+  samples: LeverDecisionPayload['subject']['samples']
   channelAffinity: ChannelAffinityMap
   channelSamples: ChannelCoarseStat[]
   // null on ran:false replays of pre-Phase-B decisions.
@@ -51,7 +51,7 @@ export async function runLeverTick(
   // the audit row below, so replaying P(best) from (cycle_date, projectId) is
   // exact even for a request that straddles UTC midnight.
   const cycleDate = new Date().toISOString().slice(0, 10)
-  const evidence = await observeTick(db, projectId, config, cycleDate)
+  const evidence = await observeTick(db, projectId, config)
   const decision = decide(evidence, config, cycleDate, projectId)
   const { payload } = decision
 
@@ -61,7 +61,9 @@ export async function runLeverTick(
     .onConflictDoNothing({ target: [leverDecisions.projectId, leverDecisions.cycleDate] })
     .returning({ cycleDate: leverDecisions.cycleDate })
 
+  const dayStart = new Date(`${cycleDate}T00:00:00Z`)
   if (inserted.length === 0) {
+    const restored = await ruleRestoresSince(db, projectId, dayStart)
     const [existing] = await db
       .select({ cycleDate: leverDecisions.cycleDate, decision: leverDecisions.decision })
       .from(leverDecisions)
@@ -75,6 +77,7 @@ export async function runLeverTick(
       weights: existing.decision.subject.weights,
       pBest: existing.decision.subject.pBest ?? null,
       archived: existing.decision.subject.archived,
+      restored,
       samples: existing.decision.subject.samples,
       channelAffinity: existing.decision.channel?.affinity ?? {},
       channelSamples: existing.decision.channel?.samples ?? [],
@@ -84,8 +87,8 @@ export async function runLeverTick(
       // needsReplenishment is a live current-state signal (never persisted), not part
       // of the applied decision the fields above echo — a mid-day archive or config
       // change may shift it while the applied weights stay fixed.
-      needsReplenishment: await computeNeedsReplenishment(db, projectId, evidence.variants.length, config),
-      needsStrategyReplenishment: evidence.strategies.length < config.targetActiveStrategies,
+      needsReplenishment: evidence.variants.active.length < config.targetActiveArms,
+      needsStrategyReplenishment: evidence.strategies.active.length < config.targetActiveStrategies,
     })
   }
 
@@ -97,17 +100,15 @@ export async function runLeverTick(
     minSamplePerArm: config.minSamplePerArm,
     weights: decision.variants.weights,
     pBest: decision.variants.pBest,
-    archived: decision.variants.toArchive,
-    samples: evidence.variants,
+    archived: payload.subject.archived,
+    restored: await ruleRestoresSince(db, projectId, dayStart),
+    samples: payload.subject.samples,
     channelAffinity: payload.channel.affinity,
     channelSamples: payload.channel.samples,
     targetingLifts: payload.targeting.lifts,
     discovery: payload.discovery,
     vitals: payload.vitals,
-    // Today's decision row is already inserted, so a rotation applied above
-    // reads back as an unfulfilled rotation here.
-    needsReplenishment: await computeNeedsReplenishment(db, projectId, evidence.variants.length - decision.variants.toArchive.length, config),
-    needsStrategyReplenishment:
-      evidence.strategies.length - decision.strategies.toArchive.length < config.targetActiveStrategies,
+    needsReplenishment: Object.keys(decision.variants.weights).length < config.targetActiveArms,
+    needsStrategyReplenishment: Object.keys(decision.strategies.weights).length < config.targetActiveStrategies,
   })
 }

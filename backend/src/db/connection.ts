@@ -13,6 +13,9 @@ export function createDb(databaseUrl: string): ReturnType<typeof drizzle<typeof 
   return drizzle(connect(databaseUrl), { schema })
 }
 
+// One client for `fn`, closed when it settles.
+export type DbScope = <T>(fn: (db: Db) => Promise<T>) => Promise<T>
+
 export async function withDb<T>(databaseUrl: string, fn: (db: Db) => Promise<T>): Promise<T> {
   const client = connect(databaseUrl)
   try {

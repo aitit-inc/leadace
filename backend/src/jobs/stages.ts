@@ -4,7 +4,7 @@
 import type { WorkflowStep } from 'cloudflare:workers'
 import { NonRetryableError } from 'cloudflare:workflows'
 import type { Env } from '../api/types'
-import { createDb, type Db } from '../db/connection'
+import { withDb, type Db, type DbScope } from '../db/connection'
 import { withTenantConnection } from '../db/rls'
 import type { ReachArm } from '../domain/cycle-plan'
 import type { ProjectId, TenantId } from '../domain/ids'
@@ -47,6 +47,12 @@ export function unwrap<T>(r: ServiceResult<T>): T {
   throw new NonRetryableError(message)
 }
 
+// An open client counts against the pooler's client limit until the job ends,
+// and a cycle's steps add up to it: each step closes the client it opened.
+function stepDb(ctx: StageCtx): DbScope {
+  return (fn) => withDb(ctx.env.DATABASE_URL, fn)
+}
+
 // Each unit of a stage is its own step, so a restart redoes one unit.
 function checkpointOf(ctx: StageCtx, prefix: string): Checkpoint {
   return (name, fn) => ctx.step.do(`${prefix}:${name}`, STEP_RETRY, () => paidScoped(ctx, async () => unwrap(await fn())))
@@ -73,7 +79,7 @@ async function writeLog(ctx: StageCtx, db: Db, stepName: string, entries: JobLog
 export async function logStep(ctx: StageCtx, name: string, entries: JobLogEntry[]): Promise<void> {
   const stepName = `log:${name}`
   await ctx.step.do(stepName, async () => {
-    await writeLog(ctx, createDb(ctx.env.DATABASE_URL), stepName, entries)
+    await stepDb(ctx)((db) => writeLog(ctx, db, stepName, entries))
     return true
   })
 }
@@ -98,9 +104,9 @@ export async function discoverStage(
   namePrefix = 'discover',
 ): Promise<Extract<JobResult, { kind: 'discover' }>> {
   const { tenantId, projectId }: Ids = ctx.job
-  const connect = () => createDb(ctx.env.DATABASE_URL)
-  const progress: ProgressFn = (step, done, total) => progressWriter(ctx, connect(), 'discover')(step, done, total)
-  const discovered = unwrap(await runDiscover(connect, tenantId, ctx.env, projectId, params, checkpointOf(ctx, namePrefix), progress))
+  const scoped = stepDb(ctx)
+  const progress: ProgressFn = (step, done, total) => scoped((db) => progressWriter(ctx, db, 'discover')(step, done, total))
+  const discovered = unwrap(await runDiscover(scoped, tenantId, ctx.env, projectId, params, checkpointOf(ctx, namePrefix), progress))
   const enriched = await enrichStage(ctx, discovered.candidates, `${namePrefix}:enrich`)
   return {
     ...discovered.result,
@@ -118,12 +124,12 @@ export async function enrichStage(
 ): Promise<Extract<JobResult, { kind: 'enrich' }>> {
   const { tenantId, projectId }: Ids = ctx.job
   const totals = { registered: 0, skipped: 0, withEmail: 0 }
+  const scoped = stepDb(ctx)
   for (let i = 0; i < candidates.length; i += ENRICH_CHUNK) {
     const chunk = candidates.slice(i, i + ENRICH_CHUNK)
     const stepName = `${namePrefix}:${i}`
-    const db = createDb(ctx.env.DATABASE_URL)
-    const progress: ProgressFn = (step, done) => progressWriter(ctx, db, 'enrich')(step, i + done, candidates.length)
-    const { log, withEmail } = unwrap(await runEnrich(db, tenantId, ctx.env, projectId, chunk, checkpointOf(ctx, stepName), progress))
+    const progress: ProgressFn = (step, done) => scoped((db) => progressWriter(ctx, db, 'enrich')(step, i + done, candidates.length))
+    const { log, withEmail } = unwrap(await runEnrich(scoped, tenantId, ctx.env, projectId, chunk, checkpointOf(ctx, stepName), progress))
     await logStep(ctx, stepName, log)
     const registered = log.filter((l) => l.kind === 'prospect' && l.outcome === 'registered').length
     totals.registered += registered
@@ -165,14 +171,13 @@ export async function draftStage(
       const stepName = `${namePrefix}:${p.prospectId}`
       const done = produced
       attempted.push(p.prospectId)
-      const outcome = await ctx.step.do(stepName, STEP_RETRY, () => paidScoped(ctx, async (): Promise<DraftOutcome | null> => {
-        const db = createDb(ctx.env.DATABASE_URL)
+      const outcome = await ctx.step.do(stepName, STEP_RETRY, () => paidScoped(ctx, () => stepDb(ctx)(async (db): Promise<DraftOutcome | null> => {
         if (await isCancelled(ctx, db)) return null
         await progressWriter(ctx, db, 'draft')(p.name, done, wanted)
         const drafted = unwrap(await draftOne(db, tenantId, ctx.env, projectId, p.prospectId, new Date(ctx.job.createdAt)))
         await writeLog(ctx, db, stepName, [draftLogEntry(p.name, drafted)])
         return drafted
-      }))
+      })))
       if (outcome === null) break rounds
       outcomes.push(outcome)
       if (outcome.kind === 'sent' || outcome.kind === 'drafted') produced++
@@ -199,8 +204,7 @@ export async function sendStage(ctx: StageCtx, params: JobParamsOf<'send'>): Pro
   let failed = 0
   const errors: string[] = []
   for (const [i, id] of params.draftIds.entries()) {
-    const outcome = await ctx.step.do(`send:${id}`, STEP_RETRY, () => paidScoped(ctx, async () => {
-      const db = createDb(ctx.env.DATABASE_URL)
+    const outcome = await ctx.step.do(`send:${id}`, STEP_RETRY, () => paidScoped(ctx, () => stepDb(ctx)(async (db) => {
       if (await isCancelled(ctx, db)) return { ok: false as const, cancelled: true as const, error: 'job cancelled' }
       await progressWriter(ctx, db, 'send')(`draft ${id}`, i, params.draftIds.length)
       const r = await sendDraft((fn) => tenantTx(ctx, fn), tenantId, editionOf(ctx.env), sendContextOf(ctx.env), id)
@@ -210,7 +214,7 @@ export async function sendStage(ctx: StageCtx, params: JobParamsOf<'send'>): Pro
       }
       if (r.ok) await kickAutoTopUp(ctx.env, tenantId)
       return r.ok ? { ok: true as const } : { ok: false as const, cancelled: false as const, error: r.error }
-    }))
+    })))
     if (!outcome.ok && outcome.cancelled) break
     if (outcome.ok) {
       sent++
@@ -230,16 +234,12 @@ export async function sendStage(ctx: StageCtx, params: JobParamsOf<'send'>): Pro
 
 export async function evaluateStage(ctx: StageCtx): Promise<Extract<JobResult, { kind: 'evaluate' }>> {
   const { tenantId, projectId }: Ids = ctx.job
-  return ctx.step.do('evaluate', STEP_RETRY, () => paidScoped(ctx, async () => {
-    const db = createDb(ctx.env.DATABASE_URL)
-    return unwrap(await runEvaluate(db, tenantId, ctx.env, projectId, progressWriter(ctx, db, 'evaluate')))
-  }))
+  return ctx.step.do('evaluate', STEP_RETRY, () => paidScoped(ctx, () => stepDb(ctx)(async (db) =>
+    unwrap(await runEvaluate(db, tenantId, ctx.env, projectId, progressWriter(ctx, db, 'evaluate'))))))
 }
 
 export async function journalStage(ctx: StageCtx, digest: CycleDigest | null): Promise<Extract<JobResult, { kind: 'journal' }>> {
   const { tenantId, projectId }: Ids = ctx.job
-  return ctx.step.do('journal', STEP_RETRY, () => paidScoped(ctx, async () => {
-    const db = createDb(ctx.env.DATABASE_URL)
-    return unwrap(await runJournal(db, tenantId, ctx.env, projectId, digest, progressWriter(ctx, db, 'journal')))
-  }))
+  return ctx.step.do('journal', STEP_RETRY, () => paidScoped(ctx, () => stepDb(ctx)(async (db) =>
+    unwrap(await runJournal(db, tenantId, ctx.env, projectId, digest, progressWriter(ctx, db, 'journal'))))))
 }

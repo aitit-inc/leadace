@@ -77,6 +77,8 @@ function journalLine(e: JournalEvent): string {
       return `${OPTION_HEAD[e.target][e.op]}: ${e.label ?? e.optionId}${by(e.actor, e.reason)}`
     case 'rule_archive':
       return `${OPTION_HEAD[e.target].archive}: ${e.label ?? e.optionId} (${e.reason === 'rotated' ? 'no traction' : `another ${e.target === 'variant' ? 'angle' : 'strategy'} won`})`
+    case 'rule_restore':
+      return `${OPTION_HEAD[e.target].restore}: ${e.label ?? e.optionId} (its results caught up)`
   }
 }
 
