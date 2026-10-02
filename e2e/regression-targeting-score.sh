@@ -21,8 +21,9 @@
 # Seed: 6 mature sends (backdated 15d) — 3 "hot" (B2B SaaS / 11-50 /
 # hot-src, each drawing a meeting_request) and 3 "cold" (FinTech / 201+ /
 # cold-src, silent). With priorStrength=5: r0=0.5, hot axis lift 1.375,
-# cold 0.625 → composite hot 1.375^3 → clamps to 2.0, cold 0.625^3 → 0.5
-# (country US spans both segments → lift exactly 1.0). Reachable pool =
+# cold 0.625 on industry and size → composite hot 1.375^2 = 1.89, cold
+# 0.625^2 → clamps to 0.5 (country US spans both segments → lift exactly 1.0;
+# the source is not an ordering axis). Reachable pool =
 # H1, H2 (priority 3, hot attrs) + C1 (priority 1, cold attrs).
 #
 # Curl-only, no Claude session. Cleans up.
@@ -218,15 +219,16 @@ assert_eq "country US lift = 1.0 (spans both segments = the project baseline)" \
 STATE_LIFTS="$(psql_local "SELECT targeting_lifts FROM lever_state WHERE project_id='$PROJECT_ID';")"
 assert_eq "lever_state.targeting_lifts persisted" \
   "$(echo "$STATE_LIFTS" | jq -r '.industry | length > 0' 2>/dev/null)" "true"
-assert_eq "H1 composite clamped to 2.0 (1.375^3 > max)" \
-  "$(psql_local "SELECT ordering_score FROM project_prospects WHERE project_id='$PROJECT_ID' AND prospect_id=$P_H1;")" "2"
-assert_eq "C1 composite clamped to 0.5 (0.625^3 < min)" \
+assert_eq "the discovery strategy is not an ordering axis" "$(echo "$TICK" | jq -r '.targetingLifts | has("discoveryStrategy")')" "false"
+assert_eq "H1 composite = 1.375^2 (industry x size; the source adds nothing)" \
+  "$(psql_local "SELECT round(ordering_score::numeric, 4) FROM project_prospects WHERE project_id='$PROJECT_ID' AND prospect_id=$P_H1;")" "1.8906"
+assert_eq "C1 composite clamped to 0.5 (0.625^2 < min)" \
   "$(psql_local "SELECT ordering_score FROM project_prospects WHERE project_id='$PROJECT_ID' AND prospect_id=$P_C1;")" "0.5"
 
 step "Test 3: measured beats discretion — hot P3 outranks cold P1"
 POST_TICK="$(api GET "/api/projects/$PROJECT_ID/prospects/reachable?limit=3")"
 assert_eq "reachable total=3" "$(echo "$POST_TICK" | jq -r '.total')" "3"
-assert_eq "1st = H1 (score 2.0 x P3 1.0)" "$(echo "$POST_TICK" | jq -r '.prospects[0].email')" "contact@$RUN_TAG-H1.example"
+assert_eq "1st = H1 (score 1.89 x P3 1.0)" "$(echo "$POST_TICK" | jq -r '.prospects[0].email')" "contact@$RUN_TAG-H1.example"
 assert_eq "2nd = H2 (createdAt tiebreak)"  "$(echo "$POST_TICK" | jq -r '.prospects[1].email')" "contact@$RUN_TAG-H2.example"
 assert_eq "3rd = C1 despite P1 (0.5 x 1.5 = 0.75)" "$(echo "$POST_TICK" | jq -r '.prospects[2].email')" "contact@$RUN_TAG-C1.example"
 

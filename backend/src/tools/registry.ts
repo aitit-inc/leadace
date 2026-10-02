@@ -981,7 +981,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'run_lever_tick',
-    'Run the project\'s daily outbound-optimization tick: recompute the message-variant draw weights pick_message_variant reads (Thompson sampling over graded reward; archives a variant that has its sample and is unlikely to beat the leading one, never below two active, and restores one it archived that way once its results catch up and a slot is free), the discovery-strategy draw weights over the active registry (same rule), the per-industry channel affinity get_outbound_targets surfaces, and the measured targeting lifts (industry / size / country / discovery strategy) that re-score the get_outbound_targets ordering. After a sustained flat streak (every arm has its sample yet none is likely best) it rotates out the weakest variant to free a slot for a fresh angle. Idempotent per UTC day — a repeat call returns that day\'s recorded decision without re-applying. Returns variant weights and the variants archived (a stagnation rotation is marked as such) or restored, strategy weights and the strategies archived or restored, channelAffinity by industry bucket, targeting lifts, the futility vitals verdict (ok / insufficient / futile over recent mature email sends — futile means outreach is statistically drawing neither replies nor inquiry-page engagement and belongs in the cycle report; it clears on its own once recent sends draw either again), and the live needsReplenishment / needsStrategyReplenishment flags (recomputed each call, not the frozen recorded value).',
+    'Run the project\'s daily outbound-optimization tick: recompute the message-variant draw weights pick_message_variant reads (Thompson sampling over graded reward; archives a variant that has its sample and is unlikely to beat the leading one, never below two active, and restores one it archived that way once its results catch up and a slot is free), the discovery-strategy draw weights over the active registry (same rule), the per-industry channel affinity get_outbound_targets surfaces, and the measured targeting lifts (industry / size / country) that re-score the get_outbound_targets ordering. After a sustained flat streak (every arm has its sample yet none is likely best) it rotates out the weakest variant to free a slot for a fresh angle. Idempotent per UTC day — a repeat call returns that day\'s recorded decision without re-applying. Returns variant weights and the variants archived (a stagnation rotation is marked as such) or restored, strategy weights and the strategies archived or restored, channelAffinity by industry bucket, targeting lifts, the futility vitals verdict (ok / insufficient / futile over recent mature email sends — futile means outreach is statistically drawing neither replies nor inquiry-page engagement and belongs in the cycle report; it clears on its own once recent sends draw either again), and the live needsReplenishment / needsStrategyReplenishment flags (recomputed each call, not the frozen recorded value).',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
     },
@@ -997,13 +997,12 @@ export function buildToolRegistry(): ToolDef[] {
         cycleDate: string
         minSamplePerArm: number
         weights: Record<string, number>
-        archived: Array<{ variantId: string; reason?: string }>
-        restored: Array<{ target: 'variant' | 'strategy'; optionId: string }>
+        changes: Array<{ target: 'variant' | 'strategy'; optionId: string } & ({ op: 'archive'; reason: 'lost' | 'rotated' } | { op: 'restore' })>
         samples: Array<{ variantId: string; total: number }>
         channelAffinity: Record<string, Array<{ channel: string; rate: number; total: number; rewardSum: number }>>
         targetingLifts: Record<string, unknown> | null
         needsReplenishment: boolean
-        discovery: { weights: Record<string, number>; archived: Array<{ slug: string }> } | null
+        discovery: { weights: Record<string, number> } | null
         needsStrategyReplenishment: boolean
         vitals: { sends: number; engaged: number; pDead: number; verdict: 'ok' | 'insufficient' | 'futile' } | null
       }
@@ -1011,11 +1010,15 @@ export function buildToolRegistry(): ToolDef[] {
       const head = r.ran
         ? `Lever tick ran for ${r.cycleDate}.`
         : `Lever tick already ran for ${r.cycleDate} (no change).`
-      const archivedLine = r.archived.length > 0
-        ? ` Archived: ${r.archived.map((a) => a.reason === 'stagnation' ? `${a.variantId} (stagnation rotation)` : a.variantId).join(', ')}.`
-        : ''
-      const restoredOf = (target: 'variant' | 'strategy'): string[] => r.restored.filter((x) => x.target === target).map((x) => x.optionId)
-      const restoredLine = restoredOf('variant').length > 0 ? ` Restored: ${restoredOf('variant').join(', ')}.` : ''
+      const moved = (target: 'variant' | 'strategy', op: 'archive' | 'restore'): string =>
+        r.changes
+          .filter((c) => c.target === target && c.op === op)
+          .map((c) => c.op === 'archive' && c.reason === 'rotated' ? `${c.optionId} (stagnation rotation)` : c.optionId)
+          .join(', ')
+      const archivedVariants = moved('variant', 'archive')
+      const restoredVariants = moved('variant', 'restore')
+      const archivedLine = archivedVariants ? ` Archived: ${archivedVariants}.` : ''
+      const restoredLine = restoredVariants ? ` Restored: ${restoredVariants}.` : ''
       const buckets = Object.keys(r.channelAffinity)
       const channelLine = buckets.length > 0
         ? `\nChannel affinity (${buckets.length} industry bucket(s)): ${JSON.stringify(r.channelAffinity)}`
@@ -1026,12 +1029,10 @@ export function buildToolRegistry(): ToolDef[] {
       const replenishLine = r.needsReplenishment
         ? '\nReplenishment: a fresh angle is needed (pool below target) — /evaluate should supply one.'
         : ''
-      const strategyMoves = r.discovery
-        ? [
-            ...(r.discovery.archived.length > 0 ? [`archived: ${r.discovery.archived.map((a) => a.slug).join(', ')}`] : []),
-            ...(restoredOf('strategy').length > 0 ? [`restored: ${restoredOf('strategy').join(', ')}`] : []),
-          ]
-        : []
+      const strategyMoves = (['archive', 'restore'] as const).flatMap((op) => {
+        const ids = moved('strategy', op)
+        return ids ? [`${op === 'archive' ? 'archived' : 'restored'}: ${ids}`] : []
+      })
       const strategyMovesNote = strategyMoves.length > 0 ? ` (${strategyMoves.join('; ')})` : ''
       const strategyLine = r.discovery
         ? `\nStrategy weights: ${JSON.stringify(r.discovery.weights)}${strategyMovesNote}`
@@ -1076,7 +1077,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_lever_decisions',
-    'Read-only history of the project\'s daily lever-tick decisions, newest first. Each entry is one UTC day: message-variant draw weights, variants archived that day (reason "stagnation" marks a rotation, absent = lost to the leader), the variants and strategies the tick restored that day, per-variant sample counts, channel affinity per coarse-industry bucket, targetingLifts, the discovery-strategy decision (weights / archived / samples), vitals — the project futility check over recent mature email sends (sends / engaged / pDead / verdict), and configUsed — the effective lever config the tick ran under (the latter four null on pre-upgrade entries). Empty until the tick has run at least once.',
+    'Read-only history of the project\'s daily lever-tick decisions, newest first. Each entry is one UTC day: message-variant draw weights, changes — the variants and strategies the tick archived (reason "lost" to the leader, or "rotated" out of a flat set) or restored that day, per-variant sample counts, channel affinity per coarse-industry bucket, targetingLifts, the discovery-strategy decision (weights / pBest / samples), vitals — the project futility check over recent mature email sends (sends / engaged / pDead / verdict), and configUsed — the effective lever config the tick ran under (the latter four null on pre-upgrade entries). Empty until the tick has run at least once.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       days: z.number().int().min(1).max(365).optional().describe('Lookback window in days (default 30)'),

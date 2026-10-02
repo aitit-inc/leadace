@@ -29,6 +29,16 @@ describe('retireWithdrawnMetricEntries', () => {
     expect(retireWithdrawnMetricEntries(log)).toMatch(/^- \[retired\]/)
   })
 
+  it('tombstones the strategy lift, not the strategy bandit or reply rate', () => {
+    const lift = '- [discovery] [2026-08-25] 塾は面接対策で探す — evidence: metric=targetingLifts.discoveryStrategy prep-school lift 2.00, n=198'
+    const kept = [
+      '- [discovery] [2026-08-25] 学校一覧は弱い — evidence: metric=discoveryStrategy school-directory pBest 0.013, n=31',
+      '- [discovery] [2026-09-28] 展示会が良い — evidence: metric=discoveryStrategyResponseRate edu-expo 11.4% n=44',
+    ].join('\n')
+    expect(retireWithdrawnMetricEntries(lift)).toMatch(/^- \[retired\]/)
+    expect(retireWithdrawnMetricEntries(kept)).toBe(kept)
+  })
+
   it('does not match a longer metric name that starts with a withdrawn one', () => {
     const log = '- [targeting] [2026-09-09] 別指標 — evidence: metric=freshSignalResponseRateV2 12% n=61'
     expect(retireWithdrawnMetricEntries(log)).toBe(log)

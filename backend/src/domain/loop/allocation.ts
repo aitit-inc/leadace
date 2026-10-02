@@ -11,18 +11,16 @@ export type TargetingStats = {
   industry: TargetingAxisStat[] // coarse-folded
   employeeBand: TargetingAxisStat[]
   country: TargetingAxisStat[]
-  discoveryStrategy: TargetingAxisStat[]
 }
 
 export type TargetingLifts = {
   industry: TargetingAxisLift[] // value = coarse bucket
   employeeBand: TargetingAxisLift[]
   country: TargetingAxisLift[]
-  discoveryStrategy: TargetingAxisLift[]
 }
 
-// Applied per axis AND on the composite — an unclamped 4-axis product
-// compounds to 16x and gets hypersensitive to small-n flukes.
+// Applied per axis AND on the composite — an unclamped 3-axis product
+// compounds to 8x and gets hypersensitive to small-n flukes.
 export const LIFT_MIN = 0.5
 export const LIFT_MAX = 2.0
 

@@ -12,14 +12,16 @@ const WITHDRAWN_METRICS = [
   // #494: had_fresh_signal was set by the ordering that already preferred
   // signal-carrying prospects, so the rate compared a selected arm to its leftovers.
   'freshSignalResponseRate',
+  // #793: the lift was measured on sends ordered by that same lift.
+  'targetingLifts.discoveryStrategy',
 ] as const
 
 const ENTRY_TAG = /^(\s*-\s*\[)([a-z]+)(\])/
 // One regex per metric, so an empty list matches nothing rather than matching
 // every "metric=". The optional prefix covers the nested form entries use for
-// lever axes (metric=targetingLifts.discoveryStrategy).
+// lever axes (metric=targetingLifts.freshSignalResponseRate).
 const WITHDRAWN_CITATIONS = WITHDRAWN_METRICS.map(
-  (m) => new RegExp(`metric=(?:[A-Za-z0-9_]+\\.)?${m}(?![A-Za-z0-9_])`),
+  (m) => new RegExp(`metric=(?:[A-Za-z0-9_]+\\.)?${m.replaceAll('.', '\\.')}(?![A-Za-z0-9_])`),
 )
 
 export function retireWithdrawnMetricEntries(log: string): string {

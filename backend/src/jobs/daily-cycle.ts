@@ -94,7 +94,7 @@ async function learn(ctx: StageCtx, { stage, decide }: CycleLog): Promise<void> 
   const { tenantId, projectId } = ctx.job
   const tick = await ctx.step.do('lever-tick', STEP_RETRY, () => tenantTx(ctx, async (db) => {
     const t = unwrap(await runLeverTick(db, tenantId, projectId))
-    return { ran: t.ran, archived: t.archived.length, vitals: t.vitals?.verdict ?? null }
+    return { ran: t.ran, archived: t.changes.filter((c) => c.op === 'archive').length, vitals: t.vitals?.verdict ?? null }
   }))
   await decide(tick.ran ? `lever tick ran (archived ${tick.archived}${tick.vitals ? `, vitals ${tick.vitals}` : ''})` : 'lever tick already ran today')
   if (tick.vitals === 'futile') await decide('FUTILE vitals: recent mature sends draw no interest — check deliverability and targeting')

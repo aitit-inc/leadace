@@ -55,3 +55,4 @@ export type LoggedChange =
   | ({ day: string; actor: 'rule' } & RuleChange)
   | { day: string; actor: ChangeAuthor['actor']; target: OptionTarget; optionId: string; op: OptionOp; reason: string | null }
   | { day: string; actor: ChangeAuthor['actor']; target: DocumentTarget; reason: string | null }
+export type LoggedRuleChange = Extract<LoggedChange, { actor: 'rule' }>

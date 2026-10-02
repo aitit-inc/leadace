@@ -11,7 +11,7 @@ import { keepNewestRetired, retireWithdrawnMetricEntries, stampNewRetirements } 
 import type { JobResult } from '../../domain/jobs'
 import { ok, err, type ServiceResult } from '../result'
 import { callLlmJson, LlmError } from '../llm'
-import { getProposeEvidence, type AxisBucket, type ProposeEvidence, type ReactionCounts } from './observe'
+import { DISCOVERY_WINDOW_DAYS, getProposeEvidence, type AxisBucket, type ProposeEvidence, type ReactionCounts, type StrategyDiscovery } from './observe'
 import type { OptionArchival } from './change'
 import { changeReasonSchema } from '../../domain/loop/change'
 import { loadLeverConfig } from '../project-settings'
@@ -60,6 +60,7 @@ const evaluationSchema = z.object({
 export type EvaluateResult = Extract<JobResult, { kind: 'evaluate' }>
 
 const RETIRED_KEPT = 10
+const MIN_PASSES_TO_JUDGE = 8
 
 const pct = (count: number, n: number): string => `${n === 0 ? 0 : Math.round((count / n) * 1000) / 10}%`
 const counted = (c: ReactionCounts): string =>
@@ -71,6 +72,8 @@ const archivedWhy = (a: OptionArchival): string =>
   a.actor === null ? '' : a.actor === 'rule' ? ` (${a.reason})` : ` ${ARCHIVED_BY[a.actor]}${a.reason ? `: ${JSON.stringify(a.reason)}` : ''}`
 const status = (o: { addedOn: string; archived: OptionArchival | null }, active: string): string =>
   o.archived === null ? `active since ${o.addedOn} ${active}` : `archived ${o.archived.day}${archivedWhy(o.archived)}`
+const explored = (d: StrategyDiscovery): string =>
+  `explored ${d.passes} passes: asked ${d.asked}, returned ${d.returned}, new ${d.fresh}; registered ${d.registered}, with contact ${d.targets}`
 const axis = (buckets: AxisBucket[]): string => buckets.map((b) => `${b.value ?? '(none)'} ${counted(b)}`).join('; ') || 'none'
 
 function measuredData(e: ProposeEvidence, lever: LeverStateView): string {
@@ -82,7 +85,7 @@ function measuredData(e: ProposeEvidence, lever: LeverStateView): string {
       `- ${v.variantId} ${JSON.stringify(v.label)} ${status(v, weighed(lever.weights?.[v.variantId], decision?.subject.pBest?.[v.variantId]))} · ${counted(v)} · subject ${JSON.stringify(v.subjectPattern)} · approach ${JSON.stringify(v.bodyApproach)}`),
     'Discovery strategies:',
     ...e.strategies.map((st) =>
-      `- ${st.slug} ${status(st, weighed(lever.discovery.weights?.[st.slug], decision?.discovery?.pBest[st.slug]))} · ${counted(st)} · bounced ${st.bounced}/${st.bounceEligible} · approach ${JSON.stringify(st.approach)}`),
+      `- ${st.slug} ${status(st, weighed(lever.discovery.weights?.[st.slug], decision?.discovery?.pBest[st.slug]))} · ${counted(st)} · bounced ${st.bounced}/${st.bounceEligible} · ${explored(st.discovery)} · approach ${JSON.stringify(st.approach)}`),
     ...Object.entries(e.axes).map(([name, buckets]) => `${name}: ${axis(buckets)}`),
     `Inquiry page: ${Object.entries(e.inquiryOutcomes).map(([o, n]) => `${o} ${n}`).join(' · ')}`,
     `Today's tick: vitals ${decision?.vitals?.verdict ?? 'not run'}`,
@@ -148,7 +151,7 @@ ${priorLearnings ?? '(none yet)'}
 ## Analysis frameworks
 ${frameworks}
 
-## Measured data (sends since ${evidence.frameStart ?? 'the first send'}; n = sends older than ${config.rewardWindowDays} days; positive = a meeting request, positive reply or signup; interested adds neutral replies and chats; w / p = today's weight and P(best))
+## Measured data (sends since ${evidence.frameStart ?? 'the first send'}; n = sends older than ${config.rewardWindowDays} days${config.rewardLookbackDays === undefined ? '' : `, and on the variant and strategy lines no older than ${config.rewardWindowDays + config.rewardLookbackDays} days, as the tick counts them`}; positive = a meeting request, positive reply or signup; interested adds neutral replies and chats; w / p = today's weight and P(best); explored = the strategy's hosted discovery over the last ${DISCOVERY_WINDOW_DAYS} days — candidates asked for, returned and new after dedup, then, counted apart from those passes, every prospect registered under the strategy in that time (hosted or brought in) and how many of them are qualified with a contact on file)
 ${measuredData(evidence, lever.value)}
 rejection feedback (30 days, tactical): ${rejectionData ? JSON.stringify(rejectionData) : '(unavailable this run)'}
 
@@ -165,7 +168,7 @@ ${draftReviewSection(reviews) ?? '(nothing corrected)'}
 - salesStrategy: return { content: the full document with only Target (Primary / Secondary / Prerequisites / Not a fit), KPI and Search Keywords changed, why }, or null. Adjust within the frame; never write a frame change (offer, market, industry, country, channel — past sends no longer apply). Judge Target as a premise (can they use and buy it?) before the positive rate. A wrong-prospect call in Draft review tells you the Target: when it names a kind of organization, reflect it in "Not a fit".
 - learnings: return the full log with reconciled entries, or null. Write gate for a new entry: a cited metric with n ≥ ${lever.value.minSamplePerArm}, a pattern that repeated. Retire entries whose direction no longer reproduces by replacing their tag with [retired]. Keep ≤ 15 active entries. Draft review carries no metric, so it never becomes an entry. Stage tags: [targeting] [body] [timing] [channel] [discovery].
 - newVariant: only when today's tick asks for one (${lever.value.needsReplenishment}) — one angle most different from every listed one (subject pattern ≤ 80 chars using only {{org}} / {{name}} / {{signal}} placeholders, a 2–5 line body approach, a label, why: how it differs from the listed ones) on a fresh slug like gen_${utcDateKey().replace(/-/g, '')}; otherwise null.
-- strategyUpserts: archive (archived: true, approach echoed unchanged) only on evidence the tick cannot see — clearly elevated bounces, an approach that cannot select for the Prerequisites, or a dead source. Register 1–2 fresh strategies (new kebab-case slug, 2–5 line approach: where / how to search and why it should work, preferring sources where the Prerequisites are observable) only when new strategies are needed (${lever.value.discovery.needsReplenishment}) or the premise check reoriented the Target. Never reuse a slug for a different idea. why: the evidence for an archive, the hypothesis for a new strategy.
+- strategyUpserts: archive (archived: true, approach echoed unchanged) only on evidence the tick cannot see — clearly elevated bounces, an approach that cannot select for the Prerequisites, or a spent source: over ${MIN_PASSES_TO_JUDGE} or more explored passes it returns almost nothing, almost nothing new, or almost nothing with a contact. Register 1–2 fresh strategies (new kebab-case slug, 2–5 line approach: where / how to search and why it should work, preferring sources where the Prerequisites are observable) only when new strategies are needed (${lever.value.discovery.needsReplenishment}) or the premise check reoriented the Target. Never reuse a slug for a different idea. why: the evidence for an archive, the hypothesis for a new strategy.
 - suggestions: only actions the person alone can do — kind "${ADD_MEANS_SUGGESTION_KIND}" for a means needing account setup (dedupeKey = the tentative strategy slug), kind "${REVISIT_STRATEGY_SUGGESTION_KIND}" (dedupeKey e.g. cross-channel-slump) when low performance persists across every channel and strategy through repeated rotations, or for a frame change. instruction = the next action as one sentence addressed to Ace.
 - why: one short line, kept in the change log the person reads.
 - report (markdown): key KPIs; inquiry-landing conversions when any outcome is non-zero; changes since the last cycle; discovery strategy performance (skip when no send carries a slug); suggestions recorded; findings; improvements applied; tactical rejection signals (distribution, recontact queue, decision-maker referrals) when total > 0; lever observability (leading options with w / p and maturity at n ≥ ${lever.value.minSamplePerArm}, archived options — "rotated" is for freshness, not a loser; "none yet" without data); next actions. Never imply progress the numbers do not show.`

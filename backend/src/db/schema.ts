@@ -22,7 +22,7 @@ import { sql } from 'drizzle-orm'
 import type { LeverConfig, LeverConfigPatch } from '../domain/loop/config'
 import type { FollowUpSequencePatch } from '../domain/follow-up-sequence'
 import type { Locale } from '../domain/locale'
-import type { ChannelAffinityMap, ChannelCoarseStat, TargetingAxisStat, TargetingLifts } from '../domain/loop/allocation'
+import type { ChannelAffinityMap, ChannelCoarseStat, TargetingLifts, TargetingStats } from '../domain/loop/allocation'
 import type { CoarseIndustry } from '../domain/coarse-industry'
 import type { VitalsAssessment } from '../domain/loop/frame'
 import { POLICY_ACTORS, POLICY_OPS, POLICY_TARGETS, RULE_ARCHIVE_REASONS, type RuleEvidence } from '../domain/loop/change'
@@ -1075,18 +1075,15 @@ export const discoveryStrategies = pgTable('discovery_strategies', {
 // `channel` is absent on pre-P3 rows and until the project has channel data;
 // `targeting` is absent on pre-Phase-B rows. The `subject` key predates the
 // message_variants rename and stays — renaming it would only force readers
-// into old/new branching. `pBest` is absent on pre-Phase-C rows, whose
-// `archived` entries carry Wilson-era { leaderLower, armUpper } instead of pBest.
-// `reason: 'stagnation'` marks a rotation archive (absent = lost); an archived
-// entry carries the RuleEvidence the rule decided on. What the rule restored is
-// in policy_changes only. `discovery` / `configUsed` are absent on
+// into old/new branching. `pBest` is absent on pre-Phase-C rows. What the rule
+// archived or restored that day is in policy_changes only (older rows also
+// carry an `archived` copy). `discovery` / `configUsed` are absent on
 // pre-strategy-bandit rows; configUsed snapshots the effective config so old
 // decisions replay exactly after config changes.
 export type LeverDecisionPayload = {
   subject: {
     weights: Record<string, number>
     pBest?: Record<string, number>
-    archived: Array<{ variantId: string; reason?: 'stagnation' } & RuleEvidence>
     samples: Array<{ variantId: string; total: number; responses: number; rewardSum: number }>
   }
   channel?: {
@@ -1095,17 +1092,11 @@ export type LeverDecisionPayload = {
   }
   targeting?: {
     lifts: TargetingLifts
-    samples: {
-      industry: TargetingAxisStat[]
-      employeeBand: TargetingAxisStat[]
-      country: TargetingAxisStat[]
-      discoveryStrategy: TargetingAxisStat[]
-    }
+    samples: TargetingStats
   }
   discovery?: {
     weights: Record<string, number>
     pBest: Record<string, number>
-    archived: Array<{ slug: string } & RuleEvidence>
     samples: Array<{ slug: string; total: number; rewardSum: number }>
   }
   vitals?: VitalsAssessment

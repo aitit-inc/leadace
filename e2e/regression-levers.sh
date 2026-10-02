@@ -242,10 +242,10 @@ assert_eq "tick1 ran"                "$(echo "$T1" | jq -r '.ran')" "true"
 assert_eq "tick1 measures v1 sends"  "$(echo "$T1" | jq -r '.samples[] | select(.variantId=="v1") | .total')" "60"
 assert_eq "tick1 measures v1 replies" "$(echo "$T1" | jq -r '.samples[] | select(.variantId=="v1") | .responses')" "36"
 assert_eq "tick1 scores each v1 send once" "$(echo "$T1" | jq -r '.samples[] | select(.variantId=="v1") | .rewardSum')" "36"
-assert_eq "tick1 archived exactly v3" "$(echo "$T1" | jq -rc '[.archived[].variantId]')" '["v3"]'
+assert_eq "tick1 archived exactly v3" "$(echo "$T1" | jq -rc '[.changes[] | select(.op == "archive") | .optionId]')" '["v3"]'
 # v2 and v3 both score ~0 against the leader v1 (candidates), but the ≥2-active
 # floor caps archiving to one; the posterior-mean tie-break sheds the weaker v3 (0/50).
-assert_eq "tick1 archived entry carries its score below the threshold" "$(echo "$T1" | jq -r '.archived[0].pBeatsLeader < 0.02')" "true"
+assert_eq "tick1 archive carries its score below the threshold" "$(echo "$T1" | jq -r '.changes[0].evidence.pBeatsLeader < 0.02')" "true"
 assert_eq "tick1 dropped v3 from weights" "$(echo "$T1" | jq -r '.weights | has("v3")')" "false"
 assert_eq "tick1 leader v1 outweighs v2" "$(echo "$T1" | jq -r '.weights.v1 > .weights.v2')" "true"
 assert_eq "tick1 pBest strongly favors v1 (36/60 vs 5/60)" "$(echo "$T1" | jq -r '.pBest.v1 > 0.9')" "true"
@@ -265,7 +265,7 @@ assert_eq "tick1 needsReplenishment (2 active < target 3)" "$(echo "$T1" | jq -r
 assert_eq "tick1 strategy s1 sample total = 230" "$(echo "$T1" | jq -r '.discovery.samples[] | select(.slug=="s1") | .total')" "230"
 assert_eq "tick1 unsent s2 is capped at an even share of the slots" "$(echo "$T1" | jq -r '.discovery.weights.s2 * 3 | . > 0.999 and . < 1.001')" "true"
 assert_eq "tick1 measured s1 keeps a positive weight" "$(echo "$T1" | jq -r '.discovery.weights.s1 > 0.1')" "true"
-assert_eq "tick1 no strategy archived" "$(echo "$T1" | jq -rc '[.discovery.archived[].slug]')" '[]'
+assert_eq "tick1 no strategy archived" "$(echo "$T1" | jq -rc '[.changes[] | select(.target == "strategy") | .optionId]')" '[]'
 assert_eq "tick1 needsStrategyReplenishment (2 active < target 3)" "$(echo "$T1" | jq -r '.needsStrategyReplenishment')" "true"
 # Vitals: 170 mature email sends (the 60 form sends are out of scope), 41
 # engaged sends (v1's duplicate replies count once), healthy rate → ok.
@@ -276,7 +276,7 @@ assert_eq "tick1 vitals verdict ok" "$(echo "$T1" | jq -r '.vitals.verdict')" "o
 step "run_lever_tick #2 (idempotent — same UTC day)"
 T2="$(api POST "/api/projects/$PROJECT_ID/run-lever-tick")"
 assert_eq "tick2 ran=false" "$(echo "$T2" | jq -r '.ran')" "false"
-assert_eq "tick2 echoes same archived" "$(echo "$T2" | jq -rc '[.archived[].variantId]')" '["v3"]'
+assert_eq "tick2 reports the same archive from the log" "$(echo "$T2" | jq -rc '[.changes[] | select(.op == "archive") | .optionId]')" '["v3"]'
 # Live recompute from the current active count (2 < 3), not the frozen decision.
 assert_eq "tick2 echoes needsReplenishment" "$(echo "$T2" | jq -r '.needsReplenishment')" "true"
 assert_eq "tick2 echoes recorded pBest" "$(echo "$T2" | jq -r '.pBest.v1 > 0.9')" "true"
@@ -320,7 +320,7 @@ step "get_lever_decisions (audit trend, read-only)"
 LD="$(api GET "/api/projects/$PROJECT_ID/lever-decisions?days=30")"
 assert_eq "history returns today's recorded decision" "$(echo "$LD" | jq -r '.decisions | length >= 1')" "true"
 assert_eq "history newest measures v1 replies = 36" "$(echo "$LD" | jq -r '.decisions[0].samples[] | select(.variantId=="v1") | .responses')" "36"
-assert_eq "history newest archived v3" "$(echo "$LD" | jq -rc '[.decisions[0].archived[].variantId]')" '["v3"]'
+assert_eq "history newest archived v3" "$(echo "$LD" | jq -rc '.decisions[0] | [.changes[] | select(.op == "archive") | .optionId]')" '["v3"]'
 assert_eq "history newest channel affinity software_tech email-first" \
   "$(echo "$LD" | jq -r '.decisions[0].channelAffinity.software_tech[0].channel')" "email"
 assert_eq "history newest carries the discovery decision" \
@@ -540,9 +540,9 @@ psql_local "INSERT INTO lever_state (tenant_id, project_id, variant_flat_streak)
 step "run_lever_tick rotates out the weakest arm"
 TS1="$(api POST "/api/projects/$PROJECT_ID3/run-lever-tick")"
 assert_eq "stag tick ran" "$(echo "$TS1" | jq -r '.ran')" "true"
-assert_eq "stag tick archived exactly s4" "$(echo "$TS1" | jq -rc '[.archived[].variantId]')" '["s4"]'
-assert_eq "stag archive carries reason stagnation" "$(echo "$TS1" | jq -r '.archived[0].reason // ""')" "stagnation"
-assert_eq "stag archived pBest above the lost gate" "$(echo "$TS1" | jq -r '.archived[0].pBest >= 0.02')" "true"
+assert_eq "stag tick archived exactly s4" "$(echo "$TS1" | jq -rc '[.changes[] | select(.op == "archive") | .optionId]')" '["s4"]'
+assert_eq "stag archive carries reason rotated" "$(echo "$TS1" | jq -r '.changes[0].reason')" "rotated"
+assert_eq "stag archived pBest above the lost gate" "$(echo "$TS1" | jq -r '.changes[0].evidence.pBest >= 0.02')" "true"
 assert_eq "stag weights drop s4" "$(echo "$TS1" | jq -r '.weights | has("s4")')" "false"
 assert_eq "stag pBest keeps the full arm set" "$(echo "$TS1" | jq -r '.pBest | has("s4")')" "true"
 # 4 → 3 active: at targetActiveArms, so nothing asks for a fresh angle.
@@ -555,15 +555,16 @@ assert_eq "rotation starts the flat count over" "$(psql_local "SELECT variant_fl
 step "idempotent echo keeps the rotation marker"
 TS2="$(api POST "/api/projects/$PROJECT_ID3/run-lever-tick")"
 assert_eq "stag tick2 ran=false" "$(echo "$TS2" | jq -r '.ran')" "false"
-assert_eq "stag tick2 echoes reason stagnation" "$(echo "$TS2" | jq -r '.archived[0].reason // ""')" "stagnation"
+assert_eq "stag tick2 reports reason rotated" "$(echo "$TS2" | jq -r '.changes[0].reason')" "rotated"
 
 step "the next flat tick only counts"
 forget_tick "$PROJECT_ID3"
 TS1B="$(api POST "/api/projects/$PROJECT_ID3/run-lever-tick")"
 assert_eq "stag re-tick ran" "$(echo "$TS1B" | jq -r '.ran')" "true"
-assert_eq "stag re-tick archives nothing" "$(echo "$TS1B" | jq -rc '[.archived[].variantId]')" '[]'
+# The re-tick shares its UTC day with the first, so its changes still list s4: count the log.
+assert_eq "stag re-tick archives nothing" "$(psql_local "SELECT count(*) FROM policy_changes WHERE project_id='$PROJECT_ID3' AND actor='rule';")" "1"
 assert_eq "stag re-tick counts one flat day" "$(psql_local "SELECT variant_flat_streak FROM lever_state WHERE project_id='$PROJECT_ID3';")" "1"
-assert_eq "the rule does not bring back what it rotated out" "$(echo "$TS1B" | jq -rc '[.restored[].optionId]')" '[]'
+assert_eq "the rule does not bring back what it rotated out" "$(echo "$TS1B" | jq -rc '[.changes[] | select(.op == "restore") | .optionId]')" '[]'
 
 
 # Restore and grace. A sixth project: r1 and r2 at 6/40, r3 at 0/40 → r3 is
@@ -593,18 +594,18 @@ ins_restore r2 40; reply_restore r2 6
 ins_restore r3 40
 backdate_log "$PROJECT_ID6"
 TR1="$(api POST "/api/projects/$PROJECT_ID6/run-lever-tick")"
-assert_eq "restore tick1 archives r3 as lost" "$(echo "$TR1" | jq -rc '[.archived[] | .variantId + ":" + (.reason // "lost")]')" '["r3:lost"]'
+assert_eq "restore tick1 archives r3 as lost" "$(echo "$TR1" | jq -rc '[.changes[] | .optionId + ":" + .reason]')" '["r3:lost"]'
 
 step "restore: r3's results catch up → the rule brings it back"
 reply_restore r3 6
 forget_tick "$PROJECT_ID6"
 TR2="$(api POST "/api/projects/$PROJECT_ID6/run-lever-tick")"
-assert_eq "restore tick2 restores r3" "$(echo "$TR2" | jq -rc '[.restored[] | .target + ":" + .optionId]')" '["variant:r3"]'
-assert_eq "restore tick2 score at or above the restore threshold" "$(echo "$TR2" | jq -r '.restored[0].evidence.pBeatsLeader >= 0.3')" "true"
+assert_eq "restore tick2 restores r3" "$(echo "$TR2" | jq -rc '[.changes[] | select(.op == "restore") | .target + ":" + .optionId]')" '["variant:r3"]'
+assert_eq "restore tick2 score at or above the restore threshold" "$(echo "$TR2" | jq -r '.changes[] | select(.op == "restore") | .evidence.pBeatsLeader >= 0.3')" "true"
 assert_eq "the same-day replay reports the restore from the log" \
-  "$(api POST "/api/projects/$PROJECT_ID6/run-lever-tick" | jq -rc '[.ran, (.restored | length)]')" '[false,1]'
+  "$(api POST "/api/projects/$PROJECT_ID6/run-lever-tick" | jq -rc '[.ran, ([.changes[] | select(.op == "restore")] | length)]')" '[false,1]'
 assert_eq "the decision history carries the day's restore" \
-  "$(api GET "/api/projects/$PROJECT_ID6/lever-decisions?days=1" | jq -rc '[.decisions[0].restored[].optionId]')" '["r3"]'
+  "$(api GET "/api/projects/$PROJECT_ID6/lever-decisions?days=1" | jq -rc '[.decisions[0].changes[] | select(.op == "restore") | .optionId]')" '["r3"]'
 assert_eq "restore tick2 weighs r3 again" "$(echo "$TR2" | jq -r '.weights | has("r3")')" "true"
 assert_eq "r3 is active again" "$(api GET "/api/projects/$PROJECT_ID6/lever-state" | jq -r '.variants | length')" "3"
 assert_eq "restore logged as the rule's, with its evidence and no archive reason" \
@@ -617,7 +618,7 @@ psql_local "DELETE FROM responses WHERE outreach_log_id IN (SELECT id FROM outre
 forget_tick "$PROJECT_ID6"
 TR3="$(api POST "/api/projects/$PROJECT_ID6/run-lever-tick")"
 assert_eq "grace tick sees r3 at 0/40" "$(echo "$TR3" | jq -r '.samples[] | select(.variantId=="r3") | .rewardSum')" "0"
-assert_eq "grace tick archives nothing" "$(echo "$TR3" | jq -rc '[.archived[].variantId]')" '[]'
+assert_eq "grace tick archives nothing" "$(psql_local "SELECT count(*) FROM policy_changes WHERE project_id='$PROJECT_ID6' AND actor='rule' AND op='archive';")" "1"
 
 # Futility (vitals). A fifth project: 600 mature zero-reply email sends put
 # P(rate < 1%) ≈ 0.998 past the 0.99 confidence gate. The verdict reads a

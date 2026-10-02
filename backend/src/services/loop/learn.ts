@@ -9,7 +9,8 @@ import { ok, type ServiceResult } from '../result'
 import { resolveProject } from '../projects'
 import { loadLeverConfig } from '../project-settings'
 import { observeTick } from './observe'
-import { applyTickDecision, ruleRestoresSince, type RuleRestore } from './change'
+import type { LoggedRuleChange } from '../../domain/loop/change'
+import { applyTickDecision, ruleChangesSince } from './change'
 
 export type LeverTickResult = {
   ran: boolean
@@ -18,9 +19,7 @@ export type LeverTickResult = {
   weights: Record<string, number>
   // null on ran:false replays of pre-Phase-C decisions.
   pBest: Record<string, number> | null
-  archived: LeverDecisionPayload['subject']['archived']
-  // What the day's tick brought back, variants and strategies, as logged.
-  restored: RuleRestore[]
+  changes: LoggedRuleChange[]
   samples: LeverDecisionPayload['subject']['samples']
   channelAffinity: ChannelAffinityMap
   channelSamples: ChannelCoarseStat[]
@@ -63,7 +62,6 @@ export async function runLeverTick(
 
   const dayStart = new Date(`${cycleDate}T00:00:00Z`)
   if (inserted.length === 0) {
-    const restored = await ruleRestoresSince(db, projectId, dayStart)
     const [existing] = await db
       .select({ cycleDate: leverDecisions.cycleDate, decision: leverDecisions.decision })
       .from(leverDecisions)
@@ -76,8 +74,7 @@ export async function runLeverTick(
       minSamplePerArm: config.minSamplePerArm,
       weights: existing.decision.subject.weights,
       pBest: existing.decision.subject.pBest ?? null,
-      archived: existing.decision.subject.archived,
-      restored,
+      changes: await ruleChangesSince(db, projectId, dayStart),
       samples: existing.decision.subject.samples,
       channelAffinity: existing.decision.channel?.affinity ?? {},
       channelSamples: existing.decision.channel?.samples ?? [],
@@ -92,7 +89,7 @@ export async function runLeverTick(
     })
   }
 
-  await applyTickDecision(db, tenantId, projectId, decision)
+  await applyTickDecision(db, tenantId, projectId, cycleDate, decision)
 
   return ok({
     ran: true,
@@ -100,8 +97,7 @@ export async function runLeverTick(
     minSamplePerArm: config.minSamplePerArm,
     weights: decision.variants.weights,
     pBest: decision.variants.pBest,
-    archived: payload.subject.archived,
-    restored: await ruleRestoresSince(db, projectId, dayStart),
+    changes: await ruleChangesSince(db, projectId, dayStart),
     samples: payload.subject.samples,
     channelAffinity: payload.channel.affinity,
     channelSamples: payload.channel.samples,

@@ -3,6 +3,7 @@ import {
   discoveryStrategies,
   INQUIRY_OUTCOMES,
   inquirySessions,
+  jobs,
   leverState,
   messageVariants,
   organizations,
@@ -190,8 +191,44 @@ export type ProjectStatsResult = {
   dailyActivity: DailyActivity[]
 }
 
-// The tick decides on total and rewardSum; the screens also show the reactions.
-type VariantTally = { variantId: string; total: number; responses: number; rewardSum: number } & Pick<ReactionTotals, 'positive' | 'interested'>
+// The tick decides on total and rewardSum; evaluate and the screens also show
+// the reactions.
+type OptionTally = { total: number; rewardSum: number } & Pick<ReactionTotals, 'positive' | 'interested'>
+type VariantTally = OptionTally & { variantId: string; responses: number }
+
+const optionColumn = (target: OptionTarget) => (target === 'variant' ? outreachLogs.variantId : prospects.discoveryStrategy)
+
+// One tally for the tick and evaluate, so evaluate reasons on the numbers the
+// rule decided on.
+async function optionTallies(
+  db: Db,
+  projectId: ProjectId,
+  target: OptionTarget,
+  window: SQL | undefined,
+  weights: RewardWeights,
+): Promise<Map<string, OptionTally>> {
+  const column = optionColumn(target)
+  const taken = and(isNotNull(column), window)
+  const [totals, reacted] = await Promise.all([
+    db.select({ id: column, total: count() })
+      .from(outreachLogs)
+      .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
+      .where(sentBy(projectId, taken))
+      .groupBy(column)
+      .orderBy(column),
+    reactedSends(db, projectId, taken),
+  ])
+  const reactions = reactionsBy(reacted, (r) => (target === 'variant' ? r.variantId : r.strategy), weights)
+  return new Map(totals.flatMap(({ id, total }) => {
+    if (id === null) return []
+    const r = reactions.get(id)
+    return [[id, { total, rewardSum: r?.rewardSum ?? 0, positive: r?.positive ?? 0, interested: r?.interested ?? 0 }] as const]
+  }))
+}
+
+export function getStrategyStats(db: Db, projectId: ProjectId, config: LeverConfig): Promise<Map<string, OptionTally>> {
+  return optionTallies(db, projectId, 'strategy', tickWindow(config, true), config.reward)
+}
 
 function tickWindow(config: LeverConfig, applyLookback: boolean): SQL | undefined {
   const lookbackDays =
@@ -214,36 +251,18 @@ export async function getVariantStats(
   // view to recent data; the all-history display path (getProjectStats) leaves it false.
   applyLookback = false,
 ): Promise<VariantTally[]> {
-  const window = and(isNotNull(outreachLogs.variantId), tickWindow(config, applyLookback))
-
-  const [totals, replied, reacted] = await Promise.all([
-    db.select({ variantId: outreachLogs.variantId, total: count() })
-      .from(outreachLogs)
-      .where(sentBy(projectId, window))
-      .groupBy(outreachLogs.variantId)
-      .orderBy(outreachLogs.variantId),
+  const window = tickWindow(config, applyLookback)
+  const [tallies, replied] = await Promise.all([
+    optionTallies(db, projectId, 'variant', window, config.reward),
     // Distinct sends, so a thread of two replies stays one.
     db.select({ variantId: outreachLogs.variantId, responses: countDistinct(outreachLogs.id) })
       .from(outreachLogs)
       .innerJoin(responses, eq(responses.outreachLogId, outreachLogs.id))
       .where(and(sentBy(projectId, window), notInArray(responses.responseType, [...NON_COUNTABLE_RESPONSE_TYPES])))
       .groupBy(outreachLogs.variantId),
-    reactedSends(db, projectId, window),
   ])
   const responsesBy = new Map(replied.map((r) => [r.variantId, r.responses]))
-  const reactions = reactionsBy(reacted, (r) => r.variantId, config.reward)
-  return totals.flatMap(({ variantId, total }) => {
-    if (variantId === null) return []
-    const r = reactions.get(variantId)
-    return [{
-      variantId,
-      total,
-      responses: responsesBy.get(variantId) ?? 0,
-      rewardSum: r?.rewardSum ?? 0,
-      positive: r?.positive ?? 0,
-      interested: r?.interested ?? 0,
-    }]
-  })
+  return Array.from(tallies, ([variantId, tally]) => ({ variantId, responses: responsesBy.get(variantId) ?? 0, ...tally }))
 }
 
 export async function getChannelStats(
@@ -281,8 +300,9 @@ export async function getChannelStats(
 }
 
 // Bounced sends are excluded from denominator AND rewards: for targeting a
-// bounce is source data-quality, not segment disinterest. (The message bandit
-// keeps them — variant and bounce are uncorrelated there.)
+// bounce is source data-quality, not segment disinterest. (The options keep
+// them: a variant and a bounce are unrelated, and a source that bounces is a
+// worse source.)
 export async function getTargetingStats(
   db: Db,
   projectId: ProjectId,
@@ -290,7 +310,7 @@ export async function getTargetingStats(
   applyLookback = false,
 ): Promise<TargetingStats> {
   const window = and(tickWindow(config, applyLookback), not(bounced(db)))
-  const [industryRows, bandRows, countryRows, strategyRows, reacted] = await Promise.all([
+  const [industryRows, bandRows, countryRows, reacted] = await Promise.all([
     db.select({ industry: prospects.industry, total: count() })
       .from(outreachLogs)
       .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
@@ -308,11 +328,6 @@ export async function getTargetingStats(
       .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
       .where(sentBy(projectId, window))
       .groupBy(prospects.country, organizations.country),
-    db.select({ strategy: prospects.discoveryStrategy, total: count() })
-      .from(outreachLogs)
-      .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
-      .where(sentBy(projectId, window))
-      .groupBy(prospects.discoveryStrategy),
     reactedSends(db, projectId, window),
   ])
   const axis = (totals: Map<string | null, number>, key: (r: ReactedSend) => string | null): TargetingAxisStat[] => {
@@ -338,7 +353,6 @@ export async function getTargetingStats(
     industry: Array.from(coarseAgg.values()).sort((a, b) => (a.value ?? '').localeCompare(b.value ?? '')),
     employeeBand: axis(foldCounts(bandRows, (r) => r.employeeBand, (r) => r.total), (r) => r.employeeBand),
     country: axis(foldCounts(countryRows, (r) => countryBucket(r.prospectCountry, r.organizationCountry), (r) => r.total), (r) => r.country),
-    discoveryStrategy: axis(foldCounts(strategyRows, (r) => r.strategy, (r) => r.total), (r) => r.strategy),
   }
 }
 
@@ -635,6 +649,10 @@ export type VariantEvidence = ReactionCounts & {
   archived: OptionArchival | null
 }
 
+// `fresh` = new after dedup. `registered` counts every prospect carrying the
+// slug, hosted or brought in; `targets` = those qualified with a contact on file.
+export type StrategyDiscovery = { passes: number; asked: number; returned: number; fresh: number; registered: number; targets: number }
+
 export type StrategyEvidence = ReactionCounts & {
   slug: string
   addedOn: string
@@ -642,6 +660,7 @@ export type StrategyEvidence = ReactionCounts & {
   // Threadable email sends only: a form or SNS send cannot bounce.
   bounced: number
   bounceEligible: number
+  discovery: StrategyDiscovery
   archived: OptionArchival | null
 }
 
@@ -675,6 +694,7 @@ export type ProposeEvidence = {
 }
 
 const ARCHIVED_OPTIONS_SHOWN = 10
+export const DISCOVERY_WINDOW_DAYS = 14
 const REPLIED_SENDS_SHOWN = 30
 const EVIDENCE_TEXT_CHARS = 1500
 
@@ -691,9 +711,9 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
   const strategyCols = { id: discoveryStrategies.slug, approach: discoveryStrategies.approach, createdAt: discoveryStrategies.createdAt, archivedAt: discoveryStrategies.archivedAt }
 
   const [
-    industryRows, sizeRows, countryRows, channelRows, priorityRows, variantRows, strategyRows, reacted,
+    industryRows, sizeRows, countryRows, channelRows, priorityRows, variantStats, strategyStats, reacted,
     bouncedRows, eligibleRows, activeVariants, archivedVariants, activeStrategies, archivedStrategies,
-    recent, inquiryRows, [settled],
+    recent, inquiryRows, [settled], discoveryJobs, registeredRows,
   ] = await Promise.all([
     db.select({ industry: prospects.industry, n: count() })
       .from(outreachLogs).innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
@@ -710,12 +730,8 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
     db.select({ priority: projectProspects.priority, n: count() })
       .from(outreachLogs).leftJoin(projectProspects, and(eq(projectProspects.projectId, outreachLogs.projectId), eq(projectProspects.prospectId, outreachLogs.prospectId)))
       .where(sentBy(projectId, mature)).groupBy(projectProspects.priority),
-    db.select({ variantId: outreachLogs.variantId, n: count() })
-      .from(outreachLogs)
-      .where(sentBy(projectId, mature)).groupBy(outreachLogs.variantId),
-    db.select({ strategy: prospects.discoveryStrategy, n: count() })
-      .from(outreachLogs).innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
-      .where(sentBy(projectId, mature)).groupBy(prospects.discoveryStrategy),
+    getVariantStats(db, projectId, config, true),
+    getStrategyStats(db, projectId, config),
     reactedSends(db, projectId, mature),
     db.select({ strategy: prospects.discoveryStrategy, n: countDistinct(outreachLogs.id) })
       .from(outreachLogs).innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId)).innerJoin(responses, eq(responses.outreachLogId, outreachLogs.id))
@@ -744,6 +760,13 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
       .where(sentBy(projectId, inFrame)).groupBy(inquirySessions.outcome),
     db.select({ n: count() }).from(outreachLogs)
       .where(sentBy(projectId, and(lt(outreachLogs.sentAt, daysAgo(REPLY_SETTLE_DAYS)), inFrame))),
+    // A job that failed left no result, so its passes are missing here.
+    db.select({ result: jobs.result }).from(jobs)
+      .where(and(eq(jobs.projectId, projectId), inArray(jobs.kind, ['daily_cycle', 'discover']), isNotNull(jobs.result), gte(jobs.createdAt, daysAgo(DISCOVERY_WINDOW_DAYS)))),
+    db.select({ strategy: prospects.discoveryStrategy, registered: count(), targets: count(sql`CASE WHEN ${projectTargetExpr} THEN 1 END`) })
+      .from(projectProspects).innerJoin(prospects, eq(prospects.id, projectProspects.prospectId))
+      .where(and(eq(projectProspects.projectId, projectId), isNotNull(prospects.discoveryStrategy), gte(projectProspects.createdAt, daysAgo(DISCOVERY_WINDOW_DAYS))))
+      .groupBy(prospects.discoveryStrategy),
   ])
 
   const dayOf = (at: Date): string => at.toISOString().slice(0, 10)
@@ -786,11 +809,20 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
   const archival = (archivals: Map<string, OptionArchival>, id: string, at: Date | null): OptionArchival | null =>
     at === null ? null : archivals.get(id) ?? { day: dayOf(at), actor: null, reason: null }
 
-  const variantN = new Map(variantRows.map((r) => [r.variantId, r.n]))
-  const variantReactions = reactionsBy(reacted, (r) => r.variantId, config.reward)
-  const strategyN = new Map(strategyRows.map((r) => [r.strategy, r.n]))
-  const strategyReactions = reactionsBy(reacted, (r) => r.strategy, config.reward)
+  const variantOf = new Map(variantStats.map((v) => [v.variantId, v]))
+  const counts = (t: OptionTally | undefined): ReactionCounts => ({ n: t?.total ?? 0, positive: t?.positive ?? 0, interested: t?.interested ?? 0 })
   const bouncedBy = new Map(bouncedRows.map((r) => [r.strategy, r.n]))
+  const registeredBy = new Map(registeredRows.map((r) => [r.strategy, r]))
+  const noPasses = { passes: 0, asked: 0, returned: 0, fresh: 0 }
+  const passesBy = new Map<string, typeof noPasses>()
+  for (const { result } of discoveryJobs) {
+    if (result === null || !('planCompliance' in result)) continue
+    // A pass whose source was down upstream says nothing about the source.
+    for (const pass of result.planCompliance.filter((p) => p.unavailable === 0)) {
+      const held = passesBy.get(pass.slug) ?? noPasses
+      passesBy.set(pass.slug, { passes: held.passes + 1, asked: held.asked + pass.asked, returned: held.returned + pass.returned, fresh: held.fresh + pass.fresh })
+    }
+  }
   const eligibleBy = new Map(eligibleRows.map((r) => [r.strategy, r.n]))
 
   const reactionsOf = new Map<number, Reaction[]>()
@@ -836,7 +868,7 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
       subjectPattern: v.subjectPattern,
       bodyApproach: v.bodyApproach,
       archived: archival(variantArchivals, v.id, v.archivedAt),
-      ...withReactions(variantN.get(v.id) ?? 0, variantReactions.get(v.id)),
+      ...counts(variantOf.get(v.id)),
     })),
     strategies: [...activeStrategies, ...archivedStrategies].map((st) => ({
       slug: st.id,
@@ -844,8 +876,13 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
       approach: st.approach,
       bounced: bouncedBy.get(st.id) ?? 0,
       bounceEligible: eligibleBy.get(st.id) ?? 0,
+      discovery: {
+        ...(passesBy.get(st.id) ?? noPasses),
+        registered: registeredBy.get(st.id)?.registered ?? 0,
+        targets: registeredBy.get(st.id)?.targets ?? 0,
+      },
       archived: archival(strategyArchivals, st.id, st.archivedAt),
-      ...withReactions(strategyN.get(st.id) ?? 0, strategyReactions.get(st.id)),
+      ...counts(strategyStats.get(st.id)),
     })),
     axes: {
       industry: axisBuckets(foldCounts(industryRows, (r) => coarseIndustry(industryBucket(r.industry)), (r) => r.n), (r) => coarseIndustry(r.industry)),
@@ -878,7 +915,7 @@ async function sendsSinceEntry(
 ): Promise<Map<string, number>> {
   if (optionIds.length === 0) return new Map()
   const entries = await optionEntries(db, projectId, target)
-  const column = target === 'variant' ? outreachLogs.variantId : prospects.discoveryStrategy
+  const column = optionColumn(target)
   const sinceEntry = or(...optionIds.map((id) => {
     const at = entries.get(id)
     return and(eq(column, id), at === undefined ? undefined : gte(outreachLogs.sentAt, at))
@@ -894,10 +931,11 @@ async function sendsSinceEntry(
 
 export async function observeTick(db: Db, projectId: ProjectId, config: LeverConfig): Promise<TickEvidence> {
   const window = tickWindow(config, true)
-  const [activeIds, activeSlugs, variantStats, targeting, lostIds, lostSlugs, [state]] = await Promise.all([
+  const [activeIds, activeSlugs, variantStats, strategyOf, targeting, lostIds, lostSlugs, [state]] = await Promise.all([
     loadActiveVariantIds(db, projectId),
     getActiveStrategySlugs(db, projectId),
     getVariantStats(db, projectId, config, true),
+    getStrategyStats(db, projectId, config),
     getTargetingStats(db, projectId, config, true),
     lostOptionIds(db, projectId, 'variant'),
     lostOptionIds(db, projectId, 'strategy'),
@@ -905,16 +943,9 @@ export async function observeTick(db: Db, projectId: ProjectId, config: LeverCon
   ])
   const [variantSince, strategySince] = await Promise.all([
     sendsSinceEntry(db, projectId, 'variant', activeIds, window),
-    sendsSinceEntry(db, projectId, 'strategy', activeSlugs, and(window, not(bounced(db)))),
+    sendsSinceEntry(db, projectId, 'strategy', activeSlugs, window),
   ])
   const variantOf = new Map(variantStats.map((s) => [s.variantId, s]))
-  // A stats slug outside the registry stays baseline-only (e.g. carried in by
-  // a cross-project link).
-  const strategyOf = new Map(
-    targeting.discoveryStrategy
-      .filter((s): s is typeof s & { value: string } => s.value !== null)
-      .map((s) => [s.value, s]),
-  )
   const variantArm = (id: string) => ({ armId: id, total: variantOf.get(id)?.total ?? 0, rewardSum: variantOf.get(id)?.rewardSum ?? 0 })
   const strategyArm = (slug: string) => ({ armId: slug, total: strategyOf.get(slug)?.total ?? 0, rewardSum: strategyOf.get(slug)?.rewardSum ?? 0 })
   return {

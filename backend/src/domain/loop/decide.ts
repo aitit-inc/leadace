@@ -88,7 +88,6 @@ export function decide(
     industry: computeAxisLifts(targetingStats.industry, r0, config.priorStrength),
     employeeBand: computeAxisLifts(targetingStats.employeeBand, r0, config.priorStrength),
     country: computeAxisLifts(targetingStats.country, r0, config.priorStrength),
-    discoveryStrategy: computeAxisLifts(targetingStats.discoveryStrategy, r0, config.priorStrength),
   }
 
   return {
@@ -98,7 +97,6 @@ export function decide(
       subject: {
         weights: decision.weights,
         pBest: decision.pBest,
-        archived: decision.toArchive.map(({ armId, ...rest }) => ({ variantId: armId, ...rest })),
         samples: variants.active.map(({ armId, total, responses, rewardSum }) => ({ variantId: armId, total, responses, rewardSum })),
       },
       channel: { affinity: channelAffinity, samples: channelStats },
@@ -106,7 +104,6 @@ export function decide(
       discovery: {
         weights: discoveryDecision.weights,
         pBest: discoveryDecision.pBest,
-        archived: discoveryDecision.toArchive.map(({ armId, ...evidence }) => ({ slug: armId, ...evidence })),
         samples: strategies.active.map(({ armId, total, rewardSum }) => ({ slug: armId, total, rewardSum })),
       },
       vitals,

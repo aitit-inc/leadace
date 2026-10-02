@@ -17,7 +17,8 @@ import { resolveProject } from '../projects'
 import { loadLeverConfig } from '../project-settings'
 import { listDiscoveryStrategiesById } from '../discovery-strategies'
 import { getVariantStats, loadActiveVariantIds } from './observe'
-import { ruleRestoresSince, type RuleRestore } from './change'
+import type { LoggedRuleChange } from '../../domain/loop/change'
+import { ruleChangesSince } from './change'
 
 export type LeverStateVariant = {
   variantId: string
@@ -169,9 +170,7 @@ export type LeverDecisionsHistoryQuery = z.infer<typeof leverDecisionsHistoryQue
 export type LeverDecisionHistoryEntry = {
   cycleDate: string
   weights: Record<string, number>
-  archived: LeverDecisionPayload['subject']['archived']
-  // What that day's tick brought back, variants and strategies, as logged.
-  restored: RuleRestore[]
+  changes: LoggedRuleChange[]
   samples: LeverDecisionPayload['subject']['samples']
   channelAffinity: ChannelAffinityMap
   // null on pre-Phase-B decisions.
@@ -202,19 +201,21 @@ export async function getLeverDecisionsHistory(
     ))
     .orderBy(desc(leverDecisions.cycleDate))
   const oldest = rows.at(-1)
-  const restores = oldest ? await ruleRestoresSince(db, projectId, new Date(`${oldest.cycleDate}T00:00:00Z`)) : []
+  const changes = oldest ? await ruleChangesSince(db, projectId, new Date(`${oldest.cycleDate}T00:00:00Z`)) : []
 
-  const decisions = rows.map((r) => ({
-    cycleDate: r.cycleDate,
-    weights: r.decision.subject.weights,
-    archived: r.decision.subject.archived,
-    restored: restores.filter((x) => x.day === r.cycleDate),
-    samples: r.decision.subject.samples,
-    channelAffinity: r.decision.channel?.affinity ?? {},
-    targetingLifts: r.decision.targeting?.lifts ?? null,
-    discovery: r.decision.discovery ?? null,
-    vitals: r.decision.vitals ?? null,
-    configUsed: r.decision.configUsed ?? null,
+  const decisions = rows.map(({ cycleDate, decision }) => ({
+    cycleDate,
+    weights: decision.subject.weights,
+    changes: changes.filter((c) => c.day === cycleDate),
+    samples: decision.subject.samples,
+    channelAffinity: decision.channel?.affinity ?? {},
+    targetingLifts: decision.targeting?.lifts ?? null,
+    // Field by field: rows from before the log carry an `archived` copy here.
+    discovery: decision.discovery
+      ? { weights: decision.discovery.weights, pBest: decision.discovery.pBest, samples: decision.discovery.samples }
+      : null,
+    vitals: decision.vitals ?? null,
+    configUsed: decision.configUsed ?? null,
   }))
   return ok({ decisions })
 }

@@ -11,9 +11,9 @@ import {
   type ChangeAuthor,
   type DocumentTarget,
   type LoggedChange,
+  type LoggedRuleChange,
   type OptionTarget,
   type RuleArchiveReason,
-  type RuleEvidence,
 } from '../../domain/loop/change'
 import { COARSE_TO_FINES, type CoarseIndustry } from '../../domain/coarse-industry'
 import type { MessageVariantRow, UpsertVariantBody } from '../message-variants'
@@ -21,11 +21,10 @@ import type { DiscoveryStrategyRow, UpsertDiscoveryStrategyBody } from '../disco
 
 type ChangeRow = Omit<typeof policyChanges.$inferInsert, 'id' | 'tenantId' | 'projectId' | 'createdAt'>
 
-async function log(db: Db, tenantId: TenantId, projectId: ProjectId, rows: ChangeRow[]): Promise<void> {
+// `createdAt` is not the column default: now() is the transaction's start, and
+// a write that waited on the lock would sort before the one it waited for.
+async function log(db: Db, tenantId: TenantId, projectId: ProjectId, rows: ChangeRow[], createdAt = new Date()): Promise<void> {
   if (rows.length === 0) return
-  // Not the column default: now() is the transaction's start, and a write that
-  // waited on the lock would sort before the one it waited for.
-  const createdAt = new Date()
   await db.insert(policyChanges).values(rows.map((r) => ({ ...r, tenantId, projectId, createdAt })))
 }
 
@@ -94,9 +93,12 @@ async function moveOptions<M extends { armId: string }>(db: Db, projectId: Proje
 }
 
 // Only for a decision whose lever_decisions row this tick claimed.
-export async function applyTickDecision(db: Db, tenantId: TenantId, projectId: ProjectId, decision: TickDecision): Promise<void> {
+export async function applyTickDecision(db: Db, tenantId: TenantId, projectId: ProjectId, cycleDate: string, decision: TickDecision): Promise<void> {
   const { channel: { affinity: channelAffinity }, targeting: { lifts: targetingLifts } } = decision.payload
   const now = new Date()
+  // The day's changes are read back by their UTC day, so a tick that crosses
+  // midnight logs on the day it decided for.
+  const dayEnd = new Date(`${cycleDate}T23:59:59.999Z`)
   const rows: ChangeRow[] = []
   for (const [target, layer] of [['variant', decision.variants], ['strategy', decision.strategies]] as const) {
     for (const { armId, ...decided } of await moveOptions(db, projectId, target, layer.toArchive, 'archived', now)) {
@@ -108,7 +110,7 @@ export async function applyTickDecision(db: Db, tenantId: TenantId, projectId: P
       rows.push({ target, optionId: armId, op: 'restore', actor: 'rule', evidence })
     }
   }
-  await log(db, tenantId, projectId, rows)
+  await log(db, tenantId, projectId, rows, now > dayEnd ? dayEnd : now)
   await db
     .insert(leverState)
     .values({
@@ -140,7 +142,6 @@ export async function applyTickDecision(db: Db, tenantId: TenantId, projectId: P
         ${industryLiftCase(sql`p.industry`, targetingLifts.industry)}
       * ${valueLiftCase(sql`o.employee_band::text`, targetingLifts.employeeBand)}
       * ${valueLiftCase(sql`UPPER(COALESCE(p.country, o.country))`, targetingLifts.country)}
-      * ${valueLiftCase(sql`p.discovery_strategy`, targetingLifts.discoveryStrategy)}
     ))::real
     FROM prospects p
     JOIN organizations o ON o.id = p.organization_id
@@ -337,26 +338,6 @@ export async function optionEntries(db: Db, projectId: ProjectId, target: Option
   return new Map(rows.flatMap((r) => (r.optionId === null || r.at === null ? [] : [[r.optionId, r.at] as const])))
 }
 
-export type RuleRestore = { day: string; target: OptionTarget; optionId: string; evidence: RuleEvidence | null }
-
-// What the rule brought back, oldest first.
-export async function ruleRestoresSince(db: Db, projectId: ProjectId, since: Date): Promise<RuleRestore[]> {
-  const rows = await db
-    .select({ target: policyChanges.target, optionId: policyChanges.optionId, evidence: policyChanges.evidence, createdAt: policyChanges.createdAt })
-    .from(policyChanges)
-    .where(and(
-      eq(policyChanges.projectId, projectId),
-      eq(policyChanges.actor, 'rule'),
-      eq(policyChanges.op, 'restore'),
-      gte(policyChanges.createdAt, since),
-    ))
-    .orderBy(policyChanges.createdAt, policyChanges.id)
-  return rows.flatMap((r) =>
-    (r.target === 'variant' || r.target === 'strategy') && r.optionId !== null
-      ? [{ day: utcDay(r.createdAt), target: r.target, optionId: r.optionId, evidence: r.evidence }]
-      : [])
-}
-
 // Newest first.
 export async function listChanges(db: Db, projectId: ProjectId, since: Date): Promise<LoggedChange[]> {
   const rows = await db
@@ -377,4 +358,8 @@ export async function listChanges(db: Db, projectId: ProjectId, since: Date): Pr
     if (r.op !== 'archive' || r.ruleReason === null) throw new Error(`Invariant: rule ${r.op} of ${r.optionId} without an archive reason`)
     return { ...rule, op: r.op, reason: r.ruleReason }
   })
+}
+
+export async function ruleChangesSince(db: Db, projectId: ProjectId, since: Date): Promise<LoggedRuleChange[]> {
+  return (await listChanges(db, projectId, since)).filter((c): c is LoggedRuleChange => c.actor === 'rule')
 }

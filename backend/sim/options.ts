@@ -173,7 +173,7 @@ export function runOptions(scenario: OptionsScenario, seed: number, config: Leve
         : { active: [], lost: [], flatStreak: 0 },
       strategies: scenario.layer === 'strategy' ? { active: active().map(activeArm), lost } : { active: [], lost: [] },
       channel: [],
-      targeting: { industry: [], employeeBand: [], country: [], discoveryStrategy: [] },
+      targeting: { industry: [], employeeBand: [], country: [] },
       futility: { sends: 0, engaged: 0 },
     }
     const decision = decide(evidence, config, String(day), key, samples)

@@ -15,7 +15,7 @@ const evidence = (over: Partial<TickEvidence> = {}): TickEvidence => ({
   variants: { active: flatArms, lost: [], flatStreak: defaultLeverConfig.stagnationTicks - 1 },
   strategies: { active: [], lost: [] },
   channel: [],
-  targeting: { industry: [], employeeBand: [], country: [], discoveryStrategy: [] },
+  targeting: { industry: [], employeeBand: [], country: [] },
   futility: { sends: 0, engaged: 0 },
   ...over,
 })
@@ -32,7 +32,6 @@ describe('decide', () => {
     expect(variants.toArchive).toHaveLength(1)
     expect(variants.toArchive[0]).toMatchObject({ reason: 'stagnation' })
     expect(Object.keys(variants.weights)).toHaveLength(2)
-    expect(payload.subject.archived).toEqual(variants.toArchive.map(({ armId, ...rest }) => ({ variantId: armId, ...rest })))
     expect(payload.subject.samples.map((s) => s.variantId)).toEqual(['a', 'b', 'c'])
   })
 
@@ -60,7 +59,6 @@ describe('decide', () => {
     })
     const { payload, strategies } = decide(e, defaultLeverConfig, '2026-09-28', 'p1')
     expect(strategies.toArchive.map((a) => a.armId)).toEqual(['loser'])
-    expect(payload.discovery.archived.map((a) => a.slug)).toEqual(['loser'])
     expect(strategies.toRestore.map((r) => r.armId)).toEqual(['back'])
     expect(Object.keys(payload.discovery.weights).sort()).toEqual(['back', 'fresh', 'winner'])
     expect(payload.configUsed).toBe(defaultLeverConfig)
