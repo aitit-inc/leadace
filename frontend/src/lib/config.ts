@@ -1,4 +1,4 @@
-// dynamic/public reads Cloudflare Pages runtime env and silently misses
+// dynamic/public reads the Worker's runtime env and silently misses
 // build-time values set in deploy.yml — use static. Wildcard cast lets
 // optional PUBLIC_* (Stripe Price IDs on self-host) be undefined without
 // TS-erroring on named imports.

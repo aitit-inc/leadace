@@ -164,7 +164,7 @@ plugin/                          # Claude Code plugin
 ├── scripts/fetch_url.py         # Local web fetch helper
 └── references/                  # Shared reference docs
 backend/                         # API + MCP servers (Cloudflare Workers, Hono, Drizzle)
-frontend/                        # Web app (SvelteKit, Cloudflare Pages)
+frontend/                        # Web app (SvelteKit, Cloudflare Worker + static assets)
 docs/                            # Project-wide docs (deploy runbook, self-host, architecture)
 docker-compose.yml               # Bare Postgres for non-Supabase local dev
 ```

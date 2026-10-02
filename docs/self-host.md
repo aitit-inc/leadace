@@ -198,8 +198,8 @@ What you need:
   pipeline and the hourly reply poll make more outbound requests per
   invocation than the Free plan's 50-subrequest limit allows.
 - **Supabase project** (free tier works for evaluation).
-- **Domain** (optional — you can run on `*.workers.dev` /
-  `*.pages.dev` URLs without a custom domain).
+- **Domain** (optional — you can run on `*.workers.dev` URLs without a
+  custom domain).
 - **No Stripe account required** — the `self-hosted` edition does not
   invoke Stripe. Leave `LEADACE_EDITION=self-hosted` (the default in
   `.dev.vars.example` and `wrangler.api.jsonc`).
@@ -246,7 +246,7 @@ environment. If you prefer the named-environment workflow, add your own
    - **JWT Secret** (Settings → API → "JWT Settings"). The MCP Worker
      mints HS256 tokens with this; the API Worker verifies them.
 3. **Authentication → URL Configuration**:
-   - Site URL: `https://app.<your-domain>` (or your Pages preview URL).
+   - Site URL: `https://app.<your-domain>` (or the frontend's `*.workers.dev` URL).
    - Redirect URLs: add the same hostname plus `/auth/callback`,
      `/auth/*`, and your local dev URL `http://localhost:5273/*` if
      you're going to keep working from a laptop too.
@@ -316,7 +316,7 @@ the repository. Local dev uses `backend/.dev.vars` instead.
 ```bash
 cd backend
 export CLOUDFLARE_ACCOUNT_ID="<your account id>"
-export CLOUDFLARE_API_TOKEN="<token with Workers + Pages + KV scopes>"
+export CLOUDFLARE_API_TOKEN="<token with Workers + KV scopes>"
 
 # API Worker — required
 npx wrangler secret put DATABASE_URL          --config wrangler.api.jsonc
@@ -382,35 +382,29 @@ curl -o /dev/null -w "%{http_code}\n" \
 If you wired up a custom domain via the `routes` block in the wrangler
 configs, check `https://api.<your-domain>/health` instead.
 
-### 7. Deploy the frontend (Cloudflare Pages)
+### 7. Deploy the frontend (Cloudflare Worker)
 
-The frontend is a SvelteKit app served from Cloudflare Pages. Easiest
-path is to create the project from the dashboard once and let CI take
-over from there:
-
-1. [Cloudflare Dashboard → Pages → Create a project](https://dash.cloudflare.com/?to=/:account/pages).
-2. Project name: `lead-ace` (or anything — make sure CI uses the same
-   name in `wrangler pages deploy --project-name`).
-3. Production branch: `main`.
-4. Build settings (only relevant if you connect to Git instead of
-   uploading from CI):
-   - Framework preset: SvelteKit
-   - Build command: `npm run build`
-   - Build output directory: `.svelte-kit/cloudflare`
-   - Root directory: `frontend`
-5. After the project exists, add `app.<your-domain>` under
-   **Custom domains** if you want a branded URL.
-
-Manual one-shot deploy from your laptop:
+The frontend is a SvelteKit app deployed as a Worker (`lead-ace-app`) that
+serves its static files alongside the server-rendered pages:
 
 ```bash
 cd frontend
 cp .env.example .env       # edit to point at your Workers + Supabase
 npm install
 npm run build
-npx wrangler pages deploy .svelte-kit/cloudflare \
-  --project-name lead-ace --branch main
+npx wrangler deploy
 ```
+
+It comes up on `lead-ace-app.<subdomain>.workers.dev`. For a branded URL,
+add a `routes` entry to `frontend/wrangler.jsonc`
+(`{ "pattern": "app.<your-domain>", "custom_domain": true }`).
+
+The Worker runs at the visitor's nearest Cloudflare location by default. If
+your users are far from your Supabase region, add a
+[placement hint](https://developers.cloudflare.com/workers/configuration/placement/)
+to both `frontend/wrangler.jsonc` and `backend/wrangler.api.jsonc`
+(for example `"placement": { "region": "aws:us-east-1" }`) so each request's
+database and auth round trips stay local.
 
 The PUBLIC_* values are baked into the build at this step, so always
 rebuild after changing them.
@@ -456,7 +450,7 @@ jobs:
       - run: cd backend && npx wrangler deploy --config wrangler.api.jsonc
       - run: cd backend && npx wrangler deploy --config wrangler.mcp.jsonc
       # Frontend (PUBLIC_* are baked at build time)
-      - run: cd frontend && npm ci && npm run build && npx wrangler pages deploy .svelte-kit/cloudflare --project-name lead-ace --branch main
+      - run: cd frontend && npm ci && npm run build && npx wrangler deploy
         env:
           PUBLIC_API_URL: ${{ vars.PUBLIC_API_URL }}
           PUBLIC_MCP_URL: ${{ vars.PUBLIC_MCP_URL }}
@@ -469,7 +463,7 @@ jobs:
 
 | Name | Value |
 |---|---|
-| `CLOUDFLARE_API_TOKEN` | Token scoped to Workers + Pages + KV (use the **Edit Cloudflare Workers** template). |
+| `CLOUDFLARE_API_TOKEN` | Token scoped to Workers + KV (use the **Edit Cloudflare Workers** template). |
 | `CLOUDFLARE_ACCOUNT_ID` | Your Cloudflare account ID (Dashboard → right sidebar). |
 | `DATABASE_URL_SESSION_POOLER` | Session Pooler URL (port 5432) used by the migrate step. |
 
@@ -634,7 +628,6 @@ Most self-hosters will leave Stripe off entirely.
 
 - **Roll back a deploy**: Cloudflare Dashboard → Workers & Pages →
   the affected Worker → Deployments → "Rollback" on a previous build.
-  Pages projects work the same way under Deployments.
 - **Roll back the DB**: Supabase Dashboard → Database → Backups
   (daily snapshots on free tier).
 - **Migrations**: `db:migrate` is idempotent — re-running is safe.

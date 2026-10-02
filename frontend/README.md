@@ -1,7 +1,7 @@
 # frontend/
 
 LeadAce web app. SvelteKit 2 (Svelte 5 runes) + Tailwind v4 + Supabase Auth
-(`@supabase/ssr`), SSR + client hydration, deployed to Cloudflare Pages.
+(`@supabase/ssr`), SSR + client hydration, deployed as a Cloudflare Worker with static assets.
 
 For repo-wide dev workflow and env setup, see the top-level
 [README.md](../README.md), [CLAUDE.md](../CLAUDE.md), and

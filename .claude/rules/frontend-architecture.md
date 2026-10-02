@@ -7,7 +7,7 @@ paths:
 
 Standard for `frontend/src/`: SvelteKit 2 + Svelte 5 runes + TypeScript
 strict + Tailwind v4 (CSS-based config) + Supabase Auth via `@supabase/ssr`,
-served on Cloudflare Pages. SSR + client hydration — the
+served by a Cloudflare Worker with static assets. SSR + client hydration — the
 [officially recommended Supabase/SvelteKit pattern](https://supabase.com/docs/guides/auth/server-side/sveltekit).
 The SPA (`ssr: false`) era was abandoned: the post-OAuth load → mount race is
 unfixable inside the SPA model. Canonical implementations to read before
@@ -105,5 +105,7 @@ localStorage/cookies/session APIs — receivers have no account; the URL's
 - `page.url` from `$app/state` is read-only; route changes go through `goto`.
 - SSR has no `window`/`document`/`localStorage` — guard with
   `import { browser } from '$app/environment'`.
-- `adapter-cloudflare` runs every request through a Pages Function (not just
-  assets) — watch invocation counts after rollout.
+- `adapter-cloudflare` builds one Worker for every non-asset request; static
+  files are served from the visitor's edge without invoking it. In production
+  the Worker runs beside the database (`placement` in `wrangler.jsonc`), so a
+  loader's calls to the API and Supabase Auth are local hops.

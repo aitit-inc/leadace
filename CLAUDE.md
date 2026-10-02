@@ -8,7 +8,7 @@ LeadAce — an autonomous sales automation Claude Code plugin by SurpassOne Inc.
 .claude-plugin/marketplace.json  # Marketplace definition (source: "./plugin/")
 plugin/                          # Claude Code plugin (skills/, scripts/, references/, .mcp.json)
 backend/                         # API Worker + MCP Worker (Cloudflare)
-frontend/                        # SvelteKit web app (Cloudflare Pages)
+frontend/                        # SvelteKit web app (Cloudflare Worker + static assets)
 docs/                            # Project-wide design docs, runbooks, task tracking
 ```
 
