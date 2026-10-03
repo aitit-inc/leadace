@@ -1,5 +1,5 @@
-// A row holds what a vendor metered, never an amount: cost is computed from
-// these prices, so a price change is an edit here.
+// A row is priced from these when it is written; a price change is an edit
+// here and applies to calls made after it.
 
 export type LlmModel = 'gpt-6-luna' | 'gpt-6-sol' | 'gpt-5.4-mini'
 export type PaidCallModel = LlmModel | 'emailable'

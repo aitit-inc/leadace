@@ -4,6 +4,7 @@ import {
   check,
   customType,
   date,
+  doublePrecision,
   foreignKey,
   index,
   integer,
@@ -840,7 +841,7 @@ export const discoveryCharges = pgTable('discovery_charges', {
   index('idx_discovery_charges_tenant').on(table.tenantId, table.createdAt),
 ])
 
-// One row per call a vendor bills us for (domain/paid-calls.ts prices it).
+// One row per call a vendor bills us for, priced when written (domain/paid-calls.ts).
 // Project, job and thread are FK-less so the spend outlives what it was for.
 export const paidCalls = pgTable('paid_calls', {
   id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
@@ -859,6 +860,9 @@ export const paidCalls = pgTable('paid_calls', {
   outputTokens: integer('output_tokens').notNull(),
   reasoningTokens: integer('reasoning_tokens').notNull(),
   searchCalls: integer('search_calls').notNull(),
+  // Nullable for one release: Workers deployed before this column insert
+  // without it until the new ones replace them. NOT NULL follows (#807).
+  costUsd: doublePrecision('cost_usd'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   index('idx_paid_calls_tenant').on(table.tenantId, table.createdAt),

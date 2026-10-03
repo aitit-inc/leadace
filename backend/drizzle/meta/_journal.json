@@ -806,6 +806,13 @@
       "when": 1790871330541,
       "tag": "0114_rule_restore",
       "breakpoints": true
+    },
+    {
+      "idx": 115,
+      "version": "7",
+      "when": 1790999730909,
+      "tag": "0115_flashy_slyde",
+      "breakpoints": true
     }
   ]
 }

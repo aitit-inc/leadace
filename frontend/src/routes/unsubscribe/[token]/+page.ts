@@ -8,7 +8,7 @@ export type UnsubscribeLoadResult =
 
 // Public route — no session, no SSR data fetch (the backend route is open).
 // Using +page.ts (instead of +page.server.ts) keeps the call client-side so
-// the SvelteKit Pages Function isn't hit for a route that is otherwise
+// the SvelteKit Worker isn't hit for a route that is otherwise
 // purely static + a single XHR.
 export const load: PageLoad = async ({ params, fetch }) => {
   try {

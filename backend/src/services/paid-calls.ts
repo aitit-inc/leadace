@@ -1,9 +1,10 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { sql } from 'drizzle-orm'
 import type { Db } from '../db/connection'
 import { withTenantConnection } from '../db/rls'
-import { paidCalls } from '../db/schema'
+import { chatThreads, paidCalls } from '../db/schema'
 import type { ProjectId, TenantId } from '../domain/ids'
-import type { PaidCall } from '../domain/paid-calls'
+import { paidCallCostUsd, type PaidCall } from '../domain/paid-calls'
 
 export type PaidCallFor = { projectId?: ProjectId; jobId?: string; threadId?: string }
 
@@ -23,10 +24,17 @@ export function currentPaidCallScope(): Partial<Omit<PaidCallScope, 'databaseUrl
   return { tenantId, projectId, jobId, threadId }
 }
 
+// Read at write time: the agent can set the thread's project mid-turn.
+function projectOf(tenantId: TenantId, paidFor: PaidCallFor) {
+  if (paidFor.projectId) return paidFor.projectId
+  if (!paidFor.threadId) return null
+  return sql`(SELECT ${chatThreads.projectId} FROM ${chatThreads} WHERE ${chatThreads.tenantId} = ${tenantId} AND ${chatThreads.id} = ${paidFor.threadId})`
+}
+
 export async function insertPaidCall(db: Db, tenantId: TenantId, paidFor: PaidCallFor, call: PaidCall): Promise<void> {
   await db.insert(paidCalls).values({
     tenantId,
-    projectId: paidFor.projectId ?? null,
+    projectId: projectOf(tenantId, paidFor),
     jobId: paidFor.jobId ?? null,
     threadId: paidFor.threadId ?? null,
     op: call.op,
@@ -38,6 +46,7 @@ export async function insertPaidCall(db: Db, tenantId: TenantId, paidFor: PaidCa
     outputTokens: call.usage.output,
     reasoningTokens: call.usage.thoughts,
     searchCalls: call.usage.searchCalls,
+    costUsd: paidCallCostUsd(call),
   })
 }
 
