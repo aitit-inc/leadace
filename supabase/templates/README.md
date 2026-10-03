@@ -15,9 +15,9 @@ Not templated (current product doesn't use): `invite`.
 
 ## Updating production
 
-For the hosted Supabase project (`chaxrcdtxngoyqvtoyem`):
+For the hosted Supabase project (`ouabbbafwkxmympzshew`):
 
-1. [Dashboard → Authentication → Email Templates](https://supabase.com/dashboard/project/chaxrcdtxngoyqvtoyem/auth/templates)
+1. [Dashboard → Authentication → Email Templates](https://supabase.com/dashboard/project/ouabbbafwkxmympzshew/auth/templates)
 2. For each template above, set the subject line in the table, then paste the HTML body.
 3. Save.
 
