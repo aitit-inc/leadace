@@ -189,6 +189,11 @@ A verdict judges the candidate against the frozen spec, on the frozen snapshot:
 | `duplicate` | The same organization already counted under another domain |
 | `unknown` | The snapshot could not be taken — a bot check, a 429, a JS shell, an empty body. Record which in `reason` |
 
+`prereq_unmet` is stricter than production: since #871 the enrich judge
+drops a candidate only when a page contradicts a condition, not when no page
+mentions it, so production registers some candidates this rubric labels
+`prereq_unmet`.
+
 The line between the last two carries no discretion: a page that froze with
 real body text and no qualifying signal is `prereq_unmet`, never `unknown`.
 `unknown` names a failure of this harness's fetch layer, not a property of the

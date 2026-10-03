@@ -98,7 +98,7 @@ Candidate: ${args.candidate.name} (${args.candidate.organizationName}) — ${arg
 What we would write to them about (for the hypothesis fields only): ${args.offer}
 Discovery strategies in play (their approach text names directories that may list contacts): ${args.approaches.join(' / ') || '(none)'}
 
-Sales strategy (SALES_STRATEGY.md — a contact policy it states decides which addresses to write to):
+Sales strategy (SALES_STRATEGY.md — a contact policy it states decides which addresses and forms to use):
 ${args.salesStrategy}
 
 Procedure (follow its priorities: sales-refusal notice first, then email, then a general inquiry form):
@@ -109,7 +109,7 @@ Answer rules:
 - salesContact: whether the address is one to write a first sales approach to, best one listed first. By default a privacy, legal, dpo, abuse, no-reply, support, recruiting, careers or press mailbox is not; the sales strategy's contact policy, when it states one, overrides this default.
 - noSolicitationText: the notice text when a page you read refuses sales approaches for the organization as a whole (a header, footer or contact-page statement such as 営業お断り), else null. A notice attached to one address or one form is not site-wide: mark that address or form instead.
 - pagesToRead: up to 6 absolute URLs on this site that likely carry a contact (contact, about, company, team, imprint / legal, 特定商取引法), most likely first; empty when a sales contact without a refusal notice was already found.
-- contactForm: only a general or B2B inquiry form (never signup, support, careers, feedback), with its formType per the procedure and noSolicitation true when the form or its page states no sales inquiries; null otherwise.
+- contactForm: only a general or B2B inquiry form (never signup, support, careers, feedback) that the sales strategy's contact policy, when it states one, allows, with its formType per the procedure and noSolicitation true when the form or its page states no sales inquiries; null otherwise.
 - contactName / department: only when a specific person and role is clearly stated (CEO, founder, head of the buying function); never a guess.
 - country: ISO 3166-1 alpha-2 of the organization's address if shown, else null.
 - hypothesis: 1–3 short pain hypotheses about this organization given what we offer, the matching value bullets in the same order, and the department / role most likely to buy; leave arrays empty rather than inventing.
@@ -231,7 +231,7 @@ ${salesStrategy}
 ${candidate.signals.map((s) => `- ${s.text}`).join('\n') || '(none claimed)'}
 
 Answer rules:
-- verdict: "fit" when the pages show this organization inside the Target and nothing on them contradicts a Prerequisite or matches "Not a fit"; "not_fit" when a page shows it outside the Target, failing a Prerequisite, or matching "Not a fit"; "unclear" when the pages do not show whether it is inside the Target. A Prerequisite no public page could show (one the strategy says to confirm in conversation) never counts against it. A condition these pages do not mention is unsettled, not failed: answer "unclear" for it, never "not_fit".
+- verdict: "fit" when the pages show it is the kind of organization the Target names and nothing on them places it outside the Target, contradicts a Prerequisite or matches "Not a fit"; "not_fit" when a page shows it outside the Target, contradicting a Prerequisite, or matching "Not a fit"; "unclear" only when the pages do not show what kind of organization it is. A condition the pages do not mention never counts against it, and neither does a condition on how to contact it: its contact is read in a later step.
 - evidenceUrl: for fit, the exact URL of the page that best shows it inside the Target; else null.
 - claim: for fit, one sentence stating what that page says about this organization that places it in the Target, as the page says it; else null.
 - reason: one sentence naming the Target trait you saw, or what failed.
