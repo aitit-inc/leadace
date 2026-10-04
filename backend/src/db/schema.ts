@@ -860,9 +860,7 @@ export const paidCalls = pgTable('paid_calls', {
   outputTokens: integer('output_tokens').notNull(),
   reasoningTokens: integer('reasoning_tokens').notNull(),
   searchCalls: integer('search_calls').notNull(),
-  // Nullable for one release: Workers deployed before this column insert
-  // without it until the new ones replace them. NOT NULL follows (#807).
-  costUsd: doublePrecision('cost_usd'),
+  costUsd: doublePrecision('cost_usd').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   index('idx_paid_calls_tenant').on(table.tenantId, table.createdAt),

@@ -1,0 +1,1 @@
+ALTER TABLE "paid_calls" ALTER COLUMN "cost_usd" SET NOT NULL;
