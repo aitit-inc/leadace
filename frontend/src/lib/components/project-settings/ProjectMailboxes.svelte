@@ -117,7 +117,7 @@
       ? `fixed ${i.dailyCapOverride}/day`
       : i.rampWeek >= i.rampWeeks
         ? `steady ${i.steadyStatePerDay}/day`
-        : `warmup week ${i.rampWeek} of ${i.rampWeeks}`;
+        : `warmup week ${i.rampWeek + 1} of ${i.rampWeeks}`;
 </script>
 
 <div class="space-y-3">

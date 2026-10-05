@@ -78,6 +78,10 @@ function channelAvailabilityClause(ch: OutboundChannel): SQL {
   }
 }
 
+export function usableOnExpr(channels: readonly OutboundChannel[]): SQL {
+  return or(...channels.map(channelAvailabilityClause)) ?? sql`false`
+}
+
 const hasContactExpr: SQL = or(
   isNotNull(prospects.email),
   isNotNull(prospects.contactFormUrl),
@@ -419,7 +423,7 @@ export async function listReachable(
   const firstTouchCap = quota.kind === 'capped' && !creditsCoverOverage(quota.credits, USAGE_PRICE_CENTS.contacted) ? quota.contacted.remaining : null
 
   const channelFilter: SQL | undefined = or(...enabledChannels.map(channelAvailabilityClause))
-  const drawFilter: SQL = or(...drawChannels.map(channelAvailabilityClause)) ?? sql`false`
+  const drawFilter: SQL = usableOnExpr(drawChannels)
 
   // NULL country excluded — explicit allowlist means "only these".
   const countryFilter: SQL | undefined = allowlist.targetCountries.length > 0

@@ -62,7 +62,8 @@ describe('mailboxState', () => {
 describe('warmupLabel', () => {
   it('describes each ramp stage', () => {
     expect(warmupLabel(identity({}))).toBe('Warmup starts with the first send');
-    expect(warmupLabel(identity({ warmupStartedAt: 'x', rampWeek: 2 }))).toBe('Warmup week 2 of 4');
+    expect(warmupLabel(identity({ warmupStartedAt: 'x', rampWeek: 0 }))).toBe('Warmup week 1 of 4');
+    expect(warmupLabel(identity({ warmupStartedAt: 'x', rampWeek: 3 }))).toBe('Warmup week 4 of 4');
     expect(warmupLabel(identity({ warmupStartedAt: 'x', rampWeek: 4 }))).toBe('Warmup complete');
     expect(warmupLabel(identity({ dailyCapOverride: 7 }))).toBe('Fixed 7/day');
   });

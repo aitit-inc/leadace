@@ -91,6 +91,19 @@ scenarios (e2e/README.md → UI scenarios).
   counterpart (`list_drafts` → `discard_drafts`). Never give the agent a
   tool that loosens its own guardrails (mailbox caps, pauses) except behind a
   user-approved card.
+- **Where a rule ends and judgment begins**: a decision is a rule only when
+  its inputs settle it with nothing left to weigh. Judgment encoded as rules
+  breeds endless exceptions and caps the model. Where a decision needs
+  weighing, give the LLM the evidence and the authority to act. The line moves
+  case by case — re-weigh it each time, above all in the learning loop
+  (`domain/loop`, `services/loop`, evaluate).
+- **Writing prompts** (every text an LLM reads: backend prompts, skills,
+  references, tool descriptions): the goal, the target and the bar come first;
+  means, rules and cautions are secondary. Plain, concise, unambiguous English,
+  as short as it can be. When the model does something wrong, before adding a
+  "don't …" line, find the instruction behind the behavior and consider
+  dropping or rewording it — subtract before you add. Plugin specifics:
+  `.claude/rules/plugin-development.md`.
 - **MCP tool descriptions**: terse — they ship as context on every turn. An
   MCP tool answers with a text block, never JSON: describe what the emitted
   string carries, never a JSON shape, and never name a value the string

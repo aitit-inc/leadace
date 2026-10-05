@@ -19,7 +19,7 @@ export function warmupLabel(i: SendingIdentity): string {
   if (i.dailyCapOverride !== null) return `Fixed ${i.dailyCapOverride}/day`;
   if (!i.warmupStartedAt) return 'Warmup starts with the first send';
   if (i.rampWeek >= i.rampWeeks) return 'Warmup complete';
-  return `Warmup week ${i.rampWeek} of ${i.rampWeeks}`;
+  return `Warmup week ${i.rampWeek + 1} of ${i.rampWeeks}`;
 }
 
 export function kindLabel(i: SendingIdentity, parent: SendingIdentity | undefined): string {

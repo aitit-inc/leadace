@@ -575,7 +575,7 @@ export function buildToolRegistry(): ToolDef[] {
       ? `fixed daily cap ${h.dailyCapOverride}/day (warmup ramp bypassed)`
       : h.rampWeek >= h.rampWeeks
         ? `warmup complete (steady ${h.steadyStatePerDay}/day)`
-        : `warming up — week ${h.rampWeek} of ${h.rampWeeks} toward steady ${h.steadyStatePerDay}/day${h.warmupStartedAt ? '' : ' (no email sent yet)'}`
+        : `warming up — week ${h.rampWeek + 1} of ${h.rampWeeks} toward steady ${h.steadyStatePerDay}/day${h.warmupStartedAt ? '' : ' (no email sent yet)'}`
     const kindLabel = { gmail: 'Google account', gmail_alias: 'Send-As alias', smtp: 'SMTP mailbox' }[h.kind]
     const lines = [
       `Mailbox: ${h.fromEmail} (${kindLabel})`,

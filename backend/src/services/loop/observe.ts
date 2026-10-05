@@ -1,4 +1,4 @@
-import { and, asc, count, countDistinct, desc, eq, exists, gte, inArray, isNotNull, isNull, lt, max, not, notInArray, or, sql, type SQL } from 'drizzle-orm'
+import { and, asc, count, countDistinct, desc, eq, exists, gte, inArray, isNotNull, isNull, lt, max, not, notInArray, or, sql, sum, type SQL } from 'drizzle-orm'
 import {
   discoveryStrategies,
   INQUIRY_OUTCOMES,
@@ -7,7 +7,9 @@ import {
   leverState,
   messageVariants,
   organizations,
+  OUTBOUND_CHANNELS,
   outreachLogs,
+  paidCalls,
   projectProspects,
   prospects,
   responses,
@@ -17,6 +19,7 @@ import {
   type EmployeeBand,
   type EvaluationMetrics,
   type InquiryOutcome,
+  type OutboundChannel,
   type OutreachStatus,
 } from '../../db/schema'
 import type { Db } from '../../db/connection'
@@ -28,10 +31,11 @@ import { percentOf } from '../../domain/dashboard'
 import { type LeverConfig } from '../../domain/loop/config'
 import type { ChannelFineStat, TargetingAxisStat, TargetingStats } from '../../domain/loop/allocation'
 import type { TickEvidence } from '../../domain/loop/decide'
-import { loadLeverConfig } from '../project-settings'
+import type { FollowUpJsonOp, GroundedTextOp, PagesJsonOp } from '../llm/routes'
+import { loadLeverConfig, loadProjectOutboundAllowlist } from '../project-settings'
 import { ok, type ServiceResult } from '../result'
 import { resolveProject } from '../projects'
-import { projectTargetExpr } from '../prospects'
+import { projectTargetExpr, usableOnExpr } from '../prospects'
 import { getActiveStrategySlugs } from '../discovery-strategies'
 import { lastArchivals, lostOptionIds, optionEntries, type OptionArchival } from './change'
 import type { OptionTarget } from '../../domain/loop/change'
@@ -650,8 +654,22 @@ export type VariantEvidence = ReactionCounts & {
 }
 
 // `fresh` = new after dedup. `registered` counts every prospect carrying the
-// slug, hosted or brought in; `targets` = those qualified with a contact on file.
-export type StrategyDiscovery = { passes: number; asked: number; returned: number; fresh: number; registered: number; targets: number }
+// slug, hosted or brought in; `unqualified` = those failing the fit check or
+// taken out by the person. Of the qualified: `sendable` on a channel the project
+// has on, `channelsOff` only on one it has off, `noContact` with none on file;
+// the rest hold only a contact that cannot be used (refused, undeliverable, or
+// on a platform no channel sends on).
+export type StrategyDiscovery = {
+  passes: number
+  asked: number
+  returned: number
+  fresh: number
+  registered: number
+  unqualified: number
+  sendable: number
+  channelsOff: number
+  noContact: number
+}
 
 export type StrategyEvidence = ReactionCounts & {
   slug: string
@@ -691,12 +709,15 @@ export type ProposeEvidence = {
   axes: Record<EvidenceAxis, AxisBucket[]>
   repliedSends: RepliedSend[]
   inquiryOutcomes: Record<InquiryOutcome, number>
+  channels: OutboundChannel[]
+  discoveryCost: { usd: number; sendable: number }
 }
 
 const ARCHIVED_OPTIONS_SHOWN = 10
 export const DISCOVERY_WINDOW_DAYS = 14
 const REPLIED_SENDS_SHOWN = 30
 const EVIDENCE_TEXT_CHARS = 1500
+const DISCOVERY_OPS = ['discover.search', 'discover.extract', 'enrich.judge', 'enrich.site', 'enrich.pages'] satisfies (GroundedTextOp | FollowUpJsonOp | PagesJsonOp)[]
 
 export async function getProposeEvidence(db: Db, projectId: ProjectId, config: LeverConfig): Promise<ProposeEvidence> {
   const epoch = config.measurementsSince
@@ -709,11 +730,14 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
     and(isNotNull(column), frameStart === undefined ? undefined : gte(column, frameStart))
   const variantCols = { id: messageVariants.variantId, label: messageVariants.label, subjectPattern: messageVariants.subjectPattern, bodyApproach: messageVariants.bodyApproach, createdAt: messageVariants.createdAt, archivedAt: messageVariants.archivedAt }
   const strategyCols = { id: discoveryStrategies.slug, approach: discoveryStrategies.approach, createdAt: discoveryStrategies.createdAt, archivedAt: discoveryStrategies.archivedAt }
+  const { outboundChannels: channels } = await loadProjectOutboundAllowlist(db, projectId)
+  const qualified = eq(projectProspects.qualified, true)
+  const usable = usableOnExpr(channels)
 
   const [
     industryRows, sizeRows, countryRows, channelRows, priorityRows, variantStats, strategyStats, reacted,
     bouncedRows, eligibleRows, activeVariants, archivedVariants, activeStrategies, archivedStrategies,
-    recent, inquiryRows, [settled], discoveryJobs, registeredRows,
+    recent, inquiryRows, [settled], discoveryJobs, registeredRows, [discoveryCost],
   ] = await Promise.all([
     db.select({ industry: prospects.industry, n: count() })
       .from(outreachLogs).innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
@@ -763,10 +787,20 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
     // A job that failed left no result, so its passes are missing here.
     db.select({ result: jobs.result }).from(jobs)
       .where(and(eq(jobs.projectId, projectId), inArray(jobs.kind, ['daily_cycle', 'discover']), isNotNull(jobs.result), gte(jobs.createdAt, daysAgo(DISCOVERY_WINDOW_DAYS)))),
-    db.select({ strategy: prospects.discoveryStrategy, registered: count(), targets: count(sql`CASE WHEN ${projectTargetExpr} THEN 1 END`) })
+    db.select({
+      strategy: prospects.discoveryStrategy,
+      registered: count(),
+      unqualified: count(sql`CASE WHEN NOT ${projectProspects.qualified} THEN 1 END`),
+      sendable: count(sql`CASE WHEN ${qualified} AND ${usable} THEN 1 END`),
+      channelsOff: count(sql`CASE WHEN ${qualified} AND NOT (${usable}) AND ${usableOnExpr(OUTBOUND_CHANNELS)} THEN 1 END`),
+      noContact: count(sql`CASE WHEN ${qualified} AND NOT ${projectTargetExpr} THEN 1 END`),
+      foundSendable: count(sql`CASE WHEN ${prospects.origin} = 'found' AND ${qualified} AND ${usable} THEN 1 END`),
+    })
       .from(projectProspects).innerJoin(prospects, eq(prospects.id, projectProspects.prospectId))
       .where(and(eq(projectProspects.projectId, projectId), isNotNull(prospects.discoveryStrategy), gte(projectProspects.createdAt, daysAgo(DISCOVERY_WINDOW_DAYS))))
       .groupBy(prospects.discoveryStrategy),
+    db.select({ usd: sum(paidCalls.costUsd).mapWith(Number) }).from(paidCalls)
+      .where(and(eq(paidCalls.projectId, projectId), inArray(paidCalls.op, DISCOVERY_OPS), gte(paidCalls.createdAt, daysAgo(DISCOVERY_WINDOW_DAYS)))),
   ])
 
   const dayOf = (at: Date): string => at.toISOString().slice(0, 10)
@@ -879,7 +913,10 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
       discovery: {
         ...(passesBy.get(st.id) ?? noPasses),
         registered: registeredBy.get(st.id)?.registered ?? 0,
-        targets: registeredBy.get(st.id)?.targets ?? 0,
+        unqualified: registeredBy.get(st.id)?.unqualified ?? 0,
+        sendable: registeredBy.get(st.id)?.sendable ?? 0,
+        channelsOff: registeredBy.get(st.id)?.channelsOff ?? 0,
+        noContact: registeredBy.get(st.id)?.noContact ?? 0,
       },
       archived: archival(strategyArchivals, st.id, st.archivedAt),
       ...counts(strategyStats.get(st.id)),
@@ -893,6 +930,8 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
     },
     repliedSends,
     inquiryOutcomes,
+    channels,
+    discoveryCost: { usd: discoveryCost?.usd ?? 0, sendable: registeredRows.reduce((total, r) => total + r.foundSendable, 0) },
   }
 }
 

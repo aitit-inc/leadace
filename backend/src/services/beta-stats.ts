@@ -1,5 +1,6 @@
 import { sql, count } from 'drizzle-orm'
-import { planEnum, tenantPlans } from '../db/schema'
+import { planEnum, projectProspects, prospects, tenantPlans } from '../db/schema'
+import { projectTargetExpr } from './prospects'
 import type { Db } from '../db/connection'
 
 type Plan = (typeof planEnum.enumValues)[number]
@@ -31,6 +32,21 @@ export type BetaStats = {
   }
   bugs: number
   plans: Partial<Record<Plan, number>>
+  // Hosted discovery registers every candidate it judged: the last 24h beside
+  // the 7 days before, so a pipeline change that starves supply shows (#875).
+  found: { day: FoundRates; week: FoundRates }
+}
+
+// judged = candidates registered; fit = judged in the Target; reachable = fit
+// with a contact on file.
+export type FoundRates = { judged: number; fit: number; reachable: number }
+
+const MIN_JUDGED = 30
+
+export function foundRateDropped(day: FoundRates, week: FoundRates): boolean {
+  if (day.judged < MIN_JUDGED || week.judged < MIN_JUDGED) return false
+  const halved = (now: number, before: number) => now / day.judged < before / week.judged / 2
+  return halved(day.fit, week.fit) || halved(day.reachable, week.reachable)
 }
 
 // Through the prod transaction pooler (Supavisor, prepare:false) postgres-js
@@ -54,6 +70,12 @@ type SnapshotRow = {
   rep_meeting: string | number
   rep_bounce: string | number
   bugs: string | number
+  found_day: string | number
+  fit_day: string | number
+  reachable_day: string | number
+  found_week: string | number
+  fit_week: string | number
+  reachable_week: string | number
 }
 
 export async function collectBetaStats(db: Db): Promise<BetaStats> {
@@ -70,7 +92,8 @@ export async function collectBetaStats(db: Db): Promise<BetaStats> {
       (SELECT count(DISTINCT tenant_id) FROM outreach_logs WHERE status = 'sent' AND sent_at >= now() - INTERVAL '24 hours')::int AS senders,
       iq.inq_total, iq.inq_inquired, iq.inq_lead, iq.inq_signup, iq.inq_unsub,
       rp.rep_total, rp.rep_positive, rp.rep_neutral, rp.rep_negative, rp.rep_meeting, rp.rep_bounce,
-      (SELECT count(*) FROM bug_reports WHERE created_at >= now() - INTERVAL '24 hours')::int AS bugs
+      (SELECT count(*) FROM bug_reports WHERE created_at >= now() - INTERVAL '24 hours')::int AS bugs,
+      fd.found_day, fd.fit_day, fd.reachable_day, fd.found_week, fd.fit_week, fd.reachable_week
     FROM
       (SELECT
          count(*)::int AS inq_total,
@@ -90,6 +113,22 @@ export async function collectBetaStats(db: Db): Promise<BetaStats> {
          count(*) FILTER (WHERE response_type = 'bounce')::int AS rep_bounce
        FROM responses
        WHERE received_at >= now() - INTERVAL '24 hours') rp
+      CROSS JOIN
+      (SELECT
+         count(*) FILTER (WHERE day)::int AS found_day,
+         count(*) FILTER (WHERE day AND fit)::int AS fit_day,
+         count(*) FILTER (WHERE day AND reachable)::int AS reachable_day,
+         count(*) FILTER (WHERE NOT day)::int AS found_week,
+         count(*) FILTER (WHERE NOT day AND fit)::int AS fit_week,
+         count(*) FILTER (WHERE NOT day AND reachable)::int AS reachable_week
+       FROM (
+         SELECT
+           ${projectProspects.createdAt} >= now() - INTERVAL '24 hours' AS day,
+           ${projectProspects.qualified} AS fit,
+           ${projectTargetExpr} AS reachable
+         FROM ${projectProspects} JOIN ${prospects} ON ${prospects.id} = ${projectProspects.prospectId}
+         WHERE ${prospects.origin} = 'found' AND ${projectProspects.createdAt} >= now() - INTERVAL '8 days'
+       ) j) fd
   `)
   if (!snap) throw new Error('beta-stats snapshot returned no row')
 
@@ -122,6 +161,10 @@ export async function collectBetaStats(db: Db): Promise<BetaStats> {
     },
     bugs: Number(snap.bugs),
     plans,
+    found: {
+      day: { judged: Number(snap.found_day), fit: Number(snap.fit_day), reachable: Number(snap.reachable_day) },
+      week: { judged: Number(snap.found_week), fit: Number(snap.fit_week), reachable: Number(snap.reachable_week) },
+    },
   }
 }
 
@@ -152,6 +195,11 @@ export function formatBetaStats(stats: BetaStats, now: Date): string {
       `   ↳ Replies: 👍 ${rep.positive} · 😐 ${rep.neutral} · 👎 ${rep.negative} · 🤝 ${rep.meeting} mtg · ⚠️ ${rep.bounce} bounce`,
     )
   }
+  const { day, week } = stats.found
+  const share = (n: number, of: number) => `${of === 0 ? 0 : Math.round((n / of) * 100)}%`
+  lines.push(
+    `🔎 Found ${day.judged} judged · fit ${share(day.fit, day.judged)} · with a contact ${share(day.reachable, day.judged)} (prior 7d ${share(week.fit, week.judged)} · ${share(week.reachable, week.judged)})${foundRateDropped(day, week) ? ' ⚠️ dropped by half' : ''}`,
+  )
   lines.push(`💳 ${planLine}`)
   return lines.join('\n')
 }
