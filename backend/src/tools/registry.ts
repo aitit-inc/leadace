@@ -2216,7 +2216,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'start_job',
-    'Start a server-run job for a project and answer with its id and status line. Kinds: daily_cycle (evaluate → lever tick → follow-ups → new prospects, searching again whenever the list runs out → re-approaches → journal), discover (find and register N new prospects, following the tick\'s strategy plan unless strategySlug pins one), enrich (read the candidates\' sites for contacts and register them), draft (compose outreach for the next N reachable prospects or the given prospectIds; the project\'s outbound mode decides draft vs send), send (send the given pending drafts), evaluate, journal. Runs in the background — poll get_job. The daily cycle refuses a second start while one is still running for the project.',
+    'Start a server-run job for a project and answer with its id and status line. Kinds: daily_cycle (evaluate → lever tick → follow-ups → new prospects, searching again whenever the list runs out → re-approaches → journal), discover (find and register N new prospects, following the tick\'s strategy plan and, while short of N, the strategies it left out; strategySlug searches that one alone), enrich (read the candidates\' sites for contacts and register them), draft (compose outreach for the next N reachable prospects or the given prospectIds; the project\'s outbound mode decides draft vs send), send (send the given pending drafts), evaluate, journal. Runs in the background — poll get_job. The daily cycle refuses a second start while one is still running for the project.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       params: jobParamsSchema.describe('Job kind and its parameters.'),

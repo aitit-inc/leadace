@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { decodeCfEmail, fetchPage, pageLinks, pageText } from './fetch-page'
+import { decodeCfEmail, fetchPage, isPublicWebUrl, pageLinks, pageProse, pageText } from './fetch-page'
 
 // Each case is a page shape seen on real prospect sites, reduced to the part
 // that shows it. What a model must be able to read is `contains`; what must not
@@ -69,5 +69,27 @@ describe('malformed pages', () => {
   it('ignore a cfemail value that is not an email', () => {
     expect(decodeCfEmail('42'.repeat(200_000))).toBeNull()
     expect(decodeCfEmail('zz11')).toBeNull()
+  })
+})
+
+describe('pageProse', () => {
+  it('leaves out the link list fetchPage appends', () => {
+    const page = { requestedUrl: 'https://example.com/', url: 'https://example.com/', text: 'Contact us.\n\nLinks on this page:\nhttps://example.com/info@victim.com/contact' }
+    expect(pageProse(page)).toBe('Contact us.')
+  })
+  it('is the whole text of a page without links', () => {
+    expect(pageProse({ requestedUrl: 'https://example.com/', url: 'https://example.com/', text: 'info@example.com' })).toBe('info@example.com')
+  })
+})
+
+describe('isPublicWebUrl', () => {
+  it('passes an http(s) URL on a named public host', () => {
+    expect(isPublicWebUrl('https://www.example.co.jp/contact')).toBe(true)
+    expect(isPublicWebUrl('http://example.com.')).toBe(true)
+  })
+  it('refuses an address, a bare or internal name, and any other scheme', () => {
+    for (const url of ['http://127.0.0.1/', 'http://10.0.0.5:8080/admin', 'http://[::1]/', 'http://localhost:8787/api', 'http://localhost./', 'http://metadata/', 'https://db.internal/', 'https://printer.local/', 'file:///etc/passwd', 'ftp://example.com/', 'not a url']) {
+      expect(isPublicWebUrl(url)).toBe(false)
+    }
   })
 })

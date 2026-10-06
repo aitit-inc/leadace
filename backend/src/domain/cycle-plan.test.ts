@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MAX_DISCOVERY_PASSES, nextCycleStep } from './cycle-plan'
+import { MAX_DISCOVERY_PASSES, nextCycleStep, nextDiscoverPass } from './cycle-plan'
 
 const base = { want: 20, deliverable: 0, last: null, discovery: null, passes: 0 } as const
 
@@ -27,5 +27,24 @@ describe('nextCycleStep', () => {
   })
   it('stops a runaway day at the pass cap', () => {
     expect(nextCycleStep({ ...base, passes: MAX_DISCOVERY_PASSES, last: { kind: 'draft', produced: 1, failed: 0 } })).toEqual({ kind: 'stop', stop: { kind: 'pass_cap' } })
+  })
+})
+
+describe('nextDiscoverPass', () => {
+  const short = { wanted: 3, registered: 1, active: ['a', 'b', 'c'], searched: ['a'], paused: false }
+
+  it('asks the unsearched strategies for what is still wanted', () => {
+    expect(nextDiscoverPass(short)).toEqual({ count: 2 })
+    expect(nextDiscoverPass({ ...short, registered: 0 })).toEqual({ count: 3 })
+  })
+  it('ends once the count is registered', () => {
+    expect(nextDiscoverPass({ ...short, registered: 3 })).toBeNull()
+    expect(nextDiscoverPass({ ...short, registered: 5 })).toBeNull()
+  })
+  it('ends when every active strategy has been searched', () => {
+    expect(nextDiscoverPass({ ...short, searched: ['c', 'a', 'b', 'archived-since'] })).toBeNull()
+  })
+  it('ends when discovery is paused', () => {
+    expect(nextDiscoverPass({ ...short, paused: true })).toBeNull()
   })
 })

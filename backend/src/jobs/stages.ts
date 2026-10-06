@@ -6,12 +6,14 @@ import { NonRetryableError } from 'cloudflare:workflows'
 import type { Env } from '../api/types'
 import { withDb, type Db, type DbScope } from '../db/connection'
 import { withTenantConnection } from '../db/rls'
-import type { ReachArm } from '../domain/cycle-plan'
+import { nextDiscoverPass, type ReachArm } from '../domain/cycle-plan'
 import type { ProjectId, TenantId } from '../domain/ids'
 import type { DiscoverCandidate, JobLogEntry, JobParamsOf, JobResult } from '../domain/jobs'
 import type { ServiceResult } from '../services/result'
 import { appendJobLog, loadJobForRun, writeJobProgress, type LoadedJob } from '../services/jobs'
 import { kickAutoTopUp } from '../services/credits'
+import { getActiveStrategySlugs } from '../services/discovery-strategies'
+import { discoveryPausedReason, getRemainingProspectQuota } from '../services/plan-limits'
 import { runDiscover } from '../services/pipeline/discover'
 import { runEnrich } from '../services/pipeline/enrich'
 import { draftLogEntry, draftOne, loadDraftBatch, refillDrawSize, summarizeDraftOutcomes, type DraftOutcome } from '../services/pipeline/draft'
@@ -98,20 +100,60 @@ async function isCancelled(ctx: StageCtx, db: Db): Promise<boolean> {
   return row?.status === 'cancelled'
 }
 
+type DiscoverResult = Extract<JobResult, { kind: 'discover' }>
+
 export async function discoverStage(
   ctx: StageCtx,
   params: JobParamsOf<'discover'>,
   namePrefix = 'discover',
-): Promise<Extract<JobResult, { kind: 'discover' }>> {
+  searched: readonly string[] = [],
+): Promise<DiscoverResult> {
   const { tenantId, projectId }: Ids = ctx.job
   const scoped = stepDb(ctx)
   const progress: ProgressFn = (step, done, total) => scoped((db) => progressWriter(ctx, db, 'discover')(step, done, total))
-  const discovered = unwrap(await runDiscover(scoped, tenantId, ctx.env, projectId, params, checkpointOf(ctx, namePrefix), progress))
+  const discovered = unwrap(await runDiscover(scoped, tenantId, ctx.env, projectId, params, searched, checkpointOf(ctx, namePrefix), progress))
   const enriched = await enrichStage(ctx, discovered.candidates, `${namePrefix}:enrich`)
   return {
     ...discovered.result,
     registered: enriched.registered,
     summary: `${discovered.result.summary} ${enriched.summary}`,
+  }
+}
+
+// One pass searches the strategies the tick's plan picks for the count; a
+// small count leaves most of them out, and one poor source would end the job
+// with nothing. A strategy the person named is searched alone.
+export async function discoverJob(ctx: StageCtx, params: JobParamsOf<'discover'>): Promise<DiscoverResult> {
+  const { tenantId, projectId }: Ids = ctx.job
+  let total = await discoverStage(ctx, params)
+  if (params.strategySlug) return total
+  for (let pass = 2; ; pass++) {
+    const searched = total.planCompliance.map((p) => p.slug)
+    const next = await ctx.step.do(`discover:next:${pass}`, STEP_RETRY, () => tenantTx(ctx, async (db) =>
+      nextDiscoverPass({
+        wanted: params.count,
+        registered: total.registered,
+        active: await getActiveStrategySlugs(db, projectId),
+        searched,
+        paused: discoveryPausedReason(await getRemainingProspectQuota(db, tenantId, editionOf(ctx.env))) !== null,
+      }),
+    ))
+    if (next === null) return total
+    // What the earlier passes registered stands, so their result does too.
+    const more = await discoverStage(ctx, { ...params, count: next.count }, `discover:pass${pass}`, searched).catch((e: unknown) => {
+      console.error(`[jobs] discover pass ${pass} failed job=${ctx.job.id}`, e)
+      return e instanceof Error ? e.message : String(e)
+    })
+    if (typeof more === 'string') return { ...total, summary: `${total.summary} Next pass failed: ${more}` }
+    total = {
+      kind: 'discover',
+      summary: `${total.summary} Next pass: ${more.summary}`,
+      found: total.found + more.found,
+      fresh: total.fresh + more.fresh,
+      registered: total.registered + more.registered,
+      skipped: total.skipped + more.skipped,
+      planCompliance: [...total.planCompliance, ...more.planCompliance],
+    }
   }
 }
 

@@ -4,17 +4,20 @@ import {
   callOpenAIFollowUpJson,
   callOpenAIGroundedText,
   callOpenAIJson,
+  callOpenAIToolLoop,
   streamOpenAIChat,
   uploadOpenAIFile,
   type ChatRequest,
   type ChatStreamEvent,
   type FileUpload,
+  type ToolLoopRequest,
   type UploadedFile,
 } from './openai'
 import { callOpenAIPagesJson } from './pages'
-import { OPENAI_ROUTES, type FollowUpJsonOp, type GroundedTextOp, type JsonOp, type PagesJsonOp } from './routes'
+import { OPENAI_ROUTES, type FollowUpJsonOp, type GroundedTextOp, type JsonOp, type PagesJsonOp, type ToolLoopOp } from './routes'
 
 export { LlmError, type Citation, type GroundedText, type LlmEnv, type UrlJsonResult } from './common'
+export { loopTool } from './openai'
 export type { ChatCall, ChatRequest, ChatStreamEvent, UploadedFile } from './openai'
 
 type SchemaPrompt<T> = { prompt: string; schema: z.ZodType<T> }
@@ -40,6 +43,12 @@ export function callLlmGroundedText(env: LlmEnv, op: GroundedTextOp, args: { pro
 // search read, not only what the prompt quotes of it.
 export function callLlmFollowUpJson<T>(env: LlmEnv, op: FollowUpJsonOp, args: SchemaPrompt<T> & { after: GroundedText }): Promise<T> {
   return callOpenAIFollowUpJson({ op, apiKey: env.OPENAI_API_KEY, ...OPENAI_ROUTES[op], ...args })
+}
+
+// The model works toward the prompt with web search and the given tools until
+// it calls `answer`; an LlmError when it never gave one that fits the schema.
+export function callLlmToolLoop<T>(env: LlmEnv, op: ToolLoopOp, args: ToolLoopRequest<T>): Promise<{ value: T; toolCalls: number }> {
+  return callOpenAIToolLoop({ op, apiKey: env.OPENAI_API_KEY, ...OPENAI_ROUTES[op], ...args })
 }
 
 export function streamLlmChat(env: LlmEnv, args: ChatRequest): AsyncGenerator<ChatStreamEvent> {

@@ -1,6 +1,6 @@
 import OpenAI, { toFile } from 'openai'
 import type { AutoParseableTextFormat } from 'openai/lib/parser'
-import { zodTextFormat } from 'openai/helpers/zod'
+import { zodResponsesFunction, zodTextFormat } from 'openai/helpers/zod'
 import type { FunctionTool, Response, ResponseCreateParamsNonStreaming, ResponseInputItem, ResponseOutputText } from 'openai/resources/responses/responses'
 import { z } from 'zod'
 import type { LlmModel } from '../../domain/paid-calls'
@@ -248,6 +248,99 @@ export async function callOpenAISearchJson<T>(args: OpenAIJsonArgs<T> & { domain
     tools: [{ type: 'web_search', filters: { allowed_domains: args.domains } }],
   })
   return { value, searchedUrls: searchedPagesOf(response, args.domains) }
+}
+
+// A tool the loop runs itself; what `run` answers goes back to the model as
+// text, so it reports a failure in words rather than throwing.
+export type LoopTool = { name: string; description: string; parameters: z.ZodType; run: (args: unknown) => Promise<string> }
+
+// The loop parses a call's arguments with `parameters` before it runs the tool.
+export function loopTool<A>(tool: { name: string; description: string; parameters: z.ZodType<A>; run: (args: A) => Promise<string> }): LoopTool {
+  return { ...tool, run: (args) => tool.run(args as A) }
+}
+
+export type ToolLoopRequest<T> = {
+  prompt: string
+  tools: LoopTool[]
+  answer: { name: string; description: string; schema: z.ZodType<T> }
+  // Searches and tool runs together; the answer is not one.
+  maxToolCalls: number
+}
+
+// Every turn is one billed call, stored so the next sends only what came after it.
+export async function callOpenAIToolLoop<T>(args: OpenAICall & ToolLoopRequest<T>): Promise<{ value: T; toolCalls: number }> {
+  const client = clientOf(args)
+  const tools = [
+    { type: 'web_search' as const },
+    ...args.tools.map((t) => zodResponsesFunction({ name: t.name, description: t.description, parameters: t.parameters })),
+    zodResponsesFunction({ name: args.answer.name, description: args.answer.description, parameters: args.answer.schema }),
+  ]
+  const parsed = (raw: string): unknown => {
+    try {
+      return JSON.parse(raw)
+    } catch {
+      return null
+    }
+  }
+  let toolCalls = 0
+  let input: string | ResponseInputItem[] = args.prompt
+  let previous: string | null = null
+  let value: T | null = null
+
+  // Returns how many calls the turn made that still await the model.
+  const turn = async (forceAnswer: boolean): Promise<number> => {
+    // max_tool_calls bounds the searches of one response; the SDK's request type does not carry it yet.
+    const body = {
+      model: args.model,
+      input,
+      previous_response_id: previous,
+      tools,
+      store: true,
+      max_output_tokens: args.maxOutputTokens,
+      max_tool_calls: Math.max(1, args.maxToolCalls - toolCalls),
+      ...(forceAnswer ? { tool_choice: { type: 'function' as const, name: args.answer.name } } : {}),
+    }
+    const response = await attempt(args, 'default', args.timeoutMs, (_tier, signal) => client.responses.create(body as ResponseCreateParamsNonStreaming, { signal }))
+    // The provider's own page opens count too, or they would be free of the budget.
+    toolCalls += response.output.filter((o) => o.type === 'web_search_call').length
+    const outputs: ResponseInputItem[] = []
+    for (const call of response.output.flatMap((o) => (o.type === 'function_call' ? [o] : []))) {
+      if (call.name === args.answer.name) {
+        const answer = args.answer.schema.safeParse(parsed(call.arguments))
+        if (answer.success) value = answer.data
+        outputs.push({ type: 'function_call_output', call_id: call.call_id, output: answer.success ? 'recorded' : 'not recorded: the arguments did not match' })
+        continue
+      }
+      const tool = args.tools.find((t) => t.name === call.name)
+      const toolArgs = tool?.parameters.safeParse(parsed(call.arguments))
+      toolCalls += 1
+      const left = args.maxToolCalls - toolCalls
+      const output =
+        left < 0 ? `Tool budget spent: call ${args.answer.name} now.`
+        : tool === undefined || !toolArgs?.success ? 'Unknown tool or malformed arguments.'
+        : await tool.run(toolArgs.data)
+      outputs.push({ type: 'function_call_output', call_id: call.call_id, output: `${output}\n\n(${Math.max(0, left)} tool calls left)` })
+    }
+    input = outputs
+    previous = response.id
+    return outputs.length
+  }
+
+  // Every turn but one whose answer did not parse spends budget; the count stops that one repeating.
+  for (let turns = 0; turns <= args.maxToolCalls; turns++) {
+    const pending = await turn(false)
+    if (value !== null) break
+    // It answered in text, or spent the budget: one turn that can only answer.
+    if (pending === 0 || toolCalls >= args.maxToolCalls) {
+      if (pending === 0) input = [{ role: 'user', content: `Call ${args.answer.name} now with what you found.` }]
+      await turn(true)
+      break
+    }
+  }
+  // TS cannot see the assignment inside `turn`.
+  const answered = value as T | null
+  if (answered === null) throw new LlmError('upstream LLM gave no answer', 502)
+  return { value: answered, toolCalls }
 }
 
 export type ChatCall = { id: string; name: string; args: Record<string, unknown> }

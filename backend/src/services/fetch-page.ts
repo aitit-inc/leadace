@@ -155,6 +155,31 @@ async function readCapped(res: Response): Promise<Uint8Array> {
   return out.subarray(0, MAX_BYTES)
 }
 
+// A URL the model chose is fetched only when it names a public web host. The
+// name is all this can see: where it resolves, and where a redirect leads, is
+// left to the runtime's egress.
+export function isPublicWebUrl(url: string): boolean {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return false
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false
+  const host = parsed.hostname.toLowerCase().replace(/\.$/, '')
+  if (!host.includes('.') || host.startsWith('[') || /^[\d.]+$/.test(host)) return false
+  return !/\.(local|localhost|internal|lan|home|corp)$/.test(host)
+}
+
+const LINKS_HEADING = '\n\nLinks on this page:\n'
+
+// What the page itself says, without the link list appended to `text`: a URL
+// on that list is this code's resolution of an href, not something published.
+export function pageProse(page: FetchedPage): string {
+  const at = page.text.lastIndexOf(LINKS_HEADING)
+  return at === -1 ? page.text : page.text.slice(0, at)
+}
+
 // null: nothing a model could read — failed, not HTML, or too little text.
 export async function fetchPage(url: string): Promise<FetchedPage | null> {
   let res: Response
@@ -182,6 +207,6 @@ export async function fetchPage(url: string): Promise<FetchedPage | null> {
   if (text.length < MIN_TEXT_CHARS) return null
   const finalUrl = res.url || url
   const links = pageLinks(html, finalUrl)
-  const body = text.slice(0, MAX_TEXT_CHARS) + (links.length > 0 ? `\n\nLinks on this page:\n${links.join('\n')}` : '')
+  const body = text.slice(0, MAX_TEXT_CHARS) + (links.length > 0 ? `${LINKS_HEADING}${links.join('\n')}` : '')
   return { requestedUrl: url, url: finalUrl, text: body }
 }

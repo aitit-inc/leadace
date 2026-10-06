@@ -11,7 +11,7 @@ import { finishJob, loadJobForRun, markJobRunning, notifyJobFinished } from '../
 import { notifyCtxOf } from '../services/notifications'
 import { appendJobNotice } from '../services/chat/threads'
 import { runDailyCycle } from './daily-cycle'
-import { discoverStage, draftStage, enrichStage, evaluateStage, journalStage, sendStage, type StageCtx } from './stages'
+import { discoverJob, draftStage, enrichStage, evaluateStage, journalStage, sendStage, type StageCtx } from './stages'
 
 export type JobWorkflowParams = { jobId: string; tenantId: string }
 
@@ -23,7 +23,7 @@ async function runJob(ctx: StageCtx): Promise<JobResult> {
     case 'daily_cycle':
       return runDailyCycle(ctx, params)
     case 'discover':
-      return discoverStage(ctx, params)
+      return discoverJob(ctx, params)
     case 'enrich':
       return enrichStage(ctx, params.candidates)
     case 'draft':

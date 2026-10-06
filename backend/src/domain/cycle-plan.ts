@@ -56,3 +56,16 @@ export function nextCycleStep(s: {
   if (s.passes >= MAX_DISCOVERY_PASSES) return { kind: 'stop', stop: { kind: 'pass_cap' } }
   return { kind: 'discover', count: s.want }
 }
+
+// A discover job's count is prospects to register; null ends the job.
+export function nextDiscoverPass(s: {
+  wanted: number
+  registered: number
+  active: string[]
+  searched: string[]
+  paused: boolean
+}): { count: number } | null {
+  const left = s.wanted - s.registered
+  if (left <= 0 || s.paused || s.active.every((slug) => s.searched.includes(slug))) return null
+  return { count: left }
+}

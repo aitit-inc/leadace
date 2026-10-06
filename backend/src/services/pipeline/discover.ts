@@ -19,6 +19,7 @@ import {
 import { ok, err, type ServiceResult } from '../result'
 import { callLlmFollowUpJson, callLlmGroundedText, LlmError, type Citation, type GroundedText } from '../llm'
 import { getLeverStateById } from '../loop/policy'
+import { apportionLargestRemainder } from '../../domain/loop/allocation'
 import { loadProjectOutboundAllowlist } from '../project-settings'
 import { checkProspectDedup } from '../prospect-import'
 import { discoveryPausedReason, getRemainingProspectQuota } from '../plan-limits'
@@ -225,6 +226,7 @@ async function planDiscover(
   env: HostedEnv,
   projectId: ProjectId,
   params: JobParamsOf<'discover'>,
+  searched: readonly string[],
 ): Promise<ServiceResult<DiscoverSetup>> {
   const docs = await requireStrategyDocs(db, tenantId, projectId)
   if (!docs.ok) return docs
@@ -251,7 +253,12 @@ async function planDiscover(
     if (!pinned) return err('NOT_FOUND', `Discovery strategy "${params.strategySlug}" is not active on this project`)
     plan = [{ slug: pinned.slug, approach: pinned.approach, count: params.count, planned: params.count }]
   } else {
-    plan = lever.value.discovery.batchPlan
+    // A later pass of a job: the tick's plan sent the earlier passes to the
+    // strategies it weighs most, so the rest share the count evenly.
+    const batchPlan = searched.length === 0
+      ? lever.value.discovery.batchPlan
+      : apportionLargestRemainder(Object.fromEntries(active.filter((s) => !searched.includes(s.slug)).map((s) => [s.slug, 1])), params.count)
+    plan = batchPlan
       .filter((p) => p.count > 0)
       .flatMap((p) => {
         const s = active.find((a) => a.slug === p.slug)
@@ -281,13 +288,14 @@ export async function runDiscover(
   env: HostedEnv,
   projectId: ProjectId,
   params: JobParamsOf<'discover'>,
+  searched: readonly string[],
   checkpoint: Checkpoint,
   progress: ProgressFn = noProgress,
 ): Promise<ServiceResult<DiscoverOutput>> {
   // Progress is written inside the units: code between them reruns on every
   // replay of the job.
   const { plan, today, industries } = await checkpoint('plan', async () => {
-    const planned = await withDb((db) => planDiscover(db, tenantId, env, projectId, params))
+    const planned = await withDb((db) => planDiscover(db, tenantId, env, projectId, params, searched))
     if (planned.ok) await progress(`searching: ${planned.value.plan.map((p) => p.slug).join(', ')}`, 0, planned.value.plan.length)
     return planned
   })
