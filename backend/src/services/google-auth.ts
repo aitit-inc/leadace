@@ -141,7 +141,9 @@ export async function sendNotificationEmail(
 
   const to = input.to ?? identity.fromEmail
   const envelope = applyE2eRedirect(
-    { to: [to], cc: undefined, bcc: undefined, extraHeaders: undefined },
+    // Marks the mail as machine-sent (RFC 3834): it lands in a mailbox the reply
+    // ingest polls, which must not read it as a person's reply.
+    { to: [to], cc: undefined, bcc: undefined, extraHeaders: { 'Auto-Submitted': 'auto-generated' } },
     ctx.e2eRecipientOverride,
   )
 

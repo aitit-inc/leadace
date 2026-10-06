@@ -893,15 +893,26 @@ const SCENARIOS = [
           'New angle: Cost of doing nothing',
         ].join('\n'),
       );
+      // A reply to answer, as services/reply-ingest.ts assembles it.
+      const replyBody = q(
+        [
+          'Fabrikam Robotics (project Northwind outbound) wrote back. The reply is in the sales@northwind.example inbox. Answer it there.',
+          '',
+          'From: dana.ito@fabrikam.example',
+          '',
+          'Thanks for reaching out. We are reviewing vendors for next quarter. Could you send pricing for a 20-seat team?',
+        ].join('\n'),
+      );
       psql(`UPDATE tenants SET notifications_seen_at = now() - interval '2 hours' WHERE id = ${t};
         INSERT INTO notifications (tenant_id, category, reference, subject, body, link, created_at) VALUES
         (${t}, 'cron', 'ui:1', 'daily cycle failed: Northwind outbound', 'Search step failed upstream — upstream LLM request failed', '/chat', now() - interval '1 hour'),
         (${t}, 'general', 'ui:2', 'discover succeeded: Northwind outbound', 'Registered 8 of 12 (6 with email); 4 skipped.', '/chat', now() - interval '5 hours'),
         (${t}, 'cron', 'ui:3', 'daily cycle succeeded: Northwind outbound', 'evaluate: 2 responses scored | draft: 20 sent | journal: saved', '/chat', now() - interval '1 day'),
-        (${t}, 'insight', 'ui:4', 'Northwind outbound: 2 changes from what we learned', ${digestBody}, '/dashboard', now() - interval '30 minutes');`);
+        (${t}, 'insight', 'ui:4', 'Northwind outbound: 2 changes from what we learned', ${digestBody}, '/dashboard', now() - interval '3 hours'),
+        (${t}, 'lead', 'ui:5', 'Reply from Fabrikam Robotics', ${replyBody}, '/responses', now() - interval '30 minutes');`);
       return [
-        { name: 'bell', path: '/dashboard', click: 'button[aria-haspopup="menu"][aria-label^="Alerts"]', expect: 'daily cycle failed: Northwind outbound' },
-        { name: 'settings', path: '/workspace-settings', click: 'text=Scheduled runs', expect: ['Scheduled runs', 'What we learned'] },
+        { name: 'bell', path: '/dashboard', click: 'button[aria-haspopup="menu"][aria-label^="Alerts"]', expect: 'Reply from Fabrikam Robotics' },
+        { name: 'settings', path: '/workspace-settings', click: 'text=Scheduled runs', expect: ['Scheduled runs', 'What we learned', 'Replies to answer'] },
       ];
     },
   },

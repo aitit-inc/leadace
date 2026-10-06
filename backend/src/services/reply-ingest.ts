@@ -1,7 +1,7 @@
 import { and, eq, gte, inArray, isNotNull, or, sql } from 'drizzle-orm'
 import type { Db } from '../db/connection'
 import { isUniqueViolation } from '../db/errors'
-import { outreachLogs, prospects, responses, sendingIdentities } from '../db/schema'
+import { outreachLogs, projects, prospects, responses, sendingIdentities } from '../db/schema'
 import { asSendingIdentityId, asTenantId, type TenantId } from '../domain/ids'
 import { hasReplyReadScope, parseSendingIdentitySecret } from '../domain/sending-identity'
 import {
@@ -19,15 +19,11 @@ import { pollGmailInbox } from './gmail-poll'
 import { pollImapInbox } from './imap-poll'
 import { classifyReply, matchSameDomainReply, type ReplyClassification } from './reply-classify'
 import type { LlmEnv } from './llm'
+import { notify, notifyCtxOf, type NotifyEnv } from './notifications'
 import { withPaidCallScope } from './paid-calls'
 import { recordResponse, type RecordResponseInput } from './responses'
 
-type ReplyIngestEnv = LlmEnv & {
-  DATABASE_URL: string
-  GMAIL_TOKEN_ENCRYPTION_KEY: string
-  GOOGLE_CLIENT_ID: string
-  GOOGLE_CLIENT_SECRET: string
-}
+type ReplyIngestEnv = LlmEnv & NotifyEnv & { DATABASE_URL: string }
 
 // A fixed lookback re-polled every run + dedup by source_message_id, NOT a
 // last_polled_at cursor: provider SEARCH is only date-granular, so a cursor would
@@ -42,6 +38,8 @@ const DAY_MS = 24 * 60 * 60 * 1000
 // parsed body (quoted history, signatures, or a raw multipart fallback) can be
 // huge. 4k matches the slice fed to the classifier.
 const MAX_CONTENT_CHARS = 4_000
+// The bell shows a notification's whole body.
+const MAX_NOTICE_EXCERPT_CHARS = 300
 
 export type ReplyIngestSummary = {
   identitiesPolled: number
@@ -61,6 +59,7 @@ type IdentityRow = {
   tenant_id: string
   identity_id: string
   provider: 'gmail_oauth' | 'smtp_imap'
+  from_email: string
   scope: string | null
   last_polled_at: string | null
 }
@@ -166,6 +165,46 @@ async function loadCandidates(
       ? [{ outreachLogId: r.outreachLogId, prospectEmail: r.prospectEmail, sentAt: r.sentAt, messageId: r.messageId }]
       : [],
   )
+}
+
+// A person wrote and nothing answers them: a bounce, auto-reply, opt-out or
+// decline is settled by its record. Best-effort — the reply is recorded either way.
+async function notifyReplyToAnswer(
+  db: Db,
+  env: ReplyIngestEnv,
+  tenantId: TenantId,
+  inbox: string,
+  outreachLogId: number,
+  reply: InboundReply,
+  responseType: 'reply' | 'meeting_request',
+): Promise<void> {
+  try {
+    const [row] = await db
+      .select({ prospect: prospects.name, project: projects.name })
+      .from(outreachLogs)
+      .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
+      .innerJoin(projects, eq(projects.id, outreachLogs.projectId))
+      .where(and(eq(outreachLogs.tenantId, tenantId), eq(outreachLogs.id, outreachLogId)))
+      .limit(1)
+    if (!row) return
+    const text = leadingUnquotedText(reply.bodyText) || reply.subject || '(no text)'
+    const result = await notify((fn) => fn(db), tenantId, notifyCtxOf(env), {
+      category: 'lead',
+      reference: `reply:${reply.messageId}`,
+      subject: `${responseType === 'meeting_request' ? 'Meeting request' : 'Reply'} from ${row.prospect}`,
+      body: [
+        `${row.prospect} (project ${row.project}) wrote back. The reply is in the ${inbox} inbox. Answer it there.`,
+        '',
+        `From: ${reply.fromEmail}`,
+        '',
+        text.length > MAX_NOTICE_EXCERPT_CHARS ? text.slice(0, MAX_NOTICE_EXCERPT_CHARS) + ' …' : text,
+      ].join('\n'),
+      link: '/responses',
+    })
+    if (!result.ok) console.warn(`[reply-ingest] reply notification failed msg=${reply.messageId}: ${result.error}`)
+  } catch (e) {
+    console.warn(`[reply-ingest] reply notification threw msg=${reply.messageId}: ${e instanceof Error ? e.message : String(e)}`)
+  }
 }
 
 async function alreadyRecorded(
@@ -393,6 +432,9 @@ async function ingestIdentity(
       })
       summary.recorded++
       seen.add(reply.messageId)
+      if (input.responseType === 'reply' || input.responseType === 'meeting_request') {
+        await notifyReplyToAnswer(db, env, tenantId, identity.from_email, outreachLogId, reply, input.responseType)
+      }
     } catch (e) {
       if (isUniqueViolation(e)) {
         summary.deduped++
@@ -424,7 +466,7 @@ export async function runReplyIngest(db: Db, env: ReplyIngestEnv): Promise<Reply
   // A Send-As alias shares its parent's inbox, so only credential-holding rows
   // poll; a revoked grant cannot come back without a reconnect.
   const identities = await db.execute<IdentityRow>(sql`
-    SELECT tenant_id, identity_id, provider, scope, last_polled_at
+    SELECT tenant_id, identity_id, provider, from_email, scope, last_polled_at
     FROM sending_identities
     WHERE parent_identity_id IS NULL
       AND auth_revoked_at IS NULL
