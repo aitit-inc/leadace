@@ -1,7 +1,7 @@
 import type { OpenAIRoute } from './openai'
 
 export type JsonOp = 'draft' | 'evaluate' | 'journal' | 'reply-classify' | 'reply-domain-match'
-export type PagesJsonOp = 'enrich.site' | 'enrich.pages' | 'enrich.judge' | 'enrich.events' | 'enrich.events.pages' | 'strategy-draft.site' | 'strategy-draft'
+export type PagesJsonOp = 'enrich.site' | 'enrich.pages' | 'enrich.judge' | 'enrich.events' | 'enrich.events.pages'
 export type GroundedTextOp = 'discover.search' | 'strategy-draft.competitors'
 export type FollowUpJsonOp = 'discover.extract' | 'strategy-draft.competitors.extract'
 export type ToolLoopOp = 'enrich.contact'
@@ -36,9 +36,6 @@ export const OPENAI_ROUTES: Record<JsonOp | PagesJsonOp | GroundedTextOp | Follo
   'enrich.events': { model: 'gpt-6-luna', timeoutMs: 60_000, flexTimeoutMs: 30_000, maxOutputTokens: 8_192 },
   'enrich.events.pages': { model: 'gpt-6-luna', timeoutMs: 60_000, flexTimeoutMs: 30_000, maxOutputTokens: 8_192 },
   // A person waits on onboarding in the chat.
-  'strategy-draft.site': { model: 'gpt-6-luna', timeoutMs: 60_000, flexTimeoutMs: null, maxOutputTokens: 4_096 },
-  // Runs once per project and every later stage builds on what it writes.
-  'strategy-draft': { model: 'gpt-6-sol', timeoutMs: 240_000, flexTimeoutMs: null, maxOutputTokens: 32_768 },
   'strategy-draft.competitors': { model: 'gpt-6-luna', timeoutMs: 120_000, flexTimeoutMs: null, maxOutputTokens: 8_192 },
   'strategy-draft.competitors.extract': { model: 'gpt-6-luna', timeoutMs: 60_000, flexTimeoutMs: null, maxOutputTokens: 4_096 },
   chat: { model: 'gpt-6-sol', timeoutMs: 120_000, flexTimeoutMs: null, maxOutputTokens: 16_384 },

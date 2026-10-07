@@ -608,7 +608,7 @@ Most self-hosters will leave Stripe off entirely.
 | `GMAIL_TOKEN_ENCRYPTION_KEY` | API | for outbound | 32+ char passphrase. `pgp_sym_encrypt` key for stored Gmail tokens. |
 | `UNSUBSCRIBE_TOKEN_SECRET` | API | for outbound | 32+ char passphrase. HMAC key for `/unsubscribe/:token` links — **never rotate** once emails have been sent. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | API | for outbound | OAuth refresh-token exchange for Gmail send. |
-| `OPENAI_API_KEY` | API | yes | Powers the hosted agent (every job stage and the chat), onboarding from a URL, and inquiry-chat. Without it none of these run. |
+| `OPENAI_API_KEY` | API | yes | Powers the hosted agent (every job stage and the chat, onboarding included) and inquiry-chat. Without it none of these run. |
 | `EMAILABLE_API_KEY` | API | no | Emailable key (pay-as-you-go credits, no subscription). Verifies recipient mailboxes ahead of sending and refuses addresses that provably do not accept mail. Absent leaves only the free DNS half of that check, which still catches domains that went dark after the address was collected. |
 | `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | API | cloud only | Required only when `LEADACE_EDITION=cloud`. Ignored otherwise. |
 | `SHOWCASE_PROJECT_ID` | API | no | Project id the public `/live` scoreboard shows (`GET /api/live`). Only that project's settings show the "Publish a public scoreboard" switch, and it must be on. Unset keeps `/live` off. |

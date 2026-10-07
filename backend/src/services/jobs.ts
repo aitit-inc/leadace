@@ -125,7 +125,7 @@ export async function startJob(
     return err(
       'PRECONDITION_FAILED',
       'No active discovery strategies',
-      'Register at least one discovery strategy before collecting prospects — draft_strategy_from_url + apply_strategy_draft sets them up from the company website.',
+      'Register at least one discovery strategy before collecting prospects — upsert_discovery_strategy adds one; onboarding in the chat sets up a full first set.',
     )
   }
   return insertAndRun(db, tenantId, projectId, runner, origin, body.params, body.threadId ?? null, now)

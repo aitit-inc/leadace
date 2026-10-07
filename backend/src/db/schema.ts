@@ -1339,9 +1339,8 @@ export const inquiryMessages = pgTable('inquiry_messages', {
 ])
 
 // Fixed-window abuse counters (LLM-backed chat endpoints, operator notifications).
-// 'inquiry_link' keys by short_id; 'preview', 'notification', 'main_chat' and
-// 'strategy_draft' key by the tenant id.
-export type ChatRateScope = 'inquiry_link' | 'preview' | 'notification' | 'main_chat' | 'strategy_draft' | 'attachment_upload'
+// 'inquiry_link' keys by short_id; the rest key by the tenant id.
+export type ChatRateScope = 'inquiry_link' | 'preview' | 'notification' | 'main_chat' | 'attachment_upload' | 'setup_read'
 
 export const chatRateWindows = pgTable('chat_rate_windows', {
   tenantId: text('tenant_id')

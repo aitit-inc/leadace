@@ -1,4 +1,4 @@
-import { and, eq, gt, sql } from 'drizzle-orm'
+import { sql } from 'drizzle-orm'
 import { chatRateWindows, type ChatRateScope } from '../db/schema'
 import type { Db } from '../db/connection'
 import type { TenantId } from '../domain/ids'
@@ -10,25 +10,25 @@ export const NOTIFICATIONS_PER_TENANT_PER_DAY = 100
 // Hosted chat agent turns (one person message = one slot); the tool calls a
 // turn makes are bounded separately by the agent loop.
 export const MAIN_CHAT_TURNS_PER_TENANT_PER_DAY = 300
-// URL → strategy drafts (onboarding); each reads a site.
-export const STRATEGY_DRAFTS_PER_TENANT_PER_DAY = 10
 // Chat attachments: each one is stored and handed to the provider, whether or
 // not the message carrying it is ever sent.
 export const ATTACHMENT_UPLOADS_PER_TENANT_PER_DAY = 100
+// Requests to read pages (up to five each) or search competitors for a setup.
+// The chat agent is bounded by its turns; this bounds the routes called directly.
+export const SETUP_READS_PER_TENANT_PER_DAY = 60
 
 const LIMITS: Record<ChatRateScope, number> = {
   inquiry_link: INQUIRY_CHAT_TURNS_PER_LINK_PER_DAY,
   preview: PREVIEW_CHAT_TURNS_PER_TENANT_PER_DAY,
   notification: NOTIFICATIONS_PER_TENANT_PER_DAY,
   main_chat: MAIN_CHAT_TURNS_PER_TENANT_PER_DAY,
-  strategy_draft: STRATEGY_DRAFTS_PER_TENANT_PER_DAY,
   attachment_upload: ATTACHMENT_UPLOADS_PER_TENANT_PER_DAY,
+  setup_read: SETUP_READS_PER_TENANT_PER_DAY,
 }
 
 // Reserve-first: call immediately before the LLM spend, so a concurrent burst
 // can never exceed the window's limit in OpenAI calls. Slots are deliberately
-// not refunded on downstream failure (abuse ceiling, not billing); the one
-// exception is releaseChatRateSlot below.
+// not refunded on downstream failure (abuse ceiling, not billing).
 export async function takeChatRateSlot(
   db: Db,
   tenantId: TenantId,
@@ -50,27 +50,4 @@ export async function takeChatRateSlot(
     })
     .returning({ used: chatRateWindows.used })
   return row !== undefined
-}
-
-// Hands a reserved slot back. Only for a failure that is the input's fault
-// rather than a spend (the strategy draft's "site could not be read"), so a typo
-// does not lock a new tenant out for the rest of the UTC day.
-export async function releaseChatRateSlot(
-  db: Db,
-  tenantId: TenantId,
-  scope: ChatRateScope,
-  key: string,
-): Promise<void> {
-  await db
-    .update(chatRateWindows)
-    .set({ used: sql`${chatRateWindows.used} - 1` })
-    .where(
-      and(
-        eq(chatRateWindows.tenantId, tenantId),
-        eq(chatRateWindows.scope, scope),
-        eq(chatRateWindows.key, key),
-        eq(chatRateWindows.windowStart, startOfTodayUtc()),
-        gt(chatRateWindows.used, 0),
-      ),
-    )
 }

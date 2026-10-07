@@ -89,20 +89,20 @@ harness was never tuned on — never a hand pick:
 - JP (2): the J-Startup list (`j-startup.go.jp/startups/`), slugs in
   `random.Random(819)` shuffle order.
 - The first in order that sells to organizations numbering at least in the
-  hundreds, judged from its one-line description, is taken. A site
-  `draft_strategy_from_url` cannot read is passed over for the next.
+  hundreds, judged from its one-line description, is taken. A site that
+  could not be read was passed over for the next.
 
 Condition variants (`flint-a|b|c`, `flint-jp-a|b|c`) keep one seller and vary
 only how strict the Target is — an attribute alone, a published signal, a dated
 event — through the notes a person would type beside the URL, so what a
 condition costs to supply is measured apart from who the seller is.
 
-Specs are drafted with `eval/draft.ts`, production's `draftStrategyFromUrl`
-against the local database (the production workspace's daily draft cap stays
-untouched; keep local master documents seeded). Each spec is exactly what it
-answers for the homepage, with no notes unless a variant: `business`,
-`salesStrategy` and every discovery strategy verbatim, `targetCountries` empty
-(the project default), 10 per strategy (the per-search floor).
+The specs on file were drafted by `draftStrategyFromUrl`, the one-call drafter
+production had until the chat agent took over drafting (#890). A new spec is
+what a local chat onboarding hands to `apply_strategy_draft` for the homepage,
+with no notes unless a variant: `business`, `salesStrategy` and every discovery
+strategy verbatim, `targetCountries` empty (the project default), 10 per
+strategy (the per-search floor).
 
 ```bash
 npx tsx eval/cycle.ts run   <target> --arm prod --passes 5

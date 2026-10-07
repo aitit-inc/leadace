@@ -75,6 +75,7 @@ describe('isPublicWebUrl', () => {
     expect(isPublicWebUrl('http://metadata/computeMetadata/v1/')).toBe(false)
     expect(isPublicWebUrl('http://metadata.google.internal/')).toBe(false)
     expect(isPublicWebUrl('http://printer.local/')).toBe(false)
+    expect(isPublicWebUrl('http://printer.local./')).toBe(false)
   })
 
   it('refuses IP literals outright', () => {

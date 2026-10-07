@@ -222,7 +222,7 @@ export function newestFirst(signals: string[]): string[] {
   return [...new Set(signals)].sort((a, b) => b.slice(0, 10).localeCompare(a.slice(0, 10)))
 }
 
-export function sameSiteUrls(siteUrl: string, urls: string[], max: number): string[] {
+function sameSiteUrls(siteUrl: string, urls: string[], max: number): string[] {
   const host = (u: string) => new URL(u).hostname.replace(/^www\./, '')
   const siteHost = host(siteUrl)
   return urls

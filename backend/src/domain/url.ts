@@ -42,7 +42,8 @@ export const isPublicWebUrl = (u: string): boolean => {
     return false
   }
   if (url.protocol !== 'https:' && url.protocol !== 'http:') return false
-  const host = url.hostname.toLowerCase()
+  // A trailing dot names the same host.
+  const host = url.hostname.toLowerCase().replace(/\.$/, '')
   if (host.startsWith('[') || IPV4_LITERAL_RE.test(host)) return false
   if (!host.includes('.')) return false
   return !['.local', '.localhost', '.internal', '.home.arpa'].some((s) => host.endsWith(s))
