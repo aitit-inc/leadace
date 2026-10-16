@@ -83,6 +83,9 @@ describe('shortfallReason', () => {
     expect(shortfallReason({ target: 20, runnable: runnable(20, 'target'), reached: 0, stop: { kind: 'no_discovery', why: 'no_strategies' } })).toBe('supply — no discovery strategies')
     expect(shortfallReason({ target: 20, runnable: runnable(20, 'target'), reached: 9, stop: { kind: 'pass_cap' } })).toContain('discovery passes')
   })
+  it('names mailboxes spent mid-day', () => {
+    expect(shortfallReason({ target: 20, runnable: runnable(20, 'target'), reached: 4, stop: { kind: 'mailbox' } })).toContain('daily cap')
+  })
   it('names send failures', () => {
     expect(shortfallReason({ target: 20, runnable: runnable(20, 'target'), reached: 17, stop: { kind: 'list_spent', failed: 3 } })).toBe('3 failed')
   })

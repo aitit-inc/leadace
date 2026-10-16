@@ -31,22 +31,27 @@ export type CycleStop =
   | { kind: 'dry' }
   | { kind: 'no_discovery'; why: DiscoveryUnavailable }
   | { kind: 'pass_cap' }
+  // The mailboxes hit their daily cap mid-day (another project shares them).
+  | { kind: 'mailbox' }
 
 export type LastRound = { kind: 'draft'; produced: number; failed: number } | { kind: 'discover'; deliverableBefore: number } | null
 
 export type CycleStep = { kind: 'draft'; count: number } | { kind: 'discover'; count: number } | { kind: 'stop'; stop: CycleStop }
 
 // The day's first touches, one round at a time: write to what the list holds,
-// search when it runs out or yields nothing, and stop only when there is
-// nothing more to reach. Cost never stops the day (#531).
+// search when it runs out or yields nothing, and stop when there is nothing
+// more to reach or nothing left to send with. Cost never stops the day (#531).
 export function nextCycleStep(s: {
   want: number
   deliverable: number
+  // null: drafts wait for review, so the mailboxes do not bound them.
+  mailboxLeft: number | null
   last: LastRound
   discovery: DiscoveryUnavailable | null
   passes: number
 }): CycleStep {
   if (s.want <= 0) return { kind: 'stop', stop: { kind: 'reached' } }
+  if (s.mailboxLeft !== null && s.mailboxLeft <= 0) return { kind: 'stop', stop: { kind: 'mailbox' } }
   if (s.last?.kind === 'discover' && s.deliverable <= s.last.deliverableBefore) return { kind: 'stop', stop: { kind: 'dry' } }
   const spent = s.last?.kind === 'draft' && s.last.produced === 0 ? s.last : null
   if (s.deliverable > 0 && !spent) return { kind: 'draft', count: Math.min(s.want, s.deliverable) }

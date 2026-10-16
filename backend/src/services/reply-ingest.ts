@@ -6,6 +6,7 @@ import { asSendingIdentityId, asTenantId, type TenantId } from '../domain/ids'
 import { hasReplyReadScope, parseSendingIdentitySecret } from '../domain/sending-identity'
 import {
   attributeReply,
+  normalizeEmailForMatch,
   sameDomainCandidates,
   toInboundReply,
   type Attribution,
@@ -207,6 +208,16 @@ async function notifyReplyToAnswer(
   }
 }
 
+// The tenant answering a prospect's thread from another of its mailboxes is
+// not the prospect's response.
+async function ownAddresses(db: Db, tenantId: TenantId): Promise<Set<string>> {
+  const rows = await db
+    .select({ email: sendingIdentities.fromEmail })
+    .from(sendingIdentities)
+    .where(eq(sendingIdentities.tenantId, tenantId))
+  return new Set(rows.map((r) => normalizeEmailForMatch(r.email)))
+}
+
 async function alreadyRecorded(
   db: Db,
   tenantId: TenantId,
@@ -364,9 +375,11 @@ async function ingestIdentity(
     )
   }
 
-  const inbound = polled.replies
-    .map((c) => ({ captured: c, reply: toInboundReply(c) }))
-    .flatMap((x) => (x.reply ? [{ captured: x.captured, reply: x.reply }] : []))
+  const own = await ownAddresses(db, tenantId)
+  const inbound = polled.replies.flatMap((captured) => {
+    const reply = toInboundReply(captured)
+    return reply && !own.has(normalizeEmailForMatch(reply.fromEmail)) ? [{ captured, reply }] : []
+  })
   if (inbound.length === 0) {
     await markPollSucceeded(db, tenantId, identity.identity_id)
     return

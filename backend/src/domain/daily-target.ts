@@ -89,5 +89,7 @@ export function shortfallReason(r: { target: number; runnable: { count: number; 
       return r.stop.why === 'no_strategies' ? 'supply — no discovery strategies' : `supply — ${r.stop.why.paused}`
     case 'pass_cap':
       return `supply — ${MAX_DISCOVERY_PASSES} discovery passes found too few`
+    case 'mailbox':
+      return 'the mailboxes reached their daily cap'
   }
 }

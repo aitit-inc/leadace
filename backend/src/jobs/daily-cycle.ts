@@ -143,7 +143,8 @@ async function act(ctx: StageCtx, params: JobParamsOf<'daily_cycle'>, { stage, d
     let passes = 0
     let stop: CycleStop
     for (let round = 1; ; round++) {
-      const snap = round === 1 ? before : await reachableSnapshot(ctx, `reachable:${round}`)
+      // Read afresh each round: a project sharing these mailboxes may have spent them.
+      const snap = await reachableSnapshot(ctx, `reachable:${round}`)
       lastSnap = snap
       // Today's sends may have spent the last of the allowance.
       const discovery = hasStrategies
@@ -154,7 +155,7 @@ async function act(ctx: StageCtx, params: JobParamsOf<'daily_cycle'>, { stage, d
             }),
           )
         : 'no_strategies'
-      const step = nextCycleStep({ want: runnable.count - reached, deliverable: snap.deliverable, last, discovery, passes })
+      const step = nextCycleStep({ want: runnable.count - reached, deliverable: snap.deliverable, mailboxLeft: snap.sends ? snap.mailboxRemaining : null, last, discovery, passes })
       if (step.kind === 'stop') {
         stop = step.stop
         break
