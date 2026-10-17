@@ -30,6 +30,7 @@ import {
   type TargetingAxisStat,
 } from '../src/domain/loop/allocation'
 import type { LeverConfig } from '../src/domain/loop/config'
+import { LEGACY_MATURE_DAYS } from './delay'
 
 export type StrategyTruth = {
   // Ground-truth P(countable reply | delivered); deliveryFactor multiplies it.
@@ -143,11 +144,11 @@ export function runScenario(scenario: Scenario, seed: number, params: SimParams)
 
   const active = new Set(scenario.strategies.map((s) => s.slug))
   const archivedAt: Record<string, number> = {}
-  // Restore days. Grace counts sends made since, which mature rewardWindowDays later.
+  // Restore days. Grace counts sends made since, which mature LEGACY_MATURE_DAYS later.
   const enteredDay = new Map<string, number>()
   const sentSince = (slug: string): number => {
     const entered = enteredDay.get(slug)
-    return entered === undefined ? 0 : entered + config.rewardWindowDays
+    return entered === undefined ? 0 : entered + LEGACY_MATURE_DAYS
   }
   const inventory = new Map(scenario.strategies.map((s) => [s.slug, s.inventory]))
   const stats = new Map(
@@ -231,7 +232,7 @@ export function runScenario(scenario: Scenario, seed: number, params: SimParams)
       while (pending.length > 0 && pending[0]!.sentDay < day) pending.shift()
     }
 
-    while (pending.length > 0 && day - pending[0]!.sentDay >= config.rewardWindowDays) {
+    while (pending.length > 0 && day - pending[0]!.sentDay >= LEGACY_MATURE_DAYS) {
       const send = pending.shift()!
       if (send.bounced) continue
       const s = stats.get(send.slug)!

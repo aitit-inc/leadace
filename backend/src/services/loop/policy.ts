@@ -16,13 +16,15 @@ import { ok, type ServiceResult } from '../result'
 import { resolveProject } from '../projects'
 import { loadLeverConfig } from '../project-settings'
 import { listDiscoveryStrategiesById } from '../discovery-strategies'
-import { getVariantStats, loadActiveVariantIds } from './observe'
-import type { LoggedRuleChange } from '../../domain/loop/change'
-import { ruleChangesSince } from './change'
+import { getVariantEvidence, loadActiveVariantIds } from './observe'
+import type { LoggedChange } from '../../domain/loop/change'
+import { listChanges } from './change'
 
+// `total` counts the sends; `trials` is what the rule divides by (domain/loop/evidence).
 export type LeverStateVariant = {
   variantId: string
   total: number
+  trials: number
   responses: number
   positive: number
   interested: number
@@ -37,6 +39,19 @@ export const leverStateQuerySchema = z.object({
 })
 export type LeverStateQuery = z.infer<typeof leverStateQuerySchema>
 
+export type DiscoveryPolicy = {
+  strategies: Array<{ slug: string; approach: string; archivedAt: string | null }>
+  // null = no lever_state row yet; {} = no tick has weighed strategies yet.
+  weights: Record<string, number> | null
+  // Server-side apportionment of the registration batch across active
+  // strategies (largest remainder over the tick's weights; uniform until a
+  // tick has weighed the active set). /build-list constructs its batch to
+  // this plan; a 0 count is an explicit skip.
+  batchPlan: BatchPlanEntry[]
+  // Active strategies below targetActiveStrategies → /evaluate registers fresh ones.
+  needsReplenishment: boolean
+}
+
 export type LeverStateView = {
   // null = no tick has run yet → pickMessageVariant draws uniformly.
   weights: Record<string, number> | null
@@ -46,18 +61,7 @@ export type LeverStateView = {
   updatedAt: string | null
   minSamplePerArm: number
   variants: LeverStateVariant[]
-  discovery: {
-    strategies: Array<{ slug: string; approach: string; archivedAt: string | null }>
-    // null = no lever_state row yet; {} = no tick has weighed strategies yet.
-    weights: Record<string, number> | null
-    // Server-side apportionment of the registration batch across active
-    // strategies (largest remainder over the tick's weights; uniform until a
-    // tick has weighed the active set). /build-list constructs its batch to
-    // this plan; a 0 count is an explicit skip.
-    batchPlan: BatchPlanEntry[]
-    // Active strategies below targetActiveStrategies → /evaluate registers fresh ones.
-    needsReplenishment: boolean
-  }
+  discovery: DiscoveryPolicy
   todaysDecision: LeverDecisionPayload | null
   // Active variants below targetActiveArms → /evaluate supplies a fresh angle.
   needsReplenishment: boolean
@@ -82,7 +86,7 @@ export async function getLeverStateById(
 ): Promise<ServiceResult<LeverStateView>> {
   const config = await loadLeverConfig(db, projectId)
   const activeIds = await loadActiveVariantIds(db, projectId)
-  const statsMap = new Map((await getVariantStats(db, projectId, config, true)).map((s) => [s.variantId, s]))
+  const statsMap = await getVariantEvidence(db, projectId, config)
   // Live flag so /evaluate reads the current pool state whether or not today's
   // tick has run (the plugin's cycle still evaluates first).
   const needsReplenishment = activeIds.length < config.targetActiveArms
@@ -90,7 +94,6 @@ export async function getLeverStateById(
   const [stateRow] = await db
     .select({
       variantWeights: leverState.variantWeights,
-      strategyWeights: leverState.strategyWeights,
       channelAffinity: leverState.channelAffinity,
       targetingLifts: leverState.targetingLifts,
       updatedAt: leverState.updatedAt,
@@ -111,19 +114,40 @@ export async function getLeverStateById(
 
   const variants: LeverStateVariant[] = activeIds.map((id) => {
     const s = statsMap.get(id)
-    const total = s?.total ?? 0
+    const trials = s?.trials ?? 0
     return {
       variantId: id,
-      total,
-      responses: s?.responses ?? 0,
+      total: s?.sends ?? 0,
+      trials,
+      responses: s?.replied ?? 0,
       positive: s?.positive ?? 0,
       interested: s?.interested ?? 0,
-      mature: total >= config.minSamplePerArm,
+      mature: trials >= config.minSamplePerArm,
       weight: weights ? weights[id] ?? null : null,
     }
   })
 
-  const strategies = (await listDiscoveryStrategiesById(db, projectId)).map((s) => ({
+  return ok({
+    weights,
+    channelAffinity: stateRow?.channelAffinity ?? {},
+    targetingLifts: stateRow?.targetingLifts ?? null,
+    updatedAt: stateRow?.updatedAt ? stateRow.updatedAt.toISOString() : null,
+    minSamplePerArm: config.minSamplePerArm,
+    variants,
+    discovery: await getDiscoveryPolicy(db, projectId, batchSize),
+    todaysDecision: today?.decision ?? null,
+    needsReplenishment,
+  })
+}
+
+// What discovery reads, without the message-variant evidence the full view computes.
+export async function getDiscoveryPolicy(db: Db, projectId: ProjectId, batchSize: number = DEFAULT_BATCH_PLAN_SIZE): Promise<DiscoveryPolicy> {
+  const [config, rows, [state]] = await Promise.all([
+    loadLeverConfig(db, projectId),
+    listDiscoveryStrategiesById(db, projectId),
+    db.select({ strategyWeights: leverState.strategyWeights }).from(leverState).where(eq(leverState.projectId, projectId)).limit(1),
+  ])
+  const strategies = rows.map((s) => ({
     slug: s.slug,
     approach: s.approach,
     archivedAt: s.archivedAt ? s.archivedAt.toISOString() : null,
@@ -135,31 +159,19 @@ export async function getLeverStateById(
   // the floor — the same rescue the next tick would grant it; when nothing
   // carries weight (no tick yet, or a zero floor) the plan degrades to a
   // uniform spread — the pre-bandit behavior.
-  const storedWeights = stateRow?.strategyWeights ?? {}
-  const planWeights = floorRescuedWeights(activeSlugs, storedWeights, config.strategyWeightFloor)
+  const planWeights = floorRescuedWeights(activeSlugs, state?.strategyWeights ?? {}, config.strategyWeightFloor)
   const batchPlan = apportionLargestRemainder(
     Object.values(planWeights).reduce((acc, w) => acc + w, 0) > 0
       ? planWeights
       : Object.fromEntries(activeSlugs.map((slug) => [slug, 1])),
     batchSize,
   )
-
-  return ok({
-    weights,
-    channelAffinity: stateRow?.channelAffinity ?? {},
-    targetingLifts: stateRow?.targetingLifts ?? null,
-    updatedAt: stateRow?.updatedAt ? stateRow.updatedAt.toISOString() : null,
-    minSamplePerArm: config.minSamplePerArm,
-    variants,
-    discovery: {
-      strategies,
-      weights: stateRow?.strategyWeights ?? null,
-      batchPlan,
-      needsReplenishment: activeSlugs.length < config.targetActiveStrategies,
-    },
-    todaysDecision: today?.decision ?? null,
-    needsReplenishment,
-  })
+  return {
+    strategies,
+    weights: state?.strategyWeights ?? null,
+    batchPlan,
+    needsReplenishment: activeSlugs.length < config.targetActiveStrategies,
+  }
 }
 
 export const leverDecisionsHistoryQuerySchema = z.object({
@@ -170,7 +182,7 @@ export type LeverDecisionsHistoryQuery = z.infer<typeof leverDecisionsHistoryQue
 export type LeverDecisionHistoryEntry = {
   cycleDate: string
   weights: Record<string, number>
-  changes: LoggedRuleChange[]
+  changes: LoggedChange[]
   samples: LeverDecisionPayload['subject']['samples']
   channelAffinity: ChannelAffinityMap
   // null on pre-Phase-B decisions.
@@ -201,7 +213,7 @@ export async function getLeverDecisionsHistory(
     ))
     .orderBy(desc(leverDecisions.cycleDate))
   const oldest = rows.at(-1)
-  const changes = oldest ? await ruleChangesSince(db, projectId, new Date(`${oldest.cycleDate}T00:00:00Z`)) : []
+  const changes = oldest ? await listChanges(db, projectId, new Date(`${oldest.cycleDate}T00:00:00Z`)) : []
 
   const decisions = rows.map(({ cycleDate, decision }) => ({
     cycleDate,

@@ -244,7 +244,7 @@ type Row = {
 async function discover(plan: (typeof strategies)[number], count: number): Promise<DiscoverCandidate[]> {
   const today = utcDateKey()
   const search = await callLlmGroundedText(env, 'discover.search', {
-    prompt: searchPrompt({ plan: { slug: plan.slug, approach: plan.approach, count }, ...plan.offer, searchNotes: null, learnings: null, targetCountries: [], today }),
+    prompt: searchPrompt({ plan: { slug: plan.slug, approach: plan.approach, count }, ...plan.offer, searchNotes: null, targetCountries: [], today }),
   })
   const extracted = await callLlmFollowUpJson(env, 'discover.extract', {
     after: search,

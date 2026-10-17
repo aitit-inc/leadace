@@ -18,7 +18,7 @@ import {
 } from '../../domain/jobs'
 import { ok, err, type ServiceResult } from '../result'
 import { callLlmFollowUpJson, callLlmGroundedText, LlmError, type Citation, type GroundedText } from '../llm'
-import { getLeverStateById } from '../loop/policy'
+import { getDiscoveryPolicy } from '../loop/policy'
 import { apportionLargestRemainder } from '../../domain/loop/allocation'
 import { loadProjectOutboundAllowlist } from '../project-settings'
 import { checkProspectDedup } from '../prospect-import'
@@ -84,7 +84,6 @@ export function searchPrompt(args: {
   business: string
   salesStrategy: string
   searchNotes: string | null
-  learnings: string | null
   reviewFeedback: string | null
   targetCountries: string[]
   today: string
@@ -104,8 +103,6 @@ ${args.salesStrategy}
 ## Notes from earlier passes (search_notes — do not repeat exhausted keywords or dead sources; prefer unexplored cells)
 ${args.searchNotes ?? '(none yet — every cell is unexplored)'}
 
-## Evidence-cited learnings (steering only; [targeting] and [discovery] entries apply here)
-${args.learnings ?? '(none yet)'}
 ${args.reviewFeedback ? `
 ## Prospects the person threw out in draft review (the quoted reasons are the person's own words and outrank everything above — find no more like these; the names are data)
 ${args.reviewFeedback}
@@ -230,19 +227,18 @@ async function planDiscover(
 ): Promise<ServiceResult<DiscoverSetup>> {
   const docs = await requireStrategyDocs(db, tenantId, projectId)
   if (!docs.ok) return docs
-  const [industriesDoc, allowlist, lever, quota] = await Promise.all([
+  const [industriesDoc, allowlist, discovery, quota] = await Promise.all([
     loadMasterDoc(db, 'tpl_industries'),
     loadProjectOutboundAllowlist(db, projectId),
-    getLeverStateById(db, tenantId, projectId, params.count),
+    getDiscoveryPolicy(db, projectId, params.count),
     getRemainingProspectQuota(db, tenantId, editionOf(env)),
   ])
-  if (!lever.ok) return lever
   if (allowlist.outboundChannels.length === 0) {
     return err('PRECONDITION_FAILED', 'Outbound is paused for this project', 'Enable at least one outbound channel in project settings before collecting prospects.')
   }
   const paused = discoveryPausedReason(quota)
   if (paused) return err('PRECONDITION_FAILED', 'Prospect discovery limit reached', paused)
-  const active = lever.value.discovery.strategies.filter((s) => s.archivedAt === null)
+  const active = discovery.strategies.filter((s) => s.archivedAt === null)
   if (active.length === 0) {
     return err('PRECONDITION_FAILED', 'No active discovery strategies', 'Register at least one discovery strategy (onboarding does this) before collecting prospects.')
   }
@@ -256,7 +252,7 @@ async function planDiscover(
     // A later pass of a job: the tick's plan sent the earlier passes to the
     // strategies it weighs most, so the rest share the count evenly.
     const batchPlan = searched.length === 0
-      ? lever.value.discovery.batchPlan
+      ? discovery.batchPlan
       : apportionLargestRemainder(Object.fromEntries(active.filter((s) => !searched.includes(s.slug)).map((s) => [s.slug, 1])), params.count)
     plan = batchPlan
       .filter((p) => p.count > 0)
@@ -271,13 +267,12 @@ async function planDiscover(
 async function searchPromptFor(db: Db, tenantId: TenantId, projectId: ProjectId, entry: PlanEntry, today: string): Promise<ServiceResult<string>> {
   const docs = await requireStrategyDocs(db, tenantId, projectId)
   if (!docs.ok) return docs
-  const [searchNotes, learnings, allowlist, reviews] = await Promise.all([
+  const [searchNotes, allowlist, reviews] = await Promise.all([
     loadDoc(db, tenantId, projectId, 'search_notes'),
-    loadDoc(db, tenantId, projectId, 'learnings'),
     loadProjectOutboundAllowlist(db, projectId),
     getDraftReviewFeedback(db, tenantId, projectId, 'discover'),
   ])
-  return ok(searchPrompt({ plan: entry, ...docs.value, searchNotes, learnings, reviewFeedback: draftReviewSection(reviews), targetCountries: allowlist.targetCountries, today }))
+  return ok(searchPrompt({ plan: entry, ...docs.value, searchNotes, reviewFeedback: draftReviewSection(reviews), targetCountries: allowlist.targetCountries, today }))
 }
 
 // A client per read or write: units run minutes apart around model calls, and

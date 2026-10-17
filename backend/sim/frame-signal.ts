@@ -8,6 +8,8 @@
 import { seededRng } from '../src/domain/loop/bandit'
 import { assessVitals } from '../src/domain/loop/frame'
 import { stats } from './metrics'
+import { evidenceLog, sampleReplyDelay, settleAgeFor } from './delay'
+import { productionFeedback, type FeedbackModel } from './options'
 
 export type FrameScenario = {
   name: string
@@ -25,25 +27,30 @@ export type FrameRun = {
   firedAfter: (number | null)[]
 }
 
-export function runFrame(scenario: FrameScenario, params: FrameSignalParams, seed: number, samples: number): FrameRun {
+export function runFrame(
+  scenario: FrameScenario,
+  params: FrameSignalParams,
+  seed: number,
+  samples: number,
+  feedback: FeedbackModel = productionFeedback,
+): FrameRun {
   const rng = seededRng(`frame:${scenario.name}:${seed}`)
+  const delayRng = seededRng(`frame-delay:${scenario.name}:${seed}`)
+  const settleAge = settleAgeFor(feedback.evidence, feedback.trueDelayScale)
   const firedAfter: (number | null)[] = scenario.phases.map(() => null)
-  const positivesByDay: number[] = []
+  const logs = scenario.phases.map(() => evidenceLog(feedback.evidence, settleAge))
   let phase = 0
   for (let day = 0; day < scenario.horizonDays; day++) {
     while (phase + 1 < scenario.phases.length && day >= scenario.phases[phase + 1]!.fromDay) phase += 1
     const { fromDay, rate } = scenario.phases[phase]!
-    let positives = 0
-    for (let i = 0; i < scenario.sendsPerDay; i++) if (rng() < rate) positives += 1
-    positivesByDay.push(positives)
+    for (let i = 0; i < scenario.sendsPerDay; i++) {
+      const u = rng()
+      const delay = feedback.trueDelayScale * sampleReplyDelay(delayRng())
+      logs[phase]!.add({ day, reward: u < rate ? 1 : 0, replyAt: u < rate + feedback.nonPositiveReplyRate ? day + delay : null })
+    }
 
     if (firedAfter[phase] !== null) continue
-    let sends = 0
-    let engaged = 0
-    for (let d = fromDay; d <= day - scenario.settleDays; d++) {
-      sends += scenario.sendsPerDay
-      engaged += positivesByDay[d]!
-    }
+    const { total: sends, rewardSum: engaged } = logs[phase]!.stat(day)
     if (sends < params.minSends) continue
     // Not date-keyed, like the vitals: a day-varying seed flips the verdict at the boundary.
     const verdict = assessVitals(

@@ -979,8 +979,7 @@ export const draftReviewVerdictEnum = pgEnum('draft_review_verdict', DRAFT_REVIE
 
 // One row per reviewed draft, holding the agent's text as it stood before the
 // person touched it. Fed back to the stages it concerns as the person's own
-// words (services/draft-reviews.ts) — not a measurement, so it never becomes a
-// learnings entry.
+// words (services/draft-reviews.ts).
 export const draftReviews = pgTable('draft_reviews', {
   id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
   tenantId: text('tenant_id')
@@ -1363,8 +1362,8 @@ export const projectDocuments = pgTable('project_documents', {
     .notNull()
     .references(() => tenants.id, { onDelete: 'cascade' }),
   projectId: text('project_id').notNull(),
-  // Known values: "business", "sales_strategy", "search_notes", "learnings",
-  // "public_journal", "playbook_<strategy-slug>" (allowlist: services/documents.ts).
+  // Known values: "business", "sales_strategy", "search_notes", "public_journal",
+  // "playbook_<strategy-slug>" (allowlist: services/documents.ts).
   slug: text('slug').notNull(),
   content: text('content').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),

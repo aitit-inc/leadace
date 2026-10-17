@@ -150,6 +150,10 @@ restore_and_exit() {
     api DELETE "/api/projects/$PROJECT_ID6" > /dev/null || true
     say "deleted restore project $PROJECT_ID6"
   fi
+  if [[ -n "${PROJECT_ID7:-}" ]]; then
+    api DELETE "/api/projects/$PROJECT_ID7" > /dev/null || true
+    say "deleted arrival project $PROJECT_ID7"
+  fi
   psql_local "DELETE FROM prospects WHERE tenant_id = '$TENANT_ID' AND email LIKE 'contact@$RUN_TAG%';" > /dev/null || true
   psql_local "DELETE FROM organizations WHERE tenant_id = '$TENANT_ID' AND domain LIKE '$RUN_TAG%';" > /dev/null || true
   say "dropped tenant-scope test rows tagged $RUN_TAG"
@@ -366,11 +370,18 @@ count_rows() { psql_local "SELECT count(*) FROM policy_changes WHERE project_id=
 BEFORE="$(count_rows)"
 api PUT "/api/projects/$PROJECT_ID/documents/search_notes" "$(jq -nc '{content:"notes"}')" > /dev/null
 assert_eq "search_notes is not policy: no row" "$(count_rows)" "$BEFORE"
+# Still accepted from the plugin released before learnings went away (#918); nothing reads it.
+api PUT "/api/projects/$PROJECT_ID/documents/learnings" "$(jq -nc '{content:"[targeting] old plugin", reason:"e2e: old plugin"}')" > /dev/null
+assert_eq "learnings from an old plugin is stored, not policy: no row" "$(count_rows)" "$BEFORE"
 DASH="$(api GET "/api/projects/$PROJECT_ID/dashboard")"
 assert_eq "dashboard journal leads with today's sales_strategy edit" \
   "$(echo "$DASH" | jq -rc '.journal[0] | [.kind, .target, .actor, .reason]')" '["document","sales_strategy","user","e2e: first draft"]'
 assert_eq "dashboard journal carries the tick's archive of v3" \
   "$(echo "$DASH" | jq -r '[.journal[] | select(.kind == "rule_archive" and .optionId == "v3")] | length')" "1"
+assert_eq "an empty sales strategy is refused" \
+  "$(api PUT "/api/projects/$PROJECT_ID/documents/sales_strategy" "$(jq -nc '{content:""}')" | jq -r '.detail.fieldErrors.content | length')" "1"
+assert_eq "lever-decisions carries every change of the day, the sales_strategy edit with its reason" \
+  "$(api GET "/api/projects/$PROJECT_ID/lever-decisions" | jq -rc '[.decisions[0].changes[] | select(.target == "sales_strategy") | .reason]')" '["e2e: first draft"]'
 
 step "get_outbound_targets surfaces per-prospect channel affinity"
 RT="$(api GET "/api/projects/$PROJECT_ID/prospects/reachable?limit=10")"
@@ -413,9 +424,9 @@ assert_eq "un-archive past the cap refused" "$(echo "$V6U" | jq -r '.error // ""
 
 # Forgetting window (rewardLookbackDays). A separate project so the carefully
 # tuned scenario above is untouched. One variant with sends at two ages: 40 in
-# the band, 25 too old. With rewardLookbackDays=30 (and the default 14d maturity
-# window) the band is [now-44d, now-14d): the tick measures only the 40, while
-# the all-history /stats display still counts all 65. Same data, two windows.
+# the band, 25 too old. With rewardLookbackDays=30 the band is the last 30 days:
+# the tick measures only the 40, while the all-history /stats display still
+# counts all 65. Same data, two windows.
 step "forgetting window: second project + variant w1"
 CREATE2="$(api POST /api/projects "$(jq -nc --arg n "$PROJECT_NAME fw" '{name:$n}')")"
 PROJECT_ID2="$(echo "$CREATE2" | jq -r '.id // ""')"
@@ -430,14 +441,14 @@ psql_local "UPDATE project_settings SET lever_config = '{\"rewardLookbackDays\":
 assert_eq "lever_config rewardLookbackDays persisted" \
   "$(psql_local "SELECT lever_config->>'rewardLookbackDays' FROM project_settings WHERE project_id='$PROJECT_ID2';")" "30"
 
-step "backdate w1 sends: 40 in-band (30d) + 25 too-old (60d)"
+step "backdate w1 sends: 40 in-band (20d) + 25 too-old (60d)"
 psql_local "INSERT INTO outreach_logs (tenant_id, project_id, prospect_id, channel, body, status, sent_at, variant_id)
-            SELECT '$TENANT_ID', '$PROJECT_ID2', $PROSPECT_ID, 'email', 'e2e', 'sent', now() - interval '30 days', 'w1'
+            SELECT '$TENANT_ID', '$PROJECT_ID2', $PROSPECT_ID, 'email', 'e2e', 'sent', now() - interval '20 days', 'w1'
             FROM generate_series(1, 40);" > /dev/null
 psql_local "INSERT INTO outreach_logs (tenant_id, project_id, prospect_id, channel, body, status, sent_at, variant_id)
             SELECT '$TENANT_ID', '$PROJECT_ID2', $PROSPECT_ID, 'email', 'e2e', 'sent', now() - interval '60 days', 'w1'
             FROM generate_series(1, 25);" > /dev/null
-say "inserted 65 sends (40 @30d, 25 @60d); both ages are reply-mature (>14d)"
+say "inserted 65 sends (40 @20d, 25 @60d); both ages count as whole trials (≥14d)"
 
 step "tick path measures the windowed count; /stats display measures all-history"
 TF="$(api POST "/api/projects/$PROJECT_ID2/run-lever-tick")"
@@ -445,7 +456,7 @@ assert_eq "tick w1 windowed total (excludes the 25 too-old)" \
   "$(echo "$TF" | jq -r '.samples[] | select(.variantId=="w1") | .total')" "40"
 assert_eq "tick needsReplenishment true (1 active < target 3)" "$(echo "$TF" | jq -r '.needsReplenishment')" "true"
 # Vitals deliberately ignore the forgetting window: the whole regime counts.
-assert_eq "tick vitals ignore the lookback (all 65 mature sends)" "$(echo "$TF" | jq -r '.vitals.sends')" "65"
+assert_eq "tick vitals ignore the lookback (all 65 sends)" "$(echo "$TF" | jq -r '.vitals.sends')" "65"
 SF="$(api GET "/api/projects/$PROJECT_ID2/stats")"
 assert_eq "stats w1 all-history total (unwindowed = 65)" \
   "$(echo "$SF" | jq -r '.metrics.variantResponseRate[] | select(.variantId=="w1") | .total')" "65"
@@ -507,6 +518,42 @@ assert_eq "stats e1 all-history total (uncut = 45)" \
 # clean 400 at the settings write (would wedge needsReplenishment vs the cap).
 BADCFG="$(api PUT "/api/projects/$PROJECT_ID4/settings" "$(jq -nc '{leverConfig:{maxActiveStrategies:2}}')")"
 assert_eq "target>cap lever config refused" "$(echo "$BADCFG" | jq -r '.error // ""')" "Invalid lever config"
+
+# Reactions count when they arrive (#906). A seventh project: a send that drew a
+# reply counts as one whole trial at once, a silent send by the share of replies
+# that would have arrived by its age (2 days → ≈0.762), a bounced send not at
+# all, and a no is a trial with no reward.
+step "arrival: seventh project + variant a1 with fresh sends"
+CREATE7="$(api POST /api/projects "$(jq -nc --arg n "$PROJECT_NAME arrival" '{name:$n}')")"
+PROJECT_ID7="$(echo "$CREATE7" | jq -r '.id // ""')"
+[[ -n "$PROJECT_ID7" ]] || { echo "create-project(7) failed: $CREATE7" >&2; exit 1; }
+say "project_id7=$PROJECT_ID7"
+A1="$(api PUT "/api/projects/$PROJECT_ID7/message-variants" "$(jq -nc '{variantId:"a1", subjectPattern:"Hi {{org}} — a1", label:"a1"}')")"
+assert_eq "variant a1 upserted" "$(echo "$A1" | jq -r '.variantId // ""')" "a1"
+psql_local "INSERT INTO outreach_logs (tenant_id, project_id, prospect_id, channel, body, status, sent_at, variant_id, message_id)
+            SELECT '$TENANT_ID', '$PROJECT_ID7', $PROSPECT_ID, 'email', 'e2e', 'sent', now() - interval '2 days', 'a1', '<a1-' || g || '@e2e>'
+            FROM generate_series(1, 14) g;" > /dev/null
+# Of the 14: 2 positive replies, 1 rejection with a stated reason, 1 bounce, 10 silent.
+psql_local "INSERT INTO responses (tenant_id, outreach_log_id, channel, content, sentiment, response_type, received_at)
+            SELECT tenant_id, id, 'email', 'e2e', 'positive', 'reply', now() - interval '1 day'
+            FROM outreach_logs WHERE project_id='$PROJECT_ID7' ORDER BY id LIMIT 2;" > /dev/null
+psql_local "INSERT INTO responses (tenant_id, outreach_log_id, channel, content, sentiment, response_type, received_at, rejection_feedback)
+            SELECT tenant_id, id, 'email', 'e2e', 'negative', 'rejection', now() - interval '1 day',
+                   jsonb_build_object('version', 1, 'primary_reason', 'not_relevant', 'submitted_at', now())
+            FROM outreach_logs WHERE project_id='$PROJECT_ID7' ORDER BY id OFFSET 2 LIMIT 1;" > /dev/null
+psql_local "INSERT INTO responses (tenant_id, outreach_log_id, channel, content, sentiment, response_type, received_at)
+            SELECT tenant_id, id, 'email', 'e2e', 'neutral', 'bounce', now() - interval '2 days'
+            FROM outreach_logs WHERE project_id='$PROJECT_ID7' ORDER BY id OFFSET 3 LIMIT 1;" > /dev/null
+TA="$(api POST "/api/projects/$PROJECT_ID7/run-lever-tick")"
+assert_eq "arrival: 3 reacted sends + 10 silent at 2 days ≈ 10.62 trials, the bounce left out" \
+  "$(echo "$TA" | jq -r '.samples[] | select(.variantId=="a1") | .total | . > 10.5 and . < 10.7')" "true"
+assert_eq "arrival: both fresh positives already count" \
+  "$(echo "$TA" | jq -r '.samples[] | select(.variantId=="a1") | .rewardSum')" "2"
+assert_eq "arrival: the replied sends, the no included" \
+  "$(echo "$TA" | jq -r '.samples[] | select(.variantId=="a1") | .responses')" "3"
+LSA="$(api GET "/api/projects/$PROJECT_ID7/lever-state")"
+assert_eq "arrival: lever state counts all 14 sends" "$(echo "$LSA" | jq -r '.variants[] | select(.variantId=="a1") | .total')" "14"
+assert_eq "arrival: lever state is not yet mature (≈10.6 trials < 30)" "$(echo "$LSA" | jq -r '.variants[] | select(.variantId=="a1") | .mature')" "false"
 
 # Stagnation rotation. A third project: 4 arms with mature, statistically flat
 # data (40 sends each, 6/6/6/5 replies → max P(best) ≈ 0.29 < 0.5; the weakest

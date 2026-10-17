@@ -367,19 +367,6 @@ const DASH_SEGMENTS = [
   { industry: 'Government / Public Sector', band: '11-50', country: 'GB', strategy: 'school-directory-nationwide' },
   { industry: 'Government / Public Sector', band: '201+', country: 'GB', strategy: 'association-member-list' },
 ];
-const DASH_LEARNINGS = [
-  `[body] [D-0] Proof-led (${DASH_PROOF}) is driving reply rate and meetings by a wide margin — evidence: metric=variantResponseRate ${DASH_PROOF} 8.8% n=114 vs the other 3 angles 3.1-3.3% n=30-32 (meanReward 0.118 vs 0-0.067)`,
-  `[targeting] [D-1] Prospects carrying a why-now signal at send time reply about 4x more often — evidence: metric=freshSignalResponseRate withSignal 13.1% n=61 / withoutSignal 3.3% n=211`,
-  `[targeting] [D-2] Higher-education institutions with a standalone career-support department are the best meeting-generating segment — evidence: metric=discoveryStrategyResponseRate school-directory-nationwide 10.5% n=76 / 8 meeting enquiries`,
-  `[channel] [D-3] No human reply has ever come through a contact form (all of them auto-replies); only email has produced meetings — evidence: metric=channelResponseRate email 6.2% n=241 / form 0.0% n=31`,
-  `[body] [D-4] Only copy that quotes the recipient's own course or programme name draws a positive reply — evidence: metric=respondedMessages all 6 positive replies carried a proper-noun hook, n=198 sends`,
-  `[body] [D-5] A low-cost CTA that spells out an exit ("wrong person", "another time") is producing meeting enquiries — evidence: metric=sentimentBreakdown meeting_request=6 / positive reply=8, n=179 emails`,
-  `[timing] [D-12] Tuesday and Wednesday morning sends draw the most replies — evidence: metric=dayOfWeekResponseRate Tue 8.1% / Wed 7.6% / Fri 2.2%, n=241`,
-  `[discovery] [D-14] Nationwide school directories yield more reachable addresses than association member lists — evidence: metric=contactYield directory 62% n=180 / association 28% n=94`,
-  `[channel] [D-17] Follow-ups on the same thread outperform a fresh thread — evidence: metric=threadedResponseRate threaded 7.4% n=136 / fresh 2.1% n=95`,
-  `[targeting] [D-19] Institutions above 200 staff answer far less often — evidence: metric=employeeBandResponseRate 11-50 9.2% n=120 / 201+ 1.9% n=53`,
-];
-
 function seedDashboardFixture(ctx, projectId) {
   const tenant = ctx.persona.tenantId;
   const MIN = 60 * 1000;
@@ -583,8 +570,8 @@ function seedDashboardFixture(ctx, projectId) {
      (${q(tenant)}, ${q(projectId)}, ${q(ymd(now))}, ${q(JSON.stringify(cycleToday))}::jsonb);`,
   );
   // The journal is the change log: the angles' adds predate its 30-day
-  // window, so it shows the two the tick retired, the one it brought back and
-  // one target adjustment.
+  // window, so it shows the two the tick retired, the one it brought back,
+  // and one target adjustment.
   psql(
     `INSERT INTO policy_changes (tenant_id, project_id, target, option_id, op, actor, reason, rule_reason, evidence, created_at) VALUES
      ${[DASH_PROOF, DASH_SINGLE, 'rst_20260715_a', 'rst_20260715_c']
@@ -594,13 +581,6 @@ function seedDashboardFixture(ctx, projectId) {
      (${q(tenant)}, ${q(projectId)}, 'variant', 'rst_20260715_c', 'archive', 'rule', NULL, 'lost', '{"pBest":0.01,"n":32}'::jsonb, ${q(retiredAt)}),
      (${q(tenant)}, ${q(projectId)}, 'variant', 'rst_20260715_c', 'restore', 'rule', NULL, NULL, '{"pBeatsLeader":0.41,"n":48}'::jsonb, ${q(restoredAt)}),
      (${q(tenant)}, ${q(projectId)}, 'sales_strategy', NULL, 'update', 'ace', ${q(DASH_TARGET_WHY)}, NULL, NULL, ${q(iso(now - 3 * DAY))});`,
-  );
-  const learnings = DASH_LEARNINGS.map((line) =>
-    line.replace(/\[D-(\d+)\]/, (_, d) => `[${ymd(now - Number(d) * DAY)}]`),
-  );
-  psql(
-    `INSERT INTO project_documents (tenant_id, project_id, slug, content, created_at, approved_at)
-     VALUES (${q(tenant)}, ${q(projectId)}, 'learnings', ${q(`# Learnings\n\n${learnings.join('\n')}\n`)}, NOW(), NOW());`,
   );
   // Without a connected mailbox the page leads with "Gmail disconnected".
   // chk_sending_identities_secret_owner is why a non-alias identity has to
@@ -889,7 +869,7 @@ const SCENARIOS = [
           'Why 21 said no: Not relevant 43% · Budget 24% · Feature gap 19%',
           '',
           'What changed since 2026-09-11',
-          'Un-learned: "Prospects carrying a fresh signal reply more often" — the measurement it rested on was withdrawn',
+          'Sales strategy adjusted — Added agencies to Not a fit: 0 positive replies in 38 sends',
           'New angle: Cost of doing nothing',
         ].join('\n'),
       );
@@ -938,7 +918,7 @@ const SCENARIOS = [
           name: 'learning',
           path: '/dashboard',
           scrollTo: 'text=Recent decisions',
-          expect: ['positive / with interest', 'Leading subject line'],
+          expect: ['positive / with interest', 'Leading subject line', 'Recent decisions'],
         },
         {
           name: 'segments',

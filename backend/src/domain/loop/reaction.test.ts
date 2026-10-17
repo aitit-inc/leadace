@@ -5,6 +5,7 @@ import {
   reactionTotalsByKey,
   REWARDED_INQUIRY_OUTCOMES,
   rewardWeightsSchema,
+  sendOutcome,
   sendReaction,
   type Reaction,
 } from './reaction'
@@ -26,6 +27,7 @@ const reply = (responseType: 'reply' | 'meeting_request' | 'rejection' | 'bounce
   kind: 'reply',
   responseType,
   sentiment,
+  reason: null,
 })
 const inquiry = (outcome: 'opened' | 'inquired' | 'lead' | 'signup_clicked' | 'unsubscribed'): Reaction => ({ kind: 'inquiry', outcome })
 
@@ -120,5 +122,33 @@ describe('reactionTotalsByKey', () => {
     ])
     expect(byKey.get('yc-hn')).toEqual({ rewardSum: 1.5, positive: 1, interested: 2 })
     expect(byKey.get(null)).toEqual({ rewardSum: 1, positive: 1, interested: 1 })
+  })
+})
+
+describe('sendOutcome', () => {
+  const no = (reason: 'not_relevant' | 'budget' | 'other' | null): Reaction => ({ kind: 'reply', responseType: 'rejection', sentiment: 'negative', reason })
+
+  it('lets the strongest reaction stand: a signup after a no is positive', () => {
+    expect(sendOutcome([no('budget'), inquiry('signup_clicked')])).toEqual({ kind: 'positive' })
+    expect(sendOutcome([reply('reply', 'neutral'), no(null)])).toEqual({ kind: 'interest' })
+  })
+
+  it('reads a no by its latest specific reason, other only when nothing more specific was given', () => {
+    expect(sendOutcome([no('not_relevant'), no('other')])).toEqual({ kind: 'declined', reason: 'not_relevant' })
+    expect(sendOutcome([no('not_relevant'), no('budget')])).toEqual({ kind: 'declined', reason: 'budget' })
+    expect(sendOutcome([no('other')])).toEqual({ kind: 'declined', reason: 'other' })
+    expect(sendOutcome([reply('reply', 'negative')])).toEqual({ kind: 'declined', reason: null })
+  })
+
+  it('reads an opt-out on the inquiry page as a no, and a person over a bounce', () => {
+    expect(sendOutcome([inquiry('unsubscribed')])).toEqual({ kind: 'declined', reason: 'unsubscribe_request' })
+    expect(sendOutcome([reply('bounce', 'neutral'), reply('reply', 'positive')])).toEqual({ kind: 'positive' })
+  })
+
+  it('tells a bounce from silence, and ignores machine replies', () => {
+    expect(sendOutcome([reply('bounce', 'neutral')])).toEqual({ kind: 'bounced' })
+    expect(sendOutcome([reply('auto_reply', 'positive')])).toEqual({ kind: 'silent' })
+    expect(sendOutcome([inquiry('opened')])).toEqual({ kind: 'silent' })
+    expect(sendOutcome([])).toEqual({ kind: 'silent' })
   })
 })

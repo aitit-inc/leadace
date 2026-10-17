@@ -16,7 +16,7 @@
 #      reactions: a send counts once, by its strongest reaction.
 #
 # Seed: 4 prospects/orgs, 4 'sent' email logs on a dedicated dummy identity.
-# L1-L3 are backdated 15 days (mature, rewardWindowDays default 14); L4 stays
+# L1-L3 are backdated 15 days (older than the 14 days every reply arrives by); L4 stays
 # fresh. L1/L3 get a message_id (threadable); L1 draws a neutral and a
 # positive reply, L3 a bounce. P3's country is stored lower-case.
 #

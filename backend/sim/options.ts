@@ -5,7 +5,8 @@
 // the same outcome (common random numbers), so differences come from the config.
 //
 // Mirrors that hold while these results are read:
-// - An option's evidence is its sends matured rewardWindowDays after sending.
+// - An option's evidence is every send so far, counted as production counts
+//   it (delay.ts; the pre-#906 14-day maturity is the 'mature' model).
 // - The LLM that writes new options is a draw from the market distribution,
 //   refilling the active set to the target count right after the tick (decide
 //   → propose); the rule restores lost options into free slots first.
@@ -19,6 +20,17 @@ import { decide, type TickEvidence } from '../src/domain/loop/decide'
 import type { OptionArm } from '../src/domain/loop/options'
 import { floorRescuedWeights } from '../src/domain/loop/allocation'
 import type { LeverConfig } from '../src/domain/loop/config'
+import {
+  evidenceLog,
+  sampleReplyDelay,
+  settleAgeFor,
+  productionEvidence,
+  type EvidenceLog,
+  type EvidenceModel,
+  type LogStat,
+  type SimSend,
+} from './delay'
+import { stats } from './metrics'
 
 export type OptionsScenario = {
   name: string
@@ -41,13 +53,36 @@ type SimOption = {
   id: string
   rate: number
   state: OptionState
-  total: number
-  reward: number
-  sinceEntry: number
-  enteredDay: number
+  // The evidence as of today's tick.
+  stat: LogStat
+  log: EvidenceLog
+  createdDay: number
+  // First tick on which the rule could judge it (proven and out of its grace).
+  judgedDay: number | null
   restoredOnce: boolean
-  outcome: () => number
+  send: (day: number) => SimSend
 }
+
+// How reactions reach the evidence.
+export type FeedbackModel = {
+  evidence: EvidenceModel
+  // The market's reply delay is this multiple of the measured one (delay.ts).
+  trueDelayScale: number
+  // Human replies that carry no reward (rejections, neutral replies).
+  nonPositiveReplyRate: number
+}
+
+export const productionFeedback: FeedbackModel = {
+  evidence: productionEvidence,
+  trueDelayScale: 1,
+  nonPositiveReplyRate: 0,
+}
+
+// Days after an option is created at which its evidence is snapshotted.
+export const BIAS_DAYS = [3, 7, 14, 30] as const
+type BiasDay = (typeof BIAS_DAYS)[number]
+type BiasSums = { options: number; n: number; s: number; expectedS: number; posteriorMean: number; rate: number }
+const emptyBias = (): BiasSums => ({ options: 0, n: 0, s: 0, expectedS: 0, posteriorMean: 0, rate: 0 })
 
 export type OptionsRun = {
   archives: number
@@ -74,41 +109,63 @@ export type OptionsRun = {
   bestEverGoneBy: 'lost' | 'rotated' | null
   // (best rate ever − best active rate at the end) / best rate ever.
   endGap: number
+  // Days from creation to the first tick that could judge it, for options
+  // created at least 60 days before the end; null = never judged.
+  judgedAfter: (number | null)[]
+  bias: Record<BiasDay, BiasSums>
 }
 
-const armOf = (o: SimOption): ArmStat => ({ armId: o.id, total: o.total, rewardSum: o.reward })
-const activeArm = (o: SimOption): OptionArm => ({ ...armOf(o), sinceEntry: o.sinceEntry })
+const armOf = (o: SimOption): ArmStat => ({ armId: o.id, total: o.stat.total, rewardSum: o.stat.rewardSum })
+const activeArm = (o: SimOption): OptionArm => ({ ...armOf(o), sinceEntry: o.stat.sinceEntry })
+const posteriorMean = (o: SimOption): number => (1 + o.stat.rewardSum) / (2 + o.stat.total)
 
-export function runOptions(scenario: OptionsScenario, seed: number, config: LeverConfig, samples: number): OptionsRun {
+export function runOptions(
+  scenario: OptionsScenario,
+  seed: number,
+  config: LeverConfig,
+  samples: number,
+  feedback: FeedbackModel = productionFeedback,
+): OptionsRun {
   const key = `${scenario.name}:${seed}`
   const marketRng = seededRng(`market:${key}`)
   const allocRng = seededRng(`alloc:${key}`)
   const floor = scenario.layer === 'message' ? config.messageWeightFloor : config.strategyWeightFloor
   const target = scenario.layer === 'message' ? config.targetActiveArms : config.targetActiveStrategies
 
+  const settleAge = settleAgeFor(feedback.evidence, feedback.trueDelayScale)
   const options: SimOption[] = []
   const byId = new Map<string, SimOption>()
-  const create = (): void => {
+  const create = (day: number): void => {
     const index = options.length
     // No draw when the share is 0, so markets without breakthroughs keep their stream.
     const breakthrough = scenario.breakthroughShare > 0 && marketRng() < scenario.breakthroughShare
     const rate = scenario.baseRate * (breakthrough ? 2 : 1 - scenario.spread + 2 * scenario.spread * marketRng())
     const rng = seededRng(`outcome:${key}:${index}`)
+    // Its own stream, so the n-th outcome matches the runs under any delay model.
+    const delayRng = seededRng(`delay:${key}:${index}`)
     const option: SimOption = {
       id: `o${String(index).padStart(3, '0')}`,
       rate,
       state: 'active',
-      total: 0,
-      reward: 0,
-      sinceEntry: 0,
-      enteredDay: 0,
+      stat: { total: 0, rewardSum: 0, sinceEntry: 0 },
+      log: evidenceLog(feedback.evidence, settleAge),
+      createdDay: day,
+      judgedDay: null,
       restoredOnce: false,
-      outcome: () => (rng() < rate ? 1 : 0),
+      send: (sentDay) => {
+        const u = rng()
+        const delay = feedback.trueDelayScale * sampleReplyDelay(delayRng())
+        return {
+          day: sentDay,
+          reward: u < rate ? 1 : 0,
+          replyAt: u < rate + feedback.nonPositiveReplyRate ? sentDay + delay : null,
+        }
+      },
     }
     options.push(option)
     byId.set(option.id, option)
   }
-  for (let i = 0; i < target; i++) create()
+  for (let i = 0; i < target; i++) create(0)
 
   const run: OptionsRun = {
     archives: 0,
@@ -127,6 +184,8 @@ export function runOptions(scenario: OptionsScenario, seed: number, config: Leve
     bestEverArchivedAtEnd: false,
     bestEverGoneBy: null,
     endGap: 0,
+    judgedAfter: [],
+    bias: { 3: emptyBias(), 7: emptyBias(), 14: emptyBias(), 30: emptyBias() },
   }
   const active = (): SimOption[] => options.filter((o) => o.state === 'active')
 
@@ -148,20 +207,26 @@ export function runOptions(scenario: OptionsScenario, seed: number, config: Leve
 
   let weights: Record<string, number> = {}
   let flatStreak = 0
-  const pending: { day: number; option: SimOption; reward: number }[] = []
 
   for (let day = 0; day < scenario.horizonDays; day++) {
-    while (pending.length > 0 && day - pending[0]!.day >= config.rewardWindowDays) {
-      const { day: sentDay, option, reward } = pending.shift()!
-      option.total += 1
-      option.reward += reward
-      if (sentDay >= option.enteredDay) option.sinceEntry += 1
+    for (const o of options) {
+      o.stat = o.log.stat(day)
+      const bias = run.bias[(day - o.createdDay) as BiasDay] as BiasSums | undefined
+      if (bias !== undefined) {
+        bias.options += 1
+        bias.n += o.stat.total
+        bias.s += o.stat.rewardSum
+        bias.expectedS += o.rate * o.stat.total
+        bias.posteriorMean += posteriorMean(o)
+        bias.rate += o.rate
+      }
+      const judgeable = o.stat.total >= config.minSamplePerArm && o.stat.sinceEntry >= config.minSamplePerArm
+      if (o.judgedDay === null && o.state === 'active' && judgeable) o.judgedDay = day
     }
 
-    const matureActive = active().filter((o) => o.total >= config.minSamplePerArm)
+    const matureActive = active().filter((o) => o.stat.total >= config.minSamplePerArm)
     if (matureActive.length >= 2) {
-      const mean = (o: SimOption): number => (1 + o.reward) / (2 + o.total)
-      const leader = matureActive.reduce((a, b) => (mean(b) > mean(a) ? b : a))
+      const leader = matureActive.reduce((a, b) => (posteriorMean(b) > posteriorMean(a) ? b : a))
       run.leaderDays += 1
       if (leader.rate === Math.max(...matureActive.map((o) => o.rate))) run.leaderRightDays += 1
     }
@@ -169,7 +234,7 @@ export function runOptions(scenario: OptionsScenario, seed: number, config: Leve
     const lost = options.filter((o) => o.state === 'lost').map(armOf)
     const evidence: TickEvidence = {
       variants: scenario.layer === 'message'
-        ? { active: active().map((o) => ({ ...activeArm(o), responses: o.reward })), lost, flatStreak }
+        ? { active: active().map((o) => ({ ...activeArm(o), responses: o.stat.rewardSum })), lost, flatStreak }
         : { active: [], lost: [], flatStreak: 0 },
       strategies: scenario.layer === 'strategy' ? { active: active().map(activeArm), lost } : { active: [], lost: [] },
       channel: [],
@@ -183,15 +248,14 @@ export function runOptions(scenario: OptionsScenario, seed: number, config: Leve
     for (const { armId } of layer.toRestore) {
       const o = byId.get(armId)!
       o.state = 'active'
-      o.sinceEntry = 0
-      o.enteredDay = day
+      o.log.enter(day)
       o.restoredOnce = true
       run.restores += 1
     }
     weights = layer.weights
     flatStreak = layer.flatStreak
     while (active().length < target) {
-      create()
+      create(day)
       run.created += 1
     }
 
@@ -203,9 +267,8 @@ export function runOptions(scenario: OptionsScenario, seed: number, config: Leve
     const bestAvailable = Math.max(...options.map((o) => o.rate))
     for (let i = 0; i < scenario.sendsPerDay; i++) {
       const option = byId.get(weightedDraw(draw, allocRng))!
-      const reward = option.outcome()
-      if (option.total < config.minSamplePerArm) run.immatureSends += 1
-      pending.push({ day, option, reward })
+      if (option.stat.total < config.minSamplePerArm) run.immatureSends += 1
+      option.log.add(option.send(day))
       run.sends += 1
       run.expectedReward += option.rate
       run.bestAvailableReward += bestAvailable
@@ -221,6 +284,9 @@ export function runOptions(scenario: OptionsScenario, seed: number, config: Leve
     run.bestEverGoneBy = gone === 'active' ? null : gone
   }
   run.endGap = bestEverRate > 0 ? (bestEverRate - bestActiveRate) / bestEverRate : 0
+  run.judgedAfter = options
+    .filter((o) => o.createdDay < scenario.horizonDays - 60)
+    .map((o) => (o.judgedDay === null ? null : o.judgedDay - o.createdDay))
   return run
 }
 
@@ -249,4 +315,33 @@ export function aggregateOptions(runs: OptionsRun[], scenario: OptionsScenario):
     bestGoneByRotation: runs.filter((r) => r.bestEverGoneBy === 'rotated').length / runs.length,
     endGapMean: sum((r) => r.endGap) / runs.length,
   }
+}
+
+// Entry to first judgment, and the evidence early in an option's life: n is
+// what the rule counts; sBias = Σ arrived rewards / Σ (true rate × n) − 1, the
+// estimator's systematic error; pmRatio = mean posterior mean / mean true rate.
+export function aggregateFeedback(runs: OptionsRun[]): Record<string, number | null> {
+  const judgedAfter = runs.flatMap((r) => r.judgedAfter)
+  const judged = stats(judgedAfter)
+  const out: Record<string, number | null> = {
+    judgedDaysP50: judged.p50,
+    judgedDaysP90: judged.p90,
+    neverJudged: judgedAfter.filter((d) => d === null).length / judgedAfter.length,
+  }
+  for (const day of BIAS_DAYS) {
+    const b = emptyBias()
+    for (const r of runs) {
+      const x = r.bias[day]
+      b.options += x.options
+      b.n += x.n
+      b.s += x.s
+      b.expectedS += x.expectedS
+      b.posteriorMean += x.posteriorMean
+      b.rate += x.rate
+    }
+    out[`n@${day}`] = b.options > 0 ? b.n / b.options : null
+    out[`sBias@${day}`] = b.expectedS > 0 ? b.s / b.expectedS - 1 : null
+    out[`pmRatio@${day}`] = b.rate > 0 ? b.posteriorMean / b.rate : null
+  }
+  return out
 }

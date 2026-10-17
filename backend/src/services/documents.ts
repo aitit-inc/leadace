@@ -20,6 +20,7 @@ import { authorOf, changeReasonSchema, isDocumentTarget } from '../domain/loop/c
 
 // public_journal: one version per daily cycle, served on /live while the
 // project's publicScoreboardEnabled setting is on.
+// learnings: unread; kept one release for the plugin that still saves it (#918).
 const DOCUMENT_SLUGS = ['business', 'sales_strategy', 'search_notes', 'learnings', PUBLIC_JOURNAL_SLUG] as const
 
 function isWritableSlug(slug: string): boolean {

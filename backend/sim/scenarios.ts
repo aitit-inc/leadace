@@ -176,6 +176,18 @@ export const optionsScenarios: OptionsScenario[] = [
   optionsScenario('message', 20, 0.03, 0.1),
 ]
 
+// #906 delayed feedback: the message layer at both volumes.
+export const delayOptionsScenarios: OptionsScenario[] = [10, 20].flatMap((sendsPerDay) => [
+  optionsScenario('message', sendsPerDay, 0.03),
+  optionsScenario('message', sendsPerDay, 0.003),
+  optionsScenario('message', sendsPerDay, 0),
+  optionsScenario('message', sendsPerDay, 0.03, 0.1),
+])
+
+// Human replies that carry no reward: 58 rejections + 11 neutral of 2,429
+// emails over 90 days (leo's tenant, 2026-10-17).
+export const NON_POSITIVE_REPLY_RATE = 0.025
+
 // Reachable-per-pass means: 0–2 measured after #822, mostly 0.
 const steady = (mean: number): SupplyProfile => ({ name: `steady-${mean}`, meanAt: () => mean, spentFrom: null })
 // Declines linearly to 0 by pass 5, like shinden-retailer-registry (15→12→11→1→0 new).

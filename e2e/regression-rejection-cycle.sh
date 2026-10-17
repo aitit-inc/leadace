@@ -191,6 +191,11 @@ assert_eq "B rejection cycle count = 1 (per-project scope)" "$(rej_count "$P_SHA
 assert_eq "B link status = 'deferred' NOT 'rejected'" "$(ppB_status "$P_SHARED")" "deferred"
 assert_eq "do_not_contact still false (not cross-flipped from A)" "$(dnc "$P_SHARED")" "f"
 
+step "the reason summary counts the twice-rejecting prospect once"
+api_status GET "/api/projects/$PROJECT_A/rejection-feedback/summary?scope=all" > /dev/null
+assert_eq "A: one wrong_timing for one prospect" \
+  "$(api_body | jq -rc '[.primaryReasonDistribution[] | {reason, count}]')" '[{"reason":"wrong_timing","count":1}]'
+
 step "Leg 3: bounce on a separate prospect → DNC + inactive"
 CODE="$(api_status POST /api/responses "$(bounce_body "$LOG_A_BOUNCE")")"
 assert_eq "bounce → 201" "$CODE" "201"

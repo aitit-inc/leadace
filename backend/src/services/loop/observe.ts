@@ -1,4 +1,4 @@
-import { and, asc, count, countDistinct, desc, eq, exists, gte, inArray, isNotNull, isNull, lt, max, not, notInArray, or, sql, sum, type SQL } from 'drizzle-orm'
+import { and, asc, count, countDistinct, desc, eq, exists, gte, inArray, isNotNull, isNull, lt, max, ne, not, notInArray, sql, sum, type SQL } from 'drizzle-orm'
 import {
   discoveryStrategies,
   INQUIRY_OUTCOMES,
@@ -20,17 +20,19 @@ import {
   type EvaluationMetrics,
   type InquiryOutcome,
   type OutboundChannel,
-  type OutreachStatus,
 } from '../../db/schema'
 import type { Db } from '../../db/connection'
 import type { ProjectId, ProjectRef, TenantId } from '../../domain/ids'
-import { NON_COUNTABLE_RESPONSE_TYPES, reactionTotalsByKey, REWARDED_INQUIRY_OUTCOMES, sendReaction, type Reaction, type ReactionLevel, type ReactionTotals, type RewardWeights } from '../../domain/loop/reaction'
+import { NON_COUNTABLE_RESPONSE_TYPES, OBSERVED_INQUIRY_OUTCOMES, reactionTotalsByKey, REWARDED_INQUIRY_OUTCOMES, sendReaction, type Reaction, type ReactionLevel, type ReactionTotals, type RewardWeights } from '../../domain/loop/reaction'
+import { evidenceBy, evidenceOf, REPLY_ARRIVAL_DAYS, type Evidence, type SendObservation } from '../../domain/loop/evidence'
 import { unquotedText } from '../../domain/reply-classify'
-import { coarseIndustry, type CoarseIndustry } from '../../domain/coarse-industry'
+import { primaryReasonOf } from '../../domain/rejection-feedback'
+import { coarseIndustry } from '../../domain/coarse-industry'
 import { percentOf } from '../../domain/dashboard'
 import { type LeverConfig } from '../../domain/loop/config'
 import type { ChannelFineStat, TargetingAxisStat, TargetingStats } from '../../domain/loop/allocation'
 import type { TickEvidence } from '../../domain/loop/decide'
+import type { ArmStat } from '../../domain/loop/bandit'
 import type { FollowUpJsonOp, GroundedTextOp, PagesJsonOp } from '../llm/routes'
 import { loadLeverConfig, loadProjectOutboundAllowlist } from '../project-settings'
 import { ok, type ServiceResult } from '../result'
@@ -40,24 +42,12 @@ import { getActiveStrategySlugs } from '../discovery-strategies'
 import { lastArchivals, lostOptionIds, optionEntries, type OptionArchival } from './change'
 import type { OptionTarget } from '../../domain/loop/change'
 
-// Through the prod transaction pooler (Supavisor, prepare:false) postgres-js
-// can't read column type OIDs, so raw db.execute returns numeric/timestamp
-// columns as strings (a direct connection parses them to number/Date). Row
-// types below are honest about that (`string | number`) and reads normalize
-// with Number(...); the bandit relies on it (wilsonBounds compares responses ≤
-// total — a string compare would lie).
-
-// `::text` because the bound parameters are text, not the inquiry_outcome enum.
-const REWARDED_INQUIRY = sql`s.outcome::text IN (${sql.join(
-  REWARDED_INQUIRY_OUTCOMES.map((outcome) => sql`${outcome}`),
-  sql`, `,
-)})`
-
 type ResponseType = (typeof responseTypeEnum.enumValues)[number]
 type Sentiment = (typeof sentimentEnum.enumValues)[number]
 
 // The DB clock: every query in one transaction reads the same now().
 const daysAgo = (days: number): SQL => sql`now() - make_interval(days => ${days})`
+const DAY_MS = 24 * 60 * 60 * 1000
 // The epoch is a UTC date.
 const dayStart = (date: string): Date => new Date(`${date}T00:00:00Z`)
 
@@ -69,8 +59,101 @@ const countryBucket = (prospect: string | null, organization: string | null): st
 const sentBy = (projectId: ProjectId, where: SQL | undefined): SQL | undefined =>
   and(eq(outreachLogs.projectId, projectId), eq(outreachLogs.status, 'sent'), where)
 
-const bounced = (db: Db) =>
-  exists(db.select({ id: responses.id }).from(responses).where(and(eq(responses.outreachLogId, outreachLogs.id), eq(responses.responseType, 'bounce'))))
+const statedReason = sql<string | null>`${responses.rejectionFeedback}->>'primary_reason'`
+
+// Every send since `since` (all of them when undefined), each with the
+// attributes the loop measures by and the reactions it drew, in arrival order.
+// Auto-replies say nothing about the send and are left out.
+async function observeSends(db: Db, projectId: ProjectId, since: Date | undefined): Promise<SendObservation[]> {
+  const window = since === undefined ? undefined : gte(outreachLogs.sentAt, since)
+  const inProject = and(eq(projectProspects.projectId, outreachLogs.projectId), eq(projectProspects.prospectId, outreachLogs.prospectId))
+  const [sends, replies, sessions] = await Promise.all([
+    db.select({
+      outreachLogId: outreachLogs.id,
+      sentAt: outreachLogs.sentAt,
+      variantId: outreachLogs.variantId,
+      strategy: prospects.discoveryStrategy,
+      channel: outreachLogs.channel,
+      messageId: outreachLogs.messageId,
+      industry: prospects.industry,
+      employeeBand: organizations.employeeBand,
+      prospectCountry: prospects.country,
+      organizationCountry: organizations.country,
+      priority: projectProspects.priority,
+    })
+      .from(outreachLogs)
+      .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
+      .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
+      .leftJoin(projectProspects, inProject)
+      .where(sentBy(projectId, window)),
+    db.select({ outreachLogId: responses.outreachLogId, responseType: responses.responseType, sentiment: responses.sentiment, reason: statedReason })
+      .from(responses)
+      .innerJoin(outreachLogs, eq(outreachLogs.id, responses.outreachLogId))
+      .where(and(sentBy(projectId, window), ne(responses.responseType, 'auto_reply')))
+      .orderBy(asc(responses.receivedAt), asc(responses.id)),
+    db.select({ outreachLogId: inquirySessions.outreachLogId, outcome: inquirySessions.outcome })
+      .from(inquirySessions)
+      .innerJoin(outreachLogs, eq(outreachLogs.id, inquirySessions.outreachLogId))
+      .where(and(sentBy(projectId, window), inArray(inquirySessions.outcome, OBSERVED_INQUIRY_OUTCOMES))),
+  ])
+  const reactionsOf = new Map<number, Reaction[]>()
+  const push = (id: number, reaction: Reaction) => reactionsOf.set(id, [...(reactionsOf.get(id) ?? []), reaction])
+  for (const r of replies) push(r.outreachLogId, { kind: 'reply', responseType: r.responseType, sentiment: r.sentiment, reason: primaryReasonOf(r.reason) })
+  for (const r of sessions) push(r.outreachLogId, { kind: 'inquiry', outcome: r.outcome })
+  return sends.map(({ messageId, industry, prospectCountry, organizationCountry, ...send }) => ({
+    ...send,
+    industry: industryBucket(industry),
+    country: countryBucket(prospectCountry, organizationCountry),
+    bounceable: send.channel === 'email' && messageId !== null,
+    reactions: reactionsOf.get(send.outreachLogId) ?? [],
+  }))
+}
+
+// The frame's sends: the loop never measures across a frame change.
+const frameStart = (config: LeverConfig): Date | undefined =>
+  config.measurementsSince === undefined ? undefined : dayStart(config.measurementsSince)
+
+// The forgetting window, when configured, narrows what the options are judged on.
+const recentEnough = (config: LeverConfig, now: Date) => (send: SendObservation): boolean =>
+  config.rewardLookbackDays === undefined || send.sentAt.getTime() >= now.getTime() - config.rewardLookbackDays * DAY_MS
+
+const optionOf = (target: OptionTarget) => (send: SendObservation): string | undefined =>
+  (target === 'variant' ? send.variantId : send.strategy) ?? undefined
+
+const armOf = (id: string, e: Evidence | undefined): ArmStat => ({ armId: id, total: e?.trials ?? 0, rewardSum: e?.rewardSum ?? 0 })
+
+function targetingStatsOf(sends: readonly SendObservation[], now: Date, weights: RewardWeights): TargetingStats {
+  const axis = <K extends string | null>(key: (send: SendObservation) => K, compare: (a: K, b: K) => number): TargetingAxisStat[] =>
+    Array.from(evidenceBy(sends, key, now, weights), ([value, e]) => ({ value, total: e.trials, rewardSum: e.rewardSum })).sort((a, b) => compare(a.value, b.value))
+  const nullsLast = (a: string | null, b: string | null): number => (a === null ? (b === null ? 0 : 1) : b === null ? -1 : a.localeCompare(b))
+  return {
+    industry: axis((send) => coarseIndustry(send.industry), (a, b) => (a ?? '').localeCompare(b ?? '')),
+    employeeBand: axis((send) => send.employeeBand, nullsLast),
+    country: axis((send) => send.country, nullsLast),
+  }
+}
+
+function channelStatsOf(sends: readonly SendObservation[], now: Date, weights: RewardWeights): ChannelFineStat[] {
+  const buckets = new Map<string, { channel: Channel; industry: string | null; sends: SendObservation[] }>()
+  for (const send of sends) {
+    const key = JSON.stringify([send.channel, send.industry])
+    const bucket = buckets.get(key) ?? { channel: send.channel, industry: send.industry, sends: [] }
+    bucket.sends.push(send)
+    buckets.set(key, bucket)
+  }
+  return Array.from(buckets.values(), ({ channel, industry, sends: inBucket }) => {
+    const e = evidenceOf(inBucket, now, weights)
+    return { channel, industry, total: e.trials, rewardSum: e.rewardSum }
+  })
+}
+
+// `engaged` counts any human reaction, a no included: the check asks whether
+// mail reaches people at all.
+function futilityOf(sends: readonly SendObservation[], config: LeverConfig, now: Date): { sends: number; engaged: number } {
+  const since = now.getTime() - config.futilityLookbackDays * DAY_MS
+  const e = evidenceOf(sends.filter((send) => send.channel === 'email' && send.sentAt.getTime() >= since), now, config.reward)
+  return { sends: e.trials, engaged: e.replied }
+}
 
 type ReactedSend = {
   outreachLogId: number
@@ -101,7 +184,7 @@ async function reactedSends(db: Db, projectId: ProjectId, where: SQL | undefined
   }
   const inProject = and(eq(projectProspects.projectId, outreachLogs.projectId), eq(projectProspects.prospectId, outreachLogs.prospectId))
   const [replies, sessions] = await Promise.all([
-    db.select({ ...send, responseType: responses.responseType, sentiment: responses.sentiment })
+    db.select({ ...send, responseType: responses.responseType, sentiment: responses.sentiment, reason: statedReason })
       .from(outreachLogs)
       .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
       .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
@@ -127,7 +210,7 @@ async function reactedSends(db: Db, projectId: ProjectId, where: SQL | undefined
     country: countryBucket(prospectCountry, organizationCountry),
   })
   return [
-    ...replies.map((r) => ({ ...bucketed(r), reaction: { kind: 'reply' as const, responseType: r.responseType, sentiment: r.sentiment } })),
+    ...replies.map((r) => ({ ...bucketed(r), reaction: { kind: 'reply' as const, responseType: r.responseType, sentiment: r.sentiment, reason: primaryReasonOf(r.reason) } })),
     ...sessions.map((r) => ({ ...bucketed(r), reaction: { kind: 'inquiry' as const, outcome: r.outcome } })),
   ]
 }
@@ -135,13 +218,6 @@ async function reactedSends(db: Db, projectId: ProjectId, where: SQL | undefined
 // Per bucket, by the one reward definition (domain/loop/reaction).
 function reactionsBy(rows: ReactedSend[], key: (row: ReactedSend) => string | null, weights: RewardWeights): Map<string | null, ReactionTotals> {
   return reactionTotalsByKey(rows.map((row) => ({ key: key(row), outreachLogId: row.outreachLogId, reaction: row.reaction })), weights)
-}
-
-// Sums counts whose raw values fold into one bucket.
-function foldCounts<T>(rows: readonly T[], key: (row: T) => string | null, n: (row: T) => number): Map<string | null, number> {
-  const out = new Map<string | null, number>()
-  for (const row of rows) out.set(key(row), (out.get(key(row)) ?? 0) + n(row))
-  return out
 }
 
 type SendCounts = { total: number; responses: number; bounces: number; bounceEligible: number }
@@ -195,69 +271,20 @@ export type ProjectStatsResult = {
   dailyActivity: DailyActivity[]
 }
 
-// The tick decides on total and rewardSum; evaluate and the screens also show
-// the reactions.
-type OptionTally = { total: number; rewardSum: number } & Pick<ReactionTotals, 'positive' | 'interested'>
-type VariantTally = OptionTally & { variantId: string; responses: number }
+// The evaluations screen counts sends old enough for every reply to have arrived.
+const matured = (): SQL => lt(outreachLogs.sentAt, daysAgo(REPLY_ARRIVAL_DAYS))
 
-const optionColumn = (target: OptionTarget) => (target === 'variant' ? outreachLogs.variantId : prospects.discoveryStrategy)
+type VariantTally = { variantId: string; total: number; rewardSum: number; responses: number } & Pick<ReactionTotals, 'positive' | 'interested'>
 
-// One tally for the tick and evaluate, so evaluate reasons on the numbers the
-// rule decided on.
-async function optionTallies(
-  db: Db,
-  projectId: ProjectId,
-  target: OptionTarget,
-  window: SQL | undefined,
-  weights: RewardWeights,
-): Promise<Map<string, OptionTally>> {
-  const column = optionColumn(target)
-  const taken = and(isNotNull(column), window)
-  const [totals, reacted] = await Promise.all([
-    db.select({ id: column, total: count() })
+async function maturedVariantStats(db: Db, projectId: ProjectId, weights: RewardWeights): Promise<VariantTally[]> {
+  const window = and(isNotNull(outreachLogs.variantId), matured())
+  const [totals, reacted, replied] = await Promise.all([
+    db.select({ variantId: outreachLogs.variantId, total: count() })
       .from(outreachLogs)
-      .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
-      .where(sentBy(projectId, taken))
-      .groupBy(column)
-      .orderBy(column),
-    reactedSends(db, projectId, taken),
-  ])
-  const reactions = reactionsBy(reacted, (r) => (target === 'variant' ? r.variantId : r.strategy), weights)
-  return new Map(totals.flatMap(({ id, total }) => {
-    if (id === null) return []
-    const r = reactions.get(id)
-    return [[id, { total, rewardSum: r?.rewardSum ?? 0, positive: r?.positive ?? 0, interested: r?.interested ?? 0 }] as const]
-  }))
-}
-
-export function getStrategyStats(db: Db, projectId: ProjectId, config: LeverConfig): Promise<Map<string, OptionTally>> {
-  return optionTallies(db, projectId, 'strategy', tickWindow(config, true), config.reward)
-}
-
-function tickWindow(config: LeverConfig, applyLookback: boolean): SQL | undefined {
-  const lookbackDays =
-    applyLookback && config.rewardLookbackDays !== undefined
-      ? config.rewardWindowDays + config.rewardLookbackDays
-      : undefined
-  const epoch = applyLookback ? config.measurementsSince : undefined
-  return and(
-    lt(outreachLogs.sentAt, daysAgo(config.rewardWindowDays)),
-    lookbackDays === undefined ? undefined : gte(outreachLogs.sentAt, daysAgo(lookbackDays)),
-    epoch === undefined ? undefined : gte(outreachLogs.sentAt, dayStart(epoch)),
-  )
-}
-
-export async function getVariantStats(
-  db: Db,
-  projectId: ProjectId,
-  config: LeverConfig,
-  // Tick path passes true so a forgetting window (if configured) narrows the bandit's
-  // view to recent data; the all-history display path (getProjectStats) leaves it false.
-  applyLookback = false,
-): Promise<VariantTally[]> {
-  const window = tickWindow(config, applyLookback)
-  const [tallies, replied] = await Promise.all([
-    optionTallies(db, projectId, 'variant', window, config.reward),
+      .where(sentBy(projectId, window))
+      .groupBy(outreachLogs.variantId)
+      .orderBy(outreachLogs.variantId),
+    reactedSends(db, projectId, window),
     // Distinct sends, so a thread of two replies stays one.
     db.select({ variantId: outreachLogs.variantId, responses: countDistinct(outreachLogs.id) })
       .from(outreachLogs)
@@ -265,135 +292,19 @@ export async function getVariantStats(
       .where(and(sentBy(projectId, window), notInArray(responses.responseType, [...NON_COUNTABLE_RESPONSE_TYPES])))
       .groupBy(outreachLogs.variantId),
   ])
+  const reactions = reactionsBy(reacted, (r) => r.variantId, weights)
   const responsesBy = new Map(replied.map((r) => [r.variantId, r.responses]))
-  return Array.from(tallies, ([variantId, tally]) => ({ variantId, responses: responsesBy.get(variantId) ?? 0, ...tally }))
+  return totals.flatMap(({ variantId, total }) => {
+    if (variantId === null) return []
+    const r = reactions.get(variantId)
+    return [{ variantId, total, rewardSum: r?.rewardSum ?? 0, positive: r?.positive ?? 0, interested: r?.interested ?? 0, responses: responsesBy.get(variantId) ?? 0 }]
+  })
 }
 
-export async function getChannelStats(
-  db: Db,
-  projectId: ProjectId,
-  config: LeverConfig,
-): Promise<ChannelFineStat[]> {
-  // Tick-path only — the epoch always applies so channel affinity re-baselines
-  // with the other lever aggregates.
-  const epoch = config.measurementsSince
-  const window = and(
-    lt(outreachLogs.sentAt, daysAgo(config.rewardWindowDays)),
-    epoch === undefined ? undefined : gte(outreachLogs.sentAt, dayStart(epoch)),
-  )
-  const keyOf = (channel: Channel, industry: string | null): string => JSON.stringify([channel, industry])
-
-  const [totals, reacted] = await Promise.all([
-    db.select({ channel: outreachLogs.channel, industry: prospects.industry, total: count() })
-      .from(outreachLogs)
-      .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
-      .where(sentBy(projectId, window))
-      .groupBy(outreachLogs.channel, prospects.industry),
-    reactedSends(db, projectId, window),
-  ])
-  const rewards = reactionsBy(reacted, (r) => keyOf(r.channel, r.industry), config.reward)
-  const byBucket = new Map<string, ChannelFineStat>()
-  for (const row of totals) {
-    const industry = industryBucket(row.industry)
-    const key = keyOf(row.channel, industry)
-    const held = byBucket.get(key)
-    if (held) held.total += row.total
-    else byBucket.set(key, { channel: row.channel, industry, total: row.total, rewardSum: rewards.get(key)?.rewardSum ?? 0 })
-  }
-  return Array.from(byBucket.values())
-}
-
-// Bounced sends are excluded from denominator AND rewards: for targeting a
-// bounce is source data-quality, not segment disinterest. (The options keep
-// them: a variant and a bounce are unrelated, and a source that bounces is a
-// worse source.)
-export async function getTargetingStats(
-  db: Db,
-  projectId: ProjectId,
-  config: LeverConfig,
-  applyLookback = false,
-): Promise<TargetingStats> {
-  const window = and(tickWindow(config, applyLookback), not(bounced(db)))
-  const [industryRows, bandRows, countryRows, reacted] = await Promise.all([
-    db.select({ industry: prospects.industry, total: count() })
-      .from(outreachLogs)
-      .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
-      .where(sentBy(projectId, window))
-      .groupBy(prospects.industry),
-    db.select({ employeeBand: organizations.employeeBand, total: count() })
-      .from(outreachLogs)
-      .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
-      .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
-      .where(sentBy(projectId, window))
-      .groupBy(organizations.employeeBand),
-    db.select({ prospectCountry: prospects.country, organizationCountry: organizations.country, total: count() })
-      .from(outreachLogs)
-      .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
-      .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
-      .where(sentBy(projectId, window))
-      .groupBy(prospects.country, organizations.country),
-    reactedSends(db, projectId, window),
-  ])
-  const axis = (totals: Map<string | null, number>, key: (r: ReactedSend) => string | null): TargetingAxisStat[] => {
-    const rewards = reactionsBy(reacted, key, config.reward)
-    return Array.from(totals, ([value, total]) => ({ value, total, rewardSum: rewards.get(value)?.rewardSum ?? 0 })).sort((a, b) => {
-      if (a.value === null) return b.value === null ? 0 : 1
-      if (b.value === null) return -1
-      return a.value.localeCompare(b.value)
-    })
-  }
-
-  const industryFine = axis(foldCounts(industryRows, (r) => industryBucket(r.industry), (r) => r.total), (r) => r.industry)
-  const coarseAgg = new Map<CoarseIndustry, TargetingAxisStat>()
-  for (const stat of industryFine) {
-    const bucket = coarseIndustry(stat.value)
-    const entry = coarseAgg.get(bucket) ?? { value: bucket, total: 0, rewardSum: 0 }
-    entry.total += stat.total
-    entry.rewardSum += stat.rewardSum
-    coarseAgg.set(bucket, entry)
-  }
-
-  return {
-    industry: Array.from(coarseAgg.values()).sort((a, b) => (a.value ?? '').localeCompare(b.value ?? '')),
-    employeeBand: axis(foldCounts(bandRows, (r) => r.employeeBand, (r) => r.total), (r) => r.employeeBand),
-    country: axis(foldCounts(countryRows, (r) => countryBucket(r.prospectCountry, r.organizationCountry), (r) => r.total), (r) => r.country),
-  }
-}
-
-// Windowed by futilityLookbackDays (deliberately not rewardLookbackDays —
-// the bandit keeps all history) so the verdict self-clears after a repair.
-// `engaged` counts sends that drew interest, not the signals themselves, so it
-// stays ≤ sends for the Beta posterior.
-export async function getFutilityStats(
-  db: Db,
-  projectId: ProjectId,
-  config: LeverConfig,
-): Promise<{ sends: number; engaged: number }> {
-  const SENT: OutreachStatus = 'sent'
-  const EMAIL: Channel = 'email'
-  const matureBefore = sql`now() - make_interval(days => ${config.rewardWindowDays})`
-  // Same band shape as the variant queries: sent_at ∈ [now−W−F, now−W).
-  const windowDays = config.rewardWindowDays + config.futilityLookbackDays
-  const epoch = config.measurementsSince
-  const since = epoch === undefined ? sql`` : sql` AND ol.sent_at >= ((${epoch}::date)::timestamp AT TIME ZONE 'UTC')`
-  const rows = Array.from(
-    await db.execute<{ sends: string | number; engaged: string | number }>(sql`
-      SELECT
-        COUNT(*)::int AS sends,
-        COUNT(*) FILTER (WHERE EXISTS (
-          SELECT 1 FROM responses r WHERE r.outreach_log_id = ol.id
-            AND r.response_type NOT IN ('bounce', 'auto_reply')
-        ) OR EXISTS (
-          SELECT 1 FROM inquiry_sessions s WHERE s.outreach_log_id = ol.id AND ${REWARDED_INQUIRY}
-        ))::int AS engaged
-      FROM outreach_logs ol
-      WHERE ol.project_id = ${projectId} AND ol.status = ${SENT} AND ol.channel = ${EMAIL}
-        AND ol.sent_at < ${matureBefore}
-        AND ol.sent_at >= now() - make_interval(days => ${windowDays})${since}
-        AND NOT EXISTS (SELECT 1 FROM responses rb WHERE rb.outreach_log_id = ol.id AND rb.response_type = 'bounce')
-    `),
-  )
-  return { sends: Number(rows[0]?.sends ?? 0), engaged: Number(rows[0]?.engaged ?? 0) }
+// The variants as the rule sees them, for the lever-state view.
+export async function getVariantEvidence(db: Db, projectId: ProjectId, config: LeverConfig, now: Date = new Date()): Promise<Map<string, Evidence>> {
+  const sends = (await observeSends(db, projectId, frameStart(config))).filter(recentEnough(config, now))
+  return evidenceBy(sends, optionOf('variant'), now, config.reward)
 }
 
 export async function getProjectStats(
@@ -406,7 +317,7 @@ export async function getProjectStats(
   const projectId = resolved.value
 
   const config = await loadLeverConfig(db, projectId)
-  const mature = lt(outreachLogs.sentAt, daysAgo(config.rewardWindowDays))
+  const mature = matured()
   // A bounce binds only to a send whose Message-ID we generated; a form or SNS send cannot bounce.
   const threadable = and(eq(outreachLogs.channel, 'email'), isNotNull(outreachLogs.messageId))
   const countable = notInArray(responses.responseType, [...NON_COUNTABLE_RESPONSE_TYPES])
@@ -522,7 +433,7 @@ export async function getProjectStats(
     db.select({ variantId: messageVariants.variantId, label: messageVariants.label, archivedAt: messageVariants.archivedAt })
       .from(messageVariants)
       .where(eq(messageVariants.projectId, projectId)),
-    getVariantStats(db, projectId, config),
+    maturedVariantStats(db, projectId, config.reward),
     reactedSends(db, projectId, undefined),
     reactedSends(db, projectId, mature),
   ])
@@ -642,9 +553,7 @@ export async function getProjectStats(
   })
 }
 
-export type ReactionCounts = { n: number; positive: number; interested: number }
-
-export type VariantEvidence = ReactionCounts & {
+export type VariantEvidence = Evidence & {
   variantId: string
   addedOn: string
   label: string | null
@@ -671,19 +580,16 @@ export type StrategyDiscovery = {
   noContact: number
 }
 
-export type StrategyEvidence = ReactionCounts & {
+export type StrategyEvidence = Evidence & {
   slug: string
   addedOn: string
   approach: string
-  // Threadable email sends only: a form or SNS send cannot bounce.
-  bounced: number
-  bounceEligible: number
   discovery: StrategyDiscovery
   archived: OptionArchival | null
 }
 
 export type EvidenceAxis = 'industry' | 'size' | 'country' | 'channel' | 'priority'
-export type AxisBucket = ReactionCounts & { value: string | null }
+export type AxisBucket = Evidence & { value: string | null }
 
 export type RepliedSend = {
   lastReplyOn: string
@@ -698,12 +604,11 @@ export type RepliedSend = {
 }
 
 // What evaluate reads (#793): the frame's sends only, every list bounded, each
-// fact once. `n` counts mature sends (older than the reward window).
+// fact once. The options are counted as the rule counts them.
 export type ProposeEvidence = {
   frameStart: string | null
   sufficient: boolean
-  settled: number
-  kpi: ReactionCounts
+  kpi: Evidence
   variants: VariantEvidence[]
   strategies: StrategyEvidence[]
   axes: Record<EvidenceAxis, AxisBucket[]>
@@ -717,17 +622,15 @@ const ARCHIVED_OPTIONS_SHOWN = 10
 export const DISCOVERY_WINDOW_DAYS = 14
 const REPLIED_SENDS_SHOWN = 30
 const EVIDENCE_TEXT_CHARS = 1500
+const SUFFICIENT_TRIALS = 30
 const DISCOVERY_OPS = ['discover.search', 'discover.extract', 'enrich.judge', 'enrich.site', 'enrich.pages'] satisfies (GroundedTextOp | FollowUpJsonOp | PagesJsonOp)[]
 
-export async function getProposeEvidence(db: Db, projectId: ProjectId, config: LeverConfig): Promise<ProposeEvidence> {
-  const epoch = config.measurementsSince
-  const frameStart = epoch === undefined ? undefined : dayStart(epoch)
-  const inFrame = frameStart === undefined ? undefined : gte(outreachLogs.sentAt, frameStart)
-  const mature = and(lt(outreachLogs.sentAt, daysAgo(config.rewardWindowDays)), inFrame)
-  const threadable = and(eq(outreachLogs.channel, 'email'), isNotNull(outreachLogs.messageId), inFrame)
+export async function getProposeEvidence(db: Db, projectId: ProjectId, config: LeverConfig, now: Date = new Date()): Promise<ProposeEvidence> {
+  const start = frameStart(config)
+  const inFrame = start === undefined ? undefined : gte(outreachLogs.sentAt, start)
   const countable = notInArray(responses.responseType, [...NON_COUNTABLE_RESPONSE_TYPES])
   const archivedInFrame = (column: typeof messageVariants.archivedAt | typeof discoveryStrategies.archivedAt) =>
-    and(isNotNull(column), frameStart === undefined ? undefined : gte(column, frameStart))
+    and(isNotNull(column), start === undefined ? undefined : gte(column, start))
   const variantCols = { id: messageVariants.variantId, label: messageVariants.label, subjectPattern: messageVariants.subjectPattern, bodyApproach: messageVariants.bodyApproach, createdAt: messageVariants.createdAt, archivedAt: messageVariants.archivedAt }
   const strategyCols = { id: discoveryStrategies.slug, approach: discoveryStrategies.approach, createdAt: discoveryStrategies.createdAt, archivedAt: discoveryStrategies.archivedAt }
   const { outboundChannels: channels } = await loadProjectOutboundAllowlist(db, projectId)
@@ -735,34 +638,10 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
   const usable = usableOnExpr(channels)
 
   const [
-    industryRows, sizeRows, countryRows, channelRows, priorityRows, variantStats, strategyStats, reacted,
-    bouncedRows, eligibleRows, activeVariants, archivedVariants, activeStrategies, archivedStrategies,
-    recent, inquiryRows, [settled], discoveryJobs, registeredRows, [discoveryCost],
+    sends, activeVariants, archivedVariants, activeStrategies, archivedStrategies,
+    recent, inquiryRows, discoveryJobs, registeredRows, [discoveryCost],
   ] = await Promise.all([
-    db.select({ industry: prospects.industry, n: count() })
-      .from(outreachLogs).innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
-      .where(sentBy(projectId, mature)).groupBy(prospects.industry),
-    db.select({ size: organizations.employeeBand, n: count() })
-      .from(outreachLogs).innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId)).innerJoin(organizations, eq(organizations.id, prospects.organizationId))
-      .where(sentBy(projectId, mature)).groupBy(organizations.employeeBand),
-    db.select({ prospectCountry: prospects.country, organizationCountry: organizations.country, n: count() })
-      .from(outreachLogs).innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId)).innerJoin(organizations, eq(organizations.id, prospects.organizationId))
-      .where(sentBy(projectId, mature)).groupBy(prospects.country, organizations.country),
-    db.select({ channel: outreachLogs.channel, n: count() })
-      .from(outreachLogs)
-      .where(sentBy(projectId, mature)).groupBy(outreachLogs.channel),
-    db.select({ priority: projectProspects.priority, n: count() })
-      .from(outreachLogs).leftJoin(projectProspects, and(eq(projectProspects.projectId, outreachLogs.projectId), eq(projectProspects.prospectId, outreachLogs.prospectId)))
-      .where(sentBy(projectId, mature)).groupBy(projectProspects.priority),
-    getVariantStats(db, projectId, config, true),
-    getStrategyStats(db, projectId, config),
-    reactedSends(db, projectId, mature),
-    db.select({ strategy: prospects.discoveryStrategy, n: countDistinct(outreachLogs.id) })
-      .from(outreachLogs).innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId)).innerJoin(responses, eq(responses.outreachLogId, outreachLogs.id))
-      .where(and(sentBy(projectId, threadable), eq(responses.responseType, 'bounce'))).groupBy(prospects.discoveryStrategy),
-    db.select({ strategy: prospects.discoveryStrategy, n: count() })
-      .from(outreachLogs).innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
-      .where(sentBy(projectId, threadable)).groupBy(prospects.discoveryStrategy),
+    observeSends(db, projectId, start),
     db.select(variantCols).from(messageVariants)
       .where(and(eq(messageVariants.projectId, projectId), isNull(messageVariants.archivedAt)))
       .orderBy(asc(messageVariants.variantId)),
@@ -782,8 +661,6 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
     db.select({ outcome: inquirySessions.outcome, n: count() })
       .from(inquirySessions).innerJoin(outreachLogs, eq(outreachLogs.id, inquirySessions.outreachLogId))
       .where(sentBy(projectId, inFrame)).groupBy(inquirySessions.outcome),
-    db.select({ n: count() }).from(outreachLogs)
-      .where(sentBy(projectId, and(lt(outreachLogs.sentAt, daysAgo(REPLY_SETTLE_DAYS)), inFrame))),
     // A job that failed left no result, so its passes are missing here.
     db.select({ result: jobs.result }).from(jobs)
       .where(and(eq(jobs.projectId, projectId), inArray(jobs.kind, ['daily_cycle', 'discover']), isNotNull(jobs.result), gte(jobs.createdAt, daysAgo(DISCOVERY_WINDOW_DAYS)))),
@@ -816,6 +693,7 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
           body: outreachLogs.body,
           responseType: responses.responseType,
           sentiment: responses.sentiment,
+          reason: statedReason,
           content: responses.content,
         })
           .from(outreachLogs).innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId)).innerJoin(responses, eq(responses.outreachLogId, outreachLogs.id))
@@ -830,22 +708,19 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
     lastArchivals(db, projectId, 'strategy', archivedStrategies.map((st) => st.id)),
   ])
 
-  const withReactions = (n: number, t: ReactionTotals | undefined): ReactionCounts => ({ n, positive: t?.positive ?? 0, interested: t?.interested ?? 0 })
-  const axisBuckets = (totals: Map<string | null, number>, key: (r: ReactedSend) => string | null): AxisBucket[] => {
-    const reactions = reactionsBy(reacted, key, config.reward)
-    return Array.from(totals, ([value, n]) => ({ value, ...withReactions(n, reactions.get(value)) })).sort(
-      (a, b) => b.n - a.n || (a.value ?? '').localeCompare(b.value ?? ''),
+  const none = evidenceOf([], now, config.reward)
+  const judged = sends.filter(recentEnough(config, now))
+  const variantOf = evidenceBy(judged, optionOf('variant'), now, config.reward)
+  const strategyOf = evidenceBy(judged, optionOf('strategy'), now, config.reward)
+  const axisBuckets = (key: (send: SendObservation) => string | null): AxisBucket[] =>
+    Array.from(evidenceBy(sends, key, now, config.reward), ([value, e]) => ({ value, ...e })).sort(
+      (a, b) => b.sends - a.sends || (a.value ?? '').localeCompare(b.value ?? ''),
     )
-  }
-  const priorityBucket = (priority: number | null): string | null => (priority === null ? null : String(priority))
 
   // An option archived by a Worker that predates the log has no row: the day is all that is known.
   const archival = (archivals: Map<string, OptionArchival>, id: string, at: Date | null): OptionArchival | null =>
     at === null ? null : archivals.get(id) ?? { day: dayOf(at), actor: null, reason: null }
 
-  const variantOf = new Map(variantStats.map((v) => [v.variantId, v]))
-  const counts = (t: OptionTally | undefined): ReactionCounts => ({ n: t?.total ?? 0, positive: t?.positive ?? 0, interested: t?.interested ?? 0 })
-  const bouncedBy = new Map(bouncedRows.map((r) => [r.strategy, r.n]))
   const registeredBy = new Map(registeredRows.map((r) => [r.strategy, r]))
   const noPasses = { passes: 0, asked: 0, returned: 0, fresh: 0 }
   const passesBy = new Map<string, typeof noPasses>()
@@ -857,14 +732,13 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
       passesBy.set(pass.slug, { passes: held.passes + 1, asked: held.asked + pass.asked, returned: held.returned + pass.returned, fresh: held.fresh + pass.fresh })
     }
   }
-  const eligibleBy = new Map(eligibleRows.map((r) => [r.strategy, r.n]))
 
   const reactionsOf = new Map<number, Reaction[]>()
   const textsOf = new Map<number, string[]>()
   const sendOf = new Map<number, (typeof replyRows)[number]>()
   for (const row of replyRows) {
     sendOf.set(row.outreachLogId, row)
-    reactionsOf.set(row.outreachLogId, [...(reactionsOf.get(row.outreachLogId) ?? []), { kind: 'reply', responseType: row.responseType, sentiment: row.sentiment }])
+    reactionsOf.set(row.outreachLogId, [...(reactionsOf.get(row.outreachLogId) ?? []), { kind: 'reply', responseType: row.responseType, sentiment: row.sentiment, reason: primaryReasonOf(row.reason) }])
     const text = unquotedText(row.content)
     if (text !== '') textsOf.set(row.outreachLogId, [...(textsOf.get(row.outreachLogId) ?? []), text])
   }
@@ -888,13 +762,12 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
   const inquiryOutcomes = Object.fromEntries(INQUIRY_OUTCOMES.map((o) => [o, 0])) as Record<InquiryOutcome, number>
   for (const row of inquiryRows) inquiryOutcomes[row.outcome] = row.n
 
-  const kpiN = channelRows.reduce((sum, r) => sum + r.n, 0)
-  const settledN = settled?.n ?? 0
+  const kpi = evidenceOf(sends, now, config.reward)
+  const priorityBucket = (priority: number | null): string | null => (priority === null ? null : String(priority))
   return {
-    frameStart: epoch ?? null,
-    sufficient: settledN >= MIN_SETTLED_SENDS,
-    settled: settledN,
-    kpi: withReactions(kpiN, reactionsBy(reacted, () => null, config.reward).get(null)),
+    frameStart: config.measurementsSince ?? null,
+    sufficient: kpi.trials >= SUFFICIENT_TRIALS,
+    kpi,
     variants: [...activeVariants, ...archivedVariants].map((v) => ({
       variantId: v.id,
       addedOn: dayOf(v.createdAt),
@@ -902,14 +775,12 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
       subjectPattern: v.subjectPattern,
       bodyApproach: v.bodyApproach,
       archived: archival(variantArchivals, v.id, v.archivedAt),
-      ...counts(variantOf.get(v.id)),
+      ...(variantOf.get(v.id) ?? none),
     })),
     strategies: [...activeStrategies, ...archivedStrategies].map((st) => ({
       slug: st.id,
       addedOn: dayOf(st.createdAt),
       approach: st.approach,
-      bounced: bouncedBy.get(st.id) ?? 0,
-      bounceEligible: eligibleBy.get(st.id) ?? 0,
       discovery: {
         ...(passesBy.get(st.id) ?? noPasses),
         registered: registeredBy.get(st.id)?.registered ?? 0,
@@ -919,14 +790,14 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
         noContact: registeredBy.get(st.id)?.noContact ?? 0,
       },
       archived: archival(strategyArchivals, st.id, st.archivedAt),
-      ...counts(strategyStats.get(st.id)),
+      ...(strategyOf.get(st.id) ?? none),
     })),
     axes: {
-      industry: axisBuckets(foldCounts(industryRows, (r) => coarseIndustry(industryBucket(r.industry)), (r) => r.n), (r) => coarseIndustry(r.industry)),
-      size: axisBuckets(foldCounts(sizeRows, (r) => r.size, (r) => r.n), (r) => r.employeeBand),
-      country: axisBuckets(foldCounts(countryRows, (r) => countryBucket(r.prospectCountry, r.organizationCountry), (r) => r.n), (r) => r.country),
-      channel: axisBuckets(foldCounts(channelRows, (r) => r.channel, (r) => r.n), (r) => r.channel),
-      priority: axisBuckets(foldCounts(priorityRows, (r) => priorityBucket(r.priority), (r) => r.n), (r) => priorityBucket(r.priority)),
+      industry: axisBuckets((send) => coarseIndustry(send.industry)),
+      size: axisBuckets((send) => send.employeeBand),
+      country: axisBuckets((send) => send.country),
+      channel: axisBuckets((send) => send.channel),
+      priority: axisBuckets((send) => priorityBucket(send.priority)),
     },
     repliedSends,
     inquiryOutcomes,
@@ -944,61 +815,45 @@ export async function loadActiveVariantIds(db: Db, projectId: ProjectId): Promis
   return rows.map((r) => r.variantId)
 }
 
-// An option with no entry on record counts every send.
-async function sendsSinceEntry(
-  db: Db,
-  projectId: ProjectId,
-  target: OptionTarget,
-  optionIds: string[],
-  window: SQL | undefined,
-): Promise<Map<string, number>> {
-  if (optionIds.length === 0) return new Map()
-  const entries = await optionEntries(db, projectId, target)
-  const column = optionColumn(target)
-  const sinceEntry = or(...optionIds.map((id) => {
-    const at = entries.get(id)
-    return and(eq(column, id), at === undefined ? undefined : gte(outreachLogs.sentAt, at))
-  }))
-  const rows = await db
-    .select({ id: column, n: count() })
-    .from(outreachLogs)
-    .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
-    .where(sentBy(projectId, and(window, sinceEntry)))
-    .groupBy(column)
-  return new Map(rows.flatMap((r) => (r.id === null ? [] : [[r.id, r.n] as const])))
-}
-
-export async function observeTick(db: Db, projectId: ProjectId, config: LeverConfig): Promise<TickEvidence> {
-  const window = tickWindow(config, true)
-  const [activeIds, activeSlugs, variantStats, strategyOf, targeting, lostIds, lostSlugs, [state]] = await Promise.all([
+export async function observeTick(db: Db, projectId: ProjectId, config: LeverConfig, now: Date = new Date()): Promise<TickEvidence> {
+  const [sends, activeIds, activeSlugs, lostIds, lostSlugs, variantEntries, strategyEntries, [state]] = await Promise.all([
+    observeSends(db, projectId, frameStart(config)),
     loadActiveVariantIds(db, projectId),
     getActiveStrategySlugs(db, projectId),
-    getVariantStats(db, projectId, config, true),
-    getStrategyStats(db, projectId, config),
-    getTargetingStats(db, projectId, config, true),
     lostOptionIds(db, projectId, 'variant'),
     lostOptionIds(db, projectId, 'strategy'),
+    optionEntries(db, projectId, 'variant'),
+    optionEntries(db, projectId, 'strategy'),
     db.select({ variantFlatStreak: leverState.variantFlatStreak }).from(leverState).where(eq(leverState.projectId, projectId)),
   ])
-  const [variantSince, strategySince] = await Promise.all([
-    sendsSinceEntry(db, projectId, 'variant', activeIds, window),
-    sendsSinceEntry(db, projectId, 'strategy', activeSlugs, window),
-  ])
-  const variantOf = new Map(variantStats.map((s) => [s.variantId, s]))
-  const variantArm = (id: string) => ({ armId: id, total: variantOf.get(id)?.total ?? 0, rewardSum: variantOf.get(id)?.rewardSum ?? 0 })
-  const strategyArm = (slug: string) => ({ armId: slug, total: strategyOf.get(slug)?.total ?? 0, rewardSum: strategyOf.get(slug)?.rewardSum ?? 0 })
+  const judged = sends.filter(recentEnough(config, now))
+  const options = (target: OptionTarget, entries: Map<string, Date>) => {
+    const option = optionOf(target)
+    // An option with no entry on record counts every send.
+    const sinceEntry = (send: SendObservation): string | undefined => {
+      const id = option(send)
+      const at = id === undefined ? undefined : entries.get(id)
+      return at === undefined || send.sentAt >= at ? id : undefined
+    }
+    return { all: evidenceBy(judged, option, now, config.reward), sinceEntry: evidenceBy(judged, sinceEntry, now, config.reward) }
+  }
+  const variants = options('variant', variantEntries)
+  const strategies = options('strategy', strategyEntries)
   return {
     variants: {
-      active: activeIds.map((id) => ({ ...variantArm(id), responses: variantOf.get(id)?.responses ?? 0, sinceEntry: variantSince.get(id) ?? 0 })),
-      lost: lostIds.map(variantArm),
+      active: activeIds.map((id) => {
+        const e = variants.all.get(id)
+        return { ...armOf(id, e), responses: e?.replied ?? 0, sinceEntry: variants.sinceEntry.get(id)?.trials ?? 0 }
+      }),
+      lost: lostIds.map((id) => armOf(id, variants.all.get(id))),
       flatStreak: state?.variantFlatStreak ?? 0,
     },
     strategies: {
-      active: activeSlugs.map((slug) => ({ ...strategyArm(slug), sinceEntry: strategySince.get(slug) ?? 0 })),
-      lost: lostSlugs.map(strategyArm),
+      active: activeSlugs.map((slug) => ({ ...armOf(slug, strategies.all.get(slug)), sinceEntry: strategies.sinceEntry.get(slug)?.trials ?? 0 })),
+      lost: lostSlugs.map((slug) => armOf(slug, strategies.all.get(slug))),
     },
-    channel: await getChannelStats(db, projectId, config),
-    targeting,
-    futility: await getFutilityStats(db, projectId, config),
+    channel: channelStatsOf(sends, now, config.reward),
+    targeting: targetingStatsOf(judged, now, config.reward),
+    futility: futilityOf(sends, config, now),
   }
 }

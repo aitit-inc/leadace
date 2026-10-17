@@ -1,7 +1,6 @@
 import type { Channel, RejectionRecontactWindow } from '../db/schema'
 import type { AttentionItem } from './attention'
 import { coarseIndustry } from './coarse-industry'
-import type { LearningEntry } from './loop/learnings'
 import type { ChangeAuthor, DocumentTarget, LoggedChange, OptionOp, OptionTarget, RuleArchiveReason, RuleEvidence } from './loop/change'
 import { sendReaction, type Reaction, type ReactionLevel } from './loop/reaction'
 
@@ -41,7 +40,6 @@ export type DashboardLearning = {
   angles: LearningAngle[]
   needsNewAngle: boolean
   state: 'learning' | 'optimizing'
-  log: LearningEntry[]
 }
 
 export const JOURNAL_WINDOW_DAYS = 30

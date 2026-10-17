@@ -27,15 +27,6 @@ export interface DashboardTrendPoint {
   responses: number;
 }
 
-export type LearningStage = 'targeting' | 'body' | 'timing' | 'channel' | 'discovery';
-
-export interface LearningEntry {
-  stage: LearningStage;
-  date: string;
-  claim: string;
-  evidence: string | null;
-}
-
 // Percentages of the sends or prospects counted: positive, and positive or interest.
 export interface ReactionRates {
   positiveRate: number;
@@ -55,7 +46,6 @@ export interface DashboardLearning {
   angles: LearningAngle[];
   needsNewAngle: boolean;
   state: 'learning' | 'optimizing';
-  log: LearningEntry[];
 }
 
 // P(it beats the leading option) for a lost or restored one; P(best) among the

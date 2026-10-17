@@ -1,15 +1,32 @@
 // Deterministic pre-classification from headers + a top-line reply token; null = hand to the LLM.
 
+import type { RejectionPrimaryReason } from '../db/schema'
 import { getHeader, type ParsedEmail } from './email-message'
 
-export type DeterministicType = 'bounce' | 'auto_reply' | 'unsubscribe' | 'micro_not_me' | 'micro_later'
+type Sentiment = 'positive' | 'neutral' | 'negative'
+
+// An opt-out is the unsubscribe responseType, which the ingest gates on trust;
+// as a rejection reason it would force do_not_contact on forgeable mail.
+export type ReplyRejectionReason = Exclude<RejectionPrimaryReason, 'unsubscribe_request'>
+
+// What a reply means, whether its headers, a reply token or the LLM settled it.
+export type ReplyClassification =
+  | { sentiment: Sentiment; responseType: 'reply' | 'meeting_request' | 'unsubscribe' | 'auto_reply' | 'bounce' }
+  | { sentiment: Sentiment; responseType: 'rejection'; rejection: { reason: ReplyRejectionReason; quote: string | null } }
+
+const settled = (responseType: 'bounce' | 'auto_reply' | 'unsubscribe'): ReplyClassification => ({ sentiment: 'neutral', responseType })
+const declined = (reason: ReplyRejectionReason): ReplyClassification => ({
+  sentiment: 'neutral',
+  responseType: 'rejection',
+  rejection: { reason, quote: null },
+})
 
 const UNSUBSCRIBE_TOKENS = new Set(['unsubscribe', 'unsubscribeme', '配信停止'])
 // Must match the escape-hatch tokens promised in tpl_email_guidelines.
 const NOT_ME_TOKENS = new Set(['notme', '担当違い'])
 const LATER_TOKENS = new Set(['later', 'またの機会に'])
 
-export function detectDeterministicType(email: ParsedEmail): DeterministicType | null {
+export function classifyDeterministically(email: ParsedEmail): ReplyClassification | null {
   const from = (getHeader(email.headers, 'from') ?? '').toLowerCase()
   const contentType = (getHeader(email.headers, 'content-type') ?? '').toLowerCase()
   const subject = (getHeader(email.headers, 'subject') ?? '').toLowerCase()
@@ -20,7 +37,7 @@ export function detectDeterministicType(email: ParsedEmail): DeterministicType |
     /\bmailer-daemon\b|\bpostmaster@/.test(from) ||
     getHeader(email.headers, 'x-failed-recipients') !== null
   ) {
-    return 'bounce'
+    return settled('bounce')
   }
 
   const autoSubmitted = (getHeader(email.headers, 'auto-submitted') ?? '').toLowerCase()
@@ -31,14 +48,14 @@ export function detectDeterministicType(email: ParsedEmail): DeterministicType |
     getHeader(email.headers, 'x-vacation') !== null ||
     /\b(out of office|auto(matic)?[ -]?reply|on vacation|away from)\b/.test(subject)
   ) {
-    return 'auto_reply'
+    return settled('auto_reply')
   }
 
   const token = firstUnquotedToken(email.bodyText)
   if (token !== null) {
-    if (UNSUBSCRIBE_TOKENS.has(token)) return 'unsubscribe'
-    if (NOT_ME_TOKENS.has(token)) return 'micro_not_me'
-    if (LATER_TOKENS.has(token)) return 'micro_later'
+    if (UNSUBSCRIBE_TOKENS.has(token)) return settled('unsubscribe')
+    if (NOT_ME_TOKENS.has(token)) return declined('not_decision_maker')
+    if (LATER_TOKENS.has(token)) return declined('wrong_timing')
   }
 
   return null

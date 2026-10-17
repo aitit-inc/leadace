@@ -30,11 +30,11 @@ When response rates fall below expectations, examine the following 6 causes in o
 - Symptoms: No response from email but responses from SNS (or vice versa)
 - Owned by the lever (report-only): channel ranking is the affinity re-rank per coarse-industry. Report the measured `channelResponseRate` / `channelAffinity` and any shift — do not rewrite channel priority
 
-## Message Pattern Analysis (no deterministic edits — narrate, and route repeated findings to the Learnings Log)
+## Message Pattern Analysis (narrate, and turn a repeated finding into a new angle)
 
 There is no manual A/B test to design or "adopt as default" here. Subject lines are optimized by the lever tick (the bandit's continuous weighted draw across `subject_variants`, learning from replies); channel ranking by the affinity re-rank. /evaluate reads their measured performance and narrates it — it does not run subject / channel experiments or write `ab_test` records.
 
-For message elements no lever owns (body length, CTA phrasing, tone, hook), the structured home for a *repeated, number-anchored* finding is the Learnings Log: write it as a gated `[body]` / `[channel]` entry (per /evaluate SKILL.md step 4) so outbound applies it as a composition hint next cycle, instead of the observation evaporating into the report. Still narrate it in the report, and still do not rewrite SALES_STRATEGY messaging or encode it as a deterministic / evaluate-applied change — learnings steer authoring, they are not rules.
+For message elements no lever owns (body length, CTA phrasing, tone, hook), a *repeated, number-anchored* finding goes into the next new angle: its body approach carries it, and the lever measures it against the others. One that should hold for every message is a Messaging change only the person can make — suggest it. Narrate it in the report; do not rewrite SALES_STRATEGY messaging yourself.
 
 ### Dimensions to compare when reporting
 - **Subject patterns**: curiosity vs. number vs. problem-mention (from variant performance — lever-owned)

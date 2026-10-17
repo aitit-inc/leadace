@@ -14,7 +14,7 @@ const emptySummary: DashboardSummary = {
   funnel: [],
   trend: [],
   reactionRates: { positive: { previous: 0, current: 0 }, interested: { previous: 0, current: 0 } },
-  learning: { bestSubject: null, angles: [], needsNewAngle: false, state: 'learning', log: [] },
+  learning: { bestSubject: null, angles: [], needsNewAngle: false, state: 'learning' },
   journal: [],
   lastCycleDate: null,
   rejections: {
@@ -35,7 +35,6 @@ const input = (over: Omit<Partial<DigestInput>, 'summary'> & { summary?: Partial
   projectName: 'Acme',
   sinceDay: '2026-09-14',
   today: '2026-09-18',
-  retiredClaims: [],
   ...over,
   summary: { ...emptySummary, ...over.summary },
 })
@@ -67,18 +66,12 @@ describe('buildDigest', () => {
       { date: '2026-09-18', kind: 'option', target: 'strategy', optionId: 'yc-hn', label: null, op: 'restore', actor: 'user', reason: 'still the best source' },
       { date: '2026-09-18', kind: 'document', target: 'sales_strategy', actor: 'ace', reason: 'Not a fit: agencies' },
     ]
-    const body = buildDigest(input({ today: '2026-09-19', summary: { journal } }))?.body ?? ''
+    const digest = buildDigest(input({ today: '2026-09-19', summary: { journal } }))
+    expect(digest?.subject).toBe('Acme: 3 changes from what we learned')
+    const body = digest?.body ?? ''
     expect(body).toContain('Search strategy retired: yc-hn (another strategy won)')
     expect(body).toContain('Search strategy back: yc-hn (by you) — still the best source')
     expect(body).toContain('Sales strategy adjusted — Not a fit: agencies')
-  })
-
-  it('leads with what was un-learned and counts it as a change', () => {
-    const digest = buildDigest(input({ retiredClaims: ['Fresh-signal prospects reply more'] }))
-    expect(digest?.subject).toBe('Acme: 1 change from what we learned')
-    expect(digest?.body.split('\n').at(-1)).toBe(
-      'Un-learned: "Fresh-signal prospects reply more" — the measurement it rested on was withdrawn',
-    )
   })
 
   it('goes out on the heartbeat with nothing to report, once there is something to show', () => {

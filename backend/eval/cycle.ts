@@ -176,7 +176,7 @@ async function runPass(target: string, arm: Arm, n: number): Promise<void> {
     spec.strategies.map(async (entry) => {
       const path = resolve(at, `search.${entry.slug}.json`)
       if (existsSync(path)) return readJson(path, searchRecordSchema)
-      const args = { plan: entry, business: spec.business, salesStrategy: spec.salesStrategy, searchNotes: notesAtStart, learnings: null, reviewFeedback: null, targetCountries: spec.targetCountries, today }
+      const args = { plan: entry, business: spec.business, salesStrategy: spec.salesStrategy, searchNotes: notesAtStart, reviewFeedback: null, targetCountries: spec.targetCountries, today }
       const prompt = searchPrompt(args)
       const { value, calls } = await paid(async () => {
         try {

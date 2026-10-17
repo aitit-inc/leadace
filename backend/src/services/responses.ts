@@ -31,6 +31,7 @@ import {
   FEATURE_GAP_REASON,
   NOT_RELEVANT_REASON,
   BUDGET_REASON,
+  OTHER_REASON,
   type DecisionMakerPointer,
 } from '../domain/rejection-feedback'
 import { addMonthsUtc, nextStatusFromResponse } from '../domain/prospect-status'
@@ -650,16 +651,23 @@ export async function getRejectionFeedbackSummaryById(
     sql`, `,
   )
 
+  // One reason per prospect: a prospect who declines by email and again on the
+  // unsubscribe page is one no. Their latest specific reason stands; 'other' only
+  // when they gave nothing more specific.
+  const reasonOf = sql<string>`${responses.rejectionFeedback}->>'primary_reason'`
+  const prospectReasons = db
+    .selectDistinctOn([outreachLogs.prospectId], { reason: reasonOf.as('reason') })
+    .from(responses)
+    .innerJoin(outreachLogs, eq(outreachLogs.id, responses.outreachLogId))
+    .where(and(...baseConditions))
+    .orderBy(outreachLogs.prospectId, sql`${reasonOf} = ${OTHER_REASON}`, desc(responses.receivedAt))
+    .as('prospect_reasons')
+
   const [reasonRows, featureGapRows, budgetRows, recontactRows, decisionMakerRows, notRelevantRows] = await Promise.all([
     db
-      .select({
-        reason: sql<string>`${responses.rejectionFeedback}->>'primary_reason'`,
-        count: sql<number>`COUNT(*)::int`,
-      })
-      .from(responses)
-      .innerJoin(outreachLogs, eq(outreachLogs.id, responses.outreachLogId))
-      .where(and(...baseConditions))
-      .groupBy(sql`${responses.rejectionFeedback}->>'primary_reason'`),
+      .select({ reason: prospectReasons.reason, count: sql<number>`COUNT(*)::int` })
+      .from(prospectReasons)
+      .groupBy(prospectReasons.reason),
 
     gated(scope !== 'tactical', () =>
       db

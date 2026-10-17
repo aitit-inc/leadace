@@ -101,7 +101,7 @@ describe('percentOf', () => {
 describe('prospectLevels', () => {
   const reply = (prospectId: number, sentiment: 'positive' | 'neutral' | 'negative') => ({
     prospectId,
-    reaction: { kind: 'reply' as const, responseType: 'reply' as const, sentiment },
+    reaction: { kind: 'reply' as const, responseType: 'reply' as const, sentiment, reason: null },
   })
 
   it('scores a prospect once, by the strongest reaction across its sends', () => {

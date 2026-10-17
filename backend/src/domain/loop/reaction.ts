@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { INQUIRY_OUTCOMES, type InquiryOutcome, type responseTypeEnum, type sentimentEnum } from '../../db/schema'
+import { INQUIRY_OUTCOMES, type InquiryOutcome, type RejectionPrimaryReason, type responseTypeEnum, type sentimentEnum } from '../../db/schema'
 
 type ResponseType = (typeof responseTypeEnum.enumValues)[number]
 type Sentiment = (typeof sentimentEnum.enumValues)[number]
@@ -62,8 +62,9 @@ const LEVEL: Record<keyof RewardWeights, ReactionLevel> = {
 }
 const RANK: Record<ReactionLevel, number> = { none: 0, interest: 1, positive: 2 }
 
+// `reason` is the stated reason of a rejection (rejection_feedback), else null.
 export type Reaction =
-  | { kind: 'reply'; responseType: ResponseType; sentiment: Sentiment }
+  | { kind: 'reply'; responseType: ResponseType; sentiment: Sentiment; reason: RejectionPrimaryReason | null }
   | { kind: 'inquiry'; outcome: InquiryOutcome }
 
 function weightOf(reaction: Reaction): keyof RewardWeights | null {
@@ -122,4 +123,34 @@ export function reactionTotalsByKey<K>(
     byKey.set(key, totals)
   }
   return byKey
+}
+
+// What a send's reactions say beyond the reward: a no's stated reason, and a
+// bounce (the address failed, not the message).
+export type SendOutcome =
+  | { kind: 'positive' | 'interest' | 'bounced' | 'silent' }
+  | { kind: 'declined'; reason: RejectionPrimaryReason | null }
+
+// The inquiry-page acts sendOutcome reads: the rewarded ones and an opt-out,
+// which the page records with no reply when the person gives no reason.
+export const OBSERVED_INQUIRY_OUTCOMES: readonly InquiryOutcome[] = [...REWARDED_INQUIRY_OUTCOMES, 'unsubscribed']
+
+// undefined when the reaction is not a no.
+function declineReason(reaction: Reaction): RejectionPrimaryReason | null | undefined {
+  if (reaction.kind === 'inquiry') return reaction.outcome === 'unsubscribed' ? 'unsubscribe_request' : undefined
+  return weightOf(reaction) === 'negativeReply' ? reaction.reason : undefined
+}
+
+// `reactions` in the order they arrived: a later stated reason wins, and
+// 'other' only when no specific one was given. A person's reaction outranks a
+// bounce: the mail reached someone.
+export function sendOutcome(reactions: readonly Reaction[]): SendOutcome {
+  const { level } = sendReaction(reactions)
+  if (level !== 'none') return { kind: level }
+  const declines = reactions.map(declineReason).filter((reason) => reason !== undefined)
+  if (declines.length > 0) {
+    const stated = declines.filter((reason) => reason !== null)
+    return { kind: 'declined', reason: stated.findLast((reason) => reason !== 'other') ?? stated.at(-1) ?? null }
+  }
+  return reactions.some((r) => r.kind === 'reply' && r.responseType === 'bounce') ? { kind: 'bounced' } : { kind: 'silent' }
 }

@@ -1,10 +1,14 @@
 import { describe, it, expect } from 'vitest'
 import { parseEmailMessage } from './email-message'
-import { detectDeterministicType, leadingUnquotedText, unquotedText } from './reply-classify'
+import { classifyDeterministically, leadingUnquotedText, unquotedText } from './reply-classify'
 
-const classify = (raw: string) => detectDeterministicType(parseEmailMessage(raw))
+// A reply token's no reads as its reason.
+const classify = (raw: string) => {
+  const c = classifyDeterministically(parseEmailMessage(raw))
+  return c?.responseType === 'rejection' ? c.rejection.reason : (c?.responseType ?? null)
+}
 
-describe('detectDeterministicType', () => {
+describe('classifyDeterministically', () => {
   it('flags a DSN delivery-status report as a bounce', () => {
     const raw = 'From: Mail Delivery System <MAILER-DAEMON@mx.acme.com>\r\nContent-Type: multipart/report; report-type=delivery-status; boundary="b"\r\n\r\n...'
     expect(classify(raw)).toBe('bounce')
@@ -62,26 +66,26 @@ describe('detectDeterministicType', () => {
     expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\nplease remove me from your list')).toBeNull()
   })
 
-  it('flags a top-line "NOT ME" reply as micro_not_me (case-insensitive, punctuation stripped)', () => {
-    expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\nNot me.')).toBe('micro_not_me')
+  it('flags a top-line "NOT ME" reply as not_decision_maker (case-insensitive, punctuation stripped)', () => {
+    expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\nNot me.')).toBe('not_decision_maker')
   })
 
-  it('flags a top-line "担当違い" reply (with quoted history below) as micro_not_me', () => {
+  it('flags a top-line "担当違い" reply (with quoted history below) as not_decision_maker', () => {
     expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\n「担当違い」です\r\n\r\nOn Mon someone wrote:\r\n> hello')).toBeNull()
-    expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\n担当違い。\r\n\r\nOn Mon someone wrote:\r\n> hello')).toBe('micro_not_me')
+    expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\n担当違い。\r\n\r\nOn Mon someone wrote:\r\n> hello')).toBe('not_decision_maker')
   })
 
-  it('flags a top-line "LATER" reply as micro_later', () => {
-    expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\nLATER')).toBe('micro_later')
+  it('flags a top-line "LATER" reply as wrong_timing', () => {
+    expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\nLATER')).toBe('wrong_timing')
   })
 
-  it('flags a top-line "またの機会に。" reply as micro_later (fullwidth punctuation stripped)', () => {
-    expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\nまたの機会に。')).toBe('micro_later')
+  it('flags a top-line "またの機会に。" reply as wrong_timing (fullwidth punctuation stripped)', () => {
+    expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\nまたの機会に。')).toBe('wrong_timing')
   })
 
   it('strips smart quotes and fullwidth period/comma (‘NOT ME’, 担当違い．)', () => {
-    expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\n‘NOT ME’')).toBe('micro_not_me')
-    expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\n担当違い．')).toBe('micro_not_me')
+    expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\n‘NOT ME’')).toBe('not_decision_maker')
+    expect(classify('From: lead@acme.com\r\nSubject: Re: hi\r\n\r\n担当違い．')).toBe('not_decision_maker')
   })
 
   it('does not flag a sentence that merely starts with a token ("Later this week works")', () => {

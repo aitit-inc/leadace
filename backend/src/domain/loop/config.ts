@@ -2,7 +2,6 @@ import { z } from 'zod'
 import { rewardWeightsSchema, rewardWeightsPatchSchema, defaultRewardWeights } from './reaction'
 
 const minSamplePerArm = z.number().int().min(1)
-const rewardWindowDays = z.number().int().min(1)
 const rewardLookbackDays = z.number().int().min(1)
 const priorStrength = z.number().min(1)
 const explorationShare = z.number().min(0).max(1)
@@ -26,12 +25,8 @@ export const leverConfigSchema = z.object({
   // Sends an option needs before the rule judges it, counted over all its
   // history and again since it last entered the active set.
   minSamplePerArm: minSamplePerArm.default(30),
-  rewardWindowDays: rewardWindowDays.default(14),
-  // Forgetting window (opt-in). When set, the tick weighs only the most recent
-  // `rewardLookbackDays` days of reply-mature sends: the band is
-  // [now - rewardWindowDays - rewardLookbackDays, now - rewardWindowDays). Stacking
-  // past the maturation cutoff keeps the band non-empty for any value >= 1, so no
-  // cross-field invariant can be violated. Unset = all mature history.
+  // Forgetting window (opt-in): the options are judged on the sends of the last
+  // `rewardLookbackDays` days only. Unset = every send in the frame.
   rewardLookbackDays: rewardLookbackDays.optional(),
   reward: rewardWeightsSchema.default(defaultRewardWeights),
   // Shrinkage prior (pseudo-sends at the project mean) for the targeting lifts.
@@ -91,7 +86,6 @@ export function leverConfigInvariantViolation(config: LeverConfig): string | nul
 // Overrides-only storage shape (the jsonb $type): unset fields are filled at read, so default changes need no backfill.
 export const leverConfigPatchSchema = z.object({
   minSamplePerArm: minSamplePerArm.optional(),
-  rewardWindowDays: rewardWindowDays.optional(),
   rewardLookbackDays: rewardLookbackDays.optional(),
   reward: rewardWeightsPatchSchema.optional(),
   priorStrength: priorStrength.optional(),

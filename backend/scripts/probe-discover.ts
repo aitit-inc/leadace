@@ -106,7 +106,7 @@ async function measure(plan: (typeof strategies)[number]): Promise<void> {
   const t0 = Date.now()
   const before = usages.length
   const search = await callLlmGroundedText(env, 'discover.search', {
-    prompt: searchPrompt({ plan, business, salesStrategy, searchNotes: null, learnings: null, targetCountries: [], today }),
+    prompt: searchPrompt({ plan, business, salesStrategy, searchNotes: null, targetCountries: [], today }),
   })
   const extracted = await callLlmFollowUpJson(env, 'discover.extract', {
     after: search,

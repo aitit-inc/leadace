@@ -229,7 +229,6 @@ async function collect(target: string, provider: Provider, extractors: (string |
       business: spec.business,
       salesStrategy: spec.salesStrategy,
       searchNotes: null,
-      learnings: null,
       reviewFeedback: null,
       targetCountries: spec.targetCountries,
       today,

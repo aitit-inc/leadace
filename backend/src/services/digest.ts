@@ -1,35 +1,15 @@
-import { and, desc, eq, lt } from 'drizzle-orm'
-import { projectDocuments, projectSettings, projects } from '../db/schema'
-import type { Db } from '../db/connection'
+import { and, eq } from 'drizzle-orm'
+import { projectSettings, projects } from '../db/schema'
 import type { TenantRun } from '../db/rls'
 import type { Edition } from '../domain/edition'
 import type { ProjectId, TenantId } from '../domain/ids'
 import { buildDigest, dayOf, dayStart } from '../domain/digest'
-import { newlyRetiredClaims } from '../domain/loop/learnings'
 import { getDashboardSummary } from './dashboard'
 import { notify, type NotifyCtx } from './notifications'
 import { ok, err, type ServiceResult } from './result'
 import { getTenantOwnerUserId } from './tenants'
 
 export type DigestCtx = NotifyCtx & { edition: Edition }
-
-// The log as it stood when `at` began. Read at both ends of the window, the two
-// answers differ by exactly what the window retired.
-async function learningsBefore(db: Db, projectId: ProjectId, at: Date): Promise<string | null> {
-  const [row] = await db
-    .select({ content: projectDocuments.content })
-    .from(projectDocuments)
-    .where(
-      and(
-        eq(projectDocuments.projectId, projectId),
-        eq(projectDocuments.slug, 'learnings'),
-        lt(projectDocuments.createdAt, at),
-      ),
-    )
-    .orderBy(desc(projectDocuments.createdAt))
-    .limit(1)
-  return row?.content ?? null
-}
 
 // Sent once: the notification's reference carries the day, and a sent digest
 // moves the cursor the next one reports from.
@@ -61,20 +41,7 @@ export async function sendCycleDigest(
     // The window the dashboard opens on, so the email and the screen agree.
     const summary = await getDashboardSummary(db, tenantId, owner, ctx.edition, projectId, { period: '30d' })
     if (!summary.ok) return summary
-    const sinceDay = dayOf(settings.since)
-    const [before, after] = await Promise.all([
-      learningsBefore(db, projectId, dayStart(sinceDay)),
-      learningsBefore(db, projectId, windowEnd),
-    ])
-    return ok(
-      buildDigest({
-        projectName: project.name,
-        sinceDay,
-        today,
-        summary: summary.value,
-        retiredClaims: newlyRetiredClaims(before, after),
-      }),
-    )
+    return ok(buildDigest({ projectName: project.name, sinceDay: dayOf(settings.since), today, summary: summary.value }))
   })
   if (!prepared.ok) return prepared
   const digest = prepared.value

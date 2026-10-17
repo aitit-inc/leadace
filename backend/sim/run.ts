@@ -1,5 +1,5 @@
 // Usage (from backend/):
-//   npx tsx sim/run.ts [--experiment=bandit|futility|options|supply|frame] [--quick] [--seeds=N] [--samples=N] [--only=label,…]
+//   npx tsx sim/run.ts [--experiment=bandit|futility|options|delay|supply|frame] [--quick] [--seeds=N] [--samples=N] [--only=label,…]
 
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
@@ -7,8 +7,17 @@ import { fileURLToPath } from 'node:url'
 import { leverConfigSchema, type LeverConfigPatch } from '../src/domain/loop/config'
 import { incidentWindowOf, oracleTrajectory, runScenario, type Scenario } from './environment'
 import { aggregate, extractRunMetrics, type AggregateRow } from './metrics'
-import { banditScenarios, frameScenarios, futilityScenarios, optionsScenarios, supplyProfiles } from './scenarios'
-import { aggregateOptions, runOptions } from './options'
+import {
+  banditScenarios,
+  delayOptionsScenarios,
+  frameScenarios,
+  futilityScenarios,
+  NON_POSITIVE_REPLY_RATE,
+  optionsScenarios,
+  supplyProfiles,
+} from './scenarios'
+import { aggregateFeedback, aggregateOptions, BIAS_DAYS, runOptions, type FeedbackModel } from './options'
+import { LEGACY_MATURE_DAYS, productionEvidence } from './delay'
 import { aggregateSupply, runSupply, type ExhaustRule } from './supply'
 import { aggregateFrame, runFrame, type FrameSignalParams } from './frame-signal'
 
@@ -86,6 +95,28 @@ const frameParams: { label: string; params: FrameSignalParams }[] = [
   ),
   { label: 'floor=0.01,conf=0.95,min=300', params: { floor: 0.01, confidence: 0.95, minSends: 300 } },
 ]
+
+// #906: the pre-#906 14-day maturity vs production's delayed-feedback count
+// (delay.ts), on the measured reply delay and on one twice as slow as the loop
+// assumes. A `patch` moves an option-rule value too; the frame signal reads none of them.
+type FeedbackVariant = { label: string; patch?: LeverConfigPatch; feedback: (settleDays: number) => FeedbackModel }
+const market = (scale: number) => ({ trueDelayScale: scale, nonPositiveReplyRate: NON_POSITIVE_REPLY_RATE })
+const mature = (scale: number) => (settleDays: number): FeedbackModel => ({
+  ...market(scale),
+  evidence: { kind: 'mature', windowDays: settleDays },
+})
+const production = (scale: number) => (): FeedbackModel => ({ ...market(scale), evidence: productionEvidence })
+const feedbackVariants: FeedbackVariant[] = [
+  { label: 'mature14', feedback: mature(1) },
+  { label: 'production', feedback: production(1) },
+  { label: 'mature14@2x-slow', feedback: mature(2) },
+  { label: 'production@2x-slow', feedback: production(2) },
+  // Judging ~12 days sooner also starts the stagnation count sooner.
+  { label: 'production:rotate=14', patch: { stagnationTicks: 14 }, feedback: production(1) },
+  { label: 'production:rotate=19', patch: { stagnationTicks: 19 }, feedback: production(1) },
+]
+const delayFrameParams: FrameSignalParams = { floor: 0.01, confidence: 0.95, minSends: 100 }
+const BIAS_COLUMNS = BIAS_DAYS.flatMap((d) => [`n@${d}`, `sBias@${d}`, `pmRatio@${d}`])
 
 const args = process.argv.slice(2)
 const flag = (name: string): string | undefined =>
@@ -247,6 +278,50 @@ if (experiment === 'options' || experiment === 'all') {
     'bestGoneByRotation',
     'endGapMean',
   ])
+}
+
+if (experiment === 'delay' || experiment === 'all') {
+  const rows: ResultRow[] = []
+  const frameRows: ResultRow[] = []
+  for (const { label, patch, feedback } of feedbackVariants.filter((v) => keep(v.label))) {
+    const config = leverConfigSchema.parse(patch ?? {})
+    for (const scenario of delayOptionsScenarios) {
+      const started = Date.now()
+      const model = feedback(LEGACY_MATURE_DAYS)
+      const runs = Array.from({ length: optionsSeeds }, (_, seed) => runOptions(scenario, seed, config, mcSamples, model))
+      rows.push({
+        variant: label,
+        scenario: scenario.name,
+        metrics: { ...aggregateOptions(runs, scenario), ...aggregateFeedback(runs) },
+      })
+      console.error(`[delay] ${label} × ${scenario.name}: ${optionsSeeds} seeds in ${((Date.now() - started) / 1000).toFixed(1)}s`)
+    }
+    for (const scenario of patch === undefined ? frameScenarios : []) {
+      const model = feedback(scenario.settleDays)
+      const runs = Array.from({ length: frameSeeds }, (_, seed) => runFrame(scenario, delayFrameParams, seed, mcSamples, model))
+      frameRows.push({ variant: label, scenario: scenario.name, metrics: aggregateFrame(runs, scenario) })
+    }
+  }
+  writeOutputs('delay', optionsSeeds, rows)
+  writeOutputs('delay-frame', frameSeeds, frameRows)
+  console.log('\n== delay: options ==')
+  printTable(rows, [
+    'rateLift',
+    'wrongPerYear',
+    'wrongRotationsPerYear',
+    'wrongArchiveShare',
+    'archivesPerYear',
+    'rotationsPerYear',
+    'createdPerYear',
+    'immatureShare',
+    'judgedDaysP50',
+    'judgedDaysP90',
+    'bestArchivedAtEnd',
+  ])
+  console.log('\n== delay: early evidence ==')
+  printTable(rows, BIAS_COLUMNS)
+  console.log('\n== delay: frame signal ==')
+  printTable(frameRows, ['firedFrac', 'firedDayP50', 'firedDayP90', 'firedFrac@0', 'firedDayP50@0', 'firedFrac@90', 'firedDayP50@90'])
 }
 
 if (experiment === 'supply' || experiment === 'all') {

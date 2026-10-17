@@ -1,20 +1,17 @@
 // Assembled from what the dashboard already computed. No LLM call: the email
 // and the dashboard must never disagree about a number.
 import type { DashboardSummary, JournalEvent, RateChange, SegmentAxis } from './dashboard'
-import type { LearningEntry } from './loop/learnings'
 
 // A digest covers whole UTC days, [sinceDay, today): the day is all the
-// resolution a journal event or a learnings entry carries, so reporting a day
-// still in progress would either lose what the rest of it records or repeat
-// what was already reported. Today's changes go out in the next digest.
+// resolution a journal event carries, so reporting a day still in progress
+// would either lose what the rest of it records or repeat what was already
+// reported. Today's changes go out in the next digest.
 export type DigestInput = {
   projectName: string
   // 'YYYY-MM-DD' UTC days: the day the last digest covered up to, and today.
   sinceDay: string
   today: string
   summary: DashboardSummary
-  // Retired within the window, not every retired claim.
-  retiredClaims: string[]
 }
 
 export type Digest = { subject: string; body: string }
@@ -42,8 +39,6 @@ export function dayOf(at: Date): string {
   return at.toISOString().slice(0, 10)
 }
 
-// The window's own boundaries as instants, for the document versions that carry
-// a timestamp rather than a day.
 export function dayStart(day: string): Date {
   return new Date(`${day}T00:00:00.000Z`)
 }
@@ -54,10 +49,6 @@ function daysBetween(fromDay: string, toDay: string): number {
 
 function quote(claim: string): string {
   return `"${claim.replace(/\s+/g, ' ').trim()}"`
-}
-
-function learningLine(e: LearningEntry): string {
-  return `Learned [${e.stage}]: ${e.claim}`
 }
 
 const OPTION_HEAD = {
@@ -82,15 +73,9 @@ function journalLine(e: JournalEvent): string {
   }
 }
 
-// The retired learnings lead: what was un-learned shows on no other screen.
 function digestChanges(input: DigestInput): string[] {
-  const { sinceDay, today, summary, retiredClaims } = input
-  const inWindow = (date: string): boolean => date >= sinceDay && date < today
-  return [
-    ...retiredClaims.map((c) => `Un-learned: ${quote(c)} — the measurement it rested on was withdrawn`),
-    ...summary.learning.log.filter((e) => inWindow(e.date)).map(learningLine),
-    ...summary.journal.filter((e) => inWindow(e.date)).map(journalLine),
-  ]
+  const { sinceDay, today, summary } = input
+  return summary.journal.filter((e) => e.date >= sinceDay && e.date < today).map(journalLine)
 }
 
 function resultsLine(summary: DashboardSummary): string {

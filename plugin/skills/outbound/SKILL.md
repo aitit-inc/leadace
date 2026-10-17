@@ -60,8 +60,6 @@ Load `get_document` (`projectId: "$0"`) for
 - **Sender information**: the name (+ optional role) for the light sign-off — not a signature block. Display name and address come from project settings; the backend appends the compliance footer
 - **SNS messages**: SNS DM messaging policy
 
-Also load `slug: "learnings"`. Its `[body]` / `[timing]` / `[channel]` entries are evidence-cited composition hints, not rules — `[timing]` informs the step-3b re-approach judgment, not send time-of-day. Skip if the document is missing.
-
 **Note:** Sending timing (day of week, time of day) is not controlled by this skill.
 
 Retrieve the uncontacted prospect list and the project's send settings:
@@ -159,8 +157,6 @@ exception). It is the **default** order. Apply these inputs, highest precedence 
   top-ranked channel that is available and enabled; fall back to the policy order for
   channels it doesn't cover. Empty (the common early state) → ignore it.
 - **`tpl_channel_policy`** default order when none of the above decide.
-
-The `learnings` `[channel]` entries (step 1) are advisory color on *how* to use a channel, never a precedence input.
 
 Country eligibility is not a skill-side concern — `get_outbound_targets` already filtered to supported recipient countries (step 1).
 

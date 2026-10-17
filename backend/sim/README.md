@@ -12,6 +12,11 @@ Experiments:
 - `options` (`options.ts`): the middle and inner layers of #793 — which options
   run, which are dropped or brought back, how sends split — as `decide()` rules
   them; each row moves one config value from the defaults.
+- `delay` (`delay.ts`, #906): the options experiment and the frame signal under
+  the pre-#906 14-day maturity (`mature14`) vs production's delayed-feedback
+  count (`production`: a reply counts when it arrives, a silent send counts as
+  F(age) of a trial), on the measured reply delay and on one twice as slow as
+  assumed.
 - `supply` (`supply.ts`): when a discovery strategy counts as exhausted.
 - `frame` (`frame-signal.ts`): when the outer layer proposes rethinking the frame.
 
@@ -26,7 +31,7 @@ question comes up.
 cd backend
 npx tsx sim/run.ts                # every experiment, full seed counts
 npx tsx sim/run.ts --quick        # iteration mode
-npx tsx sim/run.ts --experiment=bandit|futility|options|supply|frame --seeds=N --samples=N
+npx tsx sim/run.ts --experiment=bandit|futility|options|delay|supply|frame --seeds=N --samples=N
 npx tsx sim/run.ts --experiment=options --only=default,tau=0.05   # one process per row set
 npx tsc --noEmit -p sim           # typecheck
 ```

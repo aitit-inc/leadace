@@ -88,14 +88,6 @@
     all: 'So far',
   };
 
-  const LEARNING_STAGE_LABELS: Record<string, string> = {
-    targeting: 'Targeting',
-    body: 'Message',
-    timing: 'Timing',
-    channel: 'Channel',
-    discovery: 'Discovery',
-  };
-  const LEARNINGS_SHOWN = 6;
   const JOURNAL_SHOWN = 5;
 
   const SEGMENT_AXIS_LABELS: Record<SegmentAxis, string> = {
@@ -127,7 +119,7 @@
   function evidenceDetail(evidence: Extract<JournalEvent, { kind: 'rule_archive' }>['evidence']): string | null {
     if (!evidence) return null;
     const p = 'pBest' in evidence ? evidence.pBest : evidence.pBeatsLeader;
-    return `win chance ${Math.round(p * 100)}% · ${evidence.n} sends`;
+    return `win chance ${Math.round(p * 100)}% · ${Math.round(evidence.n)} sends`;
   }
 
   function journalText(e: JournalEvent): { text: string; detail: string | null; why: string | null } {
@@ -454,7 +446,7 @@
             <Brain size={18} class="text-inbound" />
             <h3 class="font-display text-lg font-semibold text-text">What the AI is doing</h3>
           </div>
-          {#if summary.learning.angles.length > 0 || summary.learning.bestSubject || summary.journal.length > 0 || summary.learning.log.length > 0}
+          {#if summary.learning.angles.length > 0 || summary.learning.bestSubject || summary.journal.length > 0}
             <ul class="space-y-4 text-sm">
               <li>
                 <p class="flex items-center gap-2 text-text">
@@ -519,26 +511,6 @@
                   </ul>
                   {#if summary.journal.length > JOURNAL_SHOWN}
                     <p class="mt-2 text-xs text-text-muted">+{summary.journal.length - JOURNAL_SHOWN} more in the last 30 days</p>
-                  {/if}
-                </li>
-              {/if}
-              {#if summary.learning.log.length > 0}
-                <li class="border-t border-border pt-4">
-                  <p class="text-xs font-semibold text-text-muted">Learnings</p>
-                  <ul class="mt-2 space-y-2">
-                    {#each summary.learning.log.slice(0, LEARNINGS_SHOWN) as entry}
-                      <li class="flex items-start gap-2" title={entry.date}>
-                        <span class="chip shrink-0 bg-surface-2 text-text-secondary">
-                          {LEARNING_STAGE_LABELS[entry.stage] ?? humanize(entry.stage)}
-                        </span>
-                        <span class="min-w-0 break-words text-text-secondary">
-                          {entry.claim}{#if entry.evidence}{' '}<span class="text-text-muted">· {entry.evidence}</span>{/if}
-                        </span>
-                      </li>
-                    {/each}
-                  </ul>
-                  {#if summary.learning.log.length > LEARNINGS_SHOWN}
-                    <p class="mt-2 text-xs text-text-muted">+{summary.learning.log.length - LEARNINGS_SHOWN} more</p>
                   {/if}
                 </li>
               {/if}

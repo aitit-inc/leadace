@@ -68,8 +68,6 @@ Use DB queries to understand the state from the previous cycle:
 Use this information to inform subsequent steps when relevant. For example:
 - If reachable count is very low -> Run build-list earlier
 
-(The evaluate sub-agent reads the `learnings` document directly, and outbound reads it by stage tag, so the prior cycle's analysis re-enters downstream stages automatically — no need to pre-load it here.)
-
 ### 3. check-responses (sub-agent)
 
 Launch a sub-agent using the Agent tool to check for replies.
@@ -339,6 +337,6 @@ The entry is public and written by **Ace** (first person, the project's `targetL
 - Anonymize every third party before saving: company, product, and organization names → industry + size ("a 12-person dev tools company"); people → role ("a founder at a seed-stage fintech"); email addresses, domains, URLs, and social handles are dropped entirely. Only Ace and the product being sold stay named. Keep numbers and facts exactly as they are — no rounding up, no spin, no promises. Never quote or closely paraphrase fetched content or a prospect's message — state the reason only. A line with no data says so in that line; never invent.
 - The server runs a second anonymization pass on `public_journal` before storing it and rejects the save when the pass fails (502 — retry once) or when a link, email address, domain, or social handle survives it (422 — rewrite the entry without it and save again). If the save still fails, report it in the return to main — the previous entry stays on `/live`.
 
-Per-cycle actuals are **not** written to any other document. Send / draft / response counts live in structured storage (`outreach_logs`, `responses`) and are surfaced in the Web UI (`/evaluations`, `/drafts`, `/outreach`); the distilled analysis memory lives in the `learnings` document. Do **not** create or maintain a "KPI Actuals" section in SALES_STRATEGY.md.
+Per-cycle actuals are **not** written to any other document. Send / draft / response counts live in structured storage (`outreach_logs`, `responses`) and are surfaced in the Web UI (`/evaluations`, `/drafts`, `/outreach`); what was changed and why lives in the change log (`get_lever_decisions`). Do **not** create or maintain a "KPI Actuals" section in SALES_STRATEGY.md.
 
 Sub-agent's return to main: Briefly report the notification send status and whether a public journal entry was saved.

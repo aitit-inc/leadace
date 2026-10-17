@@ -34,7 +34,7 @@ describe('recordFieldsForReply', () => {
   const iso = '2026-06-10T12:00:00.000Z'
 
   it('maps a threaded unsubscribe to a do-not-contact rejection with unsubscribe_request', () => {
-    const fields = recordFieldsForReply('unsubscribe', iso, true)
+    const fields = recordFieldsForReply({ sentiment: 'neutral', responseType: 'unsubscribe' }, iso, true)
     expect(fields.responseType).toBe('rejection')
     expect(fields.markDoNotContact).toBe(true)
     expect(fields.rejectionFeedback).toEqual({
@@ -45,41 +45,57 @@ describe('recordFieldsForReply', () => {
   })
 
   it('downgrades a non-threaded (forgeable) unsubscribe to a per-project rejection, no DNC', () => {
-    const fields = recordFieldsForReply('unsubscribe', iso, false)
+    const fields = recordFieldsForReply({ sentiment: 'neutral', responseType: 'unsubscribe' }, iso, false)
     expect(fields.responseType).toBe('rejection')
     expect(fields.markDoNotContact).toBe(false)
     expect(fields.rejectionFeedback).toBeUndefined()
   })
 
-  it('maps a LATER micro-reply to a wrong_timing rejection with the unspecified recontact window', () => {
+  it('gives a no over timing or budget the unspecified recontact window, whoever classified it', () => {
+    for (const reason of ['wrong_timing', 'budget'] as const) {
+      const fields = recordFieldsForReply({ sentiment: 'neutral', responseType: 'rejection', rejection: { reason, quote: null } }, iso, false)
+      expect(fields.markDoNotContact).toBe(false)
+      expect(fields.rejectionFeedback).toEqual({ version: 1, primary_reason: reason, preferred_recontact_window: 'unspecified', submitted_at: iso })
+    }
+  })
+
+  it('records a classified rejection with its reason and quote, no DNC even when untrusted', () => {
     for (const trusted of [true, false]) {
-      const fields = recordFieldsForReply('micro_later', iso, trusted)
+      const fields = recordFieldsForReply(
+        { sentiment: 'negative', responseType: 'rejection', rejection: { reason: 'already_have_solution', quote: 'We handle this in-house.' } },
+        iso,
+        trusted,
+      )
       expect(fields.responseType).toBe('rejection')
       expect(fields.markDoNotContact).toBe(false)
       expect(fields.rejectionFeedback).toEqual({
         version: 1,
-        primary_reason: 'wrong_timing',
-        preferred_recontact_window: 'unspecified',
+        primary_reason: 'already_have_solution',
+        free_text: 'We handle this in-house.',
         submitted_at: iso,
       })
     }
   })
 
-  it('maps a NOT ME micro-reply to a not_decision_maker rejection, no DNC', () => {
-    const fields = recordFieldsForReply('micro_not_me', iso, true)
-    expect(fields.responseType).toBe('rejection')
-    expect(fields.markDoNotContact).toBe(false)
-    expect(fields.rejectionFeedback).toEqual({
-      version: 1,
-      primary_reason: 'not_decision_maker',
-      submitted_at: iso,
-    })
+  it('omits free_text when the classified rejection has no quote', () => {
+    const fields = recordFieldsForReply(
+      { sentiment: 'negative', responseType: 'rejection', rejection: { reason: 'other', quote: null } },
+      iso,
+      false,
+    )
+    expect(fields.rejectionFeedback).toEqual({ version: 1, primary_reason: 'other', submitted_at: iso })
   })
 
   it('passes every other type through without forcing do-not-contact', () => {
-    for (const t of ['reply', 'meeting_request', 'rejection', 'bounce', 'auto_reply'] as const) {
-      const fields = recordFieldsForReply(t, iso, true)
-      expect(fields.responseType).toBe(t)
+    const inputs = [
+      { sentiment: 'neutral', responseType: 'reply' },
+      { sentiment: 'neutral', responseType: 'meeting_request' },
+      { sentiment: 'neutral', responseType: 'auto_reply' },
+      { sentiment: 'neutral', responseType: 'bounce' },
+    ] as const
+    for (const input of inputs) {
+      const fields = recordFieldsForReply(input, iso, true)
+      expect(fields.responseType).toBe(input.responseType)
       expect(fields.markDoNotContact).toBe(false)
       expect(fields.rejectionFeedback).toBeUndefined()
     }

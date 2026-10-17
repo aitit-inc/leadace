@@ -80,14 +80,6 @@ Call `get_document` with `projectId: "$0"` and `slug: "search_notes"`. If found,
 Use this to continue exploration from where the last session left off. If
 `search_notes` is missing, treat every cell of the matrix as unexplored.
 
-Also call `get_document` with `projectId: "$0"` and
-`slug: "learnings"`, then apply its `[targeting]` entries to the search strategy (explore
-more of the segments evaluate found to respond above average, and deprioritize ones it
-flagged as low-response or targeting mismatches) and its `[discovery]` entries to
-strategy selection in step 3. These are evaluate's distilled, evidence-cited learnings
-(each carries the metric + sample it came from) — treat them as steering, not hard
-rules. Skip if the document is missing.
-
 ### 3. Search Strategy
 
 Discovery runs as **named strategies** registered on the project. Call
@@ -103,8 +95,7 @@ work); archived entries are context only — never run or stamp them.
   `[{slug, count}]` over the active strategies' draw weights (`count: 0` =
   skip). Build the batch to the plan; when a strategy cannot fill its count
   (angle exhausted), fill the gap from the others and record the shortfall for
-  step 8 — deviate only on real shortfall, never by preference. `[discovery]`
-  learnings (step 2) steer queries *within* a strategy, not the allocation.
+  step 8 — deviate only on real shortfall, never by preference.
 - Every candidate surfaced by a strategy belongs to exactly one — carry its slug
   through to registration (Phase 3 `discoveryStrategy`; an unregistered slug
   skips the row as `unknown_strategy`). Candidates from ad-hoc user

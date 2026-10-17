@@ -10,6 +10,11 @@ import {
 
 type ResponseType = (typeof responseTypeEnum.enumValues)[number]
 
+const primaryReasonSchema = z.enum(REJECTION_PRIMARY_REASONS)
+
+// A stored rejection_feedback.primary_reason, read back as the enum it was written as.
+export const primaryReasonOf = (raw: string | null): RejectionPrimaryReason | null => primaryReasonSchema.safeParse(raw).data ?? null
+
 // Decision-maker referral payload embedded in rejectionFeedback.
 export type DecisionMakerPointer = {
   name?: string
@@ -24,12 +29,14 @@ export const rejectionConsentSchema = z.object({
   marketing_opt_out: z.boolean().optional(),
 })
 
+export const REJECTION_FREE_TEXT_MAX_CHARS = 500
+
 // Subset shared by the full RejectionFeedbackV1 wire schema (services/responses.ts)
 // and the legacy unsubscribe-with-reason wire schema (services/unsubscribe.ts).
 export const rejectionFeedbackCommonSchema = z.object({
   primary_reason: z.enum(REJECTION_PRIMARY_REASONS),
   secondary_reasons: z.array(z.enum(REJECTION_PRIMARY_REASONS)).max(5).optional(),
-  free_text: z.string().max(500).optional(),
+  free_text: z.string().max(REJECTION_FREE_TEXT_MAX_CHARS).optional(),
   preferred_recontact_window: z.enum(REJECTION_RECONTACT_WINDOWS).optional(),
   consent: rejectionConsentSchema.optional(),
 })
@@ -40,6 +47,7 @@ export const rejectionFeedbackCommonSchema = z.object({
 export const FEATURE_GAP_REASON: RejectionPrimaryReason = 'feature_gap'
 export const NOT_RELEVANT_REASON: RejectionPrimaryReason = 'not_relevant'
 export const BUDGET_REASON: RejectionPrimaryReason = 'budget'
+export const OTHER_REASON: RejectionPrimaryReason = 'other'
 
 export const PMF_RELEVANT_REASONS: readonly RejectionPrimaryReason[] = [
   'feature_gap',

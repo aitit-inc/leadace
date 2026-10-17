@@ -20,7 +20,7 @@ services/  Orchestration + DB I/O + external APIs
   pipeline/  Hosted-agent stages (discover / enrich / draft / journal / strategy-draft): LLM calls + existing services
   chat/      Hosted chat agent: thread store, system prompt, the OpenAI function-calling loop
 domain/    Branded types, state machines, pure rules. No I/O.
-  loop/      The learning loop's rules by layer: frame (outer), options (middle), allocation (inner), decide (outer → middle → inner, pure); reaction (the reward), config, bandit math, learnings format, change (the policy-change log's rows)
+  loop/      The learning loop's rules by layer: frame (outer), options (middle), allocation (inner), decide (outer → middle → inner, pure); reaction (the reward), config, bandit math, change (the policy-change log's rows)
 db/        drizzle schema (single source of truth). No repository layer.
 tools/     The agent tool surface shared by the MCP worker and the chat agent; each tool calls the API through an injected callApi
 jobs/      Cloudflare Workflow entrypoint + stage runners: puts pipeline stages into steps
@@ -139,9 +139,7 @@ rejected after we reached it). Construct with `ok()` / `err()` from
 Never measure an axis on the sends the ordering produced from that same axis:
 the arm the ordering prefers is then compared against its own leftovers, and no
 amount of data exposes the bias (#478). Measure such an axis on the lever's
-random exploration slots only, or do not compute the metric at all. A metric
-withdrawn for this reason is listed in `domain/loop/learnings.ts`, so the learnings
-resting on it retire themselves on the next evaluate.
+random exploration slots only, or do not compute the metric at all.
 
 ## Value builders
 

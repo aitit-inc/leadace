@@ -7,6 +7,7 @@ import type { ProjectId, TenantId } from '../../domain/ids'
 import { LIFT_MIN, LIFT_MAX, type TargetingAxisLift } from '../../domain/loop/allocation'
 import type { TickDecision } from '../../domain/loop/decide'
 import {
+  isDocumentTarget,
   optionOps,
   type ChangeAuthor,
   type DocumentTarget,
@@ -347,7 +348,7 @@ export async function listChanges(db: Db, projectId: ProjectId, since: Date): Pr
     .orderBy(desc(policyChanges.createdAt), desc(policyChanges.id))
   return rows.map((r): LoggedChange => {
     const day = utcDay(r.createdAt)
-    if (r.target === 'business' || r.target === 'sales_strategy') {
+    if (isDocumentTarget(r.target)) {
       if (r.actor === 'rule') throw new Error(`Invariant: rule change to ${r.target}`)
       return { day, actor: r.actor, target: r.target, reason: r.reason }
     }

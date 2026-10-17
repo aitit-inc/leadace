@@ -1,10 +1,9 @@
 import { z } from 'zod'
-import { and, desc, eq, gte, inArray, notInArray, sql } from 'drizzle-orm'
+import { and, eq, gte, inArray, notInArray, sql } from 'drizzle-orm'
 import {
   inquirySessions,
   organizations,
   outreachLogs,
-  projectDocuments,
   projectSettings,
   prospects,
   responses,
@@ -35,8 +34,8 @@ import {
   type NotRelevantNote,
   type RejectionQuote,
 } from '../domain/dashboard'
-import { parseLearnings, type LearningEntry } from '../domain/loop/learnings'
 import { NON_COUNTABLE_RESPONSE_TYPES, REWARDED_INQUIRY_OUTCOMES } from '../domain/loop/reaction'
+import { primaryReasonOf } from '../domain/rejection-feedback'
 import type { RejectionRecontactWindow } from '../db/schema'
 import { ok, type ServiceResult } from './result'
 import { resolveProject } from './projects'
@@ -109,7 +108,6 @@ export async function getDashboardSummary(
     lastCycleRows,
     escalationRows,
     pendingDraftsRows,
-    learningsRows,
     contactedRows,
     outboundAllowlist,
     leverRes,
@@ -200,6 +198,7 @@ export async function getDashboardSummary(
         at: responses.receivedAt,
         responseType: responses.responseType,
         sentiment: responses.sentiment,
+        reason: sql<string | null>`${responses.rejectionFeedback}->>'primary_reason'`,
       })
       .from(responses)
       .innerJoin(outreachLogs, eq(outreachLogs.id, responses.outreachLogId))
@@ -257,12 +256,6 @@ export async function getDashboardSummary(
       .select({ count: sql<number>`COUNT(*)::int` })
       .from(outreachLogs)
       .where(and(eq(outreachLogs.projectId, projectId), eq(outreachLogs.status, 'pending_review'))),
-    db
-      .select({ content: projectDocuments.content })
-      .from(projectDocuments)
-      .where(and(eq(projectDocuments.projectId, projectId), eq(projectDocuments.slug, 'learnings')))
-      .orderBy(desc(projectDocuments.createdAt))
-      .limit(1),
     // Segments are on the rates' unit: prospects contacted in the window, counted once.
     db
       .selectDistinct({
@@ -322,19 +315,15 @@ export async function getDashboardSummary(
     dailyResponseRows.map((r) => ({ day: r.day, count: Number(r.count) })),
   )
 
-  const learning = buildLearning(
-    leverRes.value,
-    variantsRes.value.variants,
-    parseLearnings(learningsRows[0]?.content ?? null),
-  )
+  const learning = buildLearning(leverRes.value, variantsRes.value.variants)
   const journal = buildJournal(changes, variantsRes.value.variants, escalationRows, journalStartDay)
   const rejections = buildRejections(rejectionRes.value)
 
   const reactions: Array<ProspectReaction & { at: Date }> = [
-    ...replyRows.map(({ prospectId, at, responseType, sentiment }) => ({
+    ...replyRows.map(({ prospectId, at, responseType, sentiment, reason }) => ({
       prospectId,
       at,
-      reaction: { kind: 'reply' as const, responseType, sentiment },
+      reaction: { kind: 'reply' as const, responseType, sentiment, reason: primaryReasonOf(reason) },
     })),
     ...sessionRows.map(({ prospectId, at, outcome }) => ({ prospectId, at, reaction: { kind: 'inquiry' as const, outcome } })),
   ]
@@ -401,13 +390,12 @@ type LeverStateLike = Awaited<ReturnType<typeof getLeverStateById>> extends Serv
 function buildLearning(
   lever: LeverStateLike,
   variants: MessageVariantRow[],
-  log: LearningEntry[],
 ): DashboardLearning {
   const variantById = new Map(variants.map((v) => [v.variantId, v]))
 
   const rates = (v: LeverStateLike['variants'][number]) => ({
-    positiveRate: percentOf(v.positive, v.total),
-    interestedRate: percentOf(v.interested, v.total),
+    positiveRate: percentOf(v.positive, v.trials),
+    interestedRate: percentOf(v.interested, v.trials),
   })
   // Rank by bandit weight when present, else positive then interest rate; skip 0-send arms (a 0-send "leader" is noise).
   const ranked = [...lever.variants].sort((a, b) => {
@@ -441,7 +429,6 @@ function buildLearning(
     angles,
     needsNewAngle: lever.needsReplenishment,
     state: lever.weights && matureCount >= 2 ? 'optimizing' : 'learning',
-    log,
   }
 }
 

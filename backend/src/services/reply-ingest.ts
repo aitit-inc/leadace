@@ -14,11 +14,12 @@ import {
   type InboundReply,
   type OutreachCandidate,
 } from '../domain/reply'
-import { detectDeterministicType, leadingUnquotedText, type DeterministicType } from '../domain/reply-classify'
+import { classifyDeterministically, leadingUnquotedText, type ReplyClassification } from '../domain/reply-classify'
+import { REAPPROACH_REASONS } from '../domain/rejection-feedback'
 import { getGmailAccessToken } from '../auth/google'
 import { pollGmailInbox } from './gmail-poll'
 import { pollImapInbox } from './imap-poll'
-import { classifyReply, matchSameDomainReply, type ReplyClassification } from './reply-classify'
+import { classifyReply, matchSameDomainReply } from './reply-classify'
 import type { LlmEnv } from './llm'
 import { notify, notifyCtxOf, type NotifyEnv } from './notifications'
 import { withPaidCallScope } from './paid-calls'
@@ -79,11 +80,11 @@ export function pollCapCutsSinceLastPoll(receivedAts: Date[], cap: number, lastP
 }
 
 export function recordFieldsForReply(
-  responseType: ReplyClassification['responseType'] | DeterministicType,
+  classified: ReplyClassification,
   submittedAtIso: string,
   trusted: boolean,
 ): Pick<RecordResponseInput, 'responseType' | 'markDoNotContact' | 'rejectionFeedback'> {
-  if (responseType === 'unsubscribe') {
+  if (classified.responseType === 'unsubscribe') {
     // Only a threaded reply (echoes our Message-ID, unforgeable) may ratchet
     // cross-project do_not_contact — same spoof gate as the bounce path.
     if (!trusted) return { responseType: 'rejection', markDoNotContact: false }
@@ -97,32 +98,24 @@ export function recordFieldsForReply(
       },
     }
   }
-  // No trust gate: micro tokens never directly set markDoNotContact; the
-  // rejection-cycle DNC ratchet applies identically to untrusted LLM rejections.
-  if (responseType === 'micro_later') {
+  // No trust gate: no reason a reply carries forces do_not_contact; the
+  // rejection-cycle DNC ratchet applies to trusted and untrusted mail alike.
+  if (classified.responseType === 'rejection') {
+    const { reason, quote } = classified.rejection
     return {
       responseType: 'rejection',
       markDoNotContact: false,
       rejectionFeedback: {
         version: 1,
-        primary_reason: 'wrong_timing',
-        preferred_recontact_window: 'unspecified',
+        primary_reason: reason,
+        ...(quote ? { free_text: quote } : {}),
+        // A no over timing or budget is a "later" with no date: the project's default window applies.
+        ...(REAPPROACH_REASONS.includes(reason) ? { preferred_recontact_window: 'unspecified' as const } : {}),
         submitted_at: submittedAtIso,
       },
     }
   }
-  if (responseType === 'micro_not_me') {
-    return {
-      responseType: 'rejection',
-      markDoNotContact: false,
-      rejectionFeedback: {
-        version: 1,
-        primary_reason: 'not_decision_maker',
-        submitted_at: submittedAtIso,
-      },
-    }
-  }
-  return { responseType, markDoNotContact: false }
+  return { responseType: classified.responseType, markDoNotContact: false }
 }
 
 async function loadCandidates(
@@ -390,7 +383,7 @@ async function ingestIdentity(
   const now = new Date()
 
   for (const { captured, reply } of inbound) {
-    const det = detectDeterministicType(captured.email)
+    const det = classifyDeterministically(captured.email)
     const attribution = attributeReply(reply, candidates, ATTRIBUTION_WINDOW_DAYS, now)
 
     if (seen.has(reply.messageId)) {
@@ -401,7 +394,7 @@ async function ingestIdentity(
     // A bounce forces DNC, so it records only when bound to a Message-ID we
     // generated; a sender-only match is forgeable and would hand anyone a
     // spoofed-DNC vector.
-    if (det === 'bounce' && attribution?.binding !== 'threaded') {
+    if (det?.responseType === 'bounce' && attribution?.binding !== 'threaded') {
       summary.unattributed++
       continue
     }
@@ -416,10 +409,10 @@ async function ingestIdentity(
     }
     const outreachLogId = bound.outreachLogId
 
-    const classified = det
-      ? { responseType: det, sentiment: 'neutral' as const }
-      : (await classifyReply(env, { subject: reply.subject, bodyText: leadingUnquotedText(reply.bodyText) })) ??
-        { responseType: 'reply' as const, sentiment: 'neutral' as const }
+    const classified: ReplyClassification =
+      det ??
+      (await classifyReply(env, { subject: reply.subject, bodyText: leadingUnquotedText(reply.bodyText) })) ??
+      { responseType: 'reply', sentiment: 'neutral' }
 
     const rawContent = reply.bodyText.trim() || reply.subject || '(no text)'
     const content =
@@ -430,7 +423,7 @@ async function ingestIdentity(
       channel: 'email',
       content,
       sentiment: classified.sentiment,
-      ...recordFieldsForReply(classified.responseType, receivedAtIso, bound.binding === 'threaded'),
+      ...recordFieldsForReply(classified, receivedAtIso, bound.binding === 'threaded'),
       receivedAt: receivedAtIso,
       sourceMessageId: reply.messageId,
     }
