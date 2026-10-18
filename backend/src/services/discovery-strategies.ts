@@ -7,7 +7,7 @@ import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { loadLeverConfig } from './project-settings'
 import { applyStrategyChange, strategyCols } from './loop/change'
-import { authorOf, changeReasonSchema } from '../domain/loop/change'
+import { authorOf, changeReasonSchema, type ChangeSignal } from '../domain/loop/change'
 
 export const upsertDiscoveryStrategyBodySchema = z
   .object({
@@ -66,6 +66,7 @@ export async function upsertDiscoveryStrategy(
   caller: 'browser' | 'agent',
   projectRef: ProjectRef,
   body: UpsertDiscoveryStrategyBody,
+  signals: ChangeSignal[] | null = null,
 ): Promise<ServiceResult<DiscoveryStrategyRow>> {
   const resolved = await resolveProject(db, tenantId, projectRef)
   if (!resolved.ok) return resolved
@@ -93,7 +94,7 @@ export async function upsertDiscoveryStrategy(
   }
 
   const { reason, ...write } = body
-  const row = await applyStrategyChange(db, tenantId, projectId, write, authorOf(caller, reason ?? null))
+  const row = await applyStrategyChange(db, tenantId, projectId, write, authorOf(caller, reason ?? null, signals))
   if (!row) return err('INTERNAL_ERROR', 'Failed to upsert discovery strategy')
   return ok(row)
 }

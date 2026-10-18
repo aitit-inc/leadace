@@ -26,7 +26,7 @@ import type { Locale } from '../domain/locale'
 import type { ChannelAffinityMap, ChannelCoarseStat, TargetingLifts, TargetingStats } from '../domain/loop/allocation'
 import type { CoarseIndustry } from '../domain/coarse-industry'
 import type { FrameSignal, VitalsAssessment } from '../domain/loop/frame'
-import { POLICY_ACTORS, POLICY_OPS, POLICY_TARGETS, RULE_ARCHIVE_REASONS, type ReachDiff, type RuleEvidence } from '../domain/loop/change'
+import { POLICY_ACTORS, POLICY_OPS, POLICY_TARGETS, RULE_ARCHIVE_REASONS, type ChangeEvidence, type ReachDiff } from '../domain/loop/change'
 import { PROPOSAL_STATUSES, type ProposedChange } from '../domain/loop/proposal'
 import type { MailboxSendRefusal } from '../domain/warmup'
 import type { PaidCallModel } from '../domain/paid-calls'
@@ -1171,7 +1171,7 @@ export const policyChanges = pgTable('policy_changes', {
   actor: policyActorEnum('actor').notNull(),
   reason: text('reason'),
   ruleReason: policyRuleReasonEnum('rule_reason'),
-  evidence: jsonb('evidence').$type<RuleEvidence>(),
+  evidence: jsonb('evidence').$type<ChangeEvidence>(),
   reachDiff: jsonb('reach_diff').$type<ReachDiff>(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
@@ -1384,35 +1384,6 @@ export const projectDocuments = pgTable('project_documents', {
   }).onDelete('cascade'),
   index('idx_doc_tenant').on(table.tenantId),
   index('idx_doc_latest').on(table.projectId, table.slug, table.createdAt),
-])
-
-// Replaced by proposals. Dropped next release: the Worker still running during
-// a deploy reads it (release.md).
-export const suggestionStatusEnum = pgEnum('suggestion_status', ['open', 'dismissed', 'done'])
-
-export const suggestions = pgTable('suggestions', {
-  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
-  tenantId: text('tenant_id')
-    .notNull()
-    .references(() => tenants.id, { onDelete: 'cascade' }),
-  projectId: text('project_id').notNull(),
-  kind: text('kind').notNull(),
-  dedupeKey: text('dedupe_key').notNull(),
-  title: text('title').notNull(),
-  body: text('body').notNull(),
-  instruction: text('command').notNull(),
-  status: suggestionStatusEnum('status').notNull().default('open'),
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
-}, (table) => [
-  unique('uq_suggestion_project_kind_key').on(table.projectId, table.kind, table.dedupeKey),
-  // Composite FK ties project_id + tenant_id (defense-in-depth on top of RLS).
-  foreignKey({
-    columns: [table.projectId, table.tenantId],
-    foreignColumns: [projects.id, projects.tenantId],
-    name: 'fk_suggestion_project_tenant',
-  }).onDelete('cascade'),
-  index('idx_suggestions_tenant').on(table.tenantId),
 ])
 
 export const proposalStatusEnum = pgEnum('proposal_status', PROPOSAL_STATUSES)

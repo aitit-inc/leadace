@@ -370,9 +370,6 @@ count_rows() { psql_local "SELECT count(*) FROM policy_changes WHERE project_id=
 BEFORE="$(count_rows)"
 api PUT "/api/projects/$PROJECT_ID/documents/search_notes" "$(jq -nc '{content:"notes"}')" > /dev/null
 assert_eq "search_notes is not policy: no row" "$(count_rows)" "$BEFORE"
-# Still accepted from the plugin released before learnings went away (#918); nothing reads it.
-api PUT "/api/projects/$PROJECT_ID/documents/learnings" "$(jq -nc '{content:"[targeting] old plugin", reason:"e2e: old plugin"}')" > /dev/null
-assert_eq "learnings from an old plugin is stored, not policy: no row" "$(count_rows)" "$BEFORE"
 DASH="$(api GET "/api/projects/$PROJECT_ID/dashboard")"
 assert_eq "dashboard journal leads with today's sales_strategy edit" \
   "$(echo "$DASH" | jq -rc '.journal[0] | [.kind, .target, .actor, .reason]')" '["document","sales_strategy","user","e2e: first draft"]'

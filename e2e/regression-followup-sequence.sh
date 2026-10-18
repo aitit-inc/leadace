@@ -164,6 +164,8 @@ PROJECT_ID="$(api POST /api/projects "$(jq -nc --arg n "$PROJECT_NAME" '{name:$n
 say "project_id=$PROJECT_ID"
 assert_eq "new project follow-up enabled" \
   "$(api GET "/api/projects/$PROJECT_ID/settings" | jq -r '.followUpSequence.enabled')" "true"
+# The default [3] ends after one follow-up; a second gap lets touch 2 re-arm.
+api PUT "/api/projects/$PROJECT_ID/settings" '{"followUpSequence":{"enabled":true,"gapDays":[3,7]}}' > /dev/null
 
 step "seed 7 US prospects (seq / kill / fixb / disabled / old / skipped / form)"
 SEED_BODY="$(jq -nc --arg pid "$PROJECT_ID" \

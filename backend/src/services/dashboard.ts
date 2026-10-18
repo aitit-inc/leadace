@@ -19,6 +19,7 @@ import {
   buildJournal,
   buildSegments,
   buildTrend,
+  countLoopChanges,
   levelCounts,
   percentOf,
   periodToWindow,
@@ -29,6 +30,7 @@ import {
   type DashboardLearning,
   type DashboardRejections,
   type DashboardSummary,
+  type LoopReport,
   type ProspectReaction,
   type SegmentCount,
   type DecisionMakerReferral,
@@ -40,9 +42,10 @@ import { primaryReasonOf } from '../domain/rejection-feedback'
 import type { RejectionRecontactWindow } from '../db/schema'
 import { ok, type ServiceResult } from './result'
 import { resolveProject } from './projects'
-import { loadProjectOutboundAllowlist } from './project-settings'
+import { loadLeverConfig, loadProjectOutboundAllowlist } from './project-settings'
 import { getLeverStateById } from './loop/policy'
 import { listChanges } from './loop/change'
+import { frameHistory } from './loop/observe'
 import { listMessageVariantsById, type MessageVariantRow } from './message-variants'
 import { getRejectionFeedbackSummaryById } from './responses'
 import { listRecentOutreachById } from './outreach'
@@ -116,6 +119,7 @@ export async function getDashboardSummary(
     rejectionRes,
     recentRes,
     attentionInputRes,
+    frames,
   ] = await Promise.all([
     // The four KPI stage queries below define the funnel-stage events. They MUST stay
     // in lockstep with funnelStageCondition in services/outreach.ts — the KPI drill-down
@@ -282,6 +286,7 @@ export async function getDashboardSummary(
     }),
     listRecentOutreachById(db, tenantId, projectId, { limit: RECENT_ACTIVITY_CANDIDATES, offset: 0, period: 'all' }),
     loadTenantAttentionInput(db, tenantId, userId, edition),
+    loadLeverConfig(db, projectId).then((config) => frameHistory(db, projectId, config, now)),
   ])
 
   // One-by-one (not a loop) so each result narrows to its ok branch for the build below.
@@ -316,6 +321,7 @@ export async function getDashboardSummary(
 
   const learning = buildLearning(leverRes.value, variantsRes.value.variants)
   const journal = buildJournal(changes, variantsRes.value.variants, proposalRows, journalStartDay)
+  const loop: LoopReport = { ...countLoopChanges(changes), frame: frames.at(-1)!, previousFrame: frames.at(-2) ?? null }
   const rejections = buildRejections(rejectionRes.value)
 
   const reactions: Array<ProspectReaction & { at: Date }> = [
@@ -376,6 +382,7 @@ export async function getDashboardSummary(
     },
     learning,
     journal,
+    loop,
     lastCycleDate: lastCycleRows[0]?.last ?? null,
     rejections,
     segments,
@@ -404,14 +411,6 @@ function buildLearning(
     return rb.positiveRate - ra.positiveRate || rb.interestedRate - ra.interestedRate
   })
   const pick = ranked.find((v) => v.total > 0) ?? null
-  const bestSubject = pick
-    ? {
-        pattern: variantById.get(pick.variantId)?.subjectPattern ?? pick.variantId,
-        ...rates(pick),
-        mature: pick.mature,
-        n: pick.total,
-      }
-    : null
 
   const angles = ranked.map((v) => ({
     variantId: v.variantId,
@@ -424,7 +423,6 @@ function buildLearning(
 
   const matureCount = lever.variants.filter((v) => v.mature).length
   return {
-    bestSubject,
     angles,
     needsNewAngle: lever.needsReplenishment,
     state: lever.weights && matureCount >= 2 ? 'optimizing' : 'learning',

@@ -15,7 +15,6 @@ export const POLICY_OPS = ['add', 'update', 'archive', 'restore'] as const
 export type OptionOp = (typeof POLICY_OPS)[number]
 
 export const POLICY_ACTORS = ['rule', 'ace', 'user'] as const
-type PolicyActor = (typeof POLICY_ACTORS)[number]
 
 export const RULE_ARCHIVE_REASONS = ['lost', 'rotated'] as const
 export type RuleArchiveReason = (typeof RULE_ARCHIVE_REASONS)[number]
@@ -25,14 +24,26 @@ export type RuleArchiveReason = (typeof RULE_ARCHIVE_REASONS)[number]
 // tick made before it recorded any.
 export type RuleEvidence = { n: number } & ({ pBest: number } | { pBeatsLeader: number })
 
-export type ChangeAuthor = { actor: Exclude<PolicyActor, 'rule'>; reason: string | null }
+export const CHANGE_SIGNALS = ['replies', 'declines', 'bounces', 'discovery', 'person'] as const
+export type ChangeSignal = (typeof CHANGE_SIGNALS)[number]
+
+export const changeSignalsSchema = z.array(z.enum(CHANGE_SIGNALS)).min(1)
+
+// What one of Ace's loop changes rests on: the kinds of evidence it named.
+export type AceEvidence = { signals: ChangeSignal[] }
+export type ChangeEvidence = RuleEvidence | AceEvidence
+
+// `evidence` is null on a change Ace made outside the loop (the chat, MCP).
+export type ChangeAuthor =
+  | { actor: 'user'; reason: string | null }
+  | { actor: 'ace'; reason: string | null; evidence: AceEvidence | null }
 
 export const changeReasonSchema = z.string().min(1).max(300)
 
 // A person in the Web UI is the user; everything else acting through the API
 // (chat, MCP, a schedule, the hosted stages) is Ace.
-export function authorOf(caller: 'browser' | 'agent', reason: string | null): ChangeAuthor {
-  return { actor: caller === 'browser' ? 'user' : 'ace', reason }
+export function authorOf(caller: 'browser' | 'agent', reason: string | null, signals: ChangeSignal[] | null = null): ChangeAuthor {
+  return caller === 'browser' ? { actor: 'user', reason } : { actor: 'ace', reason, evidence: signals && { signals: [...new Set(signals)] } }
 }
 
 export function isDocumentTarget(slug: string): slug is DocumentTarget {
@@ -92,11 +103,18 @@ type RuleChange = { target: OptionTarget; optionId: string; evidence: RuleEviden
   | { op: 'restore' }
 )
 
+type Logged = { day: string; actor: ChangeAuthor['actor']; reason: string | null; evidence: AceEvidence | null }
+
 // `day` is the UTC day the change was made.
 export type LoggedChange =
   | ({ day: string; actor: 'rule' } & RuleChange)
-  | { day: string; actor: ChangeAuthor['actor']; target: OptionTarget; optionId: string; op: OptionOp; reason: string | null }
-  | { day: string; actor: ChangeAuthor['actor']; target: DocumentTarget; reason: string | null }
-  | { day: string; actor: ChangeAuthor['actor']; target: 'settings'; diff: ReachDiff; reason: string | null }
-  | { day: string; actor: ChangeAuthor['actor']; target: 'frame'; reason: string | null }
+  | (Logged & { target: OptionTarget; optionId: string; op: OptionOp })
+  | (Logged & { target: DocumentTarget })
+  | (Logged & { target: 'settings'; diff: ReachDiff })
+  | (Logged & { target: 'frame' })
 export type LoggedRuleChange = Extract<LoggedChange, { actor: 'rule' }>
+
+// The rule reads only the reply rates; null for a change outside the loop.
+export function changeSignals(c: LoggedChange): readonly ChangeSignal[] | null {
+  return c.actor === 'rule' ? ['replies'] : c.evidence?.signals ?? null
+}

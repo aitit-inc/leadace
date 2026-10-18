@@ -13,13 +13,13 @@ import { discoveryStrategySchema, variantIdSchema } from '../../domain/ids'
 import type { JobResult } from '../../domain/jobs'
 import { ok, err, type ServiceResult } from '../result'
 import { callLlmJson, LlmError } from '../llm'
-import { DISCOVERY_WINDOW_DAYS, frameHistory, getProposeEvidence, type AxisBucket, type FramePeriod, type ProposeEvidence, type StrategyDiscovery } from './observe'
+import { DISCOVERY_WINDOW_DAYS, frameHistory, getProposeEvidence, type AxisBucket, type ProposeEvidence, type StrategyDiscovery } from './observe'
 import type { Evidence } from '../../domain/loop/evidence'
 import { applySalesStrategyEdit, frameStart, listChanges, loadReach, type OptionArchival } from './change'
 import { recentProposals, recordAddMeans, recordFrame, recordLoosening, type ProposalRow } from './proposals'
-import { changeReasonSchema, channelList, countryList, reachLine, type LoggedChange, type OptionOp } from '../../domain/loop/change'
+import { authorOf, changeReasonSchema, changeSignalsSchema, channelList, countryList, reachLine, type LoggedChange, type OptionOp } from '../../domain/loop/change'
 import { frameBodySchema, proposalWhat, type ProposedChange } from '../../domain/loop/proposal'
-import { FRAME_SIGNAL } from '../../domain/loop/frame'
+import { FRAME_SIGNAL, type FramePeriod } from '../../domain/loop/frame'
 import { replaceableArms } from '../../domain/loop/options'
 import { OUTBOUND_CHANNELS } from '../../domain/outbound-channel'
 import { ALLOWED_SEND_COUNTRIES } from '../../domain/country'
@@ -39,7 +39,7 @@ const evaluationSchema = z.object({
   // The narration a person reads (markdown): KPIs, findings, lever
   // observability, tactical rejection signals, next actions.
   report: z.string().min(1),
-  salesStrategy: z.object({ content: z.string().min(1), why: changeReasonSchema }).nullable(),
+  salesStrategy: z.object({ content: z.string().min(1), why: changeReasonSchema, signals: changeSignalsSchema }).nullable(),
   newVariant: z
     .object({
       variantId: variantIdSchema,
@@ -48,6 +48,7 @@ const evaluationSchema = z.object({
       label: z.string().min(1).max(120),
       replaces: variantIdSchema.nullable(),
       why: changeReasonSchema,
+      signals: changeSignalsSchema,
     })
     .nullable(),
   loosen: z
@@ -60,7 +61,7 @@ const evaluationSchema = z.object({
     })
     .nullable(),
   strategyUpserts: z.array(
-    z.object({ slug: discoveryStrategySchema, approach: z.string().min(1).max(2000), archived: z.boolean(), why: changeReasonSchema }),
+    z.object({ slug: discoveryStrategySchema, approach: z.string().min(1).max(2000), archived: z.boolean(), why: changeReasonSchema, signals: changeSignalsSchema }),
   ),
   addMeans: z.array(
     z.object({
@@ -286,6 +287,7 @@ ${measuredSections(judged.value)}
 - loosen: when a channel that is off or the country list keeps organizations in the Target from being reached, and the numbers show it is worth it: outboundChannels = the full list with the channel added, targetCountries = the full list with the country added or [] to lift the limit, null for the one left as it is; a title naming the change; a body with the numbers and what it means for the person (a form or SNS message waits for them to send it); why. It applies tomorrow unless the person stops it. null while one or a new frame is pending (${pendingLoosen !== undefined || pendingFrame !== undefined}). Never repeat one the person stopped.
 - addMeans: a means that needs an account set up, when the numbers show it is worth it and it was never proposed: strategy = the tentative strategy slug; body: the numbers behind it and what it asks of the person; instruction = the next action as one sentence addressed to Ace.
 - why: one short line, kept in the change log the person reads.
+- signals: every kind of evidence a salesStrategy, newVariant or strategyUpserts change rests on: replies (positive and interested against silence), declines (the noes and their reasons), bounces, discovery (Target fit, contacts, channels, cost), person (Draft review).
 - report (markdown): key KPIs; inquiry-landing conversions when any outcome is non-zero; changes since the last cycle; discovery strategy performance (skip when no send carries a slug); proposals recorded; findings; improvements applied; tactical rejection signals (distribution, recontact queue, decision-maker referrals) when total > 0; lever observability (leading options with w / p and maturity at n ≥ ${lever.minSamplePerArm}, archived options — "rotated" is for freshness, not a loser; "none yet" without data); next actions. Never imply progress the numbers do not show.`
 
   let out: z.infer<typeof evaluationSchema>
@@ -302,17 +304,17 @@ ${measuredSections(judged.value)}
     const { salesStrategy: newStrategy, newVariant } = out
     if (newStrategy !== null && pendingFrame === undefined && newStrategy.content !== docs.salesStrategy) {
       const written = await runWithRls(db, tenantId, (tx) =>
-        applySalesStrategyEdit(tx, tenantId, projectId, newStrategy.content, { actor: 'ace', reason: newStrategy.why }, docs.salesStrategyId))
+        applySalesStrategyEdit(tx, tenantId, projectId, newStrategy.content, authorOf(STAGE_CALLER, newStrategy.why, newStrategy.signals), docs.salesStrategyId))
       if (written) wrote.push('sales_strategy')
     }
     const outgoing = newVariant?.replaces && !lever.needsReplenishment && replaceable.includes(newVariant.replaces) ? newVariant.replaces : null
     if (newVariant && (lever.needsReplenishment || outgoing) && !variants.value.variants.some((v) => v.variantId === newVariant.variantId)) {
-      const { why, replaces: _, ...variant } = newVariant
+      const { why, signals, replaces: _, ...variant } = newVariant
       const body = { ...variant, reason: why }
       const r = await runWithRls(db, tenantId, (tx) =>
         outgoing
-          ? replaceMessageVariant(tx, tenantId, STAGE_CALLER, projectId, outgoing, body)
-          : upsertMessageVariant(tx, tenantId, STAGE_CALLER, projectId, body))
+          ? replaceMessageVariant(tx, tenantId, STAGE_CALLER, projectId, outgoing, body, signals)
+          : upsertMessageVariant(tx, tenantId, STAGE_CALLER, projectId, body, signals))
       if (r.ok) wrote.push(outgoing ? `variant ${variant.variantId} in place of ${outgoing}` : `variant ${variant.variantId}`)
     }
   }
@@ -338,8 +340,8 @@ ${measuredSections(judged.value)}
   const freeSlots = config.targetActiveStrategies - activeStrategies.size + archives.length
   const additions = upserts.filter((u) => !u.archived && !known.has(u.slug)).slice(0, Math.max(freeSlots, 0))
   for (const u of [...archives, ...additions]) {
-    const { why, ...strategy } = u
-    const r = await runWithRls(db, tenantId, (tx) => upsertDiscoveryStrategy(tx, tenantId, STAGE_CALLER, projectId, { ...strategy, reason: why }))
+    const { why, signals, ...strategy } = u
+    const r = await runWithRls(db, tenantId, (tx) => upsertDiscoveryStrategy(tx, tenantId, STAGE_CALLER, projectId, { ...strategy, reason: why }, signals))
     if (r.ok) wrote.push(`${u.archived ? 'archived' : 'registered'} strategy ${u.slug}`)
   }
 

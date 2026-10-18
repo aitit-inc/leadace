@@ -36,7 +36,9 @@ import { frameBodySchema, frameReach, proposalWhat, PROPOSAL_STATUSES, type Prop
 // sentence for the chat. An older /evaluate writes a /leadace one-liner into
 // it, which the Web UI would then send to the chat verbatim — the value is
 // wrong whatever the field is called, so there is no shim to write.
-const MIN_PLUGIN_VERSION = '0.7.113'
+// 0.7.149: learnings is no longer a document. An older /evaluate saves it with
+// save_document, which now refuses the slug.
+const MIN_PLUGIN_VERSION = '0.7.149'
 
 function replyCollectionLine(status: ReplyCollectionStatus): string {
   switch (status.kind) {

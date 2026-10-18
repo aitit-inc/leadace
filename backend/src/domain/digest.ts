@@ -1,7 +1,8 @@
 // Assembled from what the dashboard already computed. No LLM call: the email
 // and the dashboard must never disagree about a number.
-import type { DashboardSummary, JournalEvent, RateChange, SegmentAxis } from './dashboard'
-import { reachLine } from './loop/change'
+import { percentOf, type DashboardSummary, type JournalEvent, type LoopReport, type RateChange, type SegmentAxis } from './dashboard'
+import { CHANGE_SIGNALS, reachLine, type AceEvidence, type ChangeSignal } from './loop/change'
+import type { FramePeriod } from './loop/frame'
 import type { ProposedChange } from './loop/proposal'
 
 // A digest covers whole UTC days, [sinceDay, today): the day is all the
@@ -59,23 +60,34 @@ const OPTION_HEAD = {
 } as const
 const DOCUMENT_HEAD = { sales_strategy: 'Sales strategy adjusted', business: 'Business profile updated' } as const
 
+const SIGNAL_WORDS: Record<ChangeSignal, string> = {
+  replies: 'reply rates',
+  declines: 'the noes',
+  bounces: 'bounces',
+  discovery: 'what discovery found',
+  person: 'your corrections',
+}
+
 const PROPOSAL_OUTCOME = { applied: 'applied', stopped: 'you stopped it', outdated: 'dropped: a change came first' } as const
 const pendingNote = (change: ProposedChange): string =>
   change.kind === 'add-means' ? 'waiting for you to set it up' : `applies ${change.applyOn} unless you stop it`
 
 function journalLine(e: JournalEvent): string {
-  const by = (actor: 'ace' | 'user', reason: string | null): string => `${actor === 'user' ? ' (by you)' : ''}${reason ? ` — ${reason}` : ''}`
+  const by = (actor: 'ace' | 'user', reason: string | null, evidence: AceEvidence | null): string => {
+    const who = actor === 'user' ? ' (by you)' : evidence ? ` (on ${evidence.signals.map((sig) => SIGNAL_WORDS[sig]).join(', ')})` : ''
+    return `${who}${reason ? ` — ${reason}` : ''}`
+  }
   switch (e.kind) {
     case 'proposed':
       return `Proposed to you: ${e.title} (${e.status === 'pending' ? pendingNote(e.change) : PROPOSAL_OUTCOME[e.status]})`
     case 'settings':
-      return `${reachLine(e.diff)}${by(e.actor, e.reason)}`
+      return `${reachLine(e.diff)}${by(e.actor, e.reason, e.evidence)}`
     case 'frame':
-      return `New frame: measuring from here${by(e.actor, e.reason)}`
+      return `New frame: measuring from here${by(e.actor, e.reason, e.evidence)}`
     case 'document':
-      return `${DOCUMENT_HEAD[e.target]}${by(e.actor, e.reason)}`
+      return `${DOCUMENT_HEAD[e.target]}${by(e.actor, e.reason, e.evidence)}`
     case 'option':
-      return `${OPTION_HEAD[e.target][e.op]}: ${e.label ?? e.optionId}${by(e.actor, e.reason)}`
+      return `${OPTION_HEAD[e.target][e.op]}: ${e.label ?? e.optionId}${by(e.actor, e.reason, e.evidence)}`
     case 'rule_archive':
       return `${OPTION_HEAD[e.target].archive}: ${e.label ?? e.optionId} (${e.reason === 'rotated' ? 'no traction' : `another ${e.target === 'variant' ? 'angle' : 'strategy'} won`})`
     case 'rule_restore':
@@ -119,6 +131,17 @@ function marketSection(summary: DashboardSummary): string[] {
   return lines
 }
 
+const frameRate = ({ trials, positive }: FramePeriod): string =>
+  `${positive} positive of ${Math.round(trials)} counted (${percentOf(positive, trials)}%)`
+
+function loopSection({ changes, bySignal, frame, previousFrame }: LoopReport): string[] {
+  const signals = CHANGE_SIGNALS.map((sig) => `${SIGNAL_WORDS[sig]} ${bySignal[sig]}`).join(' · ')
+  return [
+    `${changes} change${changes === 1 ? '' : 's'} by Ace, resting on: ${signals}`,
+    `This frame (since ${frame.start?.day ?? 'the first send'}): ${frameRate(frame)}${previousFrame ? ` · the frame before: ${frameRate(previousFrame)}` : ''}`,
+  ]
+}
+
 function section(title: string, lines: string[]): string[] {
   return lines.length > 0 ? ['', title, ...lines] : []
 }
@@ -135,6 +158,7 @@ export function buildDigest(input: DigestInput): Digest | null {
     `${input.projectName} — last 30 days`,
     resultsLine(input.summary),
     ...section('What the market is telling you', market),
+    ...section('How Ace learned (last 30 days)', loopSection(input.summary.loop)),
     ...section(
       `What changed since ${input.sinceDay}`,
       changes.length > 0 ? changes : ['Nothing — the system kept running on what it already learned.'],

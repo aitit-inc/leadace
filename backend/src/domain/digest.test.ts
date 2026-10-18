@@ -14,8 +14,14 @@ const emptySummary: DashboardSummary = {
   funnel: [],
   trend: [],
   reactionRates: { positive: { previous: 0, current: 0 }, interested: { previous: 0, current: 0 } },
-  learning: { bestSubject: null, angles: [], needsNewAngle: false, state: 'learning' },
+  learning: { angles: [], needsNewAngle: false, state: 'learning' },
   journal: [],
+  loop: {
+    changes: 0,
+    bySignal: { replies: 0, declines: 0, bounces: 0, discovery: 0, person: 0 },
+    frame: { start: null, trials: 0, positive: 0 },
+    previousFrame: null,
+  },
   lastCycleDate: null,
   rejections: {
     total: 0,
@@ -52,7 +58,7 @@ describe('buildDigest', () => {
 
   it('reports a change once the day it happened is complete, and not again after', () => {
     const journal: DashboardSummary['journal'] = [
-      { date: '2026-09-18', kind: 'option', target: 'variant', optionId: 'v2', label: 'Cost saving', op: 'add', actor: 'ace', reason: null },
+      { date: '2026-09-18', kind: 'option', target: 'variant', optionId: 'v2', label: 'Cost saving', op: 'add', actor: 'ace', reason: null, evidence: null },
     ]
     // The day it happened is still in progress: the rest of it is unreported.
     expect(buildDigest(input({ today: '2026-09-18', summary: { journal } }))).toBeNull()
@@ -63,15 +69,15 @@ describe('buildDigest', () => {
   it('says who changed what and why', () => {
     const journal: DashboardSummary['journal'] = [
       { date: '2026-09-18', kind: 'rule_archive', target: 'strategy', optionId: 'yc-hn', label: null, reason: 'lost', evidence: { pBest: 0.01, n: 74 } },
-      { date: '2026-09-18', kind: 'option', target: 'strategy', optionId: 'yc-hn', label: null, op: 'restore', actor: 'user', reason: 'still the best source' },
-      { date: '2026-09-18', kind: 'document', target: 'sales_strategy', actor: 'ace', reason: 'Not a fit: agencies' },
+      { date: '2026-09-18', kind: 'option', target: 'strategy', optionId: 'yc-hn', label: null, op: 'restore', actor: 'user', reason: 'still the best source', evidence: null },
+      { date: '2026-09-18', kind: 'document', target: 'sales_strategy', actor: 'ace', reason: 'Not a fit: agencies', evidence: { signals: ['declines', 'person'] } },
     ]
     const digest = buildDigest(input({ today: '2026-09-19', summary: { journal } }))
     expect(digest?.subject).toBe('Acme: 3 changes from what we learned')
     const body = digest?.body ?? ''
     expect(body).toContain('Search strategy retired: yc-hn (another strategy won)')
     expect(body).toContain('Search strategy back: yc-hn (by you) — still the best source')
-    expect(body).toContain('Sales strategy adjusted — Not a fit: agencies')
+    expect(body).toContain('Sales strategy adjusted (on the noes, your corrections) — Not a fit: agencies')
   })
 
   it('goes out on the heartbeat with nothing to report, once there is something to show', () => {
@@ -87,6 +93,26 @@ describe('buildDigest', () => {
     expect(digest?.subject).toBe('Acme: no change since 2026-09-14')
     expect(digest?.body).toContain('Contacted 40 prospects · positive 2.5% (was 3.3%) · with interest 7.5% (was 6.7%) · engaged 0 · won 0')
     expect(digest?.body).toContain('Nothing — the system kept running on what it already learned.')
+  })
+
+  it('counts what Ace changed by what it rested on, and this frame against the one before', () => {
+    const digest = buildDigest(
+      input({
+        today: '2026-10-20',
+        summary: {
+          kpis: { ...emptySummary.kpis, approached: { current: 40, previous: 0, deltaPct: null } },
+          loop: {
+            changes: 3,
+            bySignal: { replies: 1, declines: 0, bounces: 1, discovery: 2, person: 0 },
+            frame: { start: { day: '2026-10-19', by: 'ace', reason: 'no positive in 120 trials' }, trials: 41.6, positive: 1 },
+            previousFrame: { start: null, trials: 1240.2, positive: 2 },
+          },
+        },
+      }),
+    )
+    expect(digest?.body).toContain(
+      'How Ace learned (last 30 days)\n3 changes by Ace, resting on: reply rates 1 · the noes 0 · bounces 1 · what discovery found 2 · your corrections 0\nThis frame (since 2026-10-19): 1 positive of 42 counted (2.4%) · the frame before: 2 positive of 1240 counted (0.2%)',
+    )
   })
 
   it('stays silent on the heartbeat for a project that sent nothing and learned nothing', () => {

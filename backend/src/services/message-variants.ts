@@ -5,7 +5,7 @@ import type { Db } from '../db/connection'
 import { variantIdSchema, type ProjectId, type ProjectRef, type TenantId } from '../domain/ids'
 import { weightedDraw } from '../domain/loop/bandit'
 import { prepareDrawDistribution } from '../domain/loop/allocation'
-import { authorOf, changeReasonSchema } from '../domain/loop/change'
+import { authorOf, changeReasonSchema, type ChangeSignal } from '../domain/loop/change'
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { loadLeverConfig } from './project-settings'
@@ -65,6 +65,7 @@ export async function upsertMessageVariant(
   caller: 'browser' | 'agent',
   projectRef: ProjectRef,
   body: UpsertVariantBody,
+  signals: ChangeSignal[] | null = null,
 ): Promise<ServiceResult<MessageVariantRow>> {
   const resolved = await resolveProject(db, tenantId, projectRef)
   if (!resolved.ok) return resolved
@@ -92,7 +93,7 @@ export async function upsertMessageVariant(
   }
 
   const { reason, ...write } = body
-  const row = await applyVariantChange(db, tenantId, projectId, write, authorOf(caller, reason ?? null))
+  const row = await applyVariantChange(db, tenantId, projectId, write, authorOf(caller, reason ?? null, signals))
   if (!row) return err('INTERNAL_ERROR', 'Failed to upsert message variant')
   return ok(row)
 }
@@ -101,6 +102,7 @@ export async function upsertMessageVariant(
 // under its row lock, so two runs that picked the same one cannot both fill
 // its slot (the second finds it gone: CONFLICT). Runs in the caller's
 // transaction; an add that fails after the archive throws, rolling both back.
+// The add carries the signals: the archive is its side, not a second change.
 export async function replaceMessageVariant(
   db: Db,
   tenantId: TenantId,
@@ -108,6 +110,7 @@ export async function replaceMessageVariant(
   projectId: ProjectId,
   outId: string,
   body: UpsertVariantBody,
+  signals: ChangeSignal[],
 ): Promise<ServiceResult<MessageVariantRow>> {
   const [out] = await db
     .select({ subjectPattern: messageVariants.subjectPattern })
@@ -122,7 +125,7 @@ export async function replaceMessageVariant(
     reason: `Replaced by ${body.variantId}${body.reason ? `: ${body.reason}` : ''}`.slice(0, 300),
   })
   if (!archived.ok) return archived
-  const added = await upsertMessageVariant(db, tenantId, caller, projectId, body)
+  const added = await upsertMessageVariant(db, tenantId, caller, projectId, body, signals)
   if (!added.ok) throw new Error(`Invariant: ${body.variantId} could not take ${outId}'s slot: ${added.error}`)
   return added
 }

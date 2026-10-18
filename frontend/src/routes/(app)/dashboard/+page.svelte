@@ -3,13 +3,16 @@
   import type { PageProps } from './$types';
   import type {
     AttentionItem,
+    ChangeSignal,
     DashboardActivityKind,
     DashboardPeriod,
+    FramePeriod,
     FunnelStageKey,
     JournalEvent,
     RateChange,
     SegmentAxis,
   } from '$lib/types/dashboard';
+  import { CHANGE_SIGNALS } from '$lib/types/dashboard';
   import type { FunnelStageFilter } from '$lib/types/outreach';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import ProposalSection from '$lib/components/dashboard/ProposalSection.svelte';
@@ -118,6 +121,25 @@
   const DOCUMENT_NAMES = { sales_strategy: 'the sales strategy', business: 'the business profile' } as const;
   const PROPOSAL_OUTCOME = { applied: 'applied', stopped: 'you stopped it', outdated: 'dropped: a change came first' } as const;
 
+  const SIGNAL_LABELS: Record<ChangeSignal, string> = {
+    replies: 'Reply rates',
+    declines: 'The noes',
+    bounces: 'Bounces',
+    discovery: 'What discovery found',
+    person: 'Your corrections',
+  };
+
+  function onSignals(evidence: { signals: ChangeSignal[] } | null): string | null {
+    return evidence ? `on ${evidence.signals.map((s) => SIGNAL_LABELS[s].toLowerCase()).join(', ')}` : null;
+  }
+
+  const joined = (...parts: (string | null)[]): string | null => parts.filter(Boolean).join(' · ') || null;
+
+  function frameRate({ trials, positive }: FramePeriod): string {
+    const rate = trials > 0 ? Math.round((positive / trials) * 1000) / 10 : 0;
+    return `${positive} positive of ${Math.round(trials)} counted (${rate}%)`;
+  }
+
   function evidenceDetail(evidence: Extract<JournalEvent, { kind: 'rule_archive' }>['evidence']): string | null {
     if (!evidence) return null;
     const p = 'pBest' in evidence ? evidence.pBest : evidence.pBeatsLeader;
@@ -137,21 +159,21 @@
       case 'settings':
         return {
           text: e.actor === 'user' ? 'You changed who Ace can reach' : 'Changed who Ace can reach',
-          detail: reachRows(e.diff).map((r) => `${r.label}: ${r.from} → ${r.to}`).join(' · '),
+          detail: joined(reachRows(e.diff).map((r) => `${r.label}: ${r.from} → ${r.to}`).join(' · '), onSignals(e.evidence)),
           why: e.reason,
         };
       case 'frame':
         return {
           text: e.actor === 'user' ? 'You started a new frame' : 'Started a new frame',
-          detail: 'measuring from here',
+          detail: joined('measuring from here', onSignals(e.evidence)),
           why: e.reason,
         };
       case 'document': {
         const name = DOCUMENT_NAMES[e.target];
-        return { text: e.actor === 'user' ? `You edited ${name}` : `Adjusted ${name}`, detail: null, why: e.reason };
+        return { text: e.actor === 'user' ? `You edited ${name}` : `Adjusted ${name}`, detail: onSignals(e.evidence), why: e.reason };
       }
       case 'option':
-        return { text: `${OPTION_VERBS[e.target][e.actor][e.op]} “${e.label ?? e.optionId}”`, detail: null, why: e.reason };
+        return { text: `${OPTION_VERBS[e.target][e.actor][e.op]} “${e.label ?? e.optionId}”`, detail: onSignals(e.evidence), why: e.reason };
       case 'rule_archive': {
         const name = `“${e.label ?? e.optionId}”`;
         const detail = evidenceDetail(e.evidence);
@@ -465,7 +487,7 @@
             <Brain size={18} class="text-inbound" />
             <h3 class="font-display text-lg font-semibold text-text">What the AI is doing</h3>
           </div>
-          {#if summary.learning.angles.length > 0 || summary.learning.bestSubject || summary.journal.length > 0}
+          {#if summary.learning.angles.length > 0 || summary.journal.length > 0}
             <ul class="space-y-4 text-sm">
               <li>
                 <p class="flex items-center gap-2 text-text">
@@ -478,6 +500,31 @@
                 </p>
                 {#if summary.learning.needsNewAngle}
                   <p class="mt-0.5 text-xs text-text-muted">Recruiting a fresh angle — the next evaluation adds one.</p>
+                {/if}
+              </li>
+              <li class="border-t border-border pt-4">
+                <p class="flex justify-between gap-2 text-xs font-semibold text-text-muted">
+                  What its changes rested on<span class="font-normal">last 30 days</span>
+                </p>
+                <p class="mt-1 text-text">
+                  {summary.loop.changes} {summary.loop.changes === 1 ? 'change' : 'changes'} by Ace
+                </p>
+                <ul class="mt-2 space-y-1.5">
+                  {#each CHANGE_SIGNALS as signal}
+                    <li class="flex items-baseline justify-between gap-2">
+                      <span class="text-text-secondary">{SIGNAL_LABELS[signal]}</span>
+                      <span class="shrink-0 text-xs tabular-nums text-text-secondary">{summary.loop.bySignal[signal]}</span>
+                    </li>
+                  {/each}
+                </ul>
+                <p class="mt-3 text-xs text-text-muted">
+                  This frame{summary.loop.frame.start ? ` (since ${fmtDay(summary.loop.frame.start.day)})` : ''}:
+                  <span class="tabular-nums text-text-secondary">{frameRate(summary.loop.frame)}</span>
+                </p>
+                {#if summary.loop.previousFrame}
+                  <p class="text-xs text-text-muted">
+                    The frame before: <span class="tabular-nums text-text-secondary">{frameRate(summary.loop.previousFrame)}</span>
+                  </p>
                 {/if}
               </li>
               {#if summary.learning.angles.length > 0}
@@ -500,17 +547,6 @@
                       </li>
                     {/each}
                   </ul>
-                </li>
-              {/if}
-              {#if summary.learning.bestSubject}
-                <li class="border-t border-border pt-4">
-                  <p class="text-xs font-semibold text-text-muted">Leading subject line</p>
-                  <p class="mt-1 truncate text-text" title={summary.learning.bestSubject.pattern}>
-                    “{summary.learning.bestSubject.pattern}”
-                  </p>
-                  <p class="text-xs tabular-nums text-inbound">
-                    {summary.learning.bestSubject.positiveRate}% positive · {summary.learning.bestSubject.interestedRate}% with interest · {summary.learning.bestSubject.n} sends{summary.learning.bestSubject.mature ? ' · winning' : ' · still testing'}
-                  </p>
                 </li>
               {/if}
               {#if summary.journal.length > 0}

@@ -3,7 +3,7 @@ import { OUTBOUND_CHANNELS, type OutboundChannel } from '../outbound-channel'
 import { ALLOWED_SEND_COUNTRIES, type AllowedSendCountry } from '../country'
 import { discoveryStrategySchema } from '../ids'
 import { localeSchema } from '../locale'
-import { changeReasonSchema, reachDiff, reachLine, type ReachDiff, type ReachSettings } from './change'
+import { changeReasonSchema, reachDiff, reachLine, type ChangeSignal, type ReachDiff, type ReachSettings } from './change'
 
 // What Ace hands the person to decide (product_principles §2.2). A loosening or
 // a new frame applies as written on its day unless the person stops it: no
@@ -102,6 +102,12 @@ export function freshVariantIds(taken: ReadonlySet<string>, today: string, n: nu
   const ids: string[] = []
   for (let k = 1; ids.length < n; k++) if (!taken.has(`${prefix}${k}`)) ids.push(`${prefix}${k}`)
   return ids
+}
+
+// A loosening rests on whom discovery found but cannot reach; a frame on its
+// positive rate.
+export function proposalSignals(change: Extract<ProposedChange, { kind: 'loosen' | 'frame' }>): ChangeSignal[] {
+  return change.kind === 'loosen' ? ['discovery'] : ['replies']
 }
 
 export function applyOnFor(today: string): string {

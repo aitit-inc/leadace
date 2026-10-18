@@ -191,9 +191,9 @@ psql_local "UPDATE proposals SET change = jsonb_set(change, '{applyOn}', to_json
 ui POST "/api/projects/$PROJECT_ID/run-lever-tick" > /dev/null
 assert_eq "on its day: applied" "$(status_of "$P2")" "applied"
 assert_eq "the setting changed" "$(channels)" "email,form"
-assert_eq "logged as Ace with the proposal's reason" \
-  "$(psql_local "SELECT actor || ' | ' || reason FROM policy_changes WHERE project_id = '$PROJECT_ID' AND target = 'settings' ORDER BY id DESC LIMIT 1;")" \
-  "ace | form-only prospects: 107"
+assert_eq "logged as Ace with the proposal's reason, on discovery" \
+  "$(psql_local "SELECT actor || ' | ' || reason || ' | ' || (evidence->>'signals') FROM policy_changes WHERE project_id = '$PROJECT_ID' AND target = 'settings' ORDER BY id DESC LIMIT 1;")" \
+  'ace | form-only prospects: 107 | ["discovery"]'
 
 step "5. a setting changed since the proposal was written: outdated"
 P3="$(propose '["email","form"]' '["email","form","sns_linkedin"]' "$TOMORROW")"
@@ -256,6 +256,9 @@ assert_eq "the reach changed" "$(psql_local "SELECT array_to_string(target_count
 assert_eq "the options are the frame's" "$(active_options)" "frame_nurse_1,frame_nurse_2 | nurse-a,nurse-b"
 assert_eq "a frame row by Ace with the reason" \
   "$(psql_local "SELECT actor || ' | ' || reason FROM policy_changes WHERE project_id = '$PROJECT_ID' AND target = 'frame';")" "ace | no positive in 120 trials"
+assert_eq "only the frame row carries its signal, not the rows it wrote" \
+  "$(psql_local "SELECT string_agg(target || ':' || (evidence->>'signals'), ' ' ORDER BY id) FROM policy_changes WHERE project_id = '$PROJECT_ID' AND evidence ? 'signals';")" \
+  'settings:["discovery"] settings:["discovery"] frame:["replies"]'
 assert_eq "the tick decided on the frame signal" \
   "$(psql_local "SELECT decision ? 'frame' FROM lever_decisions WHERE project_id = '$PROJECT_ID' ORDER BY cycle_date DESC LIMIT 1;")" "t"
 OLD_DOC="$(strategy_doc_id)"
@@ -291,6 +294,8 @@ STATUS="$(ui GET "/api/projects/$PROJECT_ID/dashboard")"
 assert_eq "dashboard → 200" "$STATUS" "200"
 assert_eq "settings changes journaled" "$(api_body | jq -r '[.journal[] | select(.kind == "settings")] | length')" "8"
 assert_eq "frame starts journaled" "$(api_body | jq -r '[.journal[] | select(.kind == "frame") | .actor] | sort | join(",")')" "ace,user,user"
+assert_eq "the loop's changes counted by signal" "$(api_body | jq -rc '[.loop.changes, .loop.bySignal.discovery, .loop.bySignal.replies]')" "[3,2,1]"
+assert_eq "this frame and the one before" "$(api_body | jq -rc '[.loop.frame.start.day == "'"$TODAY"'", .loop.previousFrame != null]')" "[true,true]"
 assert_eq "proposals journaled with their outcome" \
   "$(api_body | jq -r '[.journal[] | select(.kind == "proposed") | .status] | sort | join(",")')" "applied,applied,applied,applied,outdated,outdated,outdated,outdated,stopped,stopped,stopped"
 

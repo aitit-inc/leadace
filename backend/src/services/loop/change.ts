@@ -11,7 +11,9 @@ import {
   isDocumentTarget,
   optionOps,
   reachDiff,
+  type AceEvidence,
   type ChangeAuthor,
+  type ChangeEvidence,
   type DocumentTarget,
   type LoggedChange,
   type LoggedRuleChange,
@@ -19,6 +21,7 @@ import {
   type ReachDiff,
   type ReachSettings,
   type RuleArchiveReason,
+  type RuleEvidence,
 } from '../../domain/loop/change'
 import type { Frame } from '../../domain/loop/proposal'
 import { COARSE_TO_FINES, type CoarseIndustry } from '../../domain/coarse-industry'
@@ -320,6 +323,8 @@ export async function applyFrameChange(
   await lockTarget(db, projectId, 'sales_strategy', '')
   await lockTarget(db, projectId, 'settings', '')
   if (!when({ salesStrategyId: await latestSalesStrategyId(db, projectId), reach: await loadReach(db, projectId) })) return false
+  // The frame row carries what the frame rests on; the rows it writes are its content.
+  const part: ChangeAuthor = by.actor === 'ace' ? { ...by, evidence: null } : by
   // Its ids were fresh when it was written; one taken since would rewrite a measured option.
   const [takenVariants, takenStrategies] = await Promise.all([
     db.select({ id: messageVariants.variantId }).from(messageVariants)
@@ -328,22 +333,22 @@ export async function applyFrameChange(
       .where(and(eq(discoveryStrategies.projectId, projectId), inArray(discoveryStrategies.slug, frame.strategies.map((st) => st.slug)))).limit(1),
   ])
   if (takenVariants.length > 0 || takenStrategies.length > 0) return false
-  await applyDocumentChange(db, tenantId, projectId, 'sales_strategy', frame.salesStrategy, by)
-  await applyReachChange(db, tenantId, projectId, frame.reach, by)
+  await applyDocumentChange(db, tenantId, projectId, 'sales_strategy', frame.salesStrategy, part)
+  await applyReachChange(db, tenantId, projectId, frame.reach, part)
   const keepVariants = new Set(frame.variants.map((v) => v.variantId))
   const activeVariants = await db.select(variantCols).from(messageVariants)
     .where(and(eq(messageVariants.projectId, projectId), isNull(messageVariants.archivedAt)))
   for (const v of activeVariants.filter((a) => !keepVariants.has(a.variantId))) {
-    await applyVariantChange(db, tenantId, projectId, { variantId: v.variantId, subjectPattern: v.subjectPattern, archived: true }, by)
+    await applyVariantChange(db, tenantId, projectId, { variantId: v.variantId, subjectPattern: v.subjectPattern, archived: true }, part)
   }
-  for (const v of frame.variants) await applyVariantChange(db, tenantId, projectId, { ...v, archived: false }, by)
+  for (const v of frame.variants) await applyVariantChange(db, tenantId, projectId, { ...v, archived: false }, part)
   const keepStrategies = new Set(frame.strategies.map((st) => st.slug))
   const activeStrategies = await db.select(strategyCols).from(discoveryStrategies)
     .where(and(eq(discoveryStrategies.projectId, projectId), isNull(discoveryStrategies.archivedAt)))
   for (const st of activeStrategies.filter((a) => !keepStrategies.has(a.slug))) {
-    await applyStrategyChange(db, tenantId, projectId, { slug: st.slug, approach: st.approach, archived: true }, by)
+    await applyStrategyChange(db, tenantId, projectId, { slug: st.slug, approach: st.approach, archived: true }, part)
   }
-  for (const st of frame.strategies) await applyStrategyChange(db, tenantId, projectId, { ...st, archived: false }, by)
+  for (const st of frame.strategies) await applyStrategyChange(db, tenantId, projectId, { ...st, archived: false }, part)
   await log(db, tenantId, projectId, [{ target: 'frame', op: 'add', ...by }])
   return true
 }
@@ -453,6 +458,10 @@ export async function optionEntries(db: Db, projectId: ProjectId, target: Option
   return new Map(rows.flatMap((r) => (r.optionId === null || r.at === null ? [] : [[r.optionId, r.at] as const])))
 }
 
+// The column holds the rule's evidence on its rows and Ace's on Ace's.
+const ruleEvidence = (e: ChangeEvidence | null): RuleEvidence | null => (e !== null && 'n' in e ? e : null)
+const aceEvidence = (e: ChangeEvidence | null): AceEvidence | null => (e !== null && 'signals' in e ? e : null)
+
 // Newest first.
 export async function listChanges(db: Db, projectId: ProjectId, since: Date): Promise<LoggedChange[]> {
   const rows = await db
@@ -464,19 +473,19 @@ export async function listChanges(db: Db, projectId: ProjectId, since: Date): Pr
     const day = utcDay(r.createdAt)
     if (isDocumentTarget(r.target)) {
       if (r.actor === 'rule') throw new Error(`Invariant: rule change to ${r.target}`)
-      return { day, actor: r.actor, target: r.target, reason: r.reason }
+      return { day, actor: r.actor, target: r.target, reason: r.reason, evidence: aceEvidence(r.evidence) }
     }
     if (r.target === 'settings') {
       if (r.actor === 'rule' || r.reachDiff === null) throw new Error('Invariant: a settings change row without its author or diff')
-      return { day, actor: r.actor, target: r.target, diff: r.reachDiff, reason: r.reason }
+      return { day, actor: r.actor, target: r.target, diff: r.reachDiff, reason: r.reason, evidence: aceEvidence(r.evidence) }
     }
     if (r.target === 'frame') {
       if (r.actor === 'rule') throw new Error('Invariant: a frame started by the rule')
-      return { day, actor: r.actor, target: r.target, reason: r.reason }
+      return { day, actor: r.actor, target: r.target, reason: r.reason, evidence: aceEvidence(r.evidence) }
     }
     if (r.optionId === null) throw new Error(`Invariant: ${r.target} change row without an option`)
-    if (r.actor !== 'rule') return { day, actor: r.actor, target: r.target, optionId: r.optionId, op: r.op, reason: r.reason }
-    const rule = { day, actor: r.actor, target: r.target, optionId: r.optionId, evidence: r.evidence }
+    if (r.actor !== 'rule') return { day, actor: r.actor, target: r.target, optionId: r.optionId, op: r.op, reason: r.reason, evidence: aceEvidence(r.evidence) }
+    const rule = { day, actor: r.actor, target: r.target, optionId: r.optionId, evidence: ruleEvidence(r.evidence) }
     if (r.op === 'restore') return { ...rule, op: r.op }
     if (r.op !== 'archive' || r.ruleReason === null) throw new Error(`Invariant: rule ${r.op} of ${r.optionId} without an archive reason`)
     return { ...rule, op: r.op, reason: r.ruleReason }

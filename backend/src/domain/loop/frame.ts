@@ -72,3 +72,11 @@ export function frameSignal(
   const open = stat.trials >= FRAME_SIGNAL.minTrials && p >= FRAME_SIGNAL.confidence && vitals !== 'futile'
   return { trials: stat.trials, positive: stat.positive, pBelow: p, open }
 }
+
+// One frame's positive replies over its trials, counted on its own sends.
+export type FramePeriod = {
+  // null for the frame the project started with.
+  start: { day: string; by: 'ace' | 'user'; reason: string | null } | null
+  trials: number
+  positive: number
+}

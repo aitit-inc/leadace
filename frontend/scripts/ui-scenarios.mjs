@@ -580,7 +580,7 @@ function seedDashboardFixture(ctx, projectId, { pending = 'loosen' } = {}) {
      (${q(tenant)}, ${q(projectId)}, 'variant', 'rst_20260715_a', 'archive', 'rule', NULL, 'lost', '{"pBest":0.02,"n":30}'::jsonb, ${q(retiredAt)}),
      (${q(tenant)}, ${q(projectId)}, 'variant', 'rst_20260715_c', 'archive', 'rule', NULL, 'lost', '{"pBest":0.01,"n":32}'::jsonb, ${q(retiredAt)}),
      (${q(tenant)}, ${q(projectId)}, 'variant', 'rst_20260715_c', 'restore', 'rule', NULL, NULL, '{"pBeatsLeader":0.41,"n":48}'::jsonb, ${q(restoredAt)}),
-     (${q(tenant)}, ${q(projectId)}, 'sales_strategy', NULL, 'update', 'ace', ${q(DASH_TARGET_WHY)}, NULL, NULL, ${q(iso(now - 3 * DAY))});`,
+     (${q(tenant)}, ${q(projectId)}, 'sales_strategy', NULL, 'update', 'ace', ${q(DASH_TARGET_WHY)}, NULL, '{"signals":["replies","declines"]}'::jsonb, ${q(iso(now - 3 * DAY))});`,
   );
   // A reach change the person made, and Ace's proposals: one stopped, a
   // loosening or a new frame waiting on its card for tomorrow's cycle, and a
@@ -993,7 +993,7 @@ const SCENARIOS = [
           expect: [
             '2 meeting requests waiting',
             'Optimizing across 3 message angles',
-            'Three minutes a day',
+            'Proof-led',
             'Wantedly stories reach the schools email is bouncing at',
           ],
         },
@@ -1001,7 +1001,13 @@ const SCENARIOS = [
           name: 'learning',
           path: '/dashboard',
           scrollTo: 'text=Recent decisions',
-          expect: ['positive / with interest', 'Leading subject line', 'Recent decisions'],
+          expect: ['positive / with interest', 'Recent decisions', 'on reply rates, the noes'],
+        },
+        {
+          name: 'loop',
+          path: '/dashboard',
+          scrollTo: 'text=What its changes rested on',
+          expect: ['changes by Ace', 'What discovery found', 'This frame'],
         },
         {
           name: 'segments',

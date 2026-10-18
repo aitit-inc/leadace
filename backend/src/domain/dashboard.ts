@@ -1,7 +1,8 @@
 import type { Channel, RejectionRecontactWindow } from '../db/schema'
 import type { AttentionItem } from './attention'
 import { coarseIndustry } from './coarse-industry'
-import type { ChangeAuthor, DocumentTarget, LoggedChange, OptionOp, OptionTarget, ReachDiff, RuleArchiveReason, RuleEvidence } from './loop/change'
+import { CHANGE_SIGNALS, changeSignals, type AceEvidence, type ChangeAuthor, type ChangeSignal, type DocumentTarget, type LoggedChange, type OptionOp, type OptionTarget, type ReachDiff, type RuleArchiveReason, type RuleEvidence } from './loop/change'
+import type { FramePeriod } from './loop/frame'
 import type { ProposalStatus, ProposedChange } from './loop/proposal'
 import { sendReaction, type Reaction, type ReactionLevel } from './loop/reaction'
 
@@ -37,7 +38,6 @@ export type LearningAngle = ReactionRates & {
 }
 
 export type DashboardLearning = {
-  bestSubject: (ReactionRates & { pattern: string; mature: boolean; n: number }) | null
   angles: LearningAngle[]
   needsNewAngle: boolean
   state: 'learning' | 'optimizing'
@@ -48,10 +48,10 @@ export const JOURNAL_WINDOW_DAYS = 30
 export type JournalEvent =
   | { date: string; kind: 'rule_archive'; target: OptionTarget; optionId: string; label: string | null; reason: RuleArchiveReason; evidence: RuleEvidence | null }
   | { date: string; kind: 'rule_restore'; target: OptionTarget; optionId: string; label: string | null; evidence: RuleEvidence | null }
-  | { date: string; kind: 'option'; target: OptionTarget; optionId: string; label: string | null; op: OptionOp; actor: ChangeAuthor['actor']; reason: string | null }
-  | { date: string; kind: 'document'; target: DocumentTarget; actor: ChangeAuthor['actor']; reason: string | null }
-  | { date: string; kind: 'settings'; diff: ReachDiff; actor: ChangeAuthor['actor']; reason: string | null }
-  | { date: string; kind: 'frame'; actor: ChangeAuthor['actor']; reason: string | null }
+  | { date: string; kind: 'option'; target: OptionTarget; optionId: string; label: string | null; op: OptionOp; actor: ChangeAuthor['actor']; reason: string | null; evidence: AceEvidence | null }
+  | { date: string; kind: 'document'; target: DocumentTarget; actor: ChangeAuthor['actor']; reason: string | null; evidence: AceEvidence | null }
+  | { date: string; kind: 'settings'; diff: ReachDiff; actor: ChangeAuthor['actor']; reason: string | null; evidence: AceEvidence | null }
+  | { date: string; kind: 'frame'; actor: ChangeAuthor['actor']; reason: string | null; evidence: AceEvidence | null }
   | { date: string; kind: 'proposed'; title: string; status: ProposalStatus; change: ProposedChange }
 
 export type JournalProposal = { title: string; status: ProposalStatus; change: ProposedChange; createdAt: Date | string }
@@ -74,19 +74,41 @@ export function buildJournal(
       const event = { date: c.day, target, optionId, label: label(target, optionId), evidence }
       return c.op === 'archive' ? { ...event, kind: 'rule_archive', reason: c.reason } : { ...event, kind: 'rule_restore' }
     }
+    const { actor, reason, evidence } = c
     if ('optionId' in c) {
-      const { target, optionId, op, actor, reason } = c
-      return { date: c.day, kind: 'option', target, optionId, label: label(target, optionId), op, actor, reason }
+      const { target, optionId, op } = c
+      return { date: c.day, kind: 'option', target, optionId, label: label(target, optionId), op, actor, reason, evidence }
     }
-    if (c.target === 'settings') return { date: c.day, kind: 'settings', diff: c.diff, actor: c.actor, reason: c.reason }
-    if (c.target === 'frame') return { date: c.day, kind: 'frame', actor: c.actor, reason: c.reason }
-    return { date: c.day, kind: 'document', target: c.target, actor: c.actor, reason: c.reason }
+    if (c.target === 'settings') return { date: c.day, kind: 'settings', diff: c.diff, actor, reason, evidence }
+    if (c.target === 'frame') return { date: c.day, kind: 'frame', actor, reason, evidence }
+    return { date: c.day, kind: 'document', target: c.target, actor, reason, evidence }
   })
   const raised = proposals
     .map((p) => ({ date: utcDay(p.createdAt), kind: 'proposed' as const, title: p.title, status: p.status, change: p.change }))
     .filter((e) => e.date >= windowStartDay)
     .sort((a, b) => (a.title < b.title ? -1 : a.title > b.title ? 1 : 0))
   return [...events, ...raised].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
+}
+
+// The loop's changes in the journal's window by signal (one may count under
+// several), and this frame against the one before.
+export type LoopReport = {
+  changes: number
+  bySignal: Record<ChangeSignal, number>
+  frame: FramePeriod
+  previousFrame: FramePeriod | null
+}
+
+export function countLoopChanges(changes: readonly LoggedChange[]): Pick<LoopReport, 'changes' | 'bySignal'> {
+  const bySignal = Object.fromEntries(CHANGE_SIGNALS.map((s) => [s, 0])) as Record<ChangeSignal, number>
+  let count = 0
+  for (const c of changes) {
+    const signals = changeSignals(c)
+    if (signals === null) continue
+    count++
+    for (const s of signals) bySignal[s]++
+  }
+  return { changes: count, bySignal }
 }
 
 export type RejectionQuote = {
@@ -213,6 +235,7 @@ export type DashboardSummary = {
   reactionRates: { positive: RateChange; interested: RateChange }
   learning: DashboardLearning
   journal: JournalEvent[]
+  loop: LoopReport
   // Newest lever-tick cycle date (all-time, not window-bound); null = no tick has ever run.
   lastCycleDate: string | null
   rejections: DashboardRejections

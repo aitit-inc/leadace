@@ -43,10 +43,28 @@ export interface LearningAngle extends ReactionRates {
 }
 
 export interface DashboardLearning {
-  bestSubject: (ReactionRates & { pattern: string; mature: boolean; n: number }) | null;
   angles: LearningAngle[];
   needsNewAngle: boolean;
   state: 'learning' | 'optimizing';
+}
+
+export const CHANGE_SIGNALS = ['replies', 'declines', 'bounces', 'discovery', 'person'] as const;
+export type ChangeSignal = (typeof CHANGE_SIGNALS)[number];
+// What one of Ace's loop changes rests on; null on a change outside the loop.
+type AceEvidence = { signals: ChangeSignal[] };
+
+export interface FramePeriod {
+  // null for the frame the project started with.
+  start: { day: string; by: 'ace' | 'user'; reason: string | null } | null;
+  trials: number;
+  positive: number;
+}
+
+export interface LoopReport {
+  changes: number;
+  bySignal: Record<ChangeSignal, number>;
+  frame: FramePeriod;
+  previousFrame: FramePeriod | null;
 }
 
 // P(it beats the leading option) for a lost or restored one; P(best) among the
@@ -80,10 +98,11 @@ export type JournalEvent =
       op: 'add' | 'update' | 'archive' | 'restore';
       actor: 'ace' | 'user';
       reason: string | null;
+      evidence: AceEvidence | null;
     }
-  | { date: string; kind: 'document'; target: 'business' | 'sales_strategy'; actor: 'ace' | 'user'; reason: string | null }
-  | { date: string; kind: 'settings'; diff: ReachDiff; actor: 'ace' | 'user'; reason: string | null }
-  | { date: string; kind: 'frame'; actor: 'ace' | 'user'; reason: string | null }
+  | { date: string; kind: 'document'; target: 'business' | 'sales_strategy'; actor: 'ace' | 'user'; reason: string | null; evidence: AceEvidence | null }
+  | { date: string; kind: 'settings'; diff: ReachDiff; actor: 'ace' | 'user'; reason: string | null; evidence: AceEvidence | null }
+  | { date: string; kind: 'frame'; actor: 'ace' | 'user'; reason: string | null; evidence: AceEvidence | null }
   | { date: string; kind: 'proposed'; title: string; status: ProposalStatus; change: ProposedChange };
 
 export type ReachSettings = { outboundChannels: string[]; targetCountries: string[]; targetLanguage: string };
@@ -178,6 +197,7 @@ export interface DashboardSummary {
   reactionRates: { positive: RateChange; interested: RateChange };
   learning: DashboardLearning;
   journal: JournalEvent[];
+  loop: LoopReport;
   lastCycleDate: string | null;
   rejections: DashboardRejections;
   segments: DashboardSegment[];

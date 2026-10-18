@@ -17,6 +17,7 @@ import {
   frameReach,
   freshVariantIds,
   loosening,
+  proposalSignals,
   sameReach,
   stillApplies,
   PROPOSAL_STATUSES,
@@ -246,7 +247,7 @@ async function applyProposal(
   const { change } = p
   const projectId = p.projectId as ProjectId
   if (change.kind === 'add-means') return err('CONFLICT', 'A means applies once its playbook is approved')
-  const by: ChangeAuthor = { actor: 'ace', reason: change.reason }
+  const by: ChangeAuthor = { actor: 'ace', reason: change.reason, evidence: { signals: proposalSignals(change) } }
   const applied = change.kind === 'loosen'
     ? (await applyReachChange(
         db,

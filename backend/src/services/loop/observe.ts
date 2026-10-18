@@ -33,6 +33,7 @@ import { type LeverConfig } from '../../domain/loop/config'
 import type { ChannelFineStat, TargetingAxisStat, TargetingStats } from '../../domain/loop/allocation'
 import type { TickEvidence } from '../../domain/loop/decide'
 import type { ArmStat } from '../../domain/loop/bandit'
+import type { FramePeriod } from '../../domain/loop/frame'
 import type { FollowUpJsonOp, GroundedTextOp, PagesJsonOp } from '../llm/routes'
 import { loadLeverConfig, loadProjectOutboundAllowlist } from '../project-settings'
 import { ok, type ServiceResult } from '../result'
@@ -830,13 +831,6 @@ export async function loadActiveVariantIds(db: Db, projectId: ProjectId): Promis
     .where(and(eq(messageVariants.projectId, projectId), isNull(messageVariants.archivedAt)))
     .orderBy(asc(messageVariants.variantId))
   return rows.map((r) => r.variantId)
-}
-
-export type FramePeriod = {
-  // null for the frame the project started with.
-  start: { day: string; by: 'ace' | 'user'; reason: string | null } | null
-  trials: number
-  positive: number
 }
 
 // Every frame the project has run, oldest first, each counted on its own sends
