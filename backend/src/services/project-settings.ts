@@ -22,6 +22,8 @@ import { composeFooterBlock, replyUnsubscribeFooterLine } from '../domain/inquir
 import { localeSchema, type Locale } from '../domain/locale'
 import { loadTenantSettings, localizeComplianceIdentity } from './tenants'
 import { leverConfigSchema, leverConfigPatchSchema, leverConfigInvariantViolation, type LeverConfig } from '../domain/loop/config'
+import { authorOf } from '../domain/loop/change'
+import { applyReachChange } from './loop/change'
 import {
   followUpSequenceSchema,
   followUpSequencePatchSchema,
@@ -521,12 +523,14 @@ export async function updateProjectSettings(
     ...(patch.maxReapproachCycles !== undefined ? { maxReapproachCycles: patch.maxReapproachCycles } : {}),
     ...(patch.unspecifiedRecontactWindowMonths !== undefined ? { unspecifiedRecontactWindowMonths: patch.unspecifiedRecontactWindowMonths } : {}),
     ...(patch.noResponseRecycleDays !== undefined ? { noResponseRecycleDays: patch.noResponseRecycleDays } : {}),
-    ...(patch.outboundChannels !== undefined ? { outboundChannels: patch.outboundChannels } : {}),
-    ...(patch.targetCountries !== undefined ? { targetCountries: patch.targetCountries } : {}),
-    ...(patch.targetLanguage !== undefined ? { targetLanguage: patch.targetLanguage } : {}),
     ...(patch.leverConfig !== undefined ? { leverConfig: patch.leverConfig } : {}),
     ...(patch.followUpSequence !== undefined ? { followUpSequence: patch.followUpSequence } : {}),
     updatedAt: now,
+  }
+
+  const { outboundChannels, targetCountries, targetLanguage } = patch
+  if (outboundChannels !== undefined || targetCountries !== undefined || targetLanguage !== undefined) {
+    await applyReachChange(db, tenantId, projectId, { outboundChannels, targetCountries, targetLanguage }, authorOf(caller, null))
   }
 
   const followUpWasEnabled =

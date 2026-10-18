@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { optionOps } from './change'
+import { optionOps, reachDiff } from './change'
 
 const state = (archived: boolean, subject: string | null = 's', label: string | null = null) => ({
   archived,
@@ -24,5 +24,21 @@ describe('optionOps', () => {
 
   it('logs nothing when nothing changed', () => {
     expect(optionOps(state(true, 's', 'l'), state(true, 's', 'l'))).toEqual([])
+  })
+})
+
+describe('reachDiff', () => {
+  const before = { outboundChannels: ['email' as const], targetCountries: ['JP' as const], targetLanguage: 'ja' as const }
+
+  it('keeps only the fields whose value changed, comparing lists as sets', () => {
+    expect(reachDiff(before, { outboundChannels: ['form', 'email'], targetCountries: ['JP'], targetLanguage: 'ja' })).toEqual({
+      outboundChannels: { from: ['email'], to: ['form', 'email'] },
+    })
+    expect(reachDiff(before, { targetLanguage: 'en' })).toEqual({ targetLanguage: { from: 'ja', to: 'en' } })
+  })
+
+  it('is empty when nothing changed', () => {
+    expect(reachDiff(before, { outboundChannels: ['email'] })).toEqual({})
+    expect(reachDiff(before, {})).toEqual({})
   })
 })

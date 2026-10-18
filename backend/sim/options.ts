@@ -240,6 +240,7 @@ export function runOptions(
       channel: [],
       targeting: { industry: [], employeeBand: [], country: [] },
       futility: { sends: 0, engaged: 0 },
+      frame: { trials: 0, positive: 0 },
     }
     const decision = decide(evidence, config, String(day), key, samples)
     const layer = scenario.layer === 'message' ? decision.variants : decision.strategies

@@ -67,19 +67,20 @@ export async function requireStrategyDocs(
   db: Db,
   tenantId: TenantId,
   projectId: ProjectId,
-): Promise<ServiceResult<{ business: string; salesStrategy: string }>> {
+): Promise<ServiceResult<{ business: string; salesStrategy: string; salesStrategyId: number }>> {
   const [business, salesStrategy] = await Promise.all([
     loadDoc(db, tenantId, projectId, 'business'),
-    loadDoc(db, tenantId, projectId, 'sales_strategy'),
+    getDocument(db, tenantId, STAGE_CALLER, { id: projectId, slug: 'sales_strategy' }),
   ])
-  if (business === null || salesStrategy === null) {
+  if (business === null || !salesStrategy.ok) {
     return err(
       'PRECONDITION_FAILED',
       'Project strategy not set up',
       'The business and sales_strategy documents are missing — finish onboarding (paste the company URL in chat) first.',
     )
   }
-  return ok({ business, salesStrategy })
+  // The version it read: Ace writes over it only while it is still the latest.
+  return ok({ business, salesStrategy: salesStrategy.value.content, salesStrategyId: salesStrategy.value.id })
 }
 
 export async function loadMasterDoc(db: Db, slug: string): Promise<string> {

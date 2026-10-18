@@ -167,3 +167,12 @@ export function decideOptions(
     flatStreak,
   }
 }
+
+// The active options Ace may swap for a fresh angle the replies point to: out
+// of their grace, and not today's likeliest best. None without today's P(best)
+// for every one of them.
+export function replaceableArms(arms: Array<{ armId: string; sinceEntry: number }>, pBest: Record<string, number>, minSamplePerArm: number): string[] {
+  if (arms.length === 0 || arms.some((a) => pBest[a.armId] === undefined)) return []
+  const leader = arms.reduce((best, a) => (pBest[a.armId]! > pBest[best.armId]! ? a : best))
+  return arms.filter((a) => a.armId !== leader.armId && a.sinceEntry >= minSamplePerArm).map((a) => a.armId).sort()
+}

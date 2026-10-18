@@ -17,6 +17,7 @@ const evidence = (over: Partial<TickEvidence> = {}): TickEvidence => ({
   channel: [],
   targeting: { industry: [], employeeBand: [], country: [] },
   futility: { sends: 0, engaged: 0 },
+  frame: { trials: 0, positive: 0 },
   ...over,
 })
 

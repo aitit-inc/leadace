@@ -1,6 +1,8 @@
 // Assembled from what the dashboard already computed. No LLM call: the email
 // and the dashboard must never disagree about a number.
 import type { DashboardSummary, JournalEvent, RateChange, SegmentAxis } from './dashboard'
+import { reachLine } from './loop/change'
+import type { ProposedChange } from './loop/proposal'
 
 // A digest covers whole UTC days, [sinceDay, today): the day is all the
 // resolution a journal event carries, so reporting a day still in progress
@@ -57,11 +59,19 @@ const OPTION_HEAD = {
 } as const
 const DOCUMENT_HEAD = { sales_strategy: 'Sales strategy adjusted', business: 'Business profile updated' } as const
 
+const PROPOSAL_OUTCOME = { applied: 'applied', stopped: 'you stopped it', outdated: 'dropped: a change came first' } as const
+const pendingNote = (change: ProposedChange): string =>
+  change.kind === 'add-means' ? 'waiting for you to set it up' : `applies ${change.applyOn} unless you stop it`
+
 function journalLine(e: JournalEvent): string {
   const by = (actor: 'ace' | 'user', reason: string | null): string => `${actor === 'user' ? ' (by you)' : ''}${reason ? ` — ${reason}` : ''}`
   switch (e.kind) {
-    case 'strategy_escalated':
-      return `Discovery strategy raised: ${e.title}`
+    case 'proposed':
+      return `Proposed to you: ${e.title} (${e.status === 'pending' ? pendingNote(e.change) : PROPOSAL_OUTCOME[e.status]})`
+    case 'settings':
+      return `${reachLine(e.diff)}${by(e.actor, e.reason)}`
+    case 'frame':
+      return `New frame: measuring from here${by(e.actor, e.reason)}`
     case 'document':
       return `${DOCUMENT_HEAD[e.target]}${by(e.actor, e.reason)}`
     case 'option':

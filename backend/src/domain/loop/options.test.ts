@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { computePBest, seededRng, type ArmStat } from './bandit'
-import { decideOptions, isFlat, type OptionArm } from './options'
+import { decideOptions, isFlat, replaceableArms, type OptionArm } from './options'
 
 const sum = (w: Record<string, number>): number => Object.values(w).reduce((a, b) => a + b, 0)
 
@@ -183,5 +183,23 @@ describe('computePBest', () => {
     expect(Number.isFinite(p['a']!)).toBe(true)
     expect(sum(p)).toBeCloseTo(1, 10)
     expect(p['a']!).toBeGreaterThan(p['b']!)
+  })
+})
+
+describe('replaceableArms', () => {
+  const arms = [
+    { armId: 'a', sinceEntry: 40 },
+    { armId: 'b', sinceEntry: 35 },
+    { armId: 'c', sinceEntry: 12 },
+  ]
+
+  it('keeps the likeliest best and any option still in its grace', () => {
+    expect(replaceableArms(arms, { a: 0.6, b: 0.3, c: 0.1 }, 30)).toEqual(['b'])
+    expect(replaceableArms(arms, { a: 0.2, b: 0.5, c: 0.3 }, 30)).toEqual(['a'])
+  })
+
+  it('offers none without today\'s P(best) for every option', () => {
+    expect(replaceableArms(arms, { a: 0.6, b: 0.4 }, 30)).toEqual([])
+    expect(replaceableArms(arms, {}, 30)).toEqual([])
   })
 })

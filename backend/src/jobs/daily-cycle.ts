@@ -19,7 +19,7 @@ import { editionOf } from '../services/pipeline/context'
 import { CYCLE_MIN_CANDIDATES_PER_SEARCH } from '../services/pipeline/discover'
 import { listHostedReachable } from '../services/pipeline/draft'
 import type { CycleDigest } from '../services/pipeline/journal'
-import { discoverStage, draftStage, evaluateStage, journalStage, logStep, STEP_RETRY, tenantTx, unwrap, type StageCtx } from './stages'
+import { discoverStage, draftStage, evaluateStage, frameReviewStage, journalStage, logStep, STEP_RETRY, tenantTx, unwrap, type StageCtx } from './stages'
 
 // The cycle itself reads nothing of these stages but their summary. Losing one
 // costs a day of what it writes, which beats losing the day's sends.
@@ -94,11 +94,13 @@ async function learn(ctx: StageCtx, { stage, decide }: CycleLog): Promise<void> 
   const { tenantId, projectId } = ctx.job
   const tick = await ctx.step.do('lever-tick', STEP_RETRY, () => tenantTx(ctx, async (db) => {
     const t = unwrap(await runLeverTick(db, tenantId, projectId))
-    return { ran: t.ran, archived: t.changes.filter((c) => c.op === 'archive').length, vitals: t.vitals?.verdict ?? null }
+    return { ran: t.ran, archived: t.changes.filter((c) => c.op === 'archive').length, vitals: t.vitals?.verdict ?? null, frameOpen: t.frame?.open ?? false }
   }))
   await decide(tick.ran ? `lever tick ran (archived ${tick.archived}${tick.vitals ? `, vitals ${tick.vitals}` : ''})` : 'lever tick already ran today')
   if (tick.vitals === 'futile') await decide('FUTILE vitals: recent mature sends draw no interest — check deliverability and targeting')
 
+  // The outer layer before the middle: evaluate then reads a frame that waits on the person.
+  if (tick.frameOpen) await decide(`frame review: ${await advisory(() => frameReviewStage(ctx))}`)
   await stage('evaluate', await advisory(() => evaluateStage(ctx)))
 }
 

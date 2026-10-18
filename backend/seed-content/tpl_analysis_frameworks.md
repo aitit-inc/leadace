@@ -20,7 +20,7 @@ When response rates fall below expectations, examine the following 6 causes in o
 
 ### 4. CTA Problem (Response Barrier Too High)
 - Symptoms: Interest seems present but no replies
-- Report-only: note lower-barrier CTA options ("30-minute meeting" → "15-minute information exchange", "Shall I send you materials?") as a suggestion for the user's SALES_STRATEGY; evaluate does not apply messaging edits
+- A lower-barrier CTA ("30-minute meeting" → "15-minute information exchange", "Shall I send you materials?") is an angle to test: carry it in a new angle's body approach; evaluate does not apply messaging edits
 
 ### 5. Timing Problem (Poor Send Time)
 - Symptoms: Response rate skewed by day of week or time of day
@@ -34,7 +34,7 @@ When response rates fall below expectations, examine the following 6 causes in o
 
 There is no manual A/B test to design or "adopt as default" here. Subject lines are optimized by the lever tick (the bandit's continuous weighted draw across `subject_variants`, learning from replies); channel ranking by the affinity re-rank. /evaluate reads their measured performance and narrates it — it does not run subject / channel experiments or write `ab_test` records.
 
-For message elements no lever owns (body length, CTA phrasing, tone, hook), a *repeated, number-anchored* finding goes into the next new angle: its body approach carries it, and the lever measures it against the others. One that should hold for every message is a Messaging change only the person can make — suggest it. Narrate it in the report; do not rewrite SALES_STRATEGY messaging yourself.
+For message elements no lever owns (body length, CTA phrasing, tone, hook), a *repeated, number-anchored* finding goes into a new angle — a free slot, or in place of a variant past its grace that is not leading: its body approach carries it, and the lever measures it against the others. Narrate it in the report; do not rewrite SALES_STRATEGY messaging yourself.
 
 ### Dimensions to compare when reporting
 - **Subject patterns**: curiosity vs. number vs. problem-mention (from variant performance — lever-owned)

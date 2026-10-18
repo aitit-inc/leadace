@@ -59,16 +59,6 @@ describe('leverConfigSchema', () => {
   it('rejects a non-positive lookback window', () => {
     expect(() => leverConfigSchema.parse({ rewardLookbackDays: 0 })).toThrow()
   })
-
-  it('leaves measurementsSince absent by default (no epoch cut)', () => {
-    expect('measurementsSince' in defaultLeverConfig).toBe(false)
-    expect(leverConfigSchema.parse({ measurementsSince: '2026-08-27' }).measurementsSince).toBe('2026-08-27')
-  })
-
-  it('rejects a non-date measurementsSince', () => {
-    expect(() => leverConfigSchema.parse({ measurementsSince: 'not-a-date' })).toThrow()
-    expect(() => leverConfigSchema.parse({ measurementsSince: '2026-08-27T00:00:00Z' })).toThrow()
-  })
 })
 
 describe('leverConfigInvariantViolation (write-path cross-field guard)', () => {

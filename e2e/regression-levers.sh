@@ -27,7 +27,7 @@
 #     weights (largest remainder — counts always sum to batchSize; an active
 #     strategy the tick hasn't weighed yet enters at the floor share)
 #   - vitals (PR-D): the tick journals the futility check over mature
-#     non-bounced email sends (channel-scoped, epoch-cut, NOT lookback-cut);
+#     non-bounced email sends (channel-scoped, frame-cut, NOT lookback-cut);
 #     a futile verdict on a project's newest decision surfaces as an
 #     outreach_futility item on the tenant-wide /me/attention feed while an
 #     ok verdict stays silent
@@ -140,7 +140,7 @@ restore_and_exit() {
   fi
   if [[ -n "${PROJECT_ID4:-}" ]]; then
     api DELETE "/api/projects/$PROJECT_ID4" > /dev/null || true
-    say "deleted epoch project $PROJECT_ID4"
+    say "deleted frame project $PROJECT_ID4"
   fi
   if [[ -n "${PROJECT_ID5:-}" ]]; then
     api DELETE "/api/projects/$PROJECT_ID5" > /dev/null || true
@@ -461,13 +461,12 @@ SF="$(api GET "/api/projects/$PROJECT_ID2/stats")"
 assert_eq "stats w1 all-history total (unwindowed = 65)" \
   "$(echo "$SF" | jq -r '.metrics.variantResponseRate[] | select(.variantId=="w1") | .total')" "65"
 
-# Epoch cut (measurementsSince). A fourth project: sends and replies on both
-# sides of a 45-days-ago epoch date. The tick must count only the post-epoch
-# side (denominator AND reply/reward queries — both SQL fragments), while the
-# all-history /stats display stays uncut. Exercises the ::date cast end-to-end:
-# a broken fragment would 500 every tick.
-step "epoch cut: fourth project + variant e1, measurementsSince 45d ago"
-CREATE4="$(api POST /api/projects "$(jq -nc --arg n "$PROJECT_NAME epoch" '{name:$n}')")"
+# Frame cut (the latest 'frame' policy_changes row). A fourth project: sends and
+# replies on both sides of a frame that started 45 days ago. The tick must count
+# only the frame's side (denominator AND reply/reward queries — both SQL
+# fragments), while the all-history /stats display stays uncut.
+step "frame cut: fourth project + variant e1, a frame started 45d ago"
+CREATE4="$(api POST /api/projects "$(jq -nc --arg n "$PROJECT_NAME frame" '{name:$n}')")"
 PROJECT_ID4="$(echo "$CREATE4" | jq -r '.id // ""')"
 [[ -n "$PROJECT_ID4" ]] || { echo "create-project(4) failed: $CREATE4" >&2; exit 1; }
 say "project_id4=$PROJECT_ID4"
@@ -475,11 +474,11 @@ E1="$(api PUT "/api/projects/$PROJECT_ID4/message-variants" "$(jq -nc '{variantI
 assert_eq "variant e1 upserted" "$(echo "$E1" | jq -r '.variantId // ""')" "e1"
 # The shared prospect already carries discovery_strategy='s1' (set in the main
 # flow); registering the slug here makes it an arm of THIS project's registry,
-# so the discovery samples must show the same epoch cut as the variant samples.
-ES="$(api PUT "/api/projects/$PROJECT_ID4/discovery-strategies" "$(jq -nc '{slug:"s1", approach:"e2e: epoch strategy"}')")"
-assert_eq "epoch strategy s1 registered" "$(echo "$ES" | jq -r '.slug // ""')" "s1"
-EPOCH_DATE="$(psql_local "SELECT (now() - interval '45 days')::date;")"
-psql_local "UPDATE project_settings SET lever_config = '{\"measurementsSince\": \"$EPOCH_DATE\"}'::jsonb WHERE project_id = '$PROJECT_ID4';" > /dev/null
+# so the discovery samples must show the same frame cut as the variant samples.
+ES="$(api PUT "/api/projects/$PROJECT_ID4/discovery-strategies" "$(jq -nc '{slug:"s1", approach:"e2e: frame strategy"}')")"
+assert_eq "frame strategy s1 registered" "$(echo "$ES" | jq -r '.slug // ""')" "s1"
+psql_local "INSERT INTO policy_changes (tenant_id, project_id, target, op, actor, reason, created_at)
+            VALUES ('$TENANT_ID', '$PROJECT_ID4', 'frame', 'add', 'user', 'e2e: new frame', now() - interval '45 days');" > /dev/null
 psql_local "INSERT INTO outreach_logs (tenant_id, project_id, prospect_id, channel, body, status, sent_at, variant_id)
             SELECT '$TENANT_ID', '$PROJECT_ID4', $PROSPECT_ID, 'email', 'e2e', 'sent', now() - interval '30 days', 'e1'
             FROM generate_series(1, 20);" > /dev/null
@@ -492,24 +491,24 @@ psql_local "INSERT INTO responses (tenant_id, outreach_log_id, channel, content,
 psql_local "INSERT INTO responses (tenant_id, outreach_log_id, channel, content, sentiment, response_type, received_at)
             SELECT tenant_id, id, 'email', 'e2e', 'positive', 'reply', sent_at + interval '1 day'
             FROM outreach_logs WHERE project_id='$PROJECT_ID4' AND sent_at > now() - interval '31 days' ORDER BY id LIMIT 1;" > /dev/null
-say "epoch=$EPOCH_DATE; inserted 20 sends + 1 reply post-epoch, 25 sends + 5 replies pre-epoch"
+say "inserted 20 sends + 1 reply in the frame, 25 sends + 5 replies before it"
 
-step "tick measures only post-epoch; /stats display stays all-history"
+step "tick measures only the frame; /stats display stays all-history"
 TE="$(api POST "/api/projects/$PROJECT_ID4/run-lever-tick")"
-assert_eq "tick e1 post-epoch total (excludes the 25 pre-epoch)" \
+assert_eq "tick e1 in-frame total (excludes the 25 before the frame)" \
   "$(echo "$TE" | jq -r '.samples[] | select(.variantId=="e1") | .total')" "20"
-assert_eq "tick e1 post-epoch responses (excludes the 5 pre-epoch replies)" \
+assert_eq "tick e1 in-frame responses (excludes the 5 replies before the frame)" \
   "$(echo "$TE" | jq -r '.samples[] | select(.variantId=="e1") | .responses')" "1"
-assert_eq "tick journal records measurementsSince in configUsed" \
-  "$(api GET "/api/projects/$PROJECT_ID4/lever-decisions?days=1" | jq -r '.decisions[0].configUsed.measurementsSince')" "$EPOCH_DATE"
-# The epoch must also cut the targeting aggregate feeding the strategy bandit
-# (denominator AND reward query — pre-epoch rewardSum is 5, post-epoch is 1).
-assert_eq "tick strategy s1 post-epoch total" \
+assert_eq "tick frame signal counts the frame's sends (20 trials, 1 positive)" \
+  "$(echo "$TE" | jq -r '"\(.frame.trials) \(.frame.positive) \(.frame.open)"')" "20 1 false"
+# The frame must also cut the targeting aggregate feeding the strategy bandit
+# (denominator AND reward query — rewardSum is 5 before the frame, 1 in it).
+assert_eq "tick strategy s1 in-frame total" \
   "$(echo "$TE" | jq -r '.discovery.samples[] | select(.slug=="s1") | .total')" "20"
-assert_eq "tick strategy s1 post-epoch rewardSum" \
+assert_eq "tick strategy s1 in-frame rewardSum" \
   "$(echo "$TE" | jq -r '.discovery.samples[] | select(.slug=="s1") | .rewardSum')" "1"
-# The epoch cuts the vitals aggregate too; 20 sends is under futilityMinSends.
-assert_eq "tick vitals post-epoch sends" "$(echo "$TE" | jq -r '.vitals.sends')" "20"
+# The frame cuts the vitals aggregate too; 20 sends is under futilityMinSends.
+assert_eq "tick vitals in-frame sends" "$(echo "$TE" | jq -r '.vitals.sends')" "20"
 assert_eq "tick vitals verdict insufficient under the send floor" "$(echo "$TE" | jq -r '.vitals.verdict')" "insufficient"
 SE="$(api GET "/api/projects/$PROJECT_ID4/stats")"
 assert_eq "stats e1 all-history total (uncut = 45)" \

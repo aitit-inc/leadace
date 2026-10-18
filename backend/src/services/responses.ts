@@ -615,11 +615,14 @@ export async function getRejectionFeedbackSummary(
   return getRejectionFeedbackSummaryById(db, tenantId, resolved.value, query)
 }
 
+// `sentSince` keeps the noes to sends from then on — the loop's judges read
+// only the current frame's.
 export async function getRejectionFeedbackSummaryById(
   db: Db,
   tenantId: TenantId,
   projectId: ProjectId,
   query: RejectionFeedbackSummaryQuery,
+  sentSince?: Date,
 ): Promise<ServiceResult<RejectionFeedbackSummary>> {
   const { scope, freeTextLimit, recontactLimit, notRelevantLimit } = query
   const windowDays = query.windowDays ?? null
@@ -640,6 +643,7 @@ export async function getRejectionFeedbackSummaryById(
     isNotNull(responses.rejectionFeedback),
   ]
   if (since) baseConditions.push(gte(responses.receivedAt, since))
+  if (sentSince) baseConditions.push(gte(outreachLogs.sentAt, sentSince))
   if (scope === 'pmf') {
     baseConditions.push(sql`${responses.rejectionFeedback}->>'primary_reason' IN (${pmfReasonList})`)
   } else if (scope === 'tactical') {

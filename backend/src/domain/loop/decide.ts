@@ -1,7 +1,7 @@
 import type { LeverDecisionPayload } from '../../db/schema'
 import { PBEST_SAMPLES, seededRng, type ArmStat } from './bandit'
 import type { LeverConfig } from './config'
-import { assessVitals } from './frame'
+import { assessVitals, frameSignal } from './frame'
 import { decideOptions, type OptionArm, type OptionsDecision } from './options'
 import {
   aggregateByCoarse,
@@ -26,6 +26,7 @@ export type TickEvidence = {
   channel: ChannelFineStat[]
   targeting: TargetingStats
   futility: { sends: number; engaged: number }
+  frame: { trials: number; positive: number }
 }
 
 export type TickDecision = {
@@ -51,6 +52,8 @@ export function decide(
   // (measured: 298 zero-reply sends → pDead 0.9503 one day, 0.9498 the next)
   // and the attention alert would flicker without new evidence.
   const vitals = assessVitals(evidence.futility, config, seededRng(`vitals:${projectId}`), samples)
+  // Not date-keyed either, for the same reason.
+  const frame = frameSignal(evidence.frame, vitals.verdict, seededRng(`frame:${projectId}`), samples)
 
   const rule = {
     minSamplePerArm: config.minSamplePerArm,
@@ -107,6 +110,7 @@ export function decide(
         samples: strategies.active.map(({ armId, total, rewardSum }) => ({ slug: armId, total, rewardSum })),
       },
       vitals,
+      frame,
       configUsed: config,
     },
   }

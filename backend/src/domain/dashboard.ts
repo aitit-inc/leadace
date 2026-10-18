@@ -1,7 +1,8 @@
 import type { Channel, RejectionRecontactWindow } from '../db/schema'
 import type { AttentionItem } from './attention'
 import { coarseIndustry } from './coarse-industry'
-import type { ChangeAuthor, DocumentTarget, LoggedChange, OptionOp, OptionTarget, RuleArchiveReason, RuleEvidence } from './loop/change'
+import type { ChangeAuthor, DocumentTarget, LoggedChange, OptionOp, OptionTarget, ReachDiff, RuleArchiveReason, RuleEvidence } from './loop/change'
+import type { ProposalStatus, ProposedChange } from './loop/proposal'
 import { sendReaction, type Reaction, type ReactionLevel } from './loop/reaction'
 
 export const DASHBOARD_PERIODS = ['7d', '30d', 'all'] as const
@@ -49,17 +50,19 @@ export type JournalEvent =
   | { date: string; kind: 'rule_restore'; target: OptionTarget; optionId: string; label: string | null; evidence: RuleEvidence | null }
   | { date: string; kind: 'option'; target: OptionTarget; optionId: string; label: string | null; op: OptionOp; actor: ChangeAuthor['actor']; reason: string | null }
   | { date: string; kind: 'document'; target: DocumentTarget; actor: ChangeAuthor['actor']; reason: string | null }
-  | { date: string; kind: 'strategy_escalated'; title: string }
+  | { date: string; kind: 'settings'; diff: ReachDiff; actor: ChangeAuthor['actor']; reason: string | null }
+  | { date: string; kind: 'frame'; actor: ChangeAuthor['actor']; reason: string | null }
+  | { date: string; kind: 'proposed'; title: string; status: ProposalStatus; change: ProposedChange }
 
-export type JournalEscalation = { title: string; createdAt: Date | string }
+export type JournalProposal = { title: string; status: ProposalStatus; change: ProposedChange; createdAt: Date | string }
 
 const utcDay = (d: Date | string): string => new Date(d).toISOString().slice(0, 10)
 
-// Newest first; within a day the log's order, then the escalations.
+// Newest first; within a day the log's order, then the proposals.
 export function buildJournal(
   changes: LoggedChange[],
   variants: Array<{ variantId: string; label: string | null }>,
-  escalations: JournalEscalation[],
+  proposals: JournalProposal[],
   windowStartDay: string,
 ): JournalEvent[] {
   const labelById = new Map(variants.map((v) => [v.variantId, v.label]))
@@ -75,10 +78,12 @@ export function buildJournal(
       const { target, optionId, op, actor, reason } = c
       return { date: c.day, kind: 'option', target, optionId, label: label(target, optionId), op, actor, reason }
     }
+    if (c.target === 'settings') return { date: c.day, kind: 'settings', diff: c.diff, actor: c.actor, reason: c.reason }
+    if (c.target === 'frame') return { date: c.day, kind: 'frame', actor: c.actor, reason: c.reason }
     return { date: c.day, kind: 'document', target: c.target, actor: c.actor, reason: c.reason }
   })
-  const raised = escalations
-    .map((e) => ({ date: utcDay(e.createdAt), kind: 'strategy_escalated' as const, title: e.title }))
+  const raised = proposals
+    .map((p) => ({ date: utcDay(p.createdAt), kind: 'proposed' as const, title: p.title, status: p.status, change: p.change }))
     .filter((e) => e.date >= windowStartDay)
     .sort((a, b) => (a.title < b.title ? -1 : a.title > b.title ? 1 : 0))
   return [...events, ...raised].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))

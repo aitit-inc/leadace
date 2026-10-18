@@ -367,7 +367,7 @@ const DASH_SEGMENTS = [
   { industry: 'Government / Public Sector', band: '11-50', country: 'GB', strategy: 'school-directory-nationwide' },
   { industry: 'Government / Public Sector', band: '201+', country: 'GB', strategy: 'association-member-list' },
 ];
-function seedDashboardFixture(ctx, projectId) {
+function seedDashboardFixture(ctx, projectId, { pending = 'loosen' } = {}) {
   const tenant = ctx.persona.tenantId;
   const MIN = 60 * 1000;
   const DAY = 24 * 60 * MIN;
@@ -582,6 +582,61 @@ function seedDashboardFixture(ctx, projectId) {
      (${q(tenant)}, ${q(projectId)}, 'variant', 'rst_20260715_c', 'restore', 'rule', NULL, NULL, '{"pBeatsLeader":0.41,"n":48}'::jsonb, ${q(restoredAt)}),
      (${q(tenant)}, ${q(projectId)}, 'sales_strategy', NULL, 'update', 'ace', ${q(DASH_TARGET_WHY)}, NULL, NULL, ${q(iso(now - 3 * DAY))});`,
   );
+  // A reach change the person made, and Ace's proposals: one stopped, a
+  // loosening or a new frame waiting on its card for tomorrow's cycle, and a
+  // means only the person can set up.
+  const loosen = (applyOn, reason, diff) => q(JSON.stringify({ kind: 'loosen', applyOn, reason, ...diff }));
+  const FRAME_CHANGE = {
+    kind: 'frame',
+    applyOn: ymd(now + DAY),
+    reason: 'Medical prep schools: 0 positive in 140 trials; nursing schools answered twice',
+    salesStrategyFrom: 0,
+    reachFrom: { outboundChannels: ['email'], targetCountries: ['JP'], targetLanguage: 'ja' },
+    reach: { outboundChannels: ['email'], targetCountries: ['JP', 'PH'], targetLanguage: 'ja' },
+    salesStrategy: '## Target\n- Primary: nursing schools preparing students for licensing interviews\n- Prerequisites: an interview or OSCE step in admission or licensing\n\n## Value Proposition\nInterview practice students can repeat at night, scored like the real panel.\n\n## KPI\n- Positive reply rate ≥ 2%',
+    variants: [
+      { variantId: 'frame_1', label: 'Licensing-interview drills', subjectPattern: '{{org}}: OSCE interview practice at night', bodyApproach: 'Open with the licensing interview step.' },
+      { variantId: 'frame_2', label: 'Instructor time back', subjectPattern: 'Give {{org}} instructors their evenings back', bodyApproach: 'Lead with the hours instructors spend on mock interviews.' },
+      { variantId: 'frame_3', label: 'Pass-rate proof', subjectPattern: 'How one nursing school lifted its interview pass rate', bodyApproach: 'One short case, then a question.' },
+    ],
+    strategies: [
+      { slug: 'nursing-school-directories', approach: 'National nursing school lists with admissions contacts.' },
+      { slug: 'licensing-prep-programs', approach: 'Programs that advertise licensing interview prep.' },
+      { slug: 'ph-nursing-colleges', approach: 'Philippine nursing colleges with English-language admissions pages.' },
+    ],
+  };
+  // One loosening or new frame is pending at a time.
+  const pendingRow = pending === 'frame'
+    ? `(${q(tenant)}, ${q(projectId)}, ${q(JSON.stringify(FRAME_CHANGE))}::jsonb,
+      'Move to nursing schools preparing for licensing interviews',
+      ${q(
+        'Medical prep schools have not answered positively in 140 trials (P(rate < 1%) = 0.97). ' +
+          'Two nursing schools replied asking about interview practice. The new frame targets nursing schools with a licensing interview step and adds the Philippines, where those programs recruit in English.',
+      )},
+      'pending', ${q(iso(now - 3600 * 1000))})`
+    : `(${q(tenant)}, ${q(projectId)}, ${loosen(ymd(now + DAY), 'form-only career offices: 37 of 41', { outboundChannels: { from: ['email'], to: ['email', 'form'] } })}::jsonb,
+      'Turn on form outreach',
+      ${q(
+        'In the last 14 days, 37 of the 41 career offices school-directory-nationwide found in the Target publish only a contact form. ' +
+          'Turning forms on lets Ace draft to them; a form message waits for you to send it.',
+      )},
+      'pending', ${q(iso(now - 2 * 3600 * 1000))})`;
+  psql(
+    `INSERT INTO policy_changes (tenant_id, project_id, target, op, actor, reach_diff, created_at) VALUES
+     (${q(tenant)}, ${q(projectId)}, 'settings', 'update', 'user', '{"targetCountries":{"from":[],"to":["JP"]}}'::jsonb, ${q(iso(now - 9 * DAY))});
+     INSERT INTO proposals (tenant_id, project_id, change, title, body, status, created_at) VALUES
+     (${q(tenant)}, ${q(projectId)}, ${loosen(ymd(now - 5 * DAY), 'US inquiries: 2', { targetCountries: { from: ['JP'], to: ['JP', 'US'] } })}::jsonb,
+      'Reach US universities too', 'Two US career offices asked for a demo through the inquiry page.',
+      'stopped', ${q(iso(now - 6 * DAY))}),
+     (${q(tenant)}, ${q(projectId)}, ${q(JSON.stringify({ kind: 'add-means', strategy: 'wantedly-story-posts', instruction: 'Add Wantedly as an outreach means.' }))}::jsonb,
+      ${q('Wantedly stories reach the schools email is bouncing at')},
+      ${q(
+        'Four of the eight bounces this month are schools whose only published contact is a Wantedly page. ' +
+          'Wantedly needs a company account and its terms accepted, so Ace cannot sign up on your behalf.',
+      )},
+      'pending', ${q(iso(now - 3 * DAY))}),
+     ${pendingRow};`,
+  );
   // Without a connected mailbox the page leads with "Gmail disconnected".
   // chk_sending_identities_secret_owner is why a non-alias identity has to
   // carry secret bytes.
@@ -596,17 +651,6 @@ function seedDashboardFixture(ctx, projectId) {
   psql(
     `INSERT INTO tenant_plans (tenant_id, plan) VALUES (${q(tenant)}, 'unlimited')
      ON CONFLICT (tenant_id) DO UPDATE SET plan = 'unlimited';`,
-  );
-  psql(
-    // `command` is the column the `instruction` field still lives in.
-    `INSERT INTO suggestions (tenant_id, project_id, kind, dedupe_key, title, body, command) VALUES
-     (${q(tenant)}, ${q(projectId)}, 'add-means', 'wantedly-story-posts',
-      ${q('Wantedly stories reach the schools email is bouncing at')},
-      ${q(
-        'Four of the eight bounces this month are schools whose only published contact is a Wantedly page. ' +
-          'Wantedly needs a company account and its terms accepted, so Ace cannot sign up on your behalf.',
-      )},
-      ${q('Add Wantedly as an outreach means.')});`,
   );
 }
 
@@ -644,7 +688,7 @@ const SCENARIOS = [
   },
   {
     name: 'approval',
-    summary: 'A tool call waiting for approval: the switch to sending, an ordinary one and a destructive one',
+    summary: 'A tool call waiting for approval: a new frame, the switch to sending, an ordinary one and a destructive one',
     stack: 'self-host',
     setup: async (ctx) => {
       const projectId = await seedProject(ctx, { name: 'Northwind outbound', settings: { outboundMode: 'draft' } });
@@ -707,7 +751,46 @@ const SCENARIOS = [
           confirmLabel: 'Send without review',
         },
       });
+      const FRAME_STRATEGY = '## Target\n- Primary: dental clinics with 3+ chairs that book by phone\n- Prerequisites: online booking is not offered\n\n## Value Proposition\nFewer phone calls: patients book and confirm by email.\n\n## KPI\n- Positive reply rate ≥ 2%';
+      const frame = seedThread(ctx, {
+        projectId,
+        title: 'Try dental clinics instead',
+        userText: 'I stopped the proposal. Instead, go after dental clinics that still book by phone.',
+        modelText: 'Here is that frame in full. Approving it starts it now, and measuring restarts.',
+        toolName: 'apply_frame_change',
+        args: {
+          projectId,
+          frame: {
+            salesStrategy: FRAME_STRATEGY,
+            outboundChannels: ['email', 'form'],
+            targetCountries: [],
+            targetLanguage: 'en',
+            variants: [
+              { label: 'Phone-free booking', subjectPattern: '{{org}}: bookings without the phone', bodyApproach: 'Open with the calls the front desk takes.' },
+              { label: 'No-show reminders', subjectPattern: 'Fewer no-shows at {{org}}', bodyApproach: 'Lead with confirmations by email.' },
+            ],
+            strategies: [
+              { slug: 'dental-clinic-directories', approach: 'Regional dental association member lists.' },
+              { slug: 'phone-only-booking-pages', approach: 'Clinic sites whose booking page lists only a phone number.' },
+            ],
+            reason: 'The person asked for dental clinics that book by phone',
+          },
+        },
+        summary: {
+          title: 'Start a new frame',
+          facts: [
+            { label: 'Project', value: 'Northwind outbound' },
+            { label: 'Reach', value: 'Channels: email → email, form' },
+            { label: 'Message angles', value: 'Phone-free booking, No-show reminders, in place of the current ones' },
+            { label: 'Search strategies', value: 'dental-clinic-directories, phone-only-booking-pages, in place of the current ones' },
+          ],
+          body: FRAME_STRATEGY,
+          warning: 'Measuring restarts: results so far stop steering this project.',
+          confirmLabel: 'Start the new frame',
+        },
+      });
       return [
+        { name: 'frame', path: `/chat?t=${frame}`, expect: 'Start the new frame' },
         { name: 'send-mode', path: `/chat?t=${sendMode}`, expect: 'Send without review' },
         { name: 'ordinary', path: `/chat?t=${ordinary}`, expect: 'Draft this email' },
         { name: 'destructive', path: `/chat?t=${destructive}`, expect: 'This cannot be undone.' },
@@ -911,7 +994,7 @@ const SCENARIOS = [
             '2 meeting requests waiting',
             'Optimizing across 3 message angles',
             'Three minutes a day',
-            'Add Wantedly as an outreach means.',
+            'Wantedly stories reach the schools email is bouncing at',
           ],
         },
         {
@@ -926,11 +1009,13 @@ const SCENARIOS = [
           scrollTo: 'h3:has-text("What the market is telling you")',
           expect: ['Company size', 'Where they were found', 'Unsubscribe request'],
         },
+        { name: 'proposal', path: '/dashboard', scrollTo: 'text=Proposed change', expect: ['Turn on form outreach', 'Apply now', 'Something else'] },
+        { name: 'proposal-means', path: '/dashboard', scrollTo: 'text=Proposed means', expect: ['Needs your setup', 'Set it up with Ace'] },
         {
-          name: 'suggestion-menu',
+          name: 'proposal-instead',
           path: '/dashboard',
-          click: 'button[aria-label="Other ways to run this"]',
-          expect: 'Copy Claude Code command',
+          click: 'button:has-text("Something else")',
+          expect: ['This proposal stops', 'Send to Ace'],
         },
         { name: 'evaluations', path: '/evaluations', expect: ['Current Metrics', 'With interest', 'By message angle'] },
         {
@@ -938,6 +1023,23 @@ const SCENARIOS = [
           path: '/evaluations',
           click: 'button:has-text("All replies")',
           expect: ['Response rate', 'a No included'],
+        },
+      ];
+    },
+  },
+  {
+    name: 'dashboard-frame',
+    summary: 'The dashboard with a new frame waiting on the person',
+    stack: 'self-host',
+    setup: async (ctx) => {
+      const projectId = await seedProject(ctx, { name: 'SpeechMonster', settings: { outboundMode: 'send' } });
+      seedDashboardFixture(ctx, projectId, { pending: 'frame' });
+      return [
+        {
+          name: 'proposal-frame',
+          path: '/dashboard',
+          scrollTo: 'text=Proposed new frame',
+          expect: ['Move to nursing schools', 'Licensing-interview drills', 'nursing-school-directories', 'JP, PH'],
         },
       ];
     },

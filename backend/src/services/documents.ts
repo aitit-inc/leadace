@@ -11,7 +11,7 @@ import {
 import { playbookStrategySlug } from '../domain/discovery-sources'
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
-import { resolveAddMeansSuggestion } from './suggestions'
+import { applyAddMeans } from './loop/proposals'
 import { PUBLIC_JOURNAL_SLUG } from './public-scoreboard'
 import { redactPublicJournal } from './public-journal'
 import type { OpenAIEnv } from './openai'
@@ -209,7 +209,7 @@ export async function saveDocument(
           approvedAt: projectDocuments.approvedAt,
         }))[0]!
 
-  if (approvedAt) await closeAddMeansSuggestion(db, tenantId, projectId, slug)
+  if (approvedAt) await applyAddMeansFor(db, tenantId, projectId, slug)
 
   return ok({
     id: doc.id,
@@ -267,7 +267,7 @@ export async function approveDocumentVersion(
       : err('NOT_FOUND', 'Document version not found')
   }
 
-  await closeAddMeansSuggestion(db, tenantId, projectId, slug)
+  await applyAddMeansFor(db, tenantId, projectId, slug)
 
   return ok({
     id: updated.id,
@@ -277,14 +277,14 @@ export async function approveDocumentVersion(
   })
 }
 
-// An approved playbook completes its add-means suggestion — closed here so
-// the plugin needs no wiring.
-async function closeAddMeansSuggestion(
+// An approved playbook carries out the means proposed for it — here so the
+// plugin needs no wiring.
+async function applyAddMeansFor(
   db: Db,
   tenantId: TenantId,
   projectId: ProjectId,
   slug: string,
 ): Promise<void> {
   const strategySlug = playbookStrategySlug(slug)
-  if (strategySlug) await resolveAddMeansSuggestion(db, tenantId, projectId, strategySlug)
+  if (strategySlug) await applyAddMeans(db, tenantId, projectId, strategySlug)
 }

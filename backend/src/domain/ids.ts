@@ -54,7 +54,7 @@ export const projectRefParamSchema = z.object({ id: projectRefSchema })
 export const prospectIdParamSchema = z.object({ id: coercedPositiveInt })
 export const organizationIdParamSchema = z.object({ id: coercedPositiveInt })
 export const outreachLogIdParamSchema = z.object({ id: coercedPositiveInt })
-export const suggestionIdParamSchema = z.object({ id: coercedPositiveInt })
+export const proposalIdParamSchema = z.object({ id: coercedPositiveInt })
 export const shortIdParamSchema = z.object({ shortId: shortIdSchema })
 export const sendingIdentityIdParamSchema = z.object({ id: sendingIdentityIdSchema })
 

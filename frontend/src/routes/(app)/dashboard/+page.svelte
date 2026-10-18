@@ -12,7 +12,7 @@
   } from '$lib/types/dashboard';
   import type { FunnelStageFilter } from '$lib/types/outreach';
   import EmptyState from '$lib/components/EmptyState.svelte';
-  import SuggestionsSection from '$lib/components/dashboard/SuggestionsSection.svelte';
+  import ProposalSection from '$lib/components/dashboard/ProposalSection.svelte';
   import {
     Send,
     MailCheck,
@@ -32,6 +32,7 @@
     Target,
   } from '@lucide/svelte';
   import { attentionMeta, humanize, type AttentionMeta } from '$lib/attention-meta';
+  import { reachRows } from '$lib/format';
 
   let { data }: PageProps = $props();
   let summary = $derived(data.summary);
@@ -115,6 +116,7 @@
     },
   } as const;
   const DOCUMENT_NAMES = { sales_strategy: 'the sales strategy', business: 'the business profile' } as const;
+  const PROPOSAL_OUTCOME = { applied: 'applied', stopped: 'you stopped it', outdated: 'dropped: a change came first' } as const;
 
   function evidenceDetail(evidence: Extract<JournalEvent, { kind: 'rule_archive' }>['evidence']): string | null {
     if (!evidence) return null;
@@ -124,8 +126,26 @@
 
   function journalText(e: JournalEvent): { text: string; detail: string | null; why: string | null } {
     switch (e.kind) {
-      case 'strategy_escalated':
-        return { text: `Flagged for your review: ${e.title}`, detail: null, why: null };
+      case 'proposed':
+        return {
+          text: `Proposed to you: ${e.title}`,
+          detail: e.status !== 'pending'
+            ? PROPOSAL_OUTCOME[e.status]
+            : e.change.kind === 'add-means' ? 'waiting for you to set it up' : `applies ${fmtDay(e.change.applyOn)} unless you stop it`,
+          why: null,
+        };
+      case 'settings':
+        return {
+          text: e.actor === 'user' ? 'You changed who Ace can reach' : 'Changed who Ace can reach',
+          detail: reachRows(e.diff).map((r) => `${r.label}: ${r.from} → ${r.to}`).join(' · '),
+          why: e.reason,
+        };
+      case 'frame':
+        return {
+          text: e.actor === 'user' ? 'You started a new frame' : 'Started a new frame',
+          detail: 'measuring from here',
+          why: e.reason,
+        };
       case 'document': {
         const name = DOCUMENT_NAMES[e.target];
         return { text: e.actor === 'user' ? `You edited ${name}` : `Adjusted ${name}`, detail: null, why: e.reason };
@@ -312,17 +332,16 @@
         </section>
       {/if}
 
-      {#if data.suggestions.length > 0}
-        <SuggestionsSection
-          suggestions={data.suggestions}
-          projectName={data.projects.find((p) => p.id === data.activeProjectId)?.name ?? null}
+      {#each data.proposals as proposal (proposal.id)}
+        <ProposalSection
+          {proposal}
           {token}
           onAsk={(ask) => goto('/chat', { state: { ask } })}
-          onChanged={() => invalidate('app:suggestions')}
+          onChanged={() => invalidate('app:proposals')}
         />
-      {/if}
+      {/each}
 
-      {#if summary.attention.length === 0 && data.suggestions.length === 0}
+      {#if summary.attention.length === 0 && data.proposals.length === 0}
         <section class="card flex items-center gap-4 p-5">
           <span class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-inbound/15 text-inbound">
             <Check size={24} />

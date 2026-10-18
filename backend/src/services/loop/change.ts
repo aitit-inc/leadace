@@ -1,7 +1,8 @@
-// The policy's only writer (#793): every change to an option or a policy
-// document lands with its policy_changes row in the same transaction.
+// The policy's only writer (#793): every change to an option, a policy
+// document, the project's reach or its frame lands with its policy_changes row
+// in the same transaction.
 import { and, desc, eq, gte, inArray, isNotNull, isNull, max, sql } from 'drizzle-orm'
-import { discoveryStrategies, leverState, messageVariants, policyChanges, projectDocuments } from '../../db/schema'
+import { discoveryStrategies, leverState, messageVariants, policyChanges, projectDocuments, projectSettings } from '../../db/schema'
 import type { Db } from '../../db/connection'
 import type { ProjectId, TenantId } from '../../domain/ids'
 import { LIFT_MIN, LIFT_MAX, type TargetingAxisLift } from '../../domain/loop/allocation'
@@ -9,13 +10,17 @@ import type { TickDecision } from '../../domain/loop/decide'
 import {
   isDocumentTarget,
   optionOps,
+  reachDiff,
   type ChangeAuthor,
   type DocumentTarget,
   type LoggedChange,
   type LoggedRuleChange,
   type OptionTarget,
+  type ReachDiff,
+  type ReachSettings,
   type RuleArchiveReason,
 } from '../../domain/loop/change'
+import type { Frame } from '../../domain/loop/proposal'
 import { COARSE_TO_FINES, type CoarseIndustry } from '../../domain/coarse-industry'
 import type { MessageVariantRow, UpsertVariantBody } from '../message-variants'
 import type { DiscoveryStrategyRow, UpsertDiscoveryStrategyBody } from '../discovery-strategies'
@@ -280,6 +285,114 @@ export async function applyDocumentChange(
   return doc!
 }
 
+export async function loadReach(db: Db, projectId: ProjectId): Promise<ReachSettings> {
+  const [row] = await db
+    .select({ outboundChannels: projectSettings.outboundChannels, targetCountries: projectSettings.targetCountries, targetLanguage: projectSettings.targetLanguage })
+    .from(projectSettings)
+    .where(eq(projectSettings.projectId, projectId))
+    .limit(1)
+  if (!row) throw new Error(`Invariant: project_settings row missing for project ${projectId}`)
+  return row as ReachSettings
+}
+
+export async function latestSalesStrategyId(db: Db, projectId: ProjectId): Promise<number | null> {
+  const [row] = await db
+    .select({ id: projectDocuments.id })
+    .from(projectDocuments)
+    .where(and(eq(projectDocuments.projectId, projectId), eq(projectDocuments.slug, 'sales_strategy')))
+    .orderBy(desc(projectDocuments.createdAt), desc(projectDocuments.id))
+    .limit(1)
+  return row?.id ?? null
+}
+
+// A new frame in one transaction: the sales strategy, the reach, the options
+// (every active one not in the frame archived), then the 'frame' row the loop
+// measures from. `when` sees the sales strategy version and the reach under
+// their locks; false applies nothing.
+export async function applyFrameChange(
+  db: Db,
+  tenantId: TenantId,
+  projectId: ProjectId,
+  frame: Frame,
+  by: ChangeAuthor,
+  when: (current: { salesStrategyId: number | null; reach: ReachSettings }) => boolean = () => true,
+): Promise<boolean> {
+  await lockTarget(db, projectId, 'sales_strategy', '')
+  await lockTarget(db, projectId, 'settings', '')
+  if (!when({ salesStrategyId: await latestSalesStrategyId(db, projectId), reach: await loadReach(db, projectId) })) return false
+  // Its ids were fresh when it was written; one taken since would rewrite a measured option.
+  const [takenVariants, takenStrategies] = await Promise.all([
+    db.select({ id: messageVariants.variantId }).from(messageVariants)
+      .where(and(eq(messageVariants.projectId, projectId), inArray(messageVariants.variantId, frame.variants.map((v) => v.variantId)))).limit(1),
+    db.select({ slug: discoveryStrategies.slug }).from(discoveryStrategies)
+      .where(and(eq(discoveryStrategies.projectId, projectId), inArray(discoveryStrategies.slug, frame.strategies.map((st) => st.slug)))).limit(1),
+  ])
+  if (takenVariants.length > 0 || takenStrategies.length > 0) return false
+  await applyDocumentChange(db, tenantId, projectId, 'sales_strategy', frame.salesStrategy, by)
+  await applyReachChange(db, tenantId, projectId, frame.reach, by)
+  const keepVariants = new Set(frame.variants.map((v) => v.variantId))
+  const activeVariants = await db.select(variantCols).from(messageVariants)
+    .where(and(eq(messageVariants.projectId, projectId), isNull(messageVariants.archivedAt)))
+  for (const v of activeVariants.filter((a) => !keepVariants.has(a.variantId))) {
+    await applyVariantChange(db, tenantId, projectId, { variantId: v.variantId, subjectPattern: v.subjectPattern, archived: true }, by)
+  }
+  for (const v of frame.variants) await applyVariantChange(db, tenantId, projectId, { ...v, archived: false }, by)
+  const keepStrategies = new Set(frame.strategies.map((st) => st.slug))
+  const activeStrategies = await db.select(strategyCols).from(discoveryStrategies)
+    .where(and(eq(discoveryStrategies.projectId, projectId), isNull(discoveryStrategies.archivedAt)))
+  for (const st of activeStrategies.filter((a) => !keepStrategies.has(a.slug))) {
+    await applyStrategyChange(db, tenantId, projectId, { slug: st.slug, approach: st.approach, archived: true }, by)
+  }
+  for (const st of frame.strategies) await applyStrategyChange(db, tenantId, projectId, { ...st, archived: false }, by)
+  await log(db, tenantId, projectId, [{ target: 'frame', op: 'add', ...by }])
+  return true
+}
+
+// Ace's edit to the sales strategy it read as version `from`: refused (false)
+// once anyone wrote a newer one, a new frame included.
+export async function applySalesStrategyEdit(
+  db: Db,
+  tenantId: TenantId,
+  projectId: ProjectId,
+  content: string,
+  by: ChangeAuthor,
+  from: number,
+): Promise<boolean> {
+  await lockTarget(db, projectId, 'sales_strategy', '')
+  if ((await latestSalesStrategyId(db, projectId)) !== from) return false
+  await applyDocumentChange(db, tenantId, projectId, 'sales_strategy', content, by)
+  return true
+}
+
+// `when` is checked under the lock against the settings as they now stand: a
+// change written for an earlier state is refused (null), never applied over a
+// newer one.
+export async function applyReachChange(
+  db: Db,
+  tenantId: TenantId,
+  projectId: ProjectId,
+  patch: Partial<ReachSettings>,
+  by: ChangeAuthor,
+  when: (current: ReachSettings) => boolean = () => true,
+): Promise<ReachDiff | null> {
+  await lockTarget(db, projectId, 'settings', '')
+  const current = await loadReach(db, projectId)
+  if (!when(current)) return null
+  const diff = reachDiff(current, patch)
+  if (Object.keys(diff).length === 0) return diff
+  await db
+    .update(projectSettings)
+    .set({
+      ...(diff.outboundChannels ? { outboundChannels: diff.outboundChannels.to } : {}),
+      ...(diff.targetCountries ? { targetCountries: diff.targetCountries.to } : {}),
+      ...(diff.targetLanguage ? { targetLanguage: diff.targetLanguage.to } : {}),
+      updatedAt: new Date(),
+    })
+    .where(eq(projectSettings.projectId, projectId))
+  await log(db, tenantId, projectId, [{ target: 'settings', op: 'update', ...by, reachDiff: diff }])
+  return diff
+}
+
 const utcDay = (at: Date): string => at.toISOString().slice(0, 10)
 
 export type OptionArchival =
@@ -295,6 +408,7 @@ const changeCols = {
   reason: policyChanges.reason,
   ruleReason: policyChanges.ruleReason,
   evidence: policyChanges.evidence,
+  reachDiff: policyChanges.reachDiff,
   createdAt: policyChanges.createdAt,
 }
 
@@ -352,6 +466,14 @@ export async function listChanges(db: Db, projectId: ProjectId, since: Date): Pr
       if (r.actor === 'rule') throw new Error(`Invariant: rule change to ${r.target}`)
       return { day, actor: r.actor, target: r.target, reason: r.reason }
     }
+    if (r.target === 'settings') {
+      if (r.actor === 'rule' || r.reachDiff === null) throw new Error('Invariant: a settings change row without its author or diff')
+      return { day, actor: r.actor, target: r.target, diff: r.reachDiff, reason: r.reason }
+    }
+    if (r.target === 'frame') {
+      if (r.actor === 'rule') throw new Error('Invariant: a frame started by the rule')
+      return { day, actor: r.actor, target: r.target, reason: r.reason }
+    }
     if (r.optionId === null) throw new Error(`Invariant: ${r.target} change row without an option`)
     if (r.actor !== 'rule') return { day, actor: r.actor, target: r.target, optionId: r.optionId, op: r.op, reason: r.reason }
     const rule = { day, actor: r.actor, target: r.target, optionId: r.optionId, evidence: r.evidence }
@@ -359,6 +481,25 @@ export async function listChanges(db: Db, projectId: ProjectId, since: Date): Pr
     if (r.op !== 'archive' || r.ruleReason === null) throw new Error(`Invariant: rule ${r.op} of ${r.optionId} without an archive reason`)
     return { ...rule, op: r.op, reason: r.ruleReason }
   })
+}
+
+// Oldest first.
+export async function frameStarts(db: Db, projectId: ProjectId): Promise<Array<{ at: Date; actor: ChangeAuthor['actor']; reason: string | null }>> {
+  const rows = await db
+    .select({ at: policyChanges.createdAt, actor: policyChanges.actor, reason: policyChanges.reason })
+    .from(policyChanges)
+    .where(and(eq(policyChanges.projectId, projectId), eq(policyChanges.target, 'frame')))
+    .orderBy(policyChanges.createdAt, policyChanges.id)
+  return rows.map((r) => {
+    if (r.actor === 'rule') throw new Error('Invariant: a frame started by the rule')
+    return { at: r.at, actor: r.actor, reason: r.reason }
+  })
+}
+
+// Where the current frame started: the loop never measures across a frame
+// change. undefined until a first one — every send counts.
+export async function frameStart(db: Db, projectId: ProjectId): Promise<Date | undefined> {
+  return (await frameStarts(db, projectId)).at(-1)?.at
 }
 
 export async function ruleChangesSince(db: Db, projectId: ProjectId, since: Date): Promise<LoggedRuleChange[]> {

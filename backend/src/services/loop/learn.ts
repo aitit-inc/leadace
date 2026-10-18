@@ -2,7 +2,7 @@ import { and, eq } from 'drizzle-orm'
 import { leverDecisions, type LeverDecisionPayload } from '../../db/schema'
 import type { Db } from '../../db/connection'
 import type { ProjectRef, TenantId } from '../../domain/ids'
-import type { VitalsAssessment } from '../../domain/loop/frame'
+import type { FrameSignal, VitalsAssessment } from '../../domain/loop/frame'
 import type { ChannelAffinityMap, ChannelCoarseStat, TargetingLifts } from '../../domain/loop/allocation'
 import { decide } from '../../domain/loop/decide'
 import { ok, type ServiceResult } from '../result'
@@ -11,6 +11,7 @@ import { loadLeverConfig } from '../project-settings'
 import { observeTick } from './observe'
 import type { LoggedRuleChange } from '../../domain/loop/change'
 import { applyTickDecision, ruleChangesSince } from './change'
+import { applyDueProposals } from './proposals'
 
 export type LeverTickResult = {
   ran: boolean
@@ -31,6 +32,8 @@ export type LeverTickResult = {
   needsStrategyReplenishment: boolean
   // null on ran:false replays of pre-vitals decisions.
   vitals: VitalsAssessment | null
+  // null on ran:false replays of decisions from before the frame signal.
+  frame: FrameSignal | null
 }
 
 // Idempotent on (project, UTC day): the unique audit insert is the claim, only
@@ -50,6 +53,8 @@ export async function runLeverTick(
   // the audit row below, so replaying P(best) from (cycle_date, projectId) is
   // exact even for a request that straddles UTC midnight.
   const cycleDate = new Date().toISOString().slice(0, 10)
+  // Before observing, so today's decision is made on the policy as it now stands.
+  await applyDueProposals(db, tenantId, projectId, cycleDate)
   const evidence = await observeTick(db, projectId, config)
   const decision = decide(evidence, config, cycleDate, projectId)
   const { payload } = decision
@@ -81,6 +86,7 @@ export async function runLeverTick(
       targetingLifts: existing.decision.targeting?.lifts ?? null,
       discovery: existing.decision.discovery ?? null,
       vitals: existing.decision.vitals ?? null,
+      frame: existing.decision.frame ?? null,
       // needsReplenishment is a live current-state signal (never persisted), not part
       // of the applied decision the fields above echo — a mid-day archive or config
       // change may shift it while the applied weights stay fixed.
@@ -104,6 +110,7 @@ export async function runLeverTick(
     targetingLifts: payload.targeting.lifts,
     discovery: payload.discovery,
     vitals: payload.vitals,
+    frame: payload.frame,
     needsReplenishment: Object.keys(decision.variants.weights).length < config.targetActiveArms,
     needsStrategyReplenishment: Object.keys(decision.strategies.weights).length < config.targetActiveStrategies,
   })

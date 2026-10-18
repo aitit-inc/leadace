@@ -26,7 +26,7 @@
 #   4. Non-playbook slugs are ungated: MCP save → 201, MCP GET → 200; approve on
 #      a non-playbook slug → 400.
 #   5. Slug allowlist: unknown slug → 400, malformed playbook slug → 400.
-#   6. The add-means suggestion resolves on approval, not on the pending save.
+#   6. The add-means proposal is applied on approval, not on the pending save.
 #
 # Curl-only, no Claude session. Cleans up (project delete cascades).
 #
@@ -48,7 +48,7 @@ SKIP_CLEANUP="${SKIP_CLEANUP:-0}"
 RUN_TAG="e2e-caller-gates-$(date +%s)"
 PROJECT_NAME="$RUN_TAG project"
 PLAYBOOK_SLUG="e2e-means"
-SUGGESTION_SLUG="e2e-means-suggested"
+MEANS_SLUG="e2e-means-proposed"
 
 PASS=0
 FAIL=0
@@ -223,18 +223,18 @@ assert_eq "unknown slug → 400" "$STATUS" "400"
 STATUS="$(mcp PUT "$DOCS/playbook_Bad_Slug" '{"content":"x"}')"
 assert_eq "malformed playbook slug → 400" "$STATUS" "400"
 
-step "6. add-means suggestion resolves on approval, not on the pending save"
-STATUS="$(ui POST "/api/projects/$PROJECT_ID/suggestions" \
-  "$(jq -nc --arg k "$SUGGESTION_SLUG" '{kind:"add-means", dedupeKey:$k, title:"t", body:"b", instruction:"i"}')")"
-[[ "$STATUS" == "201" ]] || { echo "suggestion create failed ($STATUS): $(api_body)" >&2; exit 1; }
+step "6. add-means proposal is applied on approval, not on the pending save"
+STATUS="$(ui POST "/api/projects/$PROJECT_ID/proposals" \
+  "$(jq -nc --arg s "$MEANS_SLUG" '{strategy:$s, title:"t", body:"b", instruction:"i"}')")"
+[[ "$STATUS" == "201" ]] || { echo "proposal create failed ($STATUS): $(api_body)" >&2; exit 1; }
 SID="$(api_body | jq -r '.id')"
-mcp PUT "$DOCS/playbook_$SUGGESTION_SLUG" '{"content":"# pending"}' > /dev/null
+mcp PUT "$DOCS/playbook_$MEANS_SLUG" '{"content":"# pending"}' > /dev/null
 PID="$(api_body | jq -r '.id')"
-ui GET "/api/projects/$PROJECT_ID/suggestions" > /dev/null
-assert_eq "still open after pending save" "$(api_body | jq -r --argjson i "$SID" '.suggestions[] | select(.id == $i) | .status')" "open"
-ui POST "$DOCS/playbook_$SUGGESTION_SLUG/approve" "$(jq -nc --argjson i "$PID" '{id:$i}')" > /dev/null
-ui GET "/api/projects/$PROJECT_ID/suggestions" > /dev/null
-assert_eq "done after approval" "$(api_body | jq -r --argjson i "$SID" '.suggestions[] | select(.id == $i) | .status')" "done"
+ui GET "/api/projects/$PROJECT_ID/proposals" > /dev/null
+assert_eq "still pending after pending save" "$(api_body | jq -r --argjson i "$SID" '.proposals[] | select(.id == $i) | .status')" "pending"
+ui POST "$DOCS/playbook_$MEANS_SLUG/approve" "$(jq -nc --argjson i "$PID" '{id:$i}')" > /dev/null
+ui GET "/api/projects/$PROJECT_ID/proposals" > /dev/null
+assert_eq "applied after approval" "$(api_body | jq -r --argjson i "$SID" '.proposals[] | select(.id == $i) | .status')" "applied"
 
 step "summary"
 echo "  PASS=$PASS  FAIL=$FAIL" >&2

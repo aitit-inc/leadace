@@ -1,5 +1,6 @@
 // Mirrors backend domain/dashboard.ts DashboardSummary (the GET
 // /projects/:id/dashboard response).
+import type { ProposalStatus, ProposedChange } from './proposals';
 import type { Channel } from './outreach';
 import type { AttentionItem } from './attention';
 
@@ -81,7 +82,17 @@ export type JournalEvent =
       reason: string | null;
     }
   | { date: string; kind: 'document'; target: 'business' | 'sales_strategy'; actor: 'ace' | 'user'; reason: string | null }
-  | { date: string; kind: 'strategy_escalated'; title: string };
+  | { date: string; kind: 'settings'; diff: ReachDiff; actor: 'ace' | 'user'; reason: string | null }
+  | { date: string; kind: 'frame'; actor: 'ace' | 'user'; reason: string | null }
+  | { date: string; kind: 'proposed'; title: string; status: ProposalStatus; change: ProposedChange };
+
+export type ReachSettings = { outboundChannels: string[]; targetCountries: string[]; targetLanguage: string };
+
+export type ReachDiff = {
+  outboundChannels?: { from: string[]; to: string[] };
+  targetCountries?: { from: string[]; to: string[] };
+  targetLanguage?: { from: string; to: string };
+};
 
 export type RejectionRecontactWindow = 'never' | '3_months' | '6_months' | '12_months' | 'unspecified';
 

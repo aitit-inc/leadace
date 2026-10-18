@@ -109,9 +109,10 @@ on, need no Claude session, and run fast:
   `get_outbound_targets` ordering (score x priority multiplier; a recycle
   re-approach loses the tie to a first touch of equal fit) and the
   exploration share (random slots, no duplicates).
-- `regression-suggestions.sh` — suggestions surface: record upsert refreshes an
-  open row in place, dismissed/done never resurrected, playbook save auto-resolves
-  the matching `add-means` suggestion, status/kind validation.
+- `regression-proposals.sh` — what Ace hands the person to decide: reach-setting
+  changes logged with what changed; one pending loosening per project; stop and
+  apply are Web UI only; the tick applies a loosening on its day, outdated once
+  its setting changed; a means is proposed once and applied by its playbook.
 - `regression-prospect-delete.sh` — data-maintenance delete surface:
   `delete-batch` skips DNC / outreach-history / multi-project rows with reasons
   and reports prospect-less orgs; org `delete-batch` refuses populated orgs;
@@ -135,7 +136,7 @@ on, need no Claude session, and run fast:
   (outbound mode, sender identity, footer override, landing CTA/media) → 403;
   playbook approval gate (MCP save pending → MCP read 412 → browser approve →
   MCP read 200; browser save approved on write; slug allowlist; add-means
-  suggestion resolves on approval).
+  proposal applied on approval).
 
 Run all of them in sequence with `./e2e/regression-all.sh`. See the sections
 below for what each asserts.

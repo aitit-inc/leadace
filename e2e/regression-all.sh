@@ -41,7 +41,7 @@ SUITES=(
   regression-sending-identities
   regression-prospect-update-channel
   regression-platform-channel
-  regression-suggestions
+  regression-proposals
   regression-prospect-delete
   regression-prospect-target
   regression-rejection-cycle

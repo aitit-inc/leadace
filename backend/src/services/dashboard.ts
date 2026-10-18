@@ -5,6 +5,7 @@ import {
   organizations,
   outreachLogs,
   projectSettings,
+  proposals,
   prospects,
   responses,
 } from '../db/schema'
@@ -43,7 +44,6 @@ import { loadProjectOutboundAllowlist } from './project-settings'
 import { getLeverStateById } from './loop/policy'
 import { listChanges } from './loop/change'
 import { listMessageVariantsById, type MessageVariantRow } from './message-variants'
-import { REVISIT_STRATEGY_SUGGESTION_KIND } from './suggestions'
 import { getRejectionFeedbackSummaryById } from './responses'
 import { listRecentOutreachById } from './outreach'
 import { deriveAttentionItems } from '../domain/attention'
@@ -106,7 +106,7 @@ export async function getDashboardSummary(
     dailySentRows,
     dailyResponseRows,
     lastCycleRows,
-    escalationRows,
+    proposalRows,
     pendingDraftsRows,
     contactedRows,
     outboundAllowlist,
@@ -246,12 +246,11 @@ export async function getDashboardSummary(
     // ::text so a direct (non-pooler) connection can't hand back a Date.
     raw<{ last: string | null }>(sql`
       SELECT MAX(cycle_date)::text AS last FROM lever_decisions WHERE project_id = ${projectId}`),
-    // Day-based cutoff matching the change log's window, so the journal's
-    // first UTC day is complete instead of rolling-instant-truncated.
-    raw<{ title: string; createdAt: string | Date }>(sql`
-      SELECT title, created_at AS "createdAt" FROM suggestions
-      WHERE project_id = ${projectId} AND kind = ${REVISIT_STRATEGY_SUGGESTION_KIND}
-        AND (created_at AT TIME ZONE 'UTC') >= (now() AT TIME ZONE 'UTC')::date - make_interval(days => ${JOURNAL_WINDOW_DAYS})`),
+    // The change log's window, so the journal's first UTC day is complete.
+    db
+      .select({ title: proposals.title, status: proposals.status, change: proposals.change, createdAt: proposals.createdAt })
+      .from(proposals)
+      .where(and(eq(proposals.projectId, projectId), gte(proposals.createdAt, new Date(`${journalStartDay}T00:00:00Z`)))),
     db
       .select({ count: sql<number>`COUNT(*)::int` })
       .from(outreachLogs)
@@ -316,7 +315,7 @@ export async function getDashboardSummary(
   )
 
   const learning = buildLearning(leverRes.value, variantsRes.value.variants)
-  const journal = buildJournal(changes, variantsRes.value.variants, escalationRows, journalStartDay)
+  const journal = buildJournal(changes, variantsRes.value.variants, proposalRows, journalStartDay)
   const rejections = buildRejections(rejectionRes.value)
 
   const reactions: Array<ProspectReaction & { at: Date }> = [

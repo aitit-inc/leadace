@@ -13,6 +13,7 @@ import {
   type SegmentAxis,
   type SegmentCount,
 } from './dashboard'
+import type { ProposedChange } from './loop/proposal'
 
 describe('computeDeltaPct', () => {
   it('returns the rounded percentage change', () => {
@@ -161,17 +162,20 @@ describe('buildJournal', () => {
     ])
   })
 
-  it('windows escalations and puts them after the day\'s changes', () => {
+  const loosen = (applyOn: string): ProposedChange =>
+    ({ kind: 'loosen', applyOn, reason: 'form-only prospects', outboundChannels: { from: ['email'], to: ['email', 'form'] } })
+
+  it('windows proposals and puts them after the day\'s changes', () => {
     const events = buildJournal(
-      [{ day: '2026-07-12', actor: 'ace', target: 'variant', optionId: 'roi-focus', op: 'add', reason: null }],
+      [{ day: '2026-07-12', actor: 'ace', target: 'settings', diff: { outboundChannels: { from: ['email'], to: ['email', 'form'] } }, reason: 'form-only prospects' }],
       variants,
       [
-        { title: 'Revisit strategy', createdAt: '2026-07-12T00:30:00Z' },
-        { title: 'Stale escalation', createdAt: '2026-06-01T00:30:00Z' },
+        { title: 'Turn on form outreach', status: 'applied', change: loosen('2026-07-12'), createdAt: '2026-07-11T00:30:00Z' },
+        { title: 'Stale proposal', status: 'stopped', change: loosen('2026-06-02'), createdAt: '2026-06-01T00:30:00Z' },
       ],
       '2026-06-16',
     )
-    expect(events.map((e) => e.kind)).toEqual(['option', 'strategy_escalated'])
+    expect(events.map((e) => e.kind)).toEqual(['settings', 'proposed'])
   })
 })
 

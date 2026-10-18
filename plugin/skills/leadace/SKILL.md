@@ -140,7 +140,7 @@ Answer the user's question using the context already gathered (`PROJECTS`, `GMAI
 - Project documents (business / sales_strategy / etc.) → `get_document` / `list_documents`
 - Project / tenant settings → `get_project_settings` / `get_tenant_settings`
 - Which mailboxes a project sends from (priority order), daily send caps / warmup → `get_mailbox_health` (read-only; mailbox and cap changes are Web UI or hosted-chat only)
-- "提案は?" / pending AI suggestions → `list_suggestions` (acting on an add-means one = Step 3h)
+- "提案は?" / what Ace proposed → `list_suggestions` (acting on a means one = Step 3h)
 
 Keep the answer to a few lines. Do not invoke other skills.
 
@@ -232,8 +232,8 @@ channel enabled — the cycle skills pick the means up with no further wiring.
    via `upsert_discovery_strategy` (slug + `approach` referencing the playbook), and
    save the `playbook_<slug>` document — it stays **pending until the user approves
    it at https://app.leadace.ai/documents**; skills follow only approved versions.
-   If an open `add-means` suggestion matches (`list_suggestions`), reuse its
-   `dedupeKey` as `<slug>` so the approved playbook auto-closes it.
+   If a pending means proposal matches (`list_suggestions`), reuse its strategy
+   slug as `<slug>` so the approved playbook carries it out.
 4. **Enable the channel**: `update_project_settings` — add `"platform"` to
    `outboundChannels`, preserving existing entries.
 5. **Report**: slug, playbook saved (pending — approve it at

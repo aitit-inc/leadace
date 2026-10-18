@@ -16,11 +16,11 @@ before adding an endpoint.
 ```
 routes/    HTTP adapter: bind URL → service, validate input, map result to HTTP
 services/  Orchestration + DB I/O + external APIs
-  loop/      The learning loop's I/O: observe (records → evidence), policy (the current policy as acts and views read it), change (the policy's only writer: every change lands with its `policy_changes` log row; the log's reads live beside it), propose (the LLM step, evaluate), learn (a tick: observe → decide → claim → apply)
+  loop/      The learning loop's I/O: observe (records → evidence), policy (the current policy as acts and views read it), change (the policy's only writer: every change lands with its `policy_changes` log row, a new frame with the 'frame' row the loop measures from; the log's reads live beside it), propose (the LLM steps: the frame review on a day the frame signal is open, then evaluate), proposals (what Ace hands the person to decide: a loosening or a new frame, one at a time, held a day, then applied through change as written; a means the person sets up, applied once its playbook is approved), learn (a tick: apply due proposals → observe → decide → claim → apply)
   pipeline/  Hosted-agent stages (discover / enrich / draft / journal / strategy-draft): LLM calls + existing services
   chat/      Hosted chat agent: thread store, system prompt, the OpenAI function-calling loop
 domain/    Branded types, state machines, pure rules. No I/O.
-  loop/      The learning loop's rules by layer: frame (outer), options (middle), allocation (inner), decide (outer → middle → inner, pure); reaction (the reward), config, bandit math, change (the policy-change log's rows)
+  loop/      The learning loop's rules by layer: frame (outer: vitals and the frame signal), options (middle), allocation (inner), decide (outer → middle → inner, pure); reaction (the reward), config, bandit math, change (the policy-change log's rows), proposal (what a proposal may change and how it lands)
 db/        drizzle schema (single source of truth). No repository layer.
 tools/     The agent tool surface shared by the MCP worker and the chat agent; each tool calls the API through an injected callApi
 jobs/      Cloudflare Workflow entrypoint + stage runners: puts pipeline stages into steps
@@ -202,6 +202,10 @@ Do NOT test: routes (zValidator + types cover them), drizzle queries, service
 orchestration, DB I/O via mocks (fragile — the `e2e/regression-*.sh` curl
 harness covers DB-level behavior), trivial passthroughs, LLM-prompt string
 assembly.
+
+What a model decides is outside both suites. A change that shifts an LLM
+stage's decisions (evaluate, a pipeline stage) is run against the real model
+on a seeded local project before merge.
 
 When genuine logic is trapped in a DB-coupled service function, extract the
 pure core — to `domain/` when its types live there, otherwise as an exported

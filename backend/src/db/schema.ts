@@ -25,8 +25,9 @@ import type { FollowUpSequencePatch } from '../domain/follow-up-sequence'
 import type { Locale } from '../domain/locale'
 import type { ChannelAffinityMap, ChannelCoarseStat, TargetingLifts, TargetingStats } from '../domain/loop/allocation'
 import type { CoarseIndustry } from '../domain/coarse-industry'
-import type { VitalsAssessment } from '../domain/loop/frame'
-import { POLICY_ACTORS, POLICY_OPS, POLICY_TARGETS, RULE_ARCHIVE_REASONS, type RuleEvidence } from '../domain/loop/change'
+import type { FrameSignal, VitalsAssessment } from '../domain/loop/frame'
+import { POLICY_ACTORS, POLICY_OPS, POLICY_TARGETS, RULE_ARCHIVE_REASONS, type ReachDiff, type RuleEvidence } from '../domain/loop/change'
+import { PROPOSAL_STATUSES, type ProposedChange } from '../domain/loop/proposal'
 import type { MailboxSendRefusal } from '../domain/warmup'
 import type { PaidCallModel } from '../domain/paid-calls'
 import type { JobLogLine, JobParams, JobProgress, JobResult } from '../domain/jobs'
@@ -1101,6 +1102,7 @@ export type LeverDecisionPayload = {
     samples: Array<{ slug: string; total: number; rewardSum: number }>
   }
   vitals?: VitalsAssessment
+  frame?: FrameSignal
   configUsed?: LeverConfig
 }
 
@@ -1170,6 +1172,7 @@ export const policyChanges = pgTable('policy_changes', {
   reason: text('reason'),
   ruleReason: policyRuleReasonEnum('rule_reason'),
   evidence: jsonb('evidence').$type<RuleEvidence>(),
+  reachDiff: jsonb('reach_diff').$type<ReachDiff>(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
   index('idx_policy_changes_project_created').on(table.projectId, table.createdAt),
@@ -1181,6 +1184,7 @@ export const policyChanges = pgTable('policy_changes', {
   index('idx_policy_changes_tenant').on(table.tenantId),
   check('chk_policy_changes_option_id', sql`(${table.target} IN ('variant', 'strategy')) = (${table.optionId} IS NOT NULL)`),
   check('chk_policy_changes_rule', sql`(${table.actor} = 'rule' AND ${table.op} = 'archive') = (${table.ruleReason} IS NOT NULL)`),
+  check('chk_policy_changes_reach', sql`(${table.target}::text = 'settings') = (${table.reachDiff} IS NOT NULL)`),
 ])
 
 export const responses = pgTable('responses', {
@@ -1382,12 +1386,9 @@ export const projectDocuments = pgTable('project_documents', {
   index('idx_doc_latest').on(table.projectId, table.slug, table.createdAt),
 ])
 
-// AI suggestions needing a user-only action (account setup, ToS, business
-// decisions) — never something the loop can do itself. `status` is user-owned:
-// recording refreshes open rows, never resurrects dismissed/done.
-export const SUGGESTION_STATUSES = ['open', 'dismissed', 'done'] as const
-export type SuggestionStatus = (typeof SUGGESTION_STATUSES)[number]
-export const suggestionStatusEnum = pgEnum('suggestion_status', SUGGESTION_STATUSES)
+// Replaced by proposals. Dropped next release: the Worker still running during
+// a deploy reads it (release.md).
+export const suggestionStatusEnum = pgEnum('suggestion_status', ['open', 'dismissed', 'done'])
 
 export const suggestions = pgTable('suggestions', {
   id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
@@ -1399,9 +1400,6 @@ export const suggestions = pgTable('suggestions', {
   dedupeKey: text('dedupe_key').notNull(),
   title: text('title').notNull(),
   body: text('body').notNull(),
-  // A sentence addressed to Ace, never a slash command: the web UI sends it to
-  // the chat as it is. The column keeps its old name until a later release —
-  // renaming it breaks the Worker still running during a deploy (release.md).
   instruction: text('command').notNull(),
   status: suggestionStatusEnum('status').notNull().default('open'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
@@ -1415,6 +1413,38 @@ export const suggestions = pgTable('suggestions', {
     name: 'fk_suggestion_project_tenant',
   }).onDelete('cascade'),
   index('idx_suggestions_tenant').on(table.tenantId),
+])
+
+export const proposalStatusEnum = pgEnum('proposal_status', PROPOSAL_STATUSES)
+
+// What Ace hands the person to decide; `change` says what and how it lands
+// (domain/loop/proposal.ts). Written once; only `status` moves.
+export const proposals = pgTable('proposals', {
+  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  projectId: text('project_id').notNull(),
+  change: jsonb('change').$type<ProposedChange>().notNull(),
+  title: text('title').notNull(),
+  body: text('body').notNull(),
+  status: proposalStatusEnum('status').notNull().default('pending'),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  // One loosening or new frame at a time: the person reads one, two never race
+  // for the same setting, and none is written under a frame about to change.
+  uniqueIndex('uq_proposals_pending').on(table.projectId)
+    .where(sql`${table.status} = 'pending' AND ${table.change}->>'kind' IN ('loosen', 'frame')`),
+  // A means is asked once; the person's answer stands.
+  uniqueIndex('uq_proposals_add_means').on(table.projectId, sql`(${table.change}->>'strategy')`)
+    .where(sql`${table.change}->>'kind' = 'add-means'`),
+  foreignKey({
+    columns: [table.projectId, table.tenantId],
+    foreignColumns: [projects.id, projects.tenantId],
+    name: 'fk_proposal_project_tenant',
+  }).onDelete('cascade'),
+  index('idx_proposals_tenant').on(table.tenantId),
+  index('idx_proposals_project_created').on(table.projectId, table.createdAt),
 ])
 
 // Global master documents (not tenant-scoped) — populated by SaaS-side seed,

@@ -5,7 +5,7 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import type { ConfirmSummary, ToolEffect } from '../domain/chat'
 import { z } from 'zod'
-import { BUG_REPORT_CATEGORIES, EMPLOYEE_BANDS, OUTBOUND_CHANNELS, OUTBOUND_MODES, REACHABLE_STATUSES, REJECTION_PRIMARY_REASONS, REJECTION_RECONTACT_WINDOWS, SUGGESTION_STATUSES, prospectStatusEnum, prioritySchema, type OutboundMode, type ProspectStatus } from '../db/schema'
+import { BUG_REPORT_CATEGORIES, EMPLOYEE_BANDS, OUTBOUND_CHANNELS, OUTBOUND_MODES, REACHABLE_STATUSES, REJECTION_PRIMARY_REASONS, REJECTION_RECONTACT_WINDOWS, prospectStatusEnum, prioritySchema, type OutboundMode, type ProspectStatus } from '../db/schema'
 import { ALLOWED_SEND_COUNTRIES } from '../domain/country'
 import { discoveryStrategySchema, suggestionKindSchema, variantIdSchema } from '../domain/ids'
 import { localeSchema } from '../domain/locale'
@@ -20,7 +20,8 @@ import { SERVER_VERSION } from '../mcp/version'
 import { JOB_KINDS, JOB_STATUSES, jobParamsSchema, type JobKind, type JobLogLine, type JobParams, type JobResult, type StrategyPlanCompliance } from '../domain/jobs'
 import { DAYS_OF_WEEK, daysSchema, hourSchema, promptSchema, timezoneSchema } from '../domain/schedules'
 import { applyStrategyDraftSchema, competitorsInputSchema, readPagesSchema } from '../domain/strategy-draft'
-import { changeReasonSchema } from '../domain/loop/change'
+import { changeReasonSchema, reachDiff, reachLine, type ReachSettings } from '../domain/loop/change'
+import { frameBodySchema, frameReach, proposalWhat, PROPOSAL_STATUSES, type ProposedChange } from '../domain/loop/proposal'
 
 // MIN_PLUGIN_VERSION is the gate: any plugin older than this MUST be told to
 // run `/plugin update leadace@leadace` because backend behavior assumes the
@@ -1077,7 +1078,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_lever_decisions',
-    'Read-only history of the project\'s daily lever-tick decisions, newest first. Each entry is one UTC day: message-variant draw weights, changes — every policy change that day with who made it and why: variants and strategies the tick archived (reason "lost" to the leader, or "rotated" out of a flat set) or restored, those Ace or the person added, edited, archived or restored, and edits to business and sales_strategy, per-variant sample counts, channel affinity per coarse-industry bucket, targetingLifts, the discovery-strategy decision (weights / pBest / samples), vitals — the project futility check over recent email sends (sends counted as their reactions arrive / engaged / pDead / verdict), and configUsed — the effective lever config the tick ran under (the latter four null on pre-upgrade entries). Empty until the tick has run at least once.',
+    'Read-only history of the project\'s daily lever-tick decisions, newest first. Each entry is one UTC day: message-variant draw weights, changes — every policy change that day with who made it and why: variants and strategies the tick archived (reason "lost" to the leader, or "rotated" out of a flat set) or restored, those Ace or the person added, edited, archived or restored, edits to business and sales_strategy, changes to channels, countries or language with their before and after, and the start of a new frame (the loop measures from it), per-variant sample counts, channel affinity per coarse-industry bucket, targetingLifts, the discovery-strategy decision (weights / pBest / samples), vitals — the project futility check over recent email sends (sends counted as their reactions arrive / engaged / pDead / verdict), and configUsed — the effective lever config the tick ran under (the latter four null on pre-upgrade entries). Empty until the tick has run at least once.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       days: z.number().int().min(1).max(365).optional().describe('Lookback window in days (default 30)'),
@@ -1830,47 +1831,55 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'record_suggestion',
-    'Persist an actionable suggestion for the user (surfaced in the Web UI dashboard). Reserve for actions only the user can perform. Upserts by kind + dedupeKey: refreshes an open suggestion, never resurrects a dismissed/done one — the confirmation reports id, status, and whether it was written or left untouched.',
+    'Propose a means only the user can set up (an account, a login, a ToS), shown on the Web UI dashboard. A means is proposed once: the user\'s answer stands, and approving its playbook carries it out. The confirmation says whether it was recorded.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
-      kind: suggestionKindSchema.describe('Suggestion kind, lowercase kebab-case category'),
-      dedupeKey: z.string().min(1).describe('Stable dedup key within the kind'),
+      kind: suggestionKindSchema.describe('"add-means"; other kinds are not recorded'),
+      dedupeKey: z.string().min(1).describe('The tentative strategy slug'),
       title: z.string().min(1).describe('Short headline shown in the Web UI'),
-      body: z.string().min(1).describe('Rationale and expected payoff, markdown'),
+      body: z.string().min(1).describe('The evidence and what it asks of the user, markdown'),
       instruction: z
         .string()
         .min(1)
         .describe('The next action as one sentence addressed to Ace, e.g. "Add Wantedly as an outreach means."'),
     },
-    async ({ projectId, ...body }, ctx) => {
-      const { ok, data } = await ctx.callApi('POST', `/projects/${encodeURIComponent(projectId)}/suggestions`, body)
+    async ({ projectId, kind, dedupeKey, ...rest }, ctx) => {
+      if (kind !== 'add-means') {
+        return { content: [{ type: 'text' as const, text: 'Not recorded: only a means the user must set up (kind "add-means") is. A problem the user must fix now goes to notify_user.' }] }
+      }
+      const { ok, data } = await ctx.callApi('POST', `/projects/${encodeURIComponent(projectId)}/proposals`, { strategy: dedupeKey, ...rest })
       if (!ok) {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
       }
-      const result = data as { id: number; status: string; written: boolean }
-      const text = result.written
-        ? `Suggestion recorded (id ${result.id}, status ${result.status}).`
-        : `Suggestion left untouched — an existing one (id ${result.id}) is ${result.status}; the user's status decision stands. Do not re-propose it.`
+      const result = data as { recorded: true; id: number } | { recorded: false; why: string }
+      const text = result.recorded
+        ? `Recorded (proposal ${result.id}); it waits on the dashboard for the user.`
+        : `Not recorded: ${dedupeKey} was proposed before and the user's answer stands. Do not propose it again.`
       return { content: [{ type: 'text' as const, text }] }
     },
   )
 
   defineTool(
     'list_suggestions',
-    'List persisted suggestions for a project: id, kind, dedupeKey, title, body, instruction, status (open/dismissed/done), timestamps. Optional status filter.',
+    'List Ace\'s proposals to the user for a project, newest first, one line each: id, date, status, title, and the change — a channel or country loosening or a new frame (what changes, the day it applies), or a means to set up (strategy slug, instruction). Optional status filter.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
-      status: z.enum(SUGGESTION_STATUSES).optional().describe('Filter by status'),
+      status: z.enum(PROPOSAL_STATUSES).optional().describe('Filter by status'),
     },
     async ({ projectId, status }, ctx) => {
       const qs = status ? `?status=${status}` : ''
-      const { ok, data } = await ctx.callApi('GET', `/projects/${encodeURIComponent(projectId)}/suggestions${qs}`, null)
+      const { ok, data } = await ctx.callApi('GET', `/projects/${encodeURIComponent(projectId)}/proposals${qs}`, null)
       if (!ok) {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] }
+      const { proposals } = data as { proposals: Array<{ id: number; change: ProposedChange; title: string; status: string; createdAt: string }> }
+      const line = (p: (typeof proposals)[number]): string => {
+        const how = p.change.kind === 'add-means' ? `instruction: ${JSON.stringify(p.change.instruction)}` : `applies ${p.change.applyOn}`
+        return `#${p.id} ${p.createdAt.slice(0, 10)} ${p.status} — ${p.title}: ${proposalWhat(p.change)}; ${how}`
+      }
+      return { content: [{ type: 'text' as const, text: proposals.map(line).join('\n') || 'No proposals.' }] }
     },
     { readOnly: true },
   )
@@ -2577,6 +2586,41 @@ export function buildToolRegistry(): ToolDef[] {
         warning: "This replaces the project's current strategy and messaging.",
         confirmLabel: 'Save setup',
       }),
+    },
+  )
+
+  defineTool(
+    'apply_frame_change',
+    'Start a new frame for a project: the full new sales strategy, its channels, countries and language, and the angles and search strategies that test it. Every active angle and strategy not in it is archived, and the loop measures from now. For a different audience, offer or channel set the user asked for, including in place of a frame proposal they stopped. Answers whether the frame started.',
+    {
+      projectId: z.string().min(1).describe('Project name or ID'),
+      frame: frameBodySchema,
+    },
+    async ({ projectId, frame }, ctx) => {
+      const { ok, data } = await ctx.callApi('POST', `/projects/${encodeURIComponent(projectId)}/frame`, frame)
+      if (!ok) {
+        const e = data as { error: string; detail?: string }
+        return { content: [{ type: 'text' as const, text: `Error: ${e.detail ? `${e.error}: ${e.detail}` : e.error}` }], isError: true }
+      }
+      return { content: [{ type: 'text' as const, text: 'The new frame started; the loop measures from now.' }] }
+    },
+    {
+      surface: 'chat',
+      confirm: async ({ projectId, frame }, ctx) => {
+        const current = (await readApi(ctx, `/projects/${encodeURIComponent(projectId)}/settings`)) as ReachSettings | null
+        return {
+          title: 'Start a new frame',
+          facts: [
+            { label: 'Project', value: await projectLabel(ctx, projectId) },
+            { label: 'Reach', value: current === null ? 'unknown' : reachLine(reachDiff(current, frameReach(current, frame))) || 'unchanged' },
+            { label: 'Message angles', value: `${frame.variants.map((v) => v.label).join(', ')}, in place of the current ones` },
+            { label: 'Search strategies', value: `${frame.strategies.map((st) => st.slug).join(', ')}, in place of the current ones` },
+          ],
+          body: frame.salesStrategy,
+          warning: 'Measuring restarts: results so far stop steering this project.',
+          confirmLabel: 'Start the new frame',
+        }
+      },
     },
   )
 

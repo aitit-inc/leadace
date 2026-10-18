@@ -14,7 +14,6 @@ const maxActiveStrategies = z.number().int().min(2)
 const messageWeightFloor = z.number().min(0).max(1)
 const strategyWeightFloor = z.number().min(0).max(1)
 const stagnationTicks = z.number().int().min(2)
-const measurementsSince = z.iso.date()
 const futilitySurvivalRate = z.number().min(0).max(1)
 const futilityConfidence = z.number().min(0).max(1)
 const futilityMinSends = z.number().int().min(1)
@@ -51,9 +50,6 @@ export const leverConfigSchema = z.object({
   // Days in a row the variant set must be flat (all arms judged, max P(best) <
   // the ceiling) before it rotates its weakest arm out.
   stagnationTicks: stagnationTicks.default(7),
-  // Epoch cut: tick-path aggregates ignore sends before this UTC date (a prior
-  // regime, e.g. pre-deliverability-repair). Orthogonal to rewardLookbackDays.
-  measurementsSince: measurementsSince.optional(),
   // Vitals gate: verdict "futile" once P(reply rate < futilitySurvivalRate) ≥
   // futilityConfidence over ≥ futilityMinSends mature email sends within the
   // last futilityLookbackDays — bounded so the verdict self-clears after a
@@ -99,7 +95,6 @@ export const leverConfigPatchSchema = z.object({
   messageWeightFloor: messageWeightFloor.optional(),
   strategyWeightFloor: strategyWeightFloor.optional(),
   stagnationTicks: stagnationTicks.optional(),
-  measurementsSince: measurementsSince.optional(),
   futilitySurvivalRate: futilitySurvivalRate.optional(),
   futilityConfidence: futilityConfidence.optional(),
   futilityMinSends: futilityMinSends.optional(),

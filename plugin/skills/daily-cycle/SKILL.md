@@ -288,7 +288,7 @@ Include the following in the prompt:
 - Project ID: `$0`
 - Execution date and time: the datetime obtained in step 1
 - Phase summaries collected from sub-agents during this cycle (check-responses, evaluate, outbound, build-list)
-- The lever / trajectory narration from evaluate and step 4b (current response rate, which message angle / channel affinity is leading, sample progress, any angles added or archived this cycle with reason and numbers, any revisit-strategy suggestion raised, and the vitals verdict when step 4b reported FUTILE)
+- The lever / trajectory narration from evaluate and step 4b (current response rate, which message angle / channel affinity is leading, sample progress, any angles added or archived this cycle with reason and numbers, and the vitals verdict when step 4b reported FUTILE)
 - Any autonomous execution-order decisions taken this cycle and why (email depletion → ran build-list first; outbound success rate < 30% → aborted; form submissions capped at 5 → N carried to next cycle; total reachable 0 → outbound skipped). "None" if the cycle ran straight through.
 
 **Completion Notification**
@@ -309,7 +309,7 @@ Trajectory: (response rate now and its direction vs the last cycle if known / wh
 Decisions: (the autonomous execution-order calls this cycle and their reason, or "none")
 ```
 
-`Lever changes:` mirrors the dashboard's decision journal — use its wording so the email and the dashboard tell one story: a new angle → `Started testing a new angle “X”`; a stagnation rotation → `Swapped out “X” — results stayed flat`; a variant retired because a stronger one won → `Retired “X” — a stronger angle won`; a revisit-strategy suggestion → `Flagged for your review: <title>`. Use the variant's label when known (variantId otherwise) and append `(win chance NN% · N sends)` when the tick reported those numbers. Routine reweighting with no line-up change is "none" — a line appears only on state change, same as the journal.
+`Lever changes:` mirrors the dashboard's decision journal — use its wording so the email and the dashboard tell one story: a new angle → `Started testing a new angle “X”`; a stagnation rotation → `Swapped out “X” — results stayed flat`; a variant retired because a stronger one won → `Retired “X” — a stronger angle won`. Use the variant's label when known (variantId otherwise) and append `(win chance NN% · N sends)` when the tick reported those numbers. Routine reweighting with no line-up change is "none" — a line appears only on state change, same as the journal.
 
 Call `notify_user` with category `cron`, subject `"daily-cycle completed: $0"` and the report body. There is no recipient argument — the server resolves the workspace's notification address, and the user's Workspace settings decide whether it is emailed.
 

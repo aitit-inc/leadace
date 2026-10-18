@@ -97,6 +97,36 @@ export async function upsertMessageVariant(
   return ok(row)
 }
 
+// One change: `outId` leaves its slot to `body`. The outgoing variant is claimed
+// under its row lock, so two runs that picked the same one cannot both fill
+// its slot (the second finds it gone: CONFLICT). Runs in the caller's
+// transaction; an add that fails after the archive throws, rolling both back.
+export async function replaceMessageVariant(
+  db: Db,
+  tenantId: TenantId,
+  caller: 'browser' | 'agent',
+  projectId: ProjectId,
+  outId: string,
+  body: UpsertVariantBody,
+): Promise<ServiceResult<MessageVariantRow>> {
+  const [out] = await db
+    .select({ subjectPattern: messageVariants.subjectPattern })
+    .from(messageVariants)
+    .where(and(eq(messageVariants.projectId, projectId), eq(messageVariants.variantId, outId), isNull(messageVariants.archivedAt)))
+    .for('update')
+  if (!out) return err('CONFLICT', `Variant ${outId} is no longer active`)
+  const archived = await upsertMessageVariant(db, tenantId, caller, projectId, {
+    variantId: outId,
+    subjectPattern: out.subjectPattern,
+    archived: true,
+    reason: `Replaced by ${body.variantId}${body.reason ? `: ${body.reason}` : ''}`.slice(0, 300),
+  })
+  if (!archived.ok) return archived
+  const added = await upsertMessageVariant(db, tenantId, caller, projectId, body)
+  if (!added.ok) throw new Error(`Invariant: ${body.variantId} could not take ${outId}'s slot: ${added.error}`)
+  return added
+}
+
 // Returns null when no variants are active (caller uses a one-off subject).
 export type PickedVariant = {
   variantId: string

@@ -39,7 +39,7 @@ import { ok, type ServiceResult } from '../result'
 import { resolveProject } from '../projects'
 import { projectTargetExpr, usableOnExpr } from '../prospects'
 import { getActiveStrategySlugs } from '../discovery-strategies'
-import { lastArchivals, lostOptionIds, optionEntries, type OptionArchival } from './change'
+import { frameStart, frameStarts, lastArchivals, lostOptionIds, optionEntries, type OptionArchival } from './change'
 import type { OptionTarget } from '../../domain/loop/change'
 
 type ResponseType = (typeof responseTypeEnum.enumValues)[number]
@@ -48,8 +48,6 @@ type Sentiment = (typeof sentimentEnum.enumValues)[number]
 // The DB clock: every query in one transaction reads the same now().
 const daysAgo = (days: number): SQL => sql`now() - make_interval(days => ${days})`
 const DAY_MS = 24 * 60 * 60 * 1000
-// The epoch is a UTC date.
-const dayStart = (date: string): Date => new Date(`${date}T00:00:00Z`)
 
 // Bucket values, one definition for the send counts and the reactions alike.
 const industryBucket = (raw: string | null): string | null => raw?.trim() || null
@@ -60,6 +58,8 @@ const sentBy = (projectId: ProjectId, where: SQL | undefined): SQL | undefined =
   and(eq(outreachLogs.projectId, projectId), eq(outreachLogs.status, 'sent'), where)
 
 const statedReason = sql<string | null>`${responses.rejectionFeedback}->>'primary_reason'`
+
+const dayOf = (at: Date): string => at.toISOString().slice(0, 10)
 
 // Every send since `since` (all of them when undefined), each with the
 // attributes the loop measures by and the reactions it drew, in arrival order.
@@ -109,10 +109,6 @@ async function observeSends(db: Db, projectId: ProjectId, since: Date | undefine
   }))
 }
 
-// The frame's sends: the loop never measures across a frame change.
-const frameStart = (config: LeverConfig): Date | undefined =>
-  config.measurementsSince === undefined ? undefined : dayStart(config.measurementsSince)
-
 // The forgetting window, when configured, narrows what the options are judged on.
 const recentEnough = (config: LeverConfig, now: Date) => (send: SendObservation): boolean =>
   config.rewardLookbackDays === undefined || send.sentAt.getTime() >= now.getTime() - config.rewardLookbackDays * DAY_MS
@@ -121,6 +117,18 @@ const optionOf = (target: OptionTarget) => (send: SendObservation): string | und
   (target === 'variant' ? send.variantId : send.strategy) ?? undefined
 
 const armOf = (id: string, e: Evidence | undefined): ArmStat => ({ armId: id, total: e?.trials ?? 0, rewardSum: e?.rewardSum ?? 0 })
+
+// Each option's evidence over all its sends, and over those since it last
+// entered the active set (an option with no entry on record counts every send).
+function optionEvidence(sends: readonly SendObservation[], target: OptionTarget, entries: Map<string, Date>, now: Date, weights: RewardWeights) {
+  const option = optionOf(target)
+  const sinceEntry = (send: SendObservation): string | undefined => {
+    const id = option(send)
+    const at = id === undefined ? undefined : entries.get(id)
+    return at === undefined || send.sentAt >= at ? id : undefined
+  }
+  return { all: evidenceBy(sends, option, now, weights), sinceEntry: evidenceBy(sends, sinceEntry, now, weights) }
+}
 
 function targetingStatsOf(sends: readonly SendObservation[], now: Date, weights: RewardWeights): TargetingStats {
   const axis = <K extends string | null>(key: (send: SendObservation) => K, compare: (a: K, b: K) => number): TargetingAxisStat[] =>
@@ -303,7 +311,7 @@ async function maturedVariantStats(db: Db, projectId: ProjectId, weights: Reward
 
 // The variants as the rule sees them, for the lever-state view.
 export async function getVariantEvidence(db: Db, projectId: ProjectId, config: LeverConfig, now: Date = new Date()): Promise<Map<string, Evidence>> {
-  const sends = (await observeSends(db, projectId, frameStart(config))).filter(recentEnough(config, now))
+  const sends = (await observeSends(db, projectId, await frameStart(db, projectId))).filter(recentEnough(config, now))
   return evidenceBy(sends, optionOf('variant'), now, config.reward)
 }
 
@@ -560,14 +568,17 @@ export type VariantEvidence = Evidence & {
   subjectPattern: string
   bodyApproach: string | null
   archived: OptionArchival | null
+  // Trials since it last entered the active set: its grace, as the rule counts it.
+  sinceEntry: number
 }
 
 // `fresh` = new after dedup. `registered` counts every prospect carrying the
 // slug, hosted or brought in; `unqualified` = those failing the fit check or
 // taken out by the person. Of the qualified: `sendable` on a channel the project
-// has on, `channelsOff` only on one it has off, `noContact` with none on file;
-// the rest hold only a contact that cannot be used (refused, undeliverable, or
-// on a platform no channel sends on).
+// has on, `channelsOff` only on one it has off (`channelsOffBy` per off channel;
+// one prospect can count under several), `noContact` with none on file; the
+// rest hold only a contact that cannot be used (refused, undeliverable, or on
+// a platform no channel sends on).
 export type StrategyDiscovery = {
   passes: number
   asked: number
@@ -577,6 +588,7 @@ export type StrategyDiscovery = {
   unqualified: number
   sendable: number
   channelsOff: number
+  channelsOffBy: Partial<Record<OutboundChannel, number>>
   noContact: number
 }
 
@@ -626,7 +638,7 @@ const SUFFICIENT_TRIALS = 30
 const DISCOVERY_OPS = ['discover.search', 'discover.extract', 'enrich.judge', 'enrich.site', 'enrich.pages'] satisfies (GroundedTextOp | FollowUpJsonOp | PagesJsonOp)[]
 
 export async function getProposeEvidence(db: Db, projectId: ProjectId, config: LeverConfig, now: Date = new Date()): Promise<ProposeEvidence> {
-  const start = frameStart(config)
+  const start = await frameStart(db, projectId)
   const inFrame = start === undefined ? undefined : gte(outreachLogs.sentAt, start)
   const countable = notInArray(responses.responseType, [...NON_COUNTABLE_RESPONSE_TYPES])
   const archivedInFrame = (column: typeof messageVariants.archivedAt | typeof discoveryStrategies.archivedAt) =>
@@ -636,6 +648,8 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
   const { outboundChannels: channels } = await loadProjectOutboundAllowlist(db, projectId)
   const qualified = eq(projectProspects.qualified, true)
   const usable = usableOnExpr(channels)
+  const offOnly = (on: readonly OutboundChannel[]) => sql`CASE WHEN ${qualified} AND NOT (${usable}) AND ${usableOnExpr(on)} THEN 1 END`
+  const offChannels = OUTBOUND_CHANNELS.filter((c) => !channels.includes(c))
 
   const [
     sends, activeVariants, archivedVariants, activeStrategies, archivedStrategies,
@@ -669,7 +683,8 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
       registered: count(),
       unqualified: count(sql`CASE WHEN NOT ${projectProspects.qualified} THEN 1 END`),
       sendable: count(sql`CASE WHEN ${qualified} AND ${usable} THEN 1 END`),
-      channelsOff: count(sql`CASE WHEN ${qualified} AND NOT (${usable}) AND ${usableOnExpr(OUTBOUND_CHANNELS)} THEN 1 END`),
+      channelsOff: count(offOnly(OUTBOUND_CHANNELS)),
+      channelsOffBy: sql<Partial<Record<OutboundChannel, number>>>`jsonb_build_object(${sql.join(offChannels.map((c) => sql`${c}::text, COUNT(${offOnly([c])})`), sql`, `)})`,
       noContact: count(sql`CASE WHEN ${qualified} AND NOT ${projectTargetExpr} THEN 1 END`),
       foundSendable: count(sql`CASE WHEN ${prospects.origin} = 'found' AND ${qualified} AND ${usable} THEN 1 END`),
     })
@@ -680,9 +695,8 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
       .where(and(eq(paidCalls.projectId, projectId), inArray(paidCalls.op, DISCOVERY_OPS), gte(paidCalls.createdAt, daysAgo(DISCOVERY_WINDOW_DAYS)))),
   ])
 
-  const dayOf = (at: Date): string => at.toISOString().slice(0, 10)
   const recentIds = recent.map((r) => r.outreachLogId)
-  const [replyRows, sessionRows, variantArchivals, strategyArchivals] = await Promise.all([
+  const [replyRows, sessionRows, variantArchivals, strategyArchivals, variantEntries] = await Promise.all([
     recentIds.length === 0
       ? []
       : db.select({
@@ -706,11 +720,12 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
           .from(inquirySessions).where(inArray(inquirySessions.outreachLogId, recentIds)),
     lastArchivals(db, projectId, 'variant', archivedVariants.map((v) => v.id)),
     lastArchivals(db, projectId, 'strategy', archivedStrategies.map((st) => st.id)),
+    optionEntries(db, projectId, 'variant'),
   ])
 
   const none = evidenceOf([], now, config.reward)
   const judged = sends.filter(recentEnough(config, now))
-  const variantOf = evidenceBy(judged, optionOf('variant'), now, config.reward)
+  const variantOf = optionEvidence(judged, 'variant', variantEntries, now, config.reward)
   const strategyOf = evidenceBy(judged, optionOf('strategy'), now, config.reward)
   const axisBuckets = (key: (send: SendObservation) => string | null): AxisBucket[] =>
     Array.from(evidenceBy(sends, key, now, config.reward), ([value, e]) => ({ value, ...e })).sort(
@@ -765,7 +780,7 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
   const kpi = evidenceOf(sends, now, config.reward)
   const priorityBucket = (priority: number | null): string | null => (priority === null ? null : String(priority))
   return {
-    frameStart: config.measurementsSince ?? null,
+    frameStart: start === undefined ? null : dayOf(start),
     sufficient: kpi.trials >= SUFFICIENT_TRIALS,
     kpi,
     variants: [...activeVariants, ...archivedVariants].map((v) => ({
@@ -775,7 +790,8 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
       subjectPattern: v.subjectPattern,
       bodyApproach: v.bodyApproach,
       archived: archival(variantArchivals, v.id, v.archivedAt),
-      ...(variantOf.get(v.id) ?? none),
+      ...(variantOf.all.get(v.id) ?? none),
+      sinceEntry: variantOf.sinceEntry.get(v.id)?.trials ?? 0,
     })),
     strategies: [...activeStrategies, ...archivedStrategies].map((st) => ({
       slug: st.id,
@@ -787,6 +803,7 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
         unqualified: registeredBy.get(st.id)?.unqualified ?? 0,
         sendable: registeredBy.get(st.id)?.sendable ?? 0,
         channelsOff: registeredBy.get(st.id)?.channelsOff ?? 0,
+        channelsOffBy: registeredBy.get(st.id)?.channelsOffBy ?? {},
         noContact: registeredBy.get(st.id)?.noContact ?? 0,
       },
       archived: archival(strategyArchivals, st.id, st.archivedAt),
@@ -815,9 +832,32 @@ export async function loadActiveVariantIds(db: Db, projectId: ProjectId): Promis
   return rows.map((r) => r.variantId)
 }
 
+export type FramePeriod = {
+  // null for the frame the project started with.
+  start: { day: string; by: 'ace' | 'user'; reason: string | null } | null
+  trials: number
+  positive: number
+}
+
+// Every frame the project has run, oldest first, each counted on its own sends
+// (until the next one started).
+export async function frameHistory(db: Db, projectId: ProjectId, config: LeverConfig, now: Date = new Date()): Promise<FramePeriod[]> {
+  const [starts, sends] = await Promise.all([frameStarts(db, projectId), observeSends(db, projectId, undefined)])
+  return [null, ...starts].map((start, i) => {
+    const next = starts[i]?.at
+    const { trials, positive } = evidenceOf(
+      sends.filter((send) => (start === null || send.sentAt >= start.at) && (next === undefined || send.sentAt < next)),
+      now,
+      config.reward,
+    )
+    return { start: start && { day: dayOf(start.at), by: start.actor, reason: start.reason }, trials, positive }
+  })
+}
+
 export async function observeTick(db: Db, projectId: ProjectId, config: LeverConfig, now: Date = new Date()): Promise<TickEvidence> {
+  const start = await frameStart(db, projectId)
   const [sends, activeIds, activeSlugs, lostIds, lostSlugs, variantEntries, strategyEntries, [state]] = await Promise.all([
-    observeSends(db, projectId, frameStart(config)),
+    observeSends(db, projectId, start),
     loadActiveVariantIds(db, projectId),
     getActiveStrategySlugs(db, projectId),
     lostOptionIds(db, projectId, 'variant'),
@@ -827,18 +867,8 @@ export async function observeTick(db: Db, projectId: ProjectId, config: LeverCon
     db.select({ variantFlatStreak: leverState.variantFlatStreak }).from(leverState).where(eq(leverState.projectId, projectId)),
   ])
   const judged = sends.filter(recentEnough(config, now))
-  const options = (target: OptionTarget, entries: Map<string, Date>) => {
-    const option = optionOf(target)
-    // An option with no entry on record counts every send.
-    const sinceEntry = (send: SendObservation): string | undefined => {
-      const id = option(send)
-      const at = id === undefined ? undefined : entries.get(id)
-      return at === undefined || send.sentAt >= at ? id : undefined
-    }
-    return { all: evidenceBy(judged, option, now, config.reward), sinceEntry: evidenceBy(judged, sinceEntry, now, config.reward) }
-  }
-  const variants = options('variant', variantEntries)
-  const strategies = options('strategy', strategyEntries)
+  const variants = optionEvidence(judged, 'variant', variantEntries, now, config.reward)
+  const strategies = optionEvidence(judged, 'strategy', strategyEntries, now, config.reward)
   return {
     variants: {
       active: activeIds.map((id) => {
@@ -855,5 +885,6 @@ export async function observeTick(db: Db, projectId: ProjectId, config: LeverCon
     channel: channelStatsOf(sends, now, config.reward),
     targeting: targetingStatsOf(judged, now, config.reward),
     futility: futilityOf(sends, config, now),
+    frame: evidenceOf(sends, now, config.reward),
   }
 }

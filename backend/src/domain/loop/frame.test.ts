@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { seededRng } from './bandit'
-import { assessVitals, type FutilityParams } from './frame'
+import { assessVitals, frameSignal, type FutilityParams } from './frame'
 
 const PARAMS: FutilityParams = {
   futilitySurvivalRate: 0.01,
@@ -64,5 +64,31 @@ describe('assessVitals', () => {
     expect(v.engaged).toBe(100)
     expect(v.verdict).toBe('ok')
     expect(v.pDead).toBe(0)
+  })
+})
+
+describe('frameSignal', () => {
+  const at = (trials: number, positive: number, vitals: 'ok' | 'insufficient' | 'futile' = 'ok') =>
+    frameSignal({ trials, positive }, vitals, seededRng('t'))
+
+  it('stays closed until the frame has its trials, even at no positive', () => {
+    expect(at(99, 0).open).toBe(false)
+  })
+
+  it('opens on a frame with no positive past the trials (Beta(1, 367): P ≈ 0.975)', () => {
+    const s = at(366, 0)
+    expect(s.pBelow).toBeGreaterThan(0.95)
+    expect(s.open).toBe(true)
+  })
+
+  it('opens at 0.2% and stays closed at 1.9% or on too little evidence at 0.5%', () => {
+    expect(at(2079, 4).open).toBe(true)
+    expect(at(624, 12).open).toBe(false)
+    expect(at(190, 1).open).toBe(false)
+  })
+
+  it('stays closed while vitals are futile', () => {
+    expect(at(366, 0, 'futile').open).toBe(false)
+    expect(at(366, 0, 'insufficient').open).toBe(true)
   })
 })

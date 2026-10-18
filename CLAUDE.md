@@ -68,6 +68,10 @@ scenarios (e2e/README.md → UI scenarios).
 
 ## Design Principles
 
+- **Solve at the root, on the main path**: start from what the thing is for
+  and how it should work, never from the symptom. Grow or fix the mechanism the
+  system already runs on instead of adding a side path around it, and prefer
+  removing a wrong or redundant part to patching over it.
 - **Explore wide, output narrow**: investigate broadly; ship the minimum that
   carries the conclusion. "Just in case" filler is pure cost.
 - **Keep specs simple**: default to the simplest spec that solves the problem.
@@ -78,8 +82,7 @@ scenarios (e2e/README.md → UI scenarios).
   exist, present them — don't pick silently; push back when a simpler
   approach exists; ask when unclear.
 - **Surgical changes**: every changed line traces to the request. Don't
-  improve adjacent code or refactor what isn't broken; mention unrelated dead
-  code rather than deleting it; remove orphans your change created.
+  improve adjacent code or refactor what isn't broken; remove orphans your change created.
 - **LLM vs deterministic split**: operations with clear rules that must behave
   identically every time (DB writes, dedup, status transitions, quota) live in
   the backend behind MCP tools; context-dependent judgment and natural
@@ -118,6 +121,8 @@ scenarios (e2e/README.md → UI scenarios).
 - **Types express the spec**: `any` is prohibited. Encode runtime distinctions
   in types (discriminated unions, branded types, narrowed returns) so invalid
   states cannot be constructed.
+  Text that code parses is a record: give it a typed shape. A string stays
+  free text only while nothing but people and LLMs read it.
 - Optionality is a design decision: add `null`/`undefined` only when absence
   is a real, distinct state; otherwise use a default or split the type into
   variants. DB columns are NOT NULL by default.
