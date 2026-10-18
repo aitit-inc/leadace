@@ -23,7 +23,7 @@ import { FRAME_SIGNAL } from '../../domain/loop/frame'
 import { replaceableArms } from '../../domain/loop/options'
 import { OUTBOUND_CHANNELS } from '../../domain/outbound-channel'
 import { ALLOWED_SEND_COUNTRIES } from '../../domain/country'
-import { loadLeverConfig } from '../project-settings'
+import { getOutboundMode, loadLeverConfig } from '../project-settings'
 import { getRejectionFeedbackSummaryById } from '../responses'
 import { getLeverStateById, type LeverStateView } from './policy'
 import { listMessageVariantsById, replaceMessageVariant, upsertMessageVariant } from '../message-variants'
@@ -400,13 +400,16 @@ export async function runFrameReview(db: Db, tenantId: TenantId, env: HostedEnv,
   if (evidence.frameStart === utcDateKey()) return ok({ summary: 'the frame started today' })
   const signal = lever.todaysDecision?.frame
   if (!signal?.open) return ok({ summary: 'the frame signal is closed' })
-  const history = await frameHistory(db, projectId, config)
+  const [history, mode] = await Promise.all([frameHistory(db, projectId, config), getOutboundMode(db, projectId)])
   const taken = lever.discovery.strategies.map((st) => st.slug)
+  const cycle = mode === 'send'
+    ? 'it sends only email, and only to an address the organization itself publishes (large enterprises seldom publish one); a form or SNS contact waits for the person to send it by hand'
+    : 'it drafts each message on the frame\'s channels for the person to send'
 
   const prompt = `You are Ace, reviewing a project's frame: who it reaches, what it leads with, where it finds them and on which channels. Today is ${utcDateKey()}.
 
 ## Goal
-The frame is not getting positive replies: ${signal.trials.toFixed(1)} trials since it started, ${signal.positive} positive (${pct(signal.positive, signal.trials)}); P(positive rate < ${FRAME_SIGNAL.floorRate * 100}%) = ${signal.pBelow.toFixed(2)}. Inside it the loop has tried angles, search strategies and Target adjustments. Write the one new frame the evidence makes most likely to get positive replies from organizations that can use and buy the product, unlike every frame so far. Change who to reach, what to lead with, where to find them and on which channels; never the product's facts or price.
+The frame is not getting positive replies: ${signal.trials.toFixed(1)} trials since it started, ${signal.positive} positive (${pct(signal.positive, signal.trials)}); P(positive rate < ${FRAME_SIGNAL.floorRate * 100}%) = ${signal.pBelow.toFixed(2)}. Inside it the loop has tried angles, search strategies and Target adjustments. Write the one new frame the evidence makes most likely to get positive replies from organizations that can use and buy the product, unlike every frame so far. Only what the daily cycle does by itself tests a frame: ${cycle}. Change who to reach, what to lead with, where to find them and on which channels; never the product's facts or price.
 
 ## Business (fixed)
 ${docs.business}
@@ -414,7 +417,7 @@ ${docs.business}
 ## Current sales strategy
 ${docs.salesStrategy}
 
-Channels on: ${channelList(reach.outboundChannels)} · countries: ${countryList(reach.targetCountries)} · language: ${reach.targetLanguage} (hosted sends email itself; a form or SNS message waits for the person to send it)
+Channels on: ${channelList(reach.outboundChannels)} · countries: ${countryList(reach.targetCountries)} · language: ${reach.targetLanguage}
 
 ## Frames so far (oldest first; each ran until the next started, the last is the current one)
 ${history.map(framePeriodLine).join('\n')}
@@ -438,7 +441,7 @@ ${measuredSections(judged.value)}
     return ok({ summary: `no new frame: ${out.note}` })
   }
   const { title, body, why: reason, ...frame } = out.frame
-  const r = await runWithRls(db, tenantId, (tx) => recordFrame(tx, tenantId, projectId, { ...frame, title, body, reason }, { salesStrategyId: docs.salesStrategyId, reach }, utcDateKey(), config))
+  const r = await runWithRls(db, tenantId, (tx) => recordFrame(tx, tenantId, projectId, { ...frame, title, body, reason }, { salesStrategyId: docs.salesStrategyId, reach, mode }, utcDateKey(), config))
   if (!r.recorded) return ok({ summary: `no new frame: ${r.why}` })
   await announceProposal(db, tenantId, env, projectId, { id: r.id, applyOn: r.applyOn, title, body })
   return ok({ summary: `proposed a new frame: ${title} (applies ${r.applyOn})` })

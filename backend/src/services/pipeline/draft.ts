@@ -4,8 +4,9 @@
 // sendAndRecord; this stage decides only what to say and whether to skip.
 import { z } from 'zod'
 import type { Db } from '../../db/connection'
-import type { Channel, OutboundChannel, OutboundMode } from '../../db/schema'
+import type { Channel, OutboundChannel } from '../../db/schema'
 import type { ReachArm } from '../../domain/cycle-plan'
+import { hostedChannels } from '../../domain/outbound-channel'
 import type { ProjectId, TenantId } from '../../domain/ids'
 import type { JobLogEntry, JobParamsOf, JobResult } from '../../domain/jobs'
 import { ok, type ServiceError, type ServiceResult } from '../result'
@@ -33,13 +34,6 @@ export type DraftBatch = {
   // in send mode need a browser — the plugin's hands).
   needsHands: number
   quotaMessage: string | null
-}
-
-// What the hosted agent acts on by itself: only email in send mode — a form or
-// DM needs a browser — and every channel but platform in draft mode, where a
-// person submits the form / SNS drafts.
-function hostedChannels(mode: OutboundMode): OutboundChannel[] {
-  return mode === 'send' ? ['email'] : ['email', 'form', 'sns_twitter', 'sns_linkedin']
 }
 
 // The reachable list drawn only from what the hosted agent can act on; total

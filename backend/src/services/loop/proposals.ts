@@ -4,11 +4,11 @@
 // person and is applied once its playbook is approved.
 import { z } from 'zod'
 import { and, asc, desc, eq, gte, inArray, or, sql } from 'drizzle-orm'
-import { discoveryStrategies, messageVariants, proposals } from '../../db/schema'
+import { discoveryStrategies, messageVariants, proposals, type OutboundMode } from '../../db/schema'
 import type { Db } from '../../db/connection'
 import { discoveryStrategySchema, type ProjectId, type ProjectRef, type TenantId } from '../../domain/ids'
 import type { AllowedSendCountry } from '../../domain/country'
-import type { OutboundChannel } from '../../domain/outbound-channel'
+import { hostedChannels, type OutboundChannel } from '../../domain/outbound-channel'
 import type { JobOrigin } from '../../domain/jobs'
 import type { ChangeAuthor, ReachSettings } from '../../domain/loop/change'
 import type { LeverConfig } from '../../domain/loop/config'
@@ -151,19 +151,21 @@ async function frameOf(
 
 export type RecordFrameResult =
   | { recorded: true; id: number; applyOn: string }
-  | { recorded: false; why: 'one is pending' | 'too few new strategies' }
+  | { recorded: false; why: 'one is pending' | 'too few new strategies' | 'Ace sends on none of its channels' }
 
-// `read` is the sales strategy version and the reach the review read: what the
-// frame is written against, however long the model took.
+// `read` is what the review read: the sales strategy version and the reach the
+// frame is written against, however long the model took, and the outbound mode.
 export async function recordFrame(
   db: Db,
   tenantId: TenantId,
   projectId: ProjectId,
   input: FrameInput & { title: string; body: string; reason: string },
-  read: { salesStrategyId: number; reach: ReachSettings },
+  read: { salesStrategyId: number; reach: ReachSettings; mode: OutboundMode },
   today: string,
   limits: FrameLimits,
 ): Promise<RecordFrameResult> {
+  // A frame is measured only by what the cycle sends; one it cannot send on is never measured.
+  if (!input.outboundChannels.some((c) => hostedChannels(read.mode).includes(c))) return { recorded: false, why: 'Ace sends on none of its channels' }
   const frame = await frameOf(db, projectId, input, read.reach, today, limits)
   if (frame === null) return { recorded: false, why: 'too few new strategies' }
   const applyOn = applyOnFor(today)
