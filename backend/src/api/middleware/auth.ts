@@ -41,6 +41,7 @@ export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: Varia
     const caller = origin === 'ui' ? 'browser' : 'agent'
 
     c.set('userId', userId)
+    c.set('userEmail', verified.email)
     c.set('caller', caller)
     c.set('origin', origin)
 

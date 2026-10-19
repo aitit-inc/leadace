@@ -102,7 +102,6 @@
     gmailStatus={data.gmailStatus}
     planTier={data.plan?.plan}
     session={data.session}
-    supabase={data.supabase}
     notice={mailboxNotice}
     onChanged={refreshMailboxes}
   />

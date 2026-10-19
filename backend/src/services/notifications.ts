@@ -6,7 +6,7 @@ import type { TenantRun } from '../db/rls'
 import type { TenantId } from '../domain/ids'
 import { AGENT_NOTIFICATION_CATEGORIES, NOTIFICATION_CATEGORIES, NOTIFICATIONS_KEPT, type NotificationCategory } from '../domain/notifications'
 import { takeChatRateSlot, NOTIFICATIONS_PER_TENANT_PER_DAY } from './chat-rate-limit'
-import { sendNotificationEmail, type GoogleCtx } from './google-auth'
+import { getCredentialsStatus, sendNotificationEmail, type GoogleCtx } from './google-auth'
 import { getTenantOwnerUserId } from './tenants'
 import { ok, err, type ServiceResult } from './result'
 
@@ -91,6 +91,10 @@ export async function notify(run: TenantRun, tenantId: TenantId, ctx: NotifyCtx,
   return run(async (db): Promise<ServiceResult<NotifyResult>> => {
     const owner = await getTenantOwnerUserId(db, tenantId)
     if (!owner) return err('INTERNAL_ERROR', 'Tenant has no owner')
+    // The email goes out from the owner's Gmail, which an account connects
+    // only when it sends: until then the notice stays in the app.
+    const gmail = await getCredentialsStatus(db, tenantId, owner)
+    if (gmail.ok && !gmail.value.connected) return ok({ recorded: true, emailedTo: null })
     // Abuse ceiling on a Gmail-backed sender: a runaway loop must not burn the
     // mailbox's daily send quota that outreach depends on.
     const slot = await takeChatRateSlot(db, tenantId, 'notification', tenantId)

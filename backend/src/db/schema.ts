@@ -431,10 +431,10 @@ export const sendingIdentities = pgTable('sending_identities', {
   provider: sendingIdentityProviderEnum('provider').notNull(),
   fromEmail: text('from_email').notNull(),
   parentIdentityId: text('parent_identity_id'),
-  // The Gmail of the Google account the user signs in with: its token is
-  // re-issued by every sign-in, it is the fallback mailbox of a project that
-  // lists none, and it cannot be removed. Any other Gmail is connected from
-  // Account settings and holds its own grant.
+  // The Gmail of the Google account the user signs in with, granted when they
+  // first connect it to send: the fallback mailbox of a project that lists
+  // none, and it cannot be removed. Any other Gmail is connected from Account
+  // settings and holds its own grant.
   signInAccount: boolean('sign_in_account').notNull().default(false),
   // Granted OAuth scopes — gmail_oauth only; NULL for smtp_imap (no OAuth concept) and for an alias.
   scope: text('scope'),

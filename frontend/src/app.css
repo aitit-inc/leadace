@@ -53,6 +53,19 @@
       transform: translateY(6px);
     }
   }
+
+  /* `both` leaves the halo in place when reduced motion cuts the loop short. */
+  --animate-nudge: nudge 2.4s ease-in-out infinite both;
+
+  @keyframes nudge {
+    0%,
+    100% {
+      box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-accent) 35%, transparent);
+    }
+    50% {
+      box-shadow: 0 0 0 9px color-mix(in oklab, var(--color-accent) 10%, transparent);
+    }
+  }
 }
 
 .dark {

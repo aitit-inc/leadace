@@ -25,6 +25,7 @@
   import SenderIdentityCard, { type SenderIdentityProposal } from '$lib/components/chat/SenderIdentityCard.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import Logo from '$lib/components/Logo.svelte';
+  import { typedWebsite } from '$lib/website';
   import type { ChatAttachment, ChatContent, ChatEvent, ChatMessage, PendingCall } from '$lib/types/chat';
   import { TERMINAL_JOB_STATUSES, type Job, type JobDetail } from '$lib/types/jobs';
   import type { PageProps } from './$types';
@@ -50,7 +51,11 @@
   let pending = $state<PendingCall | null>(null);
   let jobs = $state<Record<string, Job | JobDetail>>({});
   let error = $state('');
-  let input = $state('');
+  // Prefilled, never sent: no link may start a turn.
+  const prefill = typedWebsite(page.url.searchParams.get('site'));
+  let input = $state(prefill ?? '');
+  // Not while a turn runs: the button is Stop then.
+  let nudge = $derived(input === prefill && !running);
   // Already uploaded to this thread, waiting to ride the next message.
   let attachments = $state<ChatAttachment[]>([]);
   let uploading = $state<{ key: number; name: string }[]>([]);
@@ -565,12 +570,17 @@
           disabled={sending || stopping || uploading.length + attaching > 0 || (!input.trim() && attachments.length === 0)}
           aria-label={needsSetup ? 'Start' : 'Send'}
           title={needsSetup ? 'Start' : 'Send'}
-          class="btn btn-primary h-10 w-10 shrink-0 p-0"
+          class="btn btn-primary h-10 w-10 shrink-0 p-0 {nudge ? 'animate-nudge' : ''}"
         >
           <ArrowUp size={18} />
         </button>
       {/if}
     </div>
+    {#if nudge}
+      <p class="flex animate-rise items-center justify-end gap-1 pr-2 text-sm font-semibold text-accent-strong">
+        Press to start <ArrowUp size={16} aria-hidden="true" />
+      </p>
+    {/if}
   </form>
 {/snippet}
 

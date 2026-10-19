@@ -3,8 +3,8 @@ import type { SendingIdentityProvider } from '../db/schema'
 
 export const GMAIL_SEND_SCOPE = 'https://www.googleapis.com/auth/gmail.send'
 export const GMAIL_READONLY_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly'
-// What a Google mailbox connected from Account settings asks for: the account's
-// email (to name the mailbox), sending, and read-only reply collection.
+// What connecting a Gmail asks for: the account's email (to name the mailbox),
+// sending, and read-only reply collection.
 export const GOOGLE_MAILBOX_SCOPES = `openid email ${GMAIL_SEND_SCOPE} ${GMAIL_READONLY_SCOPE}`
 
 export function hasGmailSendScope(scope: string): boolean {

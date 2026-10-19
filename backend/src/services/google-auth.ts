@@ -1,28 +1,15 @@
-import { z } from 'zod'
 import { and, eq } from 'drizzle-orm'
 import {
   applyE2eRedirect,
   buildRfc822,
   getGmailAccessToken,
   loadSendingIdentitySecret,
-  saveGmailRefreshToken,
   sendGmailMessage,
 } from '../auth/google'
-import { hasGmailSendScope } from '../domain/sending-identity'
 import { sendingIdentities } from '../db/schema'
 import type { Db } from '../db/connection'
 import type { TenantId } from '../domain/ids'
 import { ok, err, type ServiceResult } from './result'
-import { logFunnel } from './funnel'
-
-export const saveCredentialsSchema = z.object({
-  refreshToken: z.string().min(1),
-  scope: z.string().min(1),
-  email: z.email(),
-  // Sign-in started from the landing page's signup CTA (/login?signup=1).
-  fromSignupCta: z.boolean().default(false),
-})
-export type SaveCredentialsInput = z.infer<typeof saveCredentialsSchema>
 
 export type GoogleCtx = {
   encryptionKey: string
@@ -30,36 +17,6 @@ export type GoogleCtx = {
   clientSecret: string
   // E2E redirect; see `applyE2eRedirect` in auth/google. Null in production.
   e2eRecipientOverride: string | null
-}
-
-export async function saveCredentials(
-  db: Db,
-  tenantId: TenantId,
-  userId: string,
-  ctx: { encryptionKey: string },
-  input: SaveCredentialsInput,
-): Promise<ServiceResult<{ ok: true }>> {
-  if (!hasGmailSendScope(input.scope)) {
-    logFunnel({ event: 'gmail_scope_rejected', tenantId })
-    return err(
-      'INVALID_INPUT',
-      'Missing required scope',
-      `gmail.send scope must be granted. Received: ${input.scope}`,
-    )
-  }
-
-  const saved = await saveGmailRefreshToken(db, {
-    tenantId,
-    userId,
-    refreshToken: input.refreshToken,
-    scope: input.scope,
-    email: input.email,
-    signIn: true,
-    encryptionKey: ctx.encryptionKey,
-  })
-  if (saved?.firstConnect) logFunnel({ event: 'gmail_connected', tenantId, signupCta: input.fromSignupCta })
-
-  return ok({ ok: true })
 }
 
 export type CredentialsStatus =

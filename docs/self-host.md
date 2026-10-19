@@ -49,7 +49,7 @@ Set this up once before the first `npx supabase start`:
    - **Authorised JavaScript origins:** `http://localhost:5273`
    - **Authorised redirect URIs:** `http://localhost:54321/auth/v1/callback`
      (sign-in, via Supabase) and `http://localhost:5273/auth/google-mailbox/callback`
-     (connecting further Google accounts as mailboxes from Account settings)
+     (connecting Gmail to send)
 2. Persist the client id / secret to your shell so the
    `[auth.external.google]` block in `supabase/config.toml` (which uses
    `env(...)` interpolation) can read them. The Supabase CLI does not
@@ -528,24 +528,20 @@ sign-in. To make it work:
 ### 12. Optional: Gmail OAuth for outbound send
 
 `/api/outreach/send-and-record` calls Gmail's `gmail.send` scope on behalf of the
-signed-in user using a refresh token captured during the §10 sign-in
-flow. The pieces wire together like this:
+signed-in user using a refresh token captured when the user connects
+Gmail (the "Connect Gmail" banner or Account settings; the §10 sign-in asks
+for the account alone). The pieces wire together like this:
 
-1. Add `https://www.googleapis.com/auth/gmail.send` to your Supabase
-   Google provider's **Additional Scopes** field
-   (Dashboard → Authentication → Providers → Google). Supabase asks
-   for this scope at sign-in time, and Google returns a
-   `provider_refresh_token` along with the access token.
+1. Add `https://app.<your-domain>/auth/google-mailbox/callback` to the
+   OAuth client's Authorised redirect URIs (§10 step 2). Google returns
+   there with a code, and the API Worker exchanges it for the refresh
+   token. Nothing is set on the Supabase side.
 2. Also add `gmail.send` to the OAuth consent screen's scopes in
    Google Cloud Console. This is a Sensitive scope — for production
    use you must complete Google's verification flow (a few weeks; you
    need to record a demo video and justify the scope). Until then,
    only the test users listed on your consent screen will be able to
-   sign in. The Authorised redirect URI from §10
-   (`https://<supabase-project-ref>.supabase.co/auth/v1/callback`) is
-   the only one Google actually visits — there is no separate
-   API-Worker callback, the frontend `/auth/callback` server handler
-   forwards the refresh token to `/api/auth/google-credentials`.
+   connect Gmail.
 3. Set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` /
    `GMAIL_TOKEN_ENCRYPTION_KEY` as wrangler secrets on the API Worker
    (already covered in §4).

@@ -4,7 +4,7 @@
   import { isSafeRelativePath } from '$lib/redirect';
   import Logo from '$lib/components/Logo.svelte';
   import { EDITION } from '$lib/config';
-  import { GOOGLE_OAUTH_SCOPES } from '$lib/gmail-oauth';
+  import { typedWebsite } from '$lib/website';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
@@ -12,9 +12,6 @@
 
   // Unknown /auth/callback ?error= reasons pass through so they don't disappear silently.
   function describeCallbackError(reason: string): string {
-    if (reason === 'gmail_scope_required') {
-      return "Gmail send permission wasn't granted. LeadAce needs gmail.send to send outbound email — please continue with Google again and approve all requested scopes.";
-    }
     if (reason === 'missing_code') {
       return 'Sign-in was interrupted before completing. Please try again.';
     }
@@ -27,9 +24,10 @@
       : '',
   );
   let deletedNotice = $state(page.url.searchParams.get('deleted') === '1');
-  // Landing-page signup CTAs link here with ?signup=1; the callback forwards it
-  // to the backend for funnel attribution.
+  // Landing-page signup CTAs link here with ?signup=1; the landing page's
+  // website box adds ?site=, which lands in the chat's input box.
   const fromSignupCta = page.url.searchParams.get('signup') === '1';
+  const site = typedWebsite(page.url.searchParams.get('site'));
   let loading = $state(false);
 
   async function handleGoogle() {
@@ -40,7 +38,7 @@
     // OAuth redirect. Routing it through the OAuth redirectTo URL is brittle
     // — Supabase's allowlist-based validation can strip query params and
     // silently break deep-link returns.
-    const next = page.url.searchParams.get('next');
+    const next = page.url.searchParams.get('next') ?? (site ? `/chat?site=${encodeURIComponent(site)}` : null);
     const cookieAttrs = `Path=/; SameSite=Lax; Max-Age=600${
       dev ? '' : '; Secure'
     }`;
@@ -53,19 +51,10 @@
     document.cookie = fromSignupCta
       ? `lp-signup=1; ${cookieAttrs}`
       : `lp-signup=; ${expiredAttrs}`;
+    // The account alone: Gmail is connected when the user first sends.
     const { error: err } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
-        scopes: GOOGLE_OAUTH_SCOPES,
-        queryParams: {
-          // access_type=offline + prompt=consent forces Google to issue a
-          // refresh_token that the backend can use to mint short-lived access
-          // tokens for Gmail API calls.
-          access_type: 'offline',
-          prompt: 'consent',
-        },
-      },
+      options: { redirectTo: `${window.location.origin}/auth/callback` },
     });
     if (err) {
       error = err.message;
@@ -128,7 +117,7 @@
 
     {#if fromSignupCta}
       <ol class="mt-8 space-y-3 text-sm text-text-secondary" aria-label="What happens next">
-        {#each ['Sign in with Google', 'Paste your website in the chat', 'Read the first drafts — nothing goes out until you approve'] as step, i (step)}
+        {#each ['Sign in with Google', site ? `Send ${new URL(site).hostname} to Ace in the chat` : 'Paste your website in the chat', 'Read the first drafts, then connect Gmail to send the ones you approve'] as step, i (step)}
           <li class="flex items-center gap-3">
             <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface-2 text-xs font-semibold tabular-nums text-text">
               {i + 1}
@@ -140,10 +129,10 @@
     {/if}
 
     <p class="mt-8 text-xs leading-relaxed text-text-muted">
-      LeadAce will request permission to send email on your behalf and to read your Gmail inbox
-      (read-only) to detect and classify replies to your outreach. We never modify or delete your
-      messages. See our <a href="/privacy" class="underline hover:text-text">Privacy Policy</a> for
-      how this data is used.
+      Signing in shares only your name and email address. When you send your first email, LeadAce
+      asks for permission to send the emails you approve and to read your Gmail inbox (read-only) to
+      detect and classify the replies. We never modify or delete your messages. See our
+      <a href="/privacy" class="underline hover:text-text">Privacy Policy</a> for how this data is used.
     </p>
 
     {#if EDITION === 'cloud'}

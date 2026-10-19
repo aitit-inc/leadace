@@ -72,10 +72,10 @@ export function attentionMeta(item: AttentionItem): AttentionMeta {
 		case 'gmail_disconnected':
 			return {
 				icon: Unplug,
-				tone: 'danger',
-				title: 'Gmail disconnected',
-				desc: 'Email sending is paused until you reconnect',
-				ctaLabel: 'Reconnect',
+				tone: 'warning',
+				title: 'Gmail not connected',
+				desc: 'Connect it to send the emails you approve',
+				ctaLabel: 'Connect',
 				href: '/account-settings',
 			};
 		case 'gmail_auth_revoked':

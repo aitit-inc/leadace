@@ -1,7 +1,6 @@
 <script lang="ts">
-  import type { SupabaseClient } from '@supabase/supabase-js';
   import { Mail } from '@lucide/svelte';
-  import { connectGmail, connectGoogleMailbox } from '$lib/gmail-oauth';
+  import { connectGoogleMailbox } from '$lib/gmail-oauth';
   import { orderMailboxes } from '$lib/mailbox-status';
   import Hint from '$lib/components/Hint.svelte';
   import AddAliasDialog from './AddAliasDialog.svelte';
@@ -18,7 +17,6 @@
     gmailStatus,
     planTier,
     session,
-    supabase,
     notice,
     onChanged,
   }: {
@@ -26,8 +24,7 @@
     identitiesError: boolean;
     gmailStatus: GmailStatus;
     planTier: PlanTier | undefined;
-    session: { access_token: string; user: { id: string } } | null;
-    supabase: SupabaseClient;
+    session: { access_token: string; user: { id: string; email?: string } } | null;
     // Outcome of a Google connection the callback landed here with.
     notice: { kind: 'connected'; email: string } | { kind: 'error'; message: string } | null;
     onChanged: () => void | Promise<void>;
@@ -54,7 +51,7 @@
     }
   }
 
-  const connectSignIn = () => connect(() => connectGmail(supabase));
+  const connectSignIn = () => connect(() => connectGoogleMailbox(session, session?.user.email));
   const connectGoogle = () => connect(() => connectGoogleMailbox(session));
 
   function openAlias(parent?: SendingIdentity) {
@@ -132,7 +129,6 @@
         freeBlocked={planTier === 'free'}
         {session}
         {onChanged}
-        onReconnectSignIn={connectSignIn}
         onAddAlias={openAlias}
       />
     {/each}

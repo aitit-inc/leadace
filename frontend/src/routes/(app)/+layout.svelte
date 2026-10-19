@@ -24,7 +24,7 @@
     ChevronDown,
   } from '@lucide/svelte';
   import type { Component } from 'svelte';
-  import { connectGmail } from '$lib/gmail-oauth';
+  import { connectGoogleMailbox } from '$lib/gmail-oauth';
   import type { LayoutProps } from './$types';
 
   let { data, children }: LayoutProps = $props();
@@ -32,16 +32,21 @@
   let moreOpen = $state(false);
   let connectingGmail = $state(false);
   let gmailConnectError = $state<string | null>(null);
+  // Set by /auth/google-mailbox/callback when connecting failed.
+  let mailboxError = $derived(page.url.searchParams.get('mailbox_error'));
 
   let bellItems = $derived(data.attention);
+  // Revoked always shows. Not connected is how every account starts, so the
+  // chat, where setup happens, leaves it out.
   let gmailBannerItem = $derived(
-    data.attention.find((i) => i.kind === 'gmail_disconnected' || i.kind === 'gmail_auth_revoked'),
+    data.attention.find((i) => i.kind === 'gmail_auth_revoked') ??
+      (page.url.pathname !== '/chat' ? data.attention.find((i) => i.kind === 'gmail_disconnected') : undefined),
   );
 
   async function handleConnectGmail() {
     connectingGmail = true;
     gmailConnectError = null;
-    const err = await connectGmail(data.supabase);
+    const err = await connectGoogleMailbox(data.session, data.user?.email);
     // Success path navigates to Google and never resolves here; only error
     // returns reach this branch.
     if (err) {
@@ -201,23 +206,35 @@
       </div>
     {/if}
 
-    {#if gmailBannerItem && page.url.pathname !== '/dashboard'}
-      <div class="mx-4 mt-4 rounded-2xl bg-danger/10 px-4 py-3 md:mx-8">
+    <!-- The dashboard and Account settings show the Gmail state themselves. -->
+    {#if gmailBannerItem && page.url.pathname !== '/dashboard' && page.url.pathname !== '/account-settings'}
+      {@const revoked = gmailBannerItem.kind === 'gmail_auth_revoked'}
+      {@const connectError = gmailConnectError ?? mailboxError}
+      <div class="mx-4 mt-4 rounded-2xl px-4 py-3 md:mx-8 {revoked ? 'bg-danger/10' : 'bg-surface'}">
         <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
-          <div class="flex items-center gap-2.5 text-sm text-danger">
-            <TriangleAlert size={18} class="shrink-0" />
+          <div class="flex items-center gap-2.5 text-sm {revoked ? 'text-danger' : 'text-text'}">
+            {#if revoked}
+              <TriangleAlert size={18} class="shrink-0" />
+            {:else}
+              <Mail size={18} class="shrink-0 text-accent-strong" />
+            {/if}
             <span>
-              {gmailBannerItem.kind === 'gmail_auth_revoked'
+              {revoked
                 ? 'Google access was revoked — sending and reply collection are stopped until you reconnect.'
-                : 'Gmail is not connected — outbound email sending is disabled.'}
+                : 'Connect Gmail to send the emails you approve, from your own address.'}
             </span>
           </div>
-          <button type="button" onclick={handleConnectGmail} disabled={connectingGmail} class="btn btn-danger btn-sm">
+          <button
+            type="button"
+            onclick={handleConnectGmail}
+            disabled={connectingGmail}
+            class="btn btn-sm {revoked ? 'btn-danger' : 'btn-primary'}"
+          >
             {connectingGmail ? 'Connecting…' : 'Connect Gmail'}
           </button>
         </div>
-        {#if gmailConnectError}
-          <p class="mt-1 text-xs text-danger">Error: {gmailConnectError}</p>
+        {#if connectError}
+          <p class="mt-1 text-xs text-danger">{connectError}</p>
         {/if}
       </div>
     {/if}

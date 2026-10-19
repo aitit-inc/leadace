@@ -68,11 +68,13 @@ export function getPlanLimits(plan: PlanTier): PlanLimits {
   return PLAN_LIMITS[plan]
 }
 
-// The sign-in Gmail counts toward the total; another Google account, an SMTP
-// mailbox and a Gmail Send-As alias are each one more.
+// The sign-in Gmail counts toward the total, connected or not (connecting it is
+// never gated); another Google account, an SMTP mailbox and a Gmail Send-As
+// alias are each one more.
 export function canRegisterMailbox(
   plan: PlanTier,
   currentIdentityCount: number,
+  signInConnected: boolean,
 ): ServiceError | null {
   if (plan === 'free') {
     return {
@@ -83,7 +85,7 @@ export function canRegisterMailbox(
     }
   }
   const cap = getPlanLimits(plan).maxSendingIdentities
-  if (cap !== null && currentIdentityCount >= cap) {
+  if (cap !== null && currentIdentityCount + (signInConnected ? 0 : 1) >= cap) {
     return {
       ok: false,
       code: 'FORBIDDEN',

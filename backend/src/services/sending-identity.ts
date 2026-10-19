@@ -18,6 +18,7 @@ import {
   smtpImapSecretPayloadSchema,
   type MailboxKind,
 } from '../domain/sending-identity'
+import { logFunnel } from './funnel'
 import { verifySmtpCredentials } from './smtp-send'
 import { verifyImapCredentials } from './imap-poll'
 import { asSendingIdentityId, sendingIdentityIdSchema, type SendingIdentityId, type TenantId } from '../domain/ids'
@@ -252,12 +253,12 @@ export async function registerSmtpIdentity(
   // Count + dup-check only: select fromEmail without decrypting any secret —
   // register has no need for appPassword / refresh tokens.
   const existing = await db
-    .select({ fromEmail: sendingIdentities.fromEmail })
+    .select({ fromEmail: sendingIdentities.fromEmail, signInAccount: sendingIdentities.signInAccount })
     .from(sendingIdentities)
     .where(eq(sendingIdentities.tenantId, tenantId))
 
   const { plan } = await getTenantPlan(db, tenantId, edition)
-  const guard = canRegisterMailbox(plan, existing.length)
+  const guard = canRegisterMailbox(plan, existing.length, existing.some((i) => i.signInAccount))
   if (guard) return guard
 
   if (existing.some((i) => i.fromEmail === input.fromEmail)) {
@@ -366,12 +367,13 @@ export async function registerGmailAlias(
       parentIdentityId: sendingIdentities.parentIdentityId,
       fromEmail: sendingIdentities.fromEmail,
       authRevokedAt: sendingIdentities.authRevokedAt,
+      signInAccount: sendingIdentities.signInAccount,
     })
     .from(sendingIdentities)
     .where(eq(sendingIdentities.tenantId, tenantId))
 
   const { plan } = await getTenantPlan(db, tenantId, edition)
-  const guard = canRegisterMailbox(plan, existing.length)
+  const guard = canRegisterMailbox(plan, existing.length, existing.some((i) => i.signInAccount))
   if (guard) return guard
 
   const parent = existing.find(
@@ -448,13 +450,13 @@ async function exchangeCode(code: string, ctx: GoogleMailboxCtx): Promise<Servic
   }
 }
 
-// Any Google account, not only the one the user signs in with. Connecting an
-// address that is already a mailbox is a reconnect: it refreshes the grant in
-// place and is not plan-gated.
+// Any Google account. The one the user signs in with becomes the sign-in
+// account; any other is plan-gated. Connecting an address that is already a
+// mailbox is a reconnect: it refreshes the grant in place and is not plan-gated.
 export async function registerGoogleMailbox(
   db: Db,
   tenantId: TenantId,
-  userId: string,
+  user: { id: string; email: string | null },
   edition: Edition,
   ctx: GoogleMailboxCtx,
   input: RegisterGoogleMailboxInput,
@@ -463,7 +465,8 @@ export async function registerGoogleMailbox(
   if (!exchanged.ok) return exchanged
   const grant = exchanged.value
   if (!hasGmailSendScope(grant.scope)) {
-    return err('INVALID_INPUT', 'Missing required scope', `gmail.send scope must be granted. Received: ${grant.scope}`)
+    logFunnel({ event: 'gmail_scope_rejected', tenantId })
+    return err('INVALID_INPUT', 'Missing required scope', "Gmail wasn't connected. Allow LeadAce to send email and read replies, then try again.")
   }
   if (!grant.refreshToken) {
     return err('INVALID_INPUT', 'Google returned no refresh token', 'Start the connection again and approve access when asked.')
@@ -473,29 +476,36 @@ export async function registerGoogleMailbox(
     return err('BAD_GATEWAY', 'Google did not return the account email', 'Start the connection again.')
   }
 
+  const signIn = email.toLowerCase() === user.email?.toLowerCase()
+
   await lockTenantMailboxes(db, tenantId)
   const existing = await db
-    .select({ fromEmail: sendingIdentities.fromEmail })
+    .select({ fromEmail: sendingIdentities.fromEmail, signInAccount: sendingIdentities.signInAccount })
     .from(sendingIdentities)
     .where(eq(sendingIdentities.tenantId, tenantId))
-  if (!existing.some((i) => i.fromEmail === email)) {
+  // The sign-in account is keyed per user, so it cannot take over another mailbox's address.
+  if (signIn && existing.some((i) => i.fromEmail === email && !i.signInAccount)) {
+    return err('CONFLICT', 'Sending address already in use', `${email} is already another mailbox. Remove it in Account settings, then connect Gmail.`)
+  }
+  if (!signIn && !existing.some((i) => i.fromEmail === email)) {
     const { plan } = await getTenantPlan(db, tenantId, edition)
-    const guard = canRegisterMailbox(plan, existing.length)
+    const guard = canRegisterMailbox(plan, existing.length, existing.some((i) => i.signInAccount))
     if (guard) return guard
   }
 
   const saved = await saveGmailRefreshToken(db, {
     tenantId,
-    userId,
+    userId: user.id,
     refreshToken: grant.refreshToken,
     scope: grant.scope,
     email,
-    signIn: false,
+    signIn,
     encryptionKey: ctx.encryptionKey,
   })
   if (!saved) {
     return err('CONFLICT', 'Address is a Send-As alias', `${email} is a Send-As alias. Remove the alias before connecting it as a Google account.`)
   }
+  if (signIn && saved.firstConnect) logFunnel({ event: 'gmail_connected', tenantId })
 
   const [row] = await db
     .select(summaryColumns)

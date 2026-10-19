@@ -54,6 +54,8 @@ export type Env = {
 
 export type Variables = {
   userId: string
+  // The signed-in account's email; null on an MCP-minted token.
+  userEmail: string | null
   // Who is acting: a person in the Web UI ('browser'), or an agent — an MCP
   // token (JWT audience) or the hosted chat agent dispatching in-process
   // (api/internal-dispatch.ts). Lets a service keep a field UI-only; 'agent'

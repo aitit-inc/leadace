@@ -14,9 +14,9 @@ Website: https://leadace.ai
 
 ### Get started
 
-1. Sign in with Google at [app.leadace.ai](https://app.leadace.ai) (Free tier — no card). LeadAce asks to send from your Gmail and to read your inbox, so it can catch the replies.
+1. Sign in with Google at [app.leadace.ai](https://app.leadace.ai) (Free tier — no card). Signing in shares only your name and email.
 2. Paste your website in the chat. Ace proposes who to target and how to approach them. Change anything, then approve.
-3. Read the first drafts. Nothing is sent until you approve, and what you approve goes out from your own inbox.
+3. Read the first drafts. Nothing is sent until you approve. To send, connect Gmail: LeadAce asks to send from it and to read your inbox, so it can catch the replies.
 
 Email runs entirely in the web app: research, writing, sending and reply collection run on the server. Schedule the daily cycle from the chat or project settings. Further Google accounts and SMTP mailboxes are added in Account settings.
 
@@ -28,7 +28,7 @@ The plugin, for Claude Cowork or Claude Code, runs the same work from a Claude s
 
 - Claude Cowork (in the Claude Desktop app) or Claude Code, on an Anthropic Pro or Max plan — verified on macOS
 - A LeadAce account at https://app.leadace.ai (Free tier — no card)
-- A connected Gmail account — for sending email (granted when you sign in with Google, or via the "Connect Gmail" banner in the web app)
+- A connected Gmail account — for sending email (connected from the "Connect Gmail" banner or Account settings in the web app)
 - Gmail MCP (claude.ai built-in) — for checking email replies
 - A browser, only for browser channels — contact forms run on Cowork's built-in browser or any browser-automation MCP you configure (e.g. Playwright); SNS DMs and SNS reply checking require Claude in Chrome. A scheduled run reaches the browser only while Claude Desktop is open, with its default browser chosen beforehand
 

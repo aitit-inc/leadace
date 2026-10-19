@@ -14,7 +14,6 @@
     freeBlocked,
     session,
     onChanged,
-    onReconnectSignIn,
     onAddAlias,
   }: {
     identity: SendingIdentity;
@@ -22,7 +21,6 @@
     freeBlocked: boolean;
     session: { access_token: string; user: { id: string } } | null;
     onChanged: () => void | Promise<void>;
-    onReconnectSignIn: () => void | Promise<void>;
     onAddAlias: (parent: SendingIdentity) => void;
   } = $props();
 
@@ -52,11 +50,6 @@
   async function reconnect() {
     connecting = true;
     actionError = '';
-    if (account.signInAccount) {
-      await onReconnectSignIn();
-      connecting = false;
-      return;
-    }
     const err = await connectGoogleMailbox(session, account.fromEmail);
     if (err) {
       actionError = err;

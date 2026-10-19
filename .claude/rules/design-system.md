@@ -54,8 +54,9 @@ words, readable sizes, outcomes said as a sentence before the numbers.
   `rounded-2xl`; dialogs `rounded-3xl`.
 - Motion: state changes 150–250ms with `ease-spring`; `animate-rise` only
   where content arrives (chat messages, first run, LP hero). Nothing loops
-  except progress indicators and the LP loop motif. `prefers-reduced-motion`
-  turns motion off everywhere, LP included.
+  except progress indicators, the LP loop motif and `animate-nudge` (the send
+  button while the landing page's website waits in the chat).
+  `prefers-reduced-motion` turns motion off everywhere, LP included.
 - Every color token has a light and a dark value; check both themes before
   shipping. The app switches on `.dark` (see frontend-architecture); the LP
   follows `prefers-color-scheme`.

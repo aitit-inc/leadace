@@ -80,7 +80,7 @@ sendingIdentitiesRouter.post(
     const result = await registerGoogleMailbox(
       c.get('db'),
       c.get('tenantId'),
-      c.get('userId'),
+      { id: c.get('userId'), email: c.get('userEmail') },
       c.get('edition'),
       googleMailboxCtx(c.env),
       c.req.valid('json'),

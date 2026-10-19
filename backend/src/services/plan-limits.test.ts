@@ -46,22 +46,28 @@ describe('getPlanLimits', () => {
 
 describe('canRegisterMailbox', () => {
   it('blocks free regardless of count (paid feature)', () => {
-    expect(canRegisterMailbox('free', 0)?.code).toBe('FORBIDDEN')
+    expect(canRegisterMailbox('free', 0, false)?.code).toBe('FORBIDDEN')
   })
 
   it('allows a paid plan below its cap (gmail counts toward the total)', () => {
     // pro cap = 3; with 1 existing (the connected gmail) a first smtp is allowed.
-    expect(canRegisterMailbox('pro', 1)).toBeNull()
+    expect(canRegisterMailbox('pro', 1, true)).toBeNull()
+  })
+
+  it('keeps the slot of a sign-in gmail not connected yet', () => {
+    expect(canRegisterMailbox('starter', 0, false)?.code).toBe('FORBIDDEN')
+    expect(canRegisterMailbox('pro', 2, false)?.code).toBe('FORBIDDEN')
+    expect(canRegisterMailbox('pro', 1, false)).toBeNull()
   })
 
   it('blocks a paid plan at its cap', () => {
-    expect(canRegisterMailbox('starter', 1)?.code).toBe('FORBIDDEN')
-    expect(canRegisterMailbox('pro', 3)?.code).toBe('FORBIDDEN')
-    expect(canRegisterMailbox('scale', 10)?.code).toBe('FORBIDDEN')
+    expect(canRegisterMailbox('starter', 1, true)?.code).toBe('FORBIDDEN')
+    expect(canRegisterMailbox('pro', 3, true)?.code).toBe('FORBIDDEN')
+    expect(canRegisterMailbox('scale', 10, true)?.code).toBe('FORBIDDEN')
   })
 
   it('never caps the internal unlimited tier (self-host)', () => {
-    expect(canRegisterMailbox('unlimited', 99)).toBeNull()
+    expect(canRegisterMailbox('unlimited', 99, true)).toBeNull()
   })
 })
 

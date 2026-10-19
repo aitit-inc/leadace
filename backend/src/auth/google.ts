@@ -334,13 +334,12 @@ export function generateRfc822MessageId(fromEmail: string): string {
   return `<${randomFromAlphabet(MESSAGE_ID_ALPHABET, 32)}@${domain}>`
 }
 
-// Keyed per user for a sign-in, per address for a mailbox connected from
-// Account settings — so reconnecting refreshes that row in place, converting it
-// if the address was registered over SMTP. Either way the warmup state,
-// identity_id and granted_at are left untouched so the ramp clock survives;
-// granted_at = updated_at therefore holds exactly when this statement inserted
-// the row. Null = nothing written: the address is a Send-As alias, which cannot
-// hold a grant of its own.
+// Keyed per user for the sign-in account, per address for any other mailbox —
+// so reconnecting refreshes that row in place, converting it if the address was
+// registered over SMTP. Either way the warmup state, identity_id and granted_at
+// are left untouched so the ramp clock survives; granted_at = updated_at
+// therefore holds exactly when this statement inserted the row. Null = nothing
+// written: the address is a Send-As alias, which cannot hold a grant of its own.
 export async function saveGmailRefreshToken(
   db: Db,
   args: {

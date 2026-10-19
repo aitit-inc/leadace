@@ -664,16 +664,24 @@ const SCENARIOS = [
     persona: false,
     setup: async () => [
       { name: 'signup', path: '/login?signup=1', expect: 'Continue with Google' },
+      { name: 'signup-site', path: '/login?signup=1&site=northwind-labs.example', expect: 'Send northwind-labs.example to Ace' },
       { name: 'returning', path: '/login', expect: 'Continue with Google' },
       { name: 'deleted', path: '/login?deleted=1', expect: 'Your account has been deleted.' },
     ],
   },
   {
     name: 'first-chat',
-    summary: 'The first chat of a brand-new workspace — no project yet',
+    summary: 'The first chat of a brand-new workspace — no project yet, and after typing a website on the landing page',
     stack: 'self-host',
     setup: async () => [
       { name: 'empty', path: '/chat', expectSelector: 'textarea[placeholder="https://your-company.com"]' },
+      { name: 'from-landing', path: '/chat?site=northwind-labs.example', expect: 'Press to start' },
+      // Already signed in: the login page passes the website straight on to the chat.
+      {
+        name: 'signed-in-landing',
+        path: '/login?signup=1&site=northwind-labs.example',
+        expectSelector: 'textarea[placeholder="https://your-company.com"]',
+      },
     ],
   },
   {
@@ -816,7 +824,14 @@ const SCENARIOS = [
         });
       }
       return [
-        { name: 'list', path: '/drafts', expect: 'A quicker first reply' },
+        { name: 'list', path: '/drafts', expect: ['A quicker first reply', 'Connect Gmail to send the emails you approve'] },
+        // Back from Google after declining Gmail: still signed in, told why on the page it started from.
+        {
+          name: 'connect-declined',
+          path: '/auth/google-mailbox/callback?error=access_denied',
+          cookies: [{ name: 'lp-next', value: encodeURIComponent('/drafts') }],
+          expect: ["Gmail wasn't connected", 'A quicker first reply'],
+        },
         { name: 'discard', path: '/drafts', click: ['button:has-text("A quicker first reply") >> nth=0', 'button:text-is("Discard")'], expect: 'What was off?' },
       ];
     },
@@ -1274,6 +1289,7 @@ async function open(scenarioName) {
   const context = await newContext(browser, ctx, scenario, 'light');
   for (const page of pages) {
     const tab = await context.newPage();
+    if (page.cookies) await context.addCookies(page.cookies.map((c) => ({ ...c, url: ctx.appUrl })));
     await tab.goto(`${ctx.appUrl}${page.path}`);
   }
   console.log(`\n${scenario.name} — ${scenario.summary}`);
@@ -1308,6 +1324,7 @@ async function shoot(names, themes) {
           const errors = [];
           tab.on('pageerror', (e) => errors.push(e.message));
           const url = `${ctx.appUrl}${page.path}`;
+          if (page.cookies) await context.addCookies(page.cookies.map((c) => ({ ...c, url: ctx.appUrl })));
           const response = await tab.goto(url, { waitUntil: 'networkidle' });
           // `click` is one selector, or several clicked in order.
           for (const selector of [page.click ?? []].flat()) {

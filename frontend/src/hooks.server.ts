@@ -7,6 +7,7 @@ import {
 	PUBLIC_SUPABASE_ANON_KEY,
 } from '$env/static/public';
 import { isSafeRelativePath } from '$lib/redirect';
+import { typedWebsite } from '$lib/website';
 
 const SECURITY_HEADERS: Record<string, string> = {
 	'X-Frame-Options': 'DENY',
@@ -86,6 +87,9 @@ const authGuard: Handle = async ({ event, resolve }) => {
 		// just 401'd. Let the /login page render so its load handler can sign
 		// the stale session out.
 		if (event.url.searchParams.get('reauth') !== '1') {
+			// The landing page's website box, used while already signed in.
+			const site = typedWebsite(event.url.searchParams.get('site'));
+			if (site) redirect(303, `/chat?site=${encodeURIComponent(site)}`);
 			// `?next` is user-controlled, so reject anything that isn't a
 			// same-origin path. Without this guard, /login?next=https://evil
 			// would emit an external Location and become an open redirect.

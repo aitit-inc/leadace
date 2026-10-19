@@ -51,8 +51,8 @@ export type SendingIdentity = {
   kind: MailboxKind;
   // The connected Gmail a Send-As alias sends through; null for every other kind.
   parentIdentityId: string | null;
-  // The Gmail of the account the user signs in with: reconnected by signing in
-  // again, never removed from the registry.
+  // The Gmail of the account the user signs in with, connected when they send:
+  // never removed from the registry.
   signInAccount: boolean;
   fromEmail: string;
   warmupStartedAt: string | null;

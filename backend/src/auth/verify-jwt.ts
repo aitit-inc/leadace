@@ -12,6 +12,8 @@ export interface VerifiedJwt {
    * `/sessions` surface) must inspect this field.
    */
   aud: string | undefined
+  // Supabase-issued tokens carry the account's email; MCP-minted ones do not.
+  email: string | null
 }
 
 // jose caches keys per JWKS instance (10 min, 30 s cooldown); one instance
@@ -32,7 +34,8 @@ function decode(payload: JWTPayload): VerifiedJwt | null {
   if (typeof sub !== 'string') return null
   const audRaw = payload['aud']
   const aud = typeof audRaw === 'string' ? audRaw : undefined
-  return { sub, aud }
+  const email = payload['email']
+  return { sub, aud, email: typeof email === 'string' && email !== '' ? email : null }
 }
 
 /**

@@ -77,9 +77,9 @@ changing auth or data flow: `src/hooks.server.ts`, `src/routes/+layout.server.ts
   when `expires_at` changes.
 - `/auth/callback/+server.ts` exchanges the code server-side and
   303-redirects; the session cookies are already written by hooks'
-  `cookies.setAll` during the exchange. `provider_refresh_token` exists only
-  on the immediate sign-in event — persist it there; later session restores
-  don't carry it.
+  `cookies.setAll` during the exchange. Sign-in asks Google for the account
+  alone; every Gmail, the sign-in account's included, is connected through
+  `/auth/google-mailbox/callback`, where the API Worker exchanges the code.
 
 ## Public routes
 
