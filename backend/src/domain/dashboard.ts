@@ -280,11 +280,11 @@ function rate(count: number, prev: number): number | null {
 
 export type FunnelCounts = Record<FunnelStageKey, number>
 
-// 'reached' is the inquiry-landing open. With the landing off the event cannot
-// occur at all, so the stage is dropped rather than reported as a zero — and
-// 'engaged' then converts from 'delivered'.
+// 'reached' is the inquiry-landing open. With the landing off only links already
+// sent can still be opened, so the stage shows only when one was — never as a
+// zero that cannot fill — and otherwise 'engaged' converts from 'delivered'.
 export function buildFunnel(counts: FunnelCounts, inquiryLandingEnabled: boolean): FunnelStage[] {
-  const keys: FunnelStageKey[] = inquiryLandingEnabled
+  const keys: FunnelStageKey[] = inquiryLandingEnabled || counts.reached > 0
     ? ['sent', 'delivered', 'reached', 'engaged', 'won']
     : ['sent', 'delivered', 'engaged', 'won']
   return keys.map((key, i) => {

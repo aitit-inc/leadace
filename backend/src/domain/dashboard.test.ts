@@ -45,6 +45,11 @@ describe('buildFunnel', () => {
     expect(f[2]).toEqual({ key: 'engaged', count: 9, conversionFromPrev: 10 })
   })
 
+  it('keeps the inquiry-landing stage while the landing is off if a sent link was opened', () => {
+    const f = buildFunnel({ sent: 100, delivered: 90, reached: 3, engaged: 9, won: 2 }, false)
+    expect(f.map((s) => s.key)).toEqual(['sent', 'delivered', 'reached', 'engaged', 'won'])
+  })
+
   it('returns null conversion (not NaN/Infinity) when the prior stage is zero', () => {
     const f = buildFunnel({ sent: 0, delivered: 0, reached: 0, engaged: 0, won: 0 }, true)
     expect(f.every((s) => s.count === 0)).toBe(true)

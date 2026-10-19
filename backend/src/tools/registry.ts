@@ -2154,7 +2154,7 @@ export function buildToolRegistry(): ToolDef[] {
       unsubscribeEnabled: z.boolean().optional()
         .describe('Attach the RFC 8058 List-Unsubscribe one-click headers to outbound email.'),
       inquiryLandingEnabled: z.boolean().optional()
-        .describe('When true, outbound emails include an inquiry-landing URL footer that hosts a per-recipient AI chat, meeting-request button, and unsubscribe-with-reason flow.'),
+        .describe('When true, outbound emails include an inquiry-landing URL footer that hosts a per-recipient AI chat, meeting-request button, and unsubscribe-with-reason flow. Off affects new emails only; sent links keep working.'),
       inquiryChatBrief: z.string().max(4000).nullable().optional()
         .describe('Briefing for the inquiry-landing chat agent. null disables chat input but keeps the rest of the landing page rendering.'),
       inquiryOneLiner: z.string().max(140).nullable().optional()

@@ -2,7 +2,7 @@
 # Regression for the inquiry landing unsubscribe ratchet.
 #
 # recordInquiryUnsubscribe (services/inquiry-session.ts) ALWAYS ratchets
-# prospects.do_not_contact=true for the recipient landing opt-out. Two legs:
+# prospects.do_not_contact=true for the recipient landing opt-out. Three legs:
 #   (1) CHIP-LESS FIRST-TAP — empty body on an open session: DNC set directly,
 #       NO responses row written, session closed (outcome='unsubscribed',
 #       response_id NULL), project_prospects.status intentionally NOT flipped.
@@ -10,7 +10,9 @@
 #       primary_reason attaches exactly one rejection responses row to the same
 #       session (CAS), keeping outcome='unsubscribed' and DNC true; idempotent
 #       (first chip wins).
-# If either leg failed to ratchet DNC, an opted-out recipient keeps getting
+#   (3) LANDING TURNED OFF after the mail went out — the sent link is still that
+#       mail's opt-out: it opens and unsubscribes as before.
+# If any leg failed to ratchet DNC, an opted-out recipient keeps getting
 # mailed — a CAN-SPAM/CASL violation. Public route: the URL short_id IS the auth.
 #
 # inquiry_tokens + the 'sent' outreach_log are psql-seeded (no API mints a token
@@ -144,13 +146,13 @@ say "project_id=$PROJECT_ID"
 api PUT "/api/projects/$PROJECT_ID/settings" '{"inquiryLandingEnabled":true}' > /dev/null
 
 SEED_BODY="$(jq -nc --arg pid "$PROJECT_ID" \
-  --argjson cl "$(mkseed chipless)" --argjson wc "$(mkseed withchip)" --argjson ld "$(mkseed lead)" \
-  '{projectId:$pid, prospects:[$cl,$wc,$ld]}')"
-assert_eq "seed inserted=3" "$(api POST /api/prospects/batch "$SEED_BODY" | jq -r '.inserted // 0')" "3"
+  --argjson cl "$(mkseed chipless)" --argjson wc "$(mkseed withchip)" --argjson ld "$(mkseed lead)" --argjson off "$(mkseed off)" \
+  '{projectId:$pid, prospects:[$cl,$wc,$ld,$off]}')"
+assert_eq "seed inserted=4" "$(api POST /api/prospects/batch "$SEED_BODY" | jq -r '.inserted // 0')" "4"
 LIST_RESP="$(api GET "/api/projects/$PROJECT_ID/prospects?limit=200")"
 pid_of() { echo "$LIST_RESP" | jq -r --arg e "contact@$RUN_TAG-$1.example" '.prospects[]? | select(.email == $e) | .prospectId' | head -1; }
-P_CL="$(pid_of chipless)"; P_WC="$(pid_of withchip)"; P_LD="$(pid_of lead)"
-[[ -n "$P_CL" && -n "$P_WC" && -n "$P_LD" ]] || { echo "could not resolve prospect ids" >&2; exit 1; }
+P_CL="$(pid_of chipless)"; P_WC="$(pid_of withchip)"; P_LD="$(pid_of lead)"; P_OFF="$(pid_of off)"
+[[ -n "$P_CL" && -n "$P_WC" && -n "$P_LD" && -n "$P_OFF" ]] || { echo "could not resolve prospect ids" >&2; exit 1; }
 
 SID_CL="$(sid cl)"; SID_WC="$(sid wc)"; SID_LD="$(sid ld)"
 SESS_CL="$(seed_token_and_open "$P_CL" "$SID_CL")"
@@ -203,6 +205,13 @@ step "Negative: unsubscribe on a session closed with a non-unsubscribe outcome �
 psql_local "UPDATE inquiry_sessions SET outcome='lead', closed_at=now() WHERE id=$SESS_LD;" > /dev/null
 assert_eq "unsubscribe on lead-closed session → 409" "$(pub_status POST "/api/inquiry/$SID_LD/unsubscribe" '{}')" "409"
 assert_eq "lead prospect DNC unchanged (false)" "$(dnc "$P_LD")" "f"
+
+step "(3) Landing turned off after the mail went out: its link still opens and opts out"
+api PUT "/api/projects/$PROJECT_ID/settings" '{"inquiryLandingEnabled":false}' > /dev/null
+SESS_OFF="$(seed_token_and_open "$P_OFF" "$(sid off)")"
+assert_eq "GET landing after turning it off opens a session" "$([[ -n "$SESS_OFF" && "$SESS_OFF" != "null" ]] && echo yes || echo no)" "yes"
+assert_eq "unsubscribe after turning it off → 200" "$(pub_status POST "/api/inquiry/$(sid off)/unsubscribe" '{}')" "200"
+assert_eq "prospect do_not_contact=true" "$(dnc "$P_OFF")" "t"
 
 step "summary"
 echo "  PASS=$PASS  FAIL=$FAIL" >&2

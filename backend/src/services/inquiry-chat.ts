@@ -242,7 +242,6 @@ async function loadChatContext(
       sessionContextSnapshot: inquirySessions.contextSnapshot,
       tokenRevokedAt: inquiryTokens.revokedAt,
       brief: projectSettings.inquiryChatBrief,
-      landingEnabled: projectSettings.inquiryLandingEnabled,
       senderDisplayName: projectSettings.senderDisplayName,
       senderCompanyName: projectSettings.senderCompanyName,
       senderJobTitle: projectSettings.senderJobTitle,
@@ -256,7 +255,6 @@ async function loadChatContext(
 
   if (!row) return err('NOT_FOUND', 'Inquiry session is no longer open')
   if (row.tokenRevokedAt !== null) return err('NOT_FOUND', 'Inquiry session is no longer open')
-  if (!row.landingEnabled) return err('NOT_FOUND', 'Inquiry session is no longer open')
 
   // The per-session snapshot wins — it folds the prospect hypothesis and recent
   // org signals on top of the project brief. The bare brief covers legacy

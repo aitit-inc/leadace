@@ -783,7 +783,6 @@ const previewableSettingsCols = {
   senderDisplayName: projectSettings.senderDisplayName,
   senderCompanyName: projectSettings.senderCompanyName,
   senderJobTitle: projectSettings.senderJobTitle,
-  inquiryLandingEnabled: projectSettings.inquiryLandingEnabled,
   inquiryChatBrief: projectSettings.inquiryChatBrief,
   inquiryOneLiner: projectSettings.inquiryOneLiner,
   inquiryVideoUrl: projectSettings.inquiryVideoUrl,
@@ -843,11 +842,9 @@ export async function loadLandingContext(
     .where(and(eq(inquiryTokens.shortId, shortId), isNull(inquiryTokens.revokedAt)))
     .limit(1)
 
+  // No inquiryLandingEnabled gate: a sent link is that mail's opt-out and must
+  // keep working after the landing is turned off (CAN-SPAM: 30 days).
   if (!row) return err('NOT_FOUND', 'Inquiry link is no longer valid')
-
-  if (!row.inquiryLandingEnabled) {
-    return err('NOT_FOUND', 'Inquiry link is no longer valid')
-  }
 
   const token: InquiryTokenRow = {
     shortId,

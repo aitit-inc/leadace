@@ -184,8 +184,9 @@
           <span>
             <span class="block text-sm font-medium text-text">Enable inquiry landing</span>
             <span class="mt-0.5 block text-xs text-text-muted">
-              When off, your cold-email footer omits the inquiry link and recipients can only
-              unsubscribe. The chat backend is also disabled.
+              When off, new cold emails carry no inquiry link and recipients reply to unsubscribe.
+              Links in emails already sent keep working, so those recipients can still opt out
+              there.
             </span>
           </span>
         </label>
