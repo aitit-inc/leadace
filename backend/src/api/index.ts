@@ -41,8 +41,7 @@ import { createDb } from '../db/connection'
 import { runAccountActivityAlert } from '../services/account-activity'
 import { runDailyBetaStats } from '../services/beta-stats'
 import { runReplyIngest } from '../services/reply-ingest'
-import { parseInboxTestSeeds, runInboxTests } from '../services/inbox-test'
-import { sendContextOf } from '../services/pipeline/context'
+import { parseInboxTestSeeds, scheduleInboxTests } from '../services/inbox-test'
 import { watchVerifierBalance } from '../services/email-verify'
 import { runDueSchedules } from './schedule-runner'
 import { threadRunner } from './thread-runner'
@@ -184,9 +183,9 @@ const handler = {
           }),
       )
       ctx.waitUntil(
-        runInboxTests(db, sendContextOf(env), parseInboxTestSeeds(env.INBOX_TEST_SEEDS), new Date(controller.scheduledTime))
-          .then((s) => {
-            console.log(`[scheduled] inbox-test tested=${s.tested} held=${s.held} sent=${s.sent} failed=${s.failed} seedReadErrors=${s.seedReadErrors}`)
+        scheduleInboxTests(db, env.INBOX_TESTS, parseInboxTestSeeds(env.INBOX_TEST_SEEDS), new Date(controller.scheduledTime))
+          .then((started) => {
+            console.log(`[scheduled] inbox-test started=${started}`)
           })
           .catch((e: unknown) => {
             console.error('[scheduled] inbox-test failed', e)
@@ -237,6 +236,7 @@ export default Sentry.withSentry(
 
 // Workflow class the `JOBS` binding in wrangler.api.jsonc points at.
 export { LeadAceJobWorkflow } from '../jobs/workflow'
+export { InboxTestWorkflow } from '../jobs/inbox-test'
 
 // Durable Object class the `THREADS` binding in wrangler.api.jsonc points at.
 export const ThreadRunner = threadRunner(dispatch)

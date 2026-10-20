@@ -67,9 +67,9 @@ export function judgeInboxTest(
   return { testedAt: testedAt.toISOString(), ...counts }
 }
 
-// Daily while the mailbox sends; a held mailbox keeps being tested, so a later
-// test can lift the hold after its sends stopped.
+// Daily while the mailbox sends; a held one sends nothing new, so only a test
+// the person starts can lift its hold.
 export function inboxTestDue(lastSentAt: Date, testSentAt: Date | null, result: InboxTestResult | null, now: Date): boolean {
   if (testSentAt && now.getTime() - testSentAt.getTime() < INBOX_TEST_INTERVAL_MS) return false
-  return now.getTime() - lastSentAt.getTime() < INBOX_TEST_ACTIVE_WINDOW_MS || inboxTestHolds(result)
+  return now.getTime() - lastSentAt.getTime() < INBOX_TEST_ACTIVE_WINDOW_MS && !inboxTestHolds(result)
 }

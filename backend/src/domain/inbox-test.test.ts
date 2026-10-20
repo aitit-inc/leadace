@@ -62,8 +62,8 @@ describe('inboxTestDue', () => {
     expect(inboxTestDue(hoursAgo(2), hoursAgo(23), result(4, 0), now)).toBe(true)
   })
 
-  it('stops testing a mailbox that stopped sending, unless the test holds it', () => {
+  it('does not test a mailbox that stopped sending or is held', () => {
     expect(inboxTestDue(hoursAgo(24 * 8), hoursAgo(24), result(4, 0), now)).toBe(false)
-    expect(inboxTestDue(hoursAgo(24 * 8), hoursAgo(24), result(0, 4), now)).toBe(true)
+    expect(inboxTestDue(hoursAgo(2), hoursAgo(24), result(0, 4), now)).toBe(false)
   })
 })

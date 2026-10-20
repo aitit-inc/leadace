@@ -14,6 +14,7 @@
   let {
     identities,
     identitiesError,
+    inboxTests,
     gmailStatus,
     planTier,
     session,
@@ -22,6 +23,7 @@
   }: {
     identities: SendingIdentity[];
     identitiesError: boolean;
+    inboxTests: boolean;
     gmailStatus: GmailStatus;
     planTier: PlanTier | undefined;
     session: { access_token: string; user: { id: string; email?: string } } | null;
@@ -126,6 +128,7 @@
       <MailboxRow
         {identity}
         {identities}
+        {inboxTests}
         freeBlocked={planTier === 'free'}
         {session}
         {onChanged}

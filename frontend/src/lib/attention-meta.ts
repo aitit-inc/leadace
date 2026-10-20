@@ -105,7 +105,7 @@ export function attentionMeta(item: AttentionItem): AttentionMeta {
 				icon: MailX,
 				tone: 'danger',
 				title: 'Email is landing in spam',
-				desc: `${item.fromEmail}: the daily inbox test put ${item.spam} of ${item.delivered} copies in spam, so sending from it is held`,
+				desc: `${item.fromEmail}: the latest inbox test put ${item.spam} of ${item.delivered} copies in spam, so sending from it is held`,
 				ctaLabel: 'Review',
 				href: '/account-settings',
 			};

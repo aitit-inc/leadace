@@ -13,6 +13,7 @@ import {
   type GoogleMailboxCtx,
 } from '../../services/sending-identity'
 import { updateMailboxWarmup, updateMailboxWarmupSchema } from '../../services/plan-limits'
+import { parseInboxTestSeeds, startInboxTest } from '../../services/inbox-test'
 import { sendingIdentityIdParamSchema } from '../../domain/ids'
 import { zValidator } from '../zvalidator'
 import { respondWithError } from '../respond'
@@ -33,7 +34,7 @@ sendingIdentitiesRouter.get('/me/sending-identities', async (c) => {
     c.get('tenantId'),
     c.env.GMAIL_TOKEN_ENCRYPTION_KEY,
   )
-  return c.json({ identities })
+  return c.json({ identities, inboxTests: parseInboxTestSeeds(c.env.INBOX_TEST_SEEDS).length > 0 })
 })
 
 sendingIdentitiesRouter.post(
@@ -99,6 +100,21 @@ sendingIdentitiesRouter.put(
       c.get('tenantId'),
       c.req.valid('param').id,
       c.req.valid('json'),
+    )
+    return result.ok ? c.json(result.value) : respondWithError(c, result)
+  },
+)
+
+sendingIdentitiesRouter.post(
+  '/me/sending-identities/:id/inbox-test',
+  zValidator('param', sendingIdentityIdParamSchema),
+  async (c) => {
+    const result = await startInboxTest(
+      c.get('db'),
+      c.env.INBOX_TESTS,
+      parseInboxTestSeeds(c.env.INBOX_TEST_SEEDS),
+      c.get('tenantId'),
+      c.req.valid('param').id,
     )
     return result.ok ? c.json(result.value) : respondWithError(c, result)
   },

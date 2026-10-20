@@ -99,6 +99,7 @@
   <MailboxList
     identities={data.sendingIdentities}
     identitiesError={data.sendingIdentitiesError}
+    inboxTests={data.inboxTests}
     gmailStatus={data.gmailStatus}
     planTier={data.plan?.plan}
     session={data.session}

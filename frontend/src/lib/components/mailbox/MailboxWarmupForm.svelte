@@ -1,14 +1,17 @@
 <script lang="ts">
-  import { updateIdentityWarmup } from '$lib/api/sending-identities';
+  import { startInboxTest, updateIdentityWarmup } from '$lib/api/sending-identities';
   import Hint from '$lib/components/Hint.svelte';
   import type { SendingIdentity, MailboxWarmupPatch } from '$lib/types/sending-identity';
 
   let {
     identity,
+    inboxTests,
     token,
     onSaved,
   }: {
     identity: SendingIdentity;
+    // The server can run inbox tests (it has seed mailboxes).
+    inboxTests: boolean;
     token: string | undefined;
     onSaved: () => void | Promise<void>;
   } = $props();
@@ -101,6 +104,20 @@
     }
   }
 
+  async function testInbox() {
+    errorMsg = '';
+    message = '';
+    saving = true;
+    try {
+      await startInboxTest(identity.identityId, fetch, token);
+      message = 'Test started. Reload in about 2 minutes for the result.';
+    } catch (e) {
+      errorMsg = e instanceof Error ? e.message : 'Failed to start an inbox test.';
+    } finally {
+      saving = false;
+    }
+  }
+
   async function save() {
     if (!draft) return;
     const cap = parsedCapOverride(draft);
@@ -155,7 +172,6 @@
 
 {#if identity.inboxTestResult}
   {@const t = identity.inboxTestResult}
-  {@const seeds = t.inbox + t.spam + t.missing}
   {#if identity.inboxTestHeld}
     <div
       class="space-y-1.5 rounded-xl bg-danger/10 px-3 py-2.5 text-sm text-danger {identity.sendRefusal
@@ -168,8 +184,8 @@
       </p>
       <div class="flex flex-wrap items-center gap-2">
         <span>
-          A later test that lands in the inbox lifts the hold. To send before then, change what you send and
-          resume.
+          A test that lands in the inbox lifts the hold; run one below. To send before then, change what you
+          send and resume.
         </span>
         <button
           type="button"
@@ -183,18 +199,28 @@
     </div>
   {:else}
     <p class="text-xs text-text-muted {identity.sendRefusal ? 'mt-2' : ''}">
-      Inbox test on {formatDateTime(t.testedAt)}: {t.inbox} of {seeds} copies in the
+      Inbox test on {formatDateTime(t.testedAt)}: {t.inbox} of {t.inbox + t.spam + t.missing} copies in the
       inbox{#if t.spam > 0}, {t.spam} in spam{/if}{#if t.missing > 0}, {t.missing} not arrived{/if}.
     </p>
   {/if}
-  <p class="mt-2 text-xs text-text-muted">
-    Once a day, LeadAce sends this mailbox's latest cold email to {seeds} of its own test inboxes to see where it
-    lands. The copies show in your Sent folder and don't count toward the daily cap.
-  </p>
+{/if}
+
+{#if inboxTests}
+  <div
+    class="flex flex-wrap items-center gap-2 text-xs text-text-muted {identity.sendRefusal || identity.inboxTestResult
+      ? 'mt-2'
+      : ''}"
+  >
+    <span>
+      Once a day while this mailbox sends, its latest cold email goes to LeadAce's own test inboxes to see where it
+      lands. The copies show in your Sent folder and don't count toward the daily cap.
+    </span>
+    <button type="button" onclick={testInbox} disabled={saving} class="btn btn-secondary btn-sm">Test now</button>
+  </div>
 {/if}
 
 {#if draft}
-  <div class="space-y-4 {identity.sendRefusal || identity.inboxTestResult ? 'mt-4' : ''}">
+  <div class="space-y-4 {identity.sendRefusal || identity.inboxTestResult || inboxTests ? 'mt-4' : ''}">
     <div>
       <label for="cap-override-{identity.identityId}" class="flex items-center gap-1.5 text-sm font-medium text-text">
         Daily cap override

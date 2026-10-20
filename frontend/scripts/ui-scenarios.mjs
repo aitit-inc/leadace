@@ -1137,10 +1137,11 @@ const SCENARIOS = [
   },
   {
     name: 'inbox-test',
-    summary: 'A mailbox the daily inbox test holds for landing in spam, beside one that passed',
+    summary: 'A mailbox the inbox test holds for landing in spam, beside one that passed, and a test started by hand',
     stack: 'self-host',
     setup: async (ctx) => {
-      await seedProject(ctx, { name: 'Northwind outbound', settings: { outboundMode: 'send' } });
+      const projectId = await seedProject(ctx, { name: 'Northwind outbound', settings: { outboundMode: 'send' } });
+      const [prospect] = await seedProspects(ctx, projectId, 1);
       const testedAt = new Date(Date.now() - 2 * 3_600_000).toISOString();
       const result = (inbox, spam) => q(JSON.stringify({ testedAt, inbox, spam, missing: 0 }));
       // chk_sending_identities_secret_owner is why each has to carry secret bytes.
@@ -1153,12 +1154,27 @@ const SCENARIOS = [
                  'https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly',
                  decode('00', 'hex'), false, NOW() - INTERVAL '40 days', ${result(4, 0)}::jsonb, NOW(), NOW());`,
       );
+      // "Test now" sends the held mailbox's latest cold email.
+      psql(
+        `INSERT INTO outreach_logs (tenant_id, project_id, prospect_id, channel, subject, body, status, sent_at, sending_identity_id)
+         VALUES (${q(ctx.persona.tenantId)}, ${q(projectId)}, ${prospect.prospectId}, 'email', 'A quicker first reply', 'Hi', 'sent', NOW() - INTERVAL '3 hours', 'ui-inbox-test-held');`,
+      );
       return [
         {
           name: 'mailboxes',
           path: '/account-settings',
           scrollTo: 'text=Mailboxes',
-          expect: ['Held: landed in spam', 'copies of this', 'Resume sending'],
+          expect: ['Held: landed in spam', 'copies of this', 'Resume sending', 'Test now'],
+        },
+        // Both themes press it on the same mailbox. Its fake grant sends nothing,
+        // so a test releases its claim at once and the next press starts again,
+        // unless it comes before that release.
+        {
+          name: 'started',
+          path: '/account-settings',
+          click: 'button:has-text("Test now")',
+          scrollTo: 'button:has-text("Save")',
+          expect: 'Test now',
         },
         {
           name: 'passed',

@@ -60,12 +60,18 @@
   ],
   // Hosted-agent jobs: one Workflow instance per jobs row (src/jobs/workflow.ts).
   // The hourly cron and the chat / Web UI / MCP start instances through the
-  // `JOBS` binding; the class is exported from src/api/index.ts.
+  // `JOBS` binding. `INBOX_TESTS` runs the inbox test (src/jobs/inbox-test.ts).
+  // Both classes are exported from src/api/index.ts.
   "workflows": [
     {
       "name": "lead-ace-jobs",
       "binding": "JOBS",
       "class_name": "LeadAceJobWorkflow"
+    },
+    {
+      "name": "lead-ace-inbox-tests",
+      "binding": "INBOX_TESTS",
+      "class_name": "InboxTestWorkflow"
     }
   ],
   // The chat's thread runner: one Durable Object per thread (src/api/thread-runner.ts);

@@ -455,7 +455,7 @@ export function mailboxQuotaErrorIfExhausted(quota: MailboxDailyQuota): ServiceE
 export function formatMailboxQuotaError(quota: MailboxDailyQuota): string {
   if (quota.kind !== 'exhausted') return 'Mailbox daily send cap reached.'
   const spamHold =
-    "the latest inbox test put its email in spam. That lifts when a later test lands in the inbox, or when the person resumes the mailbox in Account settings."
+    "the latest inbox test put its email in spam. It lifts when a test the person runs in Account settings lands in the inbox, or when they resume the mailbox there."
   if (quota.inboxTestHeld === 'all') return `Every mailbox this project sends from is held: ${spamHold}`
   const rest = quota.resumesAt
     ? `Every mailbox this project sends from is paused or held after a provider refusal; the earliest lifts at ${quota.resumesAt.toISOString()} (a mailbox at its cap then still waits for UTC midnight). Check each mailbox in Account settings.`

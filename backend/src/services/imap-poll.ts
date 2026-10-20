@@ -51,7 +51,7 @@ const enc = new TextEncoder()
 
 class ImapError extends Error {}
 
-type ImapSession = {
+export type ImapSession = {
   command: (line: string) => Promise<{ tag: string; response: string }>
   expectOk: (tag: string, response: string, what: string) => void
 }

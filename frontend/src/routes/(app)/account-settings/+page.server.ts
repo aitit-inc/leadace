@@ -34,10 +34,10 @@ export const load: PageServerLoad = async ({ fetch, depends, locals }) => {
 
   // Let an auth failure (kitError(401)) reach +error.svelte rather than hide the section.
   const sendingIdentities = await listSendingIdentities(fetch, token).then(
-    (list) => ({ list, error: false }),
+    (r) => ({ list: r.identities, inboxTests: r.inboxTests, error: false }),
     (e: unknown) => {
       if (isHttpError(e)) throw e;
-      return { list: [], error: true };
+      return { list: [], inboxTests: false, error: true };
     },
   );
 
@@ -46,5 +46,6 @@ export const load: PageServerLoad = async ({ fetch, depends, locals }) => {
     mcpSessions,
     sendingIdentities: sendingIdentities.list,
     sendingIdentitiesError: sendingIdentities.error,
+    inboxTests: sendingIdentities.inboxTests,
   };
 };

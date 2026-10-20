@@ -21,7 +21,7 @@ export const load: PageServerLoad = async ({ fetch, parent, depends, locals }) =
     getProjectSettings<ProjectSettingsData>(activeProjectId, fetch, token),
     getDailyTarget(activeProjectId, fetch, token),
     listSendingIdentities(fetch, token).then(
-      (list) => ({ list, error: false }),
+      (r) => ({ list: r.identities, error: false }),
       (e: unknown) => {
         if (isHttpError(e)) throw e;
         return { list: [], error: true };

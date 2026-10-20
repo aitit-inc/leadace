@@ -55,6 +55,10 @@ export type MailboxSendRefusal = {
   sentThatDay: number;
 };
 
+// Mirrors GET /me/sending-identities. inboxTests: the server has seed mailboxes
+// to run inbox tests with.
+export type SendingIdentityList = { identities: SendingIdentity[]; inboxTests: boolean };
+
 export type SendingIdentity = {
   identityId: string;
   provider: SendingIdentityProvider;

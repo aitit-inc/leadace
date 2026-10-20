@@ -1,6 +1,7 @@
 import { request, type RequestFetch } from '../api';
 import type {
   SendingIdentity,
+  SendingIdentityList,
   RegisterSmtpIdentityInput,
   RegisterGmailAliasInput,
   GoogleMailboxAuthorizationInput,
@@ -12,13 +13,13 @@ import type {
 export function listSendingIdentities(
   fetchFn: RequestFetch = fetch,
   token?: string,
-): Promise<SendingIdentity[]> {
-  return request<{ identities: SendingIdentity[] }>(fetchFn, {
+): Promise<SendingIdentityList> {
+  return request<SendingIdentityList>(fetchFn, {
     method: 'GET',
     path: '/me/sending-identities',
     auth: 'required',
     token,
-  }).then((r) => r.identities);
+  });
 }
 
 export function registerSmtpIdentity(
@@ -87,6 +88,19 @@ export function updateIdentityWarmup(
     method: 'PUT',
     path: `/me/sending-identities/${identityId}/warmup`,
     body: patch,
+    auth: 'required',
+    token,
+  });
+}
+
+export function startInboxTest(
+  identityId: string,
+  fetchFn: RequestFetch = fetch,
+  token?: string,
+): Promise<{ started: true }> {
+  return request<{ started: true }>(fetchFn, {
+    method: 'POST',
+    path: `/me/sending-identities/${identityId}/inbox-test`,
     auth: 'required',
     token,
   });

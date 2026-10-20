@@ -604,7 +604,7 @@ export function buildToolRegistry(): ToolDef[] {
       const placed = `${t.inbox} inbox, ${t.spam} spam, ${t.missing} not arrived`
       lines.push(
         h.inboxTestHeld
-          ? `⚠️ Sending HELD: the latest inbox test (${t.testedAt}) put its latest cold email in spam at the seed mailboxes (${placed}). A later test that lands in the inbox lifts it, or the user resumes it.`
+          ? `⚠️ Sending HELD: the latest inbox test (${t.testedAt}) put its latest cold email in spam at the seed mailboxes (${placed}). It lifts when a test the user runs in Account settings lands in the inbox, or when the user resumes it.`
           : `Inbox test (${t.testedAt}): ${placed}`,
       )
     }

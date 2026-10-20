@@ -11,6 +11,7 @@
   let {
     identity,
     identities,
+    inboxTests,
     freeBlocked,
     session,
     onChanged,
@@ -18,6 +19,7 @@
   }: {
     identity: SendingIdentity;
     identities: SendingIdentity[];
+    inboxTests: boolean;
     freeBlocked: boolean;
     session: { access_token: string; user: { id: string } } | null;
     onChanged: () => void | Promise<void>;
@@ -181,7 +183,7 @@
         </dl>
 
         <div>
-          <MailboxWarmupForm {identity} {token} onSaved={onChanged} />
+          <MailboxWarmupForm {identity} {inboxTests} {token} onSaved={onChanged} />
         </div>
       </div>
 
