@@ -562,6 +562,8 @@ export function buildToolRegistry(): ToolDef[] {
     pausedUntil: string | null
     heldUntil: string | null
     sendRefusal: { since: string; lastAt: string; detail: string; sentThatDay: number } | null
+    inboxTestResult: { testedAt: string; inbox: number; spam: number; missing: number } | null
+    inboxTestHeld: boolean
     rampWeek: number
     rampWeeks: number
     steadyStatePerDay: number
@@ -597,12 +599,21 @@ export function buildToolRegistry(): ToolDef[] {
         : 'The next send checks whether it is lifted.'
       lines.push(`⚠️ The mail provider refused this mailbox (first ${r.since}, after ${r.sentThatDay} sends that UTC day; latest ${r.lastAt}): ${r.detail}. ${hold} The user resolves it with the provider (e.g. unblocks the account), then marks it resolved at app.leadace.ai; a successful send also clears it.`)
     }
+    const t = h.inboxTestResult
+    if (t) {
+      const placed = `${t.inbox} inbox, ${t.spam} spam, ${t.missing} not arrived`
+      lines.push(
+        h.inboxTestHeld
+          ? `⚠️ Sending HELD: the latest inbox test (${t.testedAt}) put its latest cold email in spam at the seed mailboxes (${placed}). A later test that lands in the inbox lifts it, or the user resumes it.`
+          : `Inbox test (${t.testedAt}): ${placed}`,
+      )
+    }
     return lines
   }
 
   defineTool(
     'get_mailbox_health',
-    "Warmup and daily-cap state of the mailboxes this project sends from, in priority order (its listed mailboxes, else the sign-in Google account): the cap / used / remaining today over the mailboxes able to send and which one the next send uses, then per mailbox its address, warmup ramp (week X of N) or fixed cap override, today's cap / used / remaining, any pause, a revoked Google connection, an unresolved provider refusal, and a trailing 30-day bounce rate (threaded-only lower bound). This per-mailbox email cap is separate from the plan/billing outreach quota — email sends only, resets at UTC midnight. Answers with a no-mailbox state when the project lists no mailbox and the sign-in Google account is not connected.",
+    "Warmup and daily-cap state of the mailboxes this project sends from, in priority order (its listed mailboxes, else the sign-in Google account): the cap / used / remaining today over the mailboxes able to send and which one the next send uses, then per mailbox its address, warmup ramp (week X of N) or fixed cap override, today's cap / used / remaining, any pause, a revoked Google connection, an unresolved provider refusal, a trailing 30-day bounce rate (threaded-only lower bound), and the latest daily inbox test (inbox / spam / not arrived at seed mailboxes; spam holds sending). This per-mailbox email cap is separate from the plan/billing outreach quota — email sends only, resets at UTC midnight. Answers with a no-mailbox state when the project lists no mailbox and the sign-in Google account is not connected.",
     {
       projectId: z.string().min(1).describe('Project name or ID'),
     },
@@ -637,6 +648,7 @@ export function buildToolRegistry(): ToolDef[] {
     dailyCapOverride: number | null
     pausedUntil: string | null
     sendRefusal: { lastAt: string } | null
+    inboxTestHeld: boolean
   }
   // Exact match: addresses that differ only in case can be separate mailboxes.
   const findMailbox = async (ctx: ToolCtx, email: string): Promise<MailboxWire | undefined> =>
@@ -650,20 +662,22 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'update_mailbox_sending',
-    "Change a sending mailbox's controls: mark a mail-provider refusal resolved (lifts its hold on sending), set or clear its fixed daily cap, pause it until a time or resume it. They apply to every project sending from the mailbox. Answers with the resulting cap, today's sends, and any pause, hold or unresolved refusal.",
+    "Change a sending mailbox's controls: mark a mail-provider refusal resolved (lifts its hold on sending), resume it after an inbox test put its email in spam, set or clear its fixed daily cap, pause it until a time or resume it. They apply to every project sending from the mailbox. Answers with the resulting cap, today's sends, and any pause, hold or unresolved refusal.",
     {
       mailbox: z.email().describe('The mailbox address, as get_mailbox_health names it.'),
       resolveRefusal: z.literal(true).optional().describe('The person says the provider refusal is resolved, e.g. the account was unblocked.'),
+      resumeInboxTest: z.literal(true).optional().describe('The person chooses to send again despite the latest inbox test landing in spam; the next daily test judges again.'),
       dailyCap: z.number().int().min(0).nullable().optional().describe('Fixed daily email cap; null returns to the warmup ramp.'),
       pausedUntil: z.iso.datetime().nullable().optional().describe('Pause sending until this time (ISO 8601); null resumes a pause.'),
     },
-    async ({ mailbox, resolveRefusal, dailyCap, pausedUntil }, ctx) => {
+    async ({ mailbox, resolveRefusal, resumeInboxTest, dailyCap, pausedUntil }, ctx) => {
       const found = await findMailbox(ctx, mailbox)
       if (!found) {
         return { content: [{ type: 'text' as const, text: `Error: no sending mailbox ${mailbox} in this workspace` }], isError: true }
       }
       const { ok, data } = await ctx.callApi('PUT', `/me/sending-identities/${encodeURIComponent(found.identityId)}/warmup`, {
         resolveRefusal,
+        resumeInboxTest,
         dailyCapOverride: dailyCap,
         pausedUntil,
       })
@@ -679,26 +693,34 @@ export function buildToolRegistry(): ToolDef[] {
         pausedUntil: string | null
         heldUntil: string | null
         sendRefusal: { lastAt: string } | null
+        inboxTestHeld: boolean
       }
       const parts = [
         `Saved for ${h.email}: cap ${capLabel(h.dailyCapOverride)}, today ${h.used}/${h.cap} sent`,
         h.pausedUntil ? `paused until ${h.pausedUntil}` : null,
         h.heldUntil ? `held until ${h.heldUntil} after a provider refusal` : null,
         h.sendRefusal ? `provider refusal unresolved (latest ${h.sendRefusal.lastAt})` : null,
+        h.inboxTestHeld ? 'held by the latest inbox test (spam)' : null,
       ]
       return { content: [{ type: 'text' as const, text: parts.filter((p) => p !== null).join('; ') }] }
     },
     {
       surface: 'chat',
-      confirm: async ({ mailbox, resolveRefusal, dailyCap, pausedUntil }, ctx) => {
+      confirm: async ({ mailbox, resolveRefusal, resumeInboxTest, dailyCap, pausedUntil }, ctx) => {
         // Nothing to change: the call fails at the API, so there is nothing to approve.
-        if (resolveRefusal === undefined && dailyCap === undefined && pausedUntil === undefined) return null
+        if (resolveRefusal === undefined && resumeInboxTest === undefined && dailyCap === undefined && pausedUntil === undefined) return null
         const current = await findMailbox(ctx, mailbox)
         const facts: Array<{ label: string; value: string }> = [{ label: 'Mailbox', value: mailbox }]
         if (resolveRefusal) {
           facts.push({
             label: 'Provider refusal',
             value: `${current ? refusalLabel(current.sendRefusal) : 'unknown'} → resolved, lifting its hold on sending`,
+          })
+        }
+        if (resumeInboxTest) {
+          facts.push({
+            label: 'Inbox test',
+            value: `${current ? (current.inboxTestHeld ? 'held: email landed in spam' : 'not held') : 'unknown'} → send again until the next daily test`,
           })
         }
         if (dailyCap !== undefined) {

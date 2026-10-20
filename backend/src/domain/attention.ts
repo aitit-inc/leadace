@@ -12,6 +12,7 @@ export type AttentionItem =
   | { kind: 'gmail_disconnected' }
   | { kind: 'gmail_auth_revoked'; fromEmail: string; since: string }
   | { kind: 'mailbox_send_refused'; fromEmail: string; sentThatDay: number }
+  | { kind: 'mailbox_inbox_test_spam'; fromEmail: string; spam: number; delivered: number }
   | { kind: 'no_outbound_channels' }
   | { kind: 'quota_exhausted'; constraint: QuotaConstraint }
   // The off-session credit charge was declined; auto top-up is off until
@@ -106,6 +107,7 @@ export type AttentionInput = {
   gmailConnected: boolean
   identities: IdentityHealthInput[]
   refusedMailboxes: Array<{ fromEmail: string; sentThatDay: number }>
+  spamHeldMailboxes: Array<{ fromEmail: string; spam: number; delivered: number }>
   quota: { exhausted: boolean; constraint: QuotaConstraint | null }
   creditTopUpFailedAt: Date | null
   futileProjects: Array<{ projectId: string; projectName: string; sends: number; engaged: number }>
@@ -136,6 +138,7 @@ export function deriveAttentionItems(input: AttentionInput): AttentionItem[] {
   if (!input.gmailConnected) items.push({ kind: 'gmail_disconnected' })
   items.push(...revoked)
   for (const m of input.refusedMailboxes) items.push({ kind: 'mailbox_send_refused', ...m })
+  for (const m of input.spamHeldMailboxes) items.push({ kind: 'mailbox_inbox_test_spam', ...m })
   if (input.project && !input.project.outboundChannelsConfigured) {
     items.push({ kind: 'no_outbound_channels' })
   }

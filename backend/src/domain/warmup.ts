@@ -1,4 +1,5 @@
 import { percentOf } from './dashboard'
+import { inboxTestHolds, type InboxTestResult } from './inbox-test'
 
 export interface WarmupConfig {
   startPerDay: number
@@ -19,6 +20,7 @@ export interface MailboxWarmupState {
   dailyCapOverride: number | null
   pausedUntil: Date | null
   sendRefusal: MailboxSendRefusal | null
+  inboxTestResult: InboxTestResult | null
 }
 
 // since/sentThatDay come from the streak's first refusal (sentThatDay = the
@@ -63,6 +65,7 @@ export function mailboxDailyCap(
 ): number {
   if (state.pausedUntil && now < state.pausedUntil) return 0
   if (heldUntil(state, now)) return 0
+  if (inboxTestHolds(state.inboxTestResult)) return 0
   if (state.dailyCapOverride !== null) return state.dailyCapOverride
   return rampCap(config, warmupWeeksElapsed(state, config, now))
 }
@@ -75,6 +78,8 @@ export interface MailboxDailyStatus {
   // not paused, so it reads as null (matching mailboxDailyCap's restored cap).
   pausedUntil: Date | null
   heldUntil: Date | null
+  // No end time: the next inbox test or the person lifts it.
+  inboxTestHeld: boolean
   rampWeek: number
   rampWeeks: number
   steadyStatePerDay: number
@@ -97,6 +102,7 @@ export function mailboxDailyStatus(
     remaining: Math.max(0, cap - used),
     pausedUntil: state.pausedUntil && state.pausedUntil > now ? state.pausedUntil : null,
     heldUntil: heldUntil(state, now),
+    inboxTestHeld: inboxTestHolds(state.inboxTestResult),
     rampWeek: warmupWeeksElapsed(state, config, now),
     rampWeeks: config.rampWeeks,
     steadyStatePerDay: config.steadyStatePerDay,
@@ -135,11 +141,17 @@ export type MailboxPoolPick<Id extends string = string> =
   // resumesAt: the earliest a pause or hold lifts, known only while every
   // mailbox waits on one. A lifted mailbox may still sit at its cap until UTC
   // midnight — the status does not carry the cap it returns to.
-  | { kind: 'exhausted'; cap: number; used: number; remaining: 0; resumesAt: Date | null }
+  | { kind: 'exhausted'; cap: number; used: number; remaining: 0; resumesAt: Date | null; inboxTestHeld: 'none' | 'some' | 'all' }
 
 function resumesAt(m: MailboxDailyStatus): Date | null {
   if (m.pausedUntil && m.heldUntil) return m.pausedUntil > m.heldUntil ? m.pausedUntil : m.heldUntil
   return m.pausedUntil ?? m.heldUntil
+}
+
+function inboxTestHeldIn(pool: MailboxDailyStatus[]): 'none' | 'some' | 'all' {
+  const held = pool.filter((m) => m.inboxTestHeld).length
+  if (held === 0) return 'none'
+  return held === pool.length ? 'all' : 'some'
 }
 
 // The first mailbox with sends left today; the totals describe the whole pool.
@@ -158,5 +170,6 @@ export function pickFromMailboxPool<Id extends string>(pool: MailboxPoolEntry<Id
     used,
     remaining: 0,
     resumesAt: allWaiting ? new Date(Math.min(...waits.map((t) => t.getTime()))) : null,
+    inboxTestHeld: inboxTestHeldIn(pool),
   }
 }

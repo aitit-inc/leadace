@@ -65,6 +65,12 @@ OPENAI_API_KEY=""
 # DNS half of the check.
 EMAILABLE_API_KEY=""
 
+# --- Inbox test (optional) ---
+# JSON array of seed mailboxes the daily inbox test sends to and reads over
+# IMAP: [{"address":"seed@gmail.com","imapHost":"imap.gmail.com","appPassword":"..."}]
+# (imapPort defaults to 993). Empty: no tests run.
+INBOX_TEST_SEEDS=""
+
 # --- Stripe (cloud edition only) ---
 # Required only when LEADACE_EDITION=cloud. Self-hosted ignores them and
 # 404s the /me/checkout, /me/portal, /stripe/webhook routes.

@@ -100,6 +100,15 @@ export function attentionMeta(item: AttentionItem): AttentionMeta {
 				ctaLabel: 'Resolve',
 				href: '/account-settings',
 			};
+		case 'mailbox_inbox_test_spam':
+			return {
+				icon: MailX,
+				tone: 'danger',
+				title: 'Email is landing in spam',
+				desc: `${item.fromEmail}: the daily inbox test put ${item.spam} of ${item.delivered} copies in spam, so sending from it is held`,
+				ctaLabel: 'Review',
+				href: '/account-settings',
+			};
 		case 'reply_collection_scope_missing':
 			return {
 				icon: MailQuestion,

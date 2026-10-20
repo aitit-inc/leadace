@@ -7,6 +7,8 @@ import {
   imapSearchDate,
   bytesToBinary,
   binaryToUtf8,
+  parseSpecialUseMailboxes,
+  imapQuoted,
 } from './imap'
 
 describe('imapResponseEnd', () => {
@@ -118,5 +120,27 @@ describe('imapSearchDate', () => {
   it('formats a non-zero-padded IMAP date in UTC', () => {
     expect(imapSearchDate(new Date('2026-01-05T23:00:00Z'))).toBe('5-Jan-2026')
     expect(imapSearchDate(new Date('2026-12-31T12:00:00Z'))).toBe('31-Dec-2026')
+  })
+})
+
+describe('parseSpecialUseMailboxes', () => {
+  it('finds the junk and trash mailboxes by attribute, whatever their localized name', () => {
+    const buf = [
+      '* LIST (\\HasNoChildren) "/" "INBOX"',
+      '* LIST (\\All \\HasNoChildren) "/" "[Gmail]/All Mail"',
+      '* LIST (\\HasNoChildren \\Junk) "/" "[Gmail]/&j,dg0TDhMPww6w-"',
+      '* LIST (\\HasNoChildren \\Trash) "/" "[Gmail]/Trash"',
+      'a2 OK Success',
+    ].join('\r\n')
+    expect(parseSpecialUseMailboxes(buf)).toEqual({ junk: '[Gmail]/&j,dg0TDhMPww6w-', trash: '[Gmail]/Trash' })
+  })
+
+  it('reads atom and escaped quoted names, and reports a missing role as null', () => {
+    const buf = ['* LIST (\\Junk) "." Junk', '* LIST (\\HasNoChildren) NIL "a \\"b\\""', 'a2 OK'].join('\r\n')
+    expect(parseSpecialUseMailboxes(buf)).toEqual({ junk: 'Junk', trash: null })
+  })
+
+  it('imapQuoted escapes quotes and backslashes', () => {
+    expect(imapQuoted('a "b" \\c')).toBe('"a \\"b\\" \\\\c"')
   })
 })

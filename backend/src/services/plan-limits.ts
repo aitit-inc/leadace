@@ -27,6 +27,7 @@ import {
   type MailboxPoolPick,
   type MailboxSendRefusal,
 } from '../domain/warmup'
+import type { InboxTestResult } from '../domain/inbox-test'
 
 // 'unlimited' is internal-only (no Stripe price), set manually in the DB for
 // staff / complimentary accounts. The Stripe webhook must never overwrite it.
@@ -453,10 +454,13 @@ export function mailboxQuotaErrorIfExhausted(quota: MailboxDailyQuota): ServiceE
 
 export function formatMailboxQuotaError(quota: MailboxDailyQuota): string {
   if (quota.kind !== 'exhausted') return 'Mailbox daily send cap reached.'
-  if (quota.resumesAt) {
-    return `Every mailbox this project sends from is paused or held after a provider refusal; the earliest lifts at ${quota.resumesAt.toISOString()} (a mailbox at its cap then still waits for UTC midnight). Check each mailbox in Account settings.`
-  }
-  return `Every mailbox this project sends from is at its safe daily send limit (${quota.cap}/day in total). This protects your sending domains' reputation; it resets at UTC midnight. Reach remaining prospects by form/SNS, or continue tomorrow.`
+  const spamHold =
+    "the latest inbox test put its email in spam. That lifts when a later test lands in the inbox, or when the person resumes the mailbox in Account settings."
+  if (quota.inboxTestHeld === 'all') return `Every mailbox this project sends from is held: ${spamHold}`
+  const rest = quota.resumesAt
+    ? `Every mailbox this project sends from is paused or held after a provider refusal; the earliest lifts at ${quota.resumesAt.toISOString()} (a mailbox at its cap then still waits for UTC midnight). Check each mailbox in Account settings.`
+    : `Every mailbox this project sends from is at its safe daily send limit (${quota.cap}/day in total). This protects your sending domains' reputation; it resets at UTC midnight. Reach remaining prospects by form/SNS, or continue tomorrow.`
+  return quota.inboxTestHeld === 'some' ? `${rest} Some of them are also held: ${spamHold}` : rest
 }
 
 export async function recordMailboxRefusal(
@@ -513,6 +517,7 @@ export type MailboxHealth =
       warmupStartedAt: Date | null
       dailyCapOverride: number | null
       sendRefusal: MailboxSendRefusal | null
+      inboxTestResult: InboxTestResult | null
     } & MailboxDailyStatus &
       MailboxBounceWindow)
 
@@ -564,6 +569,7 @@ export async function getMailboxHealth(
       dailyCapOverride: sendingIdentities.dailyCapOverride,
       pausedUntil: sendingIdentities.pausedUntil,
       sendRefusal: sendingIdentities.sendRefusal,
+      inboxTestResult: sendingIdentities.inboxTestResult,
     })
     .from(sendingIdentities)
     .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.identityId, identityId)))
@@ -581,6 +587,7 @@ export async function getMailboxHealth(
     warmupStartedAt: mailbox.warmupStartedAt,
     dailyCapOverride: mailbox.dailyCapOverride,
     sendRefusal: mailbox.sendRefusal,
+    inboxTestResult: mailbox.inboxTestResult,
     ...mailboxDailyStatus(mailbox, used, DEFAULT_WARMUP, now),
     ...mailboxBounceWindow(bounceByIdentity.get(identityId)),
   }
@@ -593,11 +600,13 @@ export const updateMailboxWarmupSchema = z
     dailyCapOverride: z.number().int().min(0).max(MAX_DAILY_CAP_OVERRIDE).nullable().optional(),
     pausedUntil: z.iso.datetime().nullable().optional(),
     resolveRefusal: z.literal(true).optional(),
+    resumeInboxTest: z.literal(true).optional(),
   })
   .strict()
   .refine(
-    (p) => p.dailyCapOverride !== undefined || p.pausedUntil !== undefined || p.resolveRefusal !== undefined,
-    { message: 'Provide dailyCapOverride, pausedUntil or resolveRefusal to update.' },
+    (p) =>
+      p.dailyCapOverride !== undefined || p.pausedUntil !== undefined || p.resolveRefusal !== undefined || p.resumeInboxTest !== undefined,
+    { message: 'Provide dailyCapOverride, pausedUntil, resolveRefusal or resumeInboxTest to update.' },
   )
 
 export type UpdateMailboxWarmupPatch = z.infer<typeof updateMailboxWarmupSchema>
@@ -615,6 +624,7 @@ export async function updateMailboxWarmup(
       ? { pausedUntil: patch.pausedUntil === null ? null : new Date(patch.pausedUntil) }
       : {}),
     ...(patch.resolveRefusal ? { sendRefusal: null } : {}),
+    ...(patch.resumeInboxTest ? { inboxTestResult: null } : {}),
     updatedAt: now,
   }
 

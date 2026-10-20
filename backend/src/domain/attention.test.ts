@@ -113,6 +113,7 @@ describe('deriveAttentionItems', () => {
     gmailConnected: true,
     identities: [],
     refusedMailboxes: [],
+    spamHeldMailboxes: [],
     futileProjects: [],
     quota: { exhausted: false, constraint: null },
     creditTopUpFailedAt: null,

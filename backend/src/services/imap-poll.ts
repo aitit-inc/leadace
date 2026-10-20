@@ -56,7 +56,7 @@ type ImapSession = {
   expectOk: (tag: string, response: string, what: string) => void
 }
 
-async function withImapSession<T>(
+export async function withImapSession<T>(
   conn: ImapConnection,
   timeoutMs: number,
   body: (session: ImapSession) => Promise<T>,

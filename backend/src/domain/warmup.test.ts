@@ -17,6 +17,7 @@ const base: MailboxWarmupState = {
   dailyCapOverride: null,
   pausedUntil: null,
   sendRefusal: null,
+  inboxTestResult: null,
 }
 
 describe('mailboxDailyCap', () => {
@@ -66,7 +67,7 @@ describe('mailboxDailyCap', () => {
 describe('mailboxDailyStatus', () => {
   it('projects cap/remaining and ramp progress for a never-sent mailbox', () => {
     expect(mailboxDailyStatus(base, 0, DEFAULT_WARMUP, NOW)).toEqual({
-      cap: 10, used: 0, remaining: 10, pausedUntil: null, heldUntil: null, rampWeek: 0, rampWeeks: 4, steadyStatePerDay: 25,
+      cap: 10, used: 0, remaining: 10, pausedUntil: null, heldUntil: null, inboxTestHeld: false, rampWeek: 0, rampWeeks: 4, steadyStatePerDay: 25,
     })
   })
 
@@ -104,6 +105,15 @@ describe('mailboxDailyStatus', () => {
     expect(probe.heldUntil).toBeNull()
     expect(probe.cap).toBe(25)
   })
+
+  it('holds a mailbox whose latest inbox test landed in spam', () => {
+    const tested = (inbox: number, spam: number) => ({ testedAt: '2026-06-21T11:00:00.000Z', inbox, spam, missing: 0 })
+    const held = mailboxDailyStatus({ ...base, warmupStartedAt: weeksAgo(10), inboxTestResult: tested(1, 3) }, 0, DEFAULT_WARMUP, NOW)
+    expect(held).toMatchObject({ cap: 0, inboxTestHeld: true })
+
+    const passed = mailboxDailyStatus({ ...base, warmupStartedAt: weeksAgo(10), inboxTestResult: tested(4, 0) }, 0, DEFAULT_WARMUP, NOW)
+    expect(passed).toMatchObject({ cap: 25, inboxTestHeld: false })
+  })
 })
 
 describe('warmupWeeksElapsed', () => {
@@ -136,6 +146,7 @@ describe('pickFromMailboxPool', () => {
     remaining: Math.max(0, cap - used),
     pausedUntil: null,
     heldUntil: null,
+    inboxTestHeld: false,
     rampWeek: 0,
     rampWeeks: 4,
     steadyStatePerDay: 25,
@@ -150,7 +161,7 @@ describe('pickFromMailboxPool', () => {
 
   it('is exhausted with no resume time when any mailbox merely hit its cap', () => {
     const pick = pickFromMailboxPool([entry('a', 10, 10), entry('b', 0, 0, { pausedUntil: t('2026-06-22T00:00:00Z') })])
-    expect(pick).toEqual({ kind: 'exhausted', cap: 10, used: 10, remaining: 0, resumesAt: null })
+    expect(pick).toEqual({ kind: 'exhausted', cap: 10, used: 10, remaining: 0, resumesAt: null, inboxTestHeld: 'none' })
   })
 
   it('resumes at the earliest pause or hold when every mailbox waits on one', () => {
@@ -166,7 +177,13 @@ describe('pickFromMailboxPool', () => {
     expect(pick).toMatchObject({ resumesAt: t('2026-06-22T00:00:00Z') })
   })
 
+  it('tells whether some or all of the mailboxes it waits on are held by the inbox test', () => {
+    const held = entry('b', 0, 0, { inboxTestHeld: true })
+    expect(pickFromMailboxPool([entry('a', 10, 10), held])).toMatchObject({ kind: 'exhausted', resumesAt: null, inboxTestHeld: 'some' })
+    expect(pickFromMailboxPool([held])).toMatchObject({ kind: 'exhausted', resumesAt: null, inboxTestHeld: 'all' })
+  })
+
   it('an empty pool is exhausted with nothing to wait for', () => {
-    expect(pickFromMailboxPool([])).toEqual({ kind: 'exhausted', cap: 0, used: 0, remaining: 0, resumesAt: null })
+    expect(pickFromMailboxPool([])).toEqual({ kind: 'exhausted', cap: 0, used: 0, remaining: 0, resumesAt: null, inboxTestHeld: 'none' })
   })
 })

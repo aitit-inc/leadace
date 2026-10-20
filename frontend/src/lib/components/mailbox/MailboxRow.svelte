@@ -180,7 +180,9 @@
           <dd class="text-text">{new Date(identity.grantedAt).toLocaleDateString()}</dd>
         </dl>
 
-        <MailboxWarmupForm {identity} {token} onSaved={onChanged} />
+        <div>
+          <MailboxWarmupForm {identity} {token} onSaved={onChanged} />
+        </div>
       </div>
 
       <div class="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-3">

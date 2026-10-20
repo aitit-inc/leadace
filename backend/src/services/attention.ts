@@ -9,6 +9,7 @@ import {
 import type { VitalsAssessment } from '../domain/loop/frame'
 import type { Edition } from '../domain/edition'
 import type { TenantId } from '../domain/ids'
+import { inboxTestHolds } from '../domain/inbox-test'
 import { getPlanInfo } from './billing'
 import { isContactQuotaExhausted } from './plan-limits'
 import { getCredentialsStatus } from './google-auth'
@@ -39,6 +40,7 @@ export async function loadTenantAttentionInput(
         pollFailingSince: sendingIdentities.pollFailingSince,
         lastPollError: sendingIdentities.lastPollError,
         sendRefusal: sendingIdentities.sendRefusal,
+        inboxTestResult: sendingIdentities.inboxTestResult,
       })
       .from(sendingIdentities)
       .where(eq(sendingIdentities.tenantId, tenantId)),
@@ -75,6 +77,11 @@ export async function loadTenantAttentionInput(
     // those) but it does have its own cap, so a refusal below is its own.
     identities: identities.filter((i) => i.parentIdentityId === null),
     refusedMailboxes: identities.flatMap((i) => (i.sendRefusal ? [{ fromEmail: i.fromEmail, sentThatDay: i.sendRefusal.sentThatDay }] : [])),
+    spamHeldMailboxes: identities.flatMap((i) =>
+      i.inboxTestResult && inboxTestHolds(i.inboxTestResult)
+        ? [{ fromEmail: i.fromEmail, spam: i.inboxTestResult.spam, delivered: i.inboxTestResult.inbox + i.inboxTestResult.spam }]
+        : [],
+    ),
     futileProjects,
     quota: {
       exhausted: isContactQuotaExhausted(quota),

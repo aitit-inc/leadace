@@ -336,6 +336,9 @@ npx wrangler secret put OPENAI_API_KEY        --config wrangler.api.jsonc
 # API Worker — verifies the recipient mailbox just before sending (optional)
 npx wrangler secret put EMAILABLE_API_KEY --config wrangler.api.jsonc
 
+# API Worker — seed mailboxes for the daily inbox test (optional)
+npx wrangler secret put INBOX_TEST_SEEDS --config wrangler.api.jsonc
+
 # MCP Worker — required
 npx wrangler secret put WEB_API_URL           --config wrangler.mcp.jsonc
 npx wrangler secret put SUPABASE_URL          --config wrangler.mcp.jsonc
@@ -606,6 +609,7 @@ Most self-hosters will leave Stripe off entirely.
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | API | for outbound | OAuth refresh-token exchange for Gmail send. |
 | `OPENAI_API_KEY` | API | yes | Powers the hosted agent (every job stage and the chat, onboarding included) and inquiry-chat. Without it none of these run. |
 | `EMAILABLE_API_KEY` | API | no | Emailable key (pay-as-you-go credits, no subscription). Verifies recipient mailboxes ahead of sending and refuses addresses that provably do not accept mail. Absent leaves only the free DNS half of that check, which still catches domains that went dark after the address was collected. |
+| `INBOX_TEST_SEEDS` | API | no | JSON array of seed mailboxes you own, read over IMAP with an app password: `[{"address":"seed@gmail.com","imapHost":"imap.gmail.com","appPassword":"..."}]` (`imapPort` defaults to 993). Once a day the hourly cron re-sends each sending mailbox's latest cold email to every seed and reads where it landed; when half or more of the delivered copies land in spam, that mailbox stops sending until a later test lands in the inbox or the user resumes it. Unset: no tests run, and a mailbox an earlier test held stays held until the user resumes it. |
 | `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | API | cloud only | Required only when `LEADACE_EDITION=cloud`. Ignored otherwise. |
 | `SHOWCASE_PROJECT_ID` | API | no | Project id the public `/live` scoreboard shows (`GET /api/live`). Only that project's settings show the "Publish a public scoreboard" switch, and it must be on. Unset keeps `/live` off. |
 

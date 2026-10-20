@@ -31,6 +31,7 @@ import {
   type MailboxDailyStatus,
   type MailboxSendRefusal,
 } from '../domain/warmup'
+import type { InboxTestResult } from '../domain/inbox-test'
 import {
   canRegisterMailbox,
   countMailboxBounceWindowByIdentity,
@@ -97,6 +98,7 @@ export type SendingIdentitySummary = {
   warmupStartedAt: Date | null
   dailyCapOverride: number | null
   sendRefusal: MailboxSendRefusal | null
+  inboxTestResult: InboxTestResult | null
   // Google refused the grant; an alias reports its parent's.
   revokedSince: Date | null
   // Projects listing this mailbox, plus for the sign-in account every project that lists none.
@@ -116,6 +118,7 @@ const summaryColumns = {
   pausedUntil: sendingIdentities.pausedUntil,
   dailyCapOverride: sendingIdentities.dailyCapOverride,
   sendRefusal: sendingIdentities.sendRefusal,
+  inboxTestResult: sendingIdentities.inboxTestResult,
   authRevokedAt: sendingIdentities.authRevokedAt,
   grantedAt: sendingIdentities.grantedAt,
 } as const
@@ -130,6 +133,7 @@ type SummaryRow = {
   pausedUntil: Date | null
   dailyCapOverride: number | null
   sendRefusal: MailboxSendRefusal | null
+  inboxTestResult: InboxTestResult | null
   authRevokedAt: Date | null
   grantedAt: Date
 }
@@ -152,6 +156,7 @@ function toSummary(
     warmupStartedAt: row.warmupStartedAt,
     dailyCapOverride: row.dailyCapOverride,
     sendRefusal: row.sendRefusal,
+    inboxTestResult: row.inboxTestResult,
     revokedSince,
     projects: projectNames,
     grantedAt: row.grantedAt,

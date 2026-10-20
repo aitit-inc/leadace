@@ -97,6 +97,28 @@ export function parseFetchMessages(buf: string): Array<{ uid: number; raw: strin
   return out
 }
 
+export function imapQuoted(s: string): string {
+  return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+}
+
+// RFC 6154 special-use attributes name a mailbox's role independently of its
+// name, which Gmail localizes by account language. A literal-encoded name is
+// skipped.
+export function parseSpecialUseMailboxes(buf: string): { junk: string | null; trash: string | null } {
+  const found = { junk: null as string | null, trash: null as string | null }
+  for (const line of buf.split('\r\n')) {
+    const m = line.match(/^\* LIST \(([^)]*)\) (?:"(?:[^"\\]|\\.)*"|NIL) (.+)$/i)
+    if (!m) continue
+    const flags = (m[1] ?? '').toLowerCase().split(/\s+/)
+    const raw = m[2] ?? ''
+    const name = raw.startsWith('"') ? raw.slice(1, -1).replace(/\\(.)/g, '$1') : raw.startsWith('{') ? null : raw
+    if (name === null) continue
+    if (flags.includes('\\junk')) found.junk ??= name
+    if (flags.includes('\\trash')) found.trash ??= name
+  }
+  return found
+}
+
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 export function imapSearchDate(d: Date): string {
   return `${d.getUTCDate()}-${MONTHS[d.getUTCMonth()]}-${d.getUTCFullYear()}`

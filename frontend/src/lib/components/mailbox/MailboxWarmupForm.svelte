@@ -86,6 +86,21 @@
     }
   }
 
+  async function resumeAfterInboxTest() {
+    errorMsg = '';
+    message = '';
+    saving = true;
+    try {
+      await updateIdentityWarmup(identity.identityId, { resumeInboxTest: true }, fetch, token);
+      await onSaved();
+      message = 'Sending resumed.';
+    } catch (e) {
+      errorMsg = e instanceof Error ? e.message : 'Failed to resume sending.';
+    } finally {
+      saving = false;
+    }
+  }
+
   async function save() {
     if (!draft) return;
     const cap = parsedCapOverride(draft);
@@ -138,8 +153,48 @@
   </div>
 {/if}
 
+{#if identity.inboxTestResult}
+  {@const t = identity.inboxTestResult}
+  {@const seeds = t.inbox + t.spam + t.missing}
+  {#if identity.inboxTestHeld}
+    <div
+      class="space-y-1.5 rounded-xl bg-danger/10 px-3 py-2.5 text-sm text-danger {identity.sendRefusal
+        ? 'mt-2'
+        : ''}"
+    >
+      <p>
+        The inbox test on {formatDateTime(t.testedAt)} put {t.spam} of {t.inbox + t.spam} copies of this
+        mailbox's latest cold email in spam. Sending from it is held.
+      </p>
+      <div class="flex flex-wrap items-center gap-2">
+        <span>
+          A later test that lands in the inbox lifts the hold. To send before then, change what you send and
+          resume.
+        </span>
+        <button
+          type="button"
+          onclick={resumeAfterInboxTest}
+          disabled={saving}
+          class="btn btn-secondary btn-sm"
+        >
+          Resume sending
+        </button>
+      </div>
+    </div>
+  {:else}
+    <p class="text-xs text-text-muted {identity.sendRefusal ? 'mt-2' : ''}">
+      Inbox test on {formatDateTime(t.testedAt)}: {t.inbox} of {seeds} copies in the
+      inbox{#if t.spam > 0}, {t.spam} in spam{/if}{#if t.missing > 0}, {t.missing} not arrived{/if}.
+    </p>
+  {/if}
+  <p class="mt-2 text-xs text-text-muted">
+    Once a day, LeadAce sends this mailbox's latest cold email to {seeds} of its own test inboxes to see where it
+    lands. The copies show in your Sent folder and don't count toward the daily cap.
+  </p>
+{/if}
+
 {#if draft}
-  <div class="space-y-4 {identity.sendRefusal ? 'mt-4' : ''}">
+  <div class="space-y-4 {identity.sendRefusal || identity.inboxTestResult ? 'mt-4' : ''}">
     <div>
       <label for="cap-override-{identity.identityId}" class="flex items-center gap-1.5 text-sm font-medium text-text">
         Daily cap override

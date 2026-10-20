@@ -29,6 +29,7 @@ import type { FrameSignal, VitalsAssessment } from '../domain/loop/frame'
 import { POLICY_ACTORS, POLICY_OPS, POLICY_TARGETS, RULE_ARCHIVE_REASONS, type ChangeEvidence, type ReachDiff } from '../domain/loop/change'
 import { PROPOSAL_STATUSES, type ProposedChange } from '../domain/loop/proposal'
 import type { MailboxSendRefusal } from '../domain/warmup'
+import type { InboxTestResult } from '../domain/inbox-test'
 import type { PaidCallModel } from '../domain/paid-calls'
 import type { JobLogLine, JobParams, JobProgress, JobResult } from '../domain/jobs'
 import { JOB_KINDS, JOB_ORIGINS, JOB_STATUSES } from '../domain/jobs'
@@ -443,6 +444,8 @@ export const sendingIdentities = pgTable('sending_identities', {
   dailyCapOverride: integer('daily_cap_override'),
   pausedUntil: timestamp('paused_until', { withTimezone: true }),
   sendRefusal: jsonb('send_refusal').$type<MailboxSendRefusal>(),
+  inboxTestSentAt: timestamp('inbox_test_sent_at', { withTimezone: true }),
+  inboxTestResult: jsonb('inbox_test_result').$type<InboxTestResult>(),
   // Observability only — NOT a poll cursor (the poll re-searches a fixed window).
   lastPolledAt: timestamp('last_polled_at', { withTimezone: true }),
   // Poll-failure streak start; NULL while healthy. Persistence is the alert

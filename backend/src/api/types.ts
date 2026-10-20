@@ -28,6 +28,8 @@ export type Env = {
   OPENAI_API_KEY: string
   // Absent leaves only the free DNS half of the send-time address check.
   EMAILABLE_API_KEY?: string
+  // Seed mailboxes for the inbox test (domain/inbox-test.ts). Absent: no tests run.
+  INBOX_TEST_SEEDS?: string
   // 'cloud' on the hosted SurpassOne deploy, 'self-hosted' (default) for
   // local dev and public-repo self-hosters. See domain/edition.ts.
   LEADACE_EDITION: string

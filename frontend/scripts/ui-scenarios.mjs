@@ -1135,6 +1135,41 @@ const SCENARIOS = [
       ];
     },
   },
+  {
+    name: 'inbox-test',
+    summary: 'A mailbox the daily inbox test holds for landing in spam, beside one that passed',
+    stack: 'self-host',
+    setup: async (ctx) => {
+      await seedProject(ctx, { name: 'Northwind outbound', settings: { outboundMode: 'send' } });
+      const testedAt = new Date(Date.now() - 2 * 3_600_000).toISOString();
+      const result = (inbox, spam) => q(JSON.stringify({ testedAt, inbox, spam, missing: 0 }));
+      // chk_sending_identities_secret_owner is why each has to carry secret bytes.
+      psql(
+        `INSERT INTO sending_identities (tenant_id, identity_id, user_id, provider, from_email, scope, secret, sign_in_account, warmup_started_at, inbox_test_result, granted_at, updated_at)
+         VALUES (${q(ctx.persona.tenantId)}, 'ui-inbox-test-held', ${q(ctx.persona.userId)}, 'gmail_oauth', 'sam@northwind-labs.example',
+                 'https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly',
+                 decode('00', 'hex'), true, NOW() - INTERVAL '40 days', ${result(1, 3)}::jsonb, NOW(), NOW()),
+                (${q(ctx.persona.tenantId)}, 'ui-inbox-test-passed', ${q(ctx.persona.userId)}, 'gmail_oauth', 'hello@northwind-labs.example',
+                 'https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly',
+                 decode('00', 'hex'), false, NOW() - INTERVAL '40 days', ${result(4, 0)}::jsonb, NOW(), NOW());`,
+      );
+      return [
+        {
+          name: 'mailboxes',
+          path: '/account-settings',
+          scrollTo: 'text=Mailboxes',
+          expect: ['Held: landed in spam', 'copies of this', 'Resume sending'],
+        },
+        {
+          name: 'passed',
+          path: '/account-settings',
+          click: 'text=hello@northwind-labs.example',
+          expect: '4 of 4 copies in the',
+        },
+        { name: 'attention', path: '/dashboard', expect: 'Email is landing in spam' },
+      ];
+    },
+  },
 ];
 
 // ─── stack ──────────────────────────────────────────────────────────────────

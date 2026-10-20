@@ -5,6 +5,7 @@ export type MailboxState = { tone: 'ok' | 'warning' | 'danger'; label: string };
 export function mailboxState(i: SendingIdentity, now = Date.now()): MailboxState {
   if (i.revokedSince !== null) return { tone: 'danger', label: 'Reconnect needed' };
   if (i.sendRefusal) return { tone: 'danger', label: 'Refused by provider' };
+  if (i.inboxTestHeld) return { tone: 'danger', label: 'Held: landed in spam' };
   if (i.pausedUntil && new Date(i.pausedUntil).getTime() > now) {
     return {
       tone: 'warning',

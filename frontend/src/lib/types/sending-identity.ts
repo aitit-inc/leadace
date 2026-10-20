@@ -19,6 +19,7 @@ export type SmtpConnectionView = {
 export type MailboxDailyStatus = {
   pausedUntil: string | null;
   heldUntil: string | null;
+  inboxTestHeld: boolean;
   cap: number;
   used: number;
   remaining: number;
@@ -35,6 +36,15 @@ export type MailboxBounceWindow = {
   sentInWindow: number;
   bounced: number;
   bounceRate: number;
+};
+
+// Mirrors backend domain/inbox-test.ts InboxTestResult: where the copies of the
+// mailbox's latest cold email landed at the seed mailboxes.
+export type InboxTestResult = {
+  testedAt: string;
+  inbox: number;
+  spam: number;
+  missing: number;
 };
 
 // Mirrors backend domain/warmup.ts MailboxSendRefusal.
@@ -58,6 +68,7 @@ export type SendingIdentity = {
   warmupStartedAt: string | null;
   dailyCapOverride: number | null;
   sendRefusal: MailboxSendRefusal | null;
+  inboxTestResult: InboxTestResult | null;
   // Google refused the grant; an alias reports its parent's.
   revokedSince: string | null;
   // Projects listing this mailbox, plus for the sign-in account every project that lists none.
@@ -104,6 +115,7 @@ export type MailboxWarmupPatch = {
   dailyCapOverride?: number | null;
   pausedUntil?: string | null;
   resolveRefusal?: true;
+  resumeInboxTest?: true;
 };
 
 // Returned by PUT /me/sending-identities/:id/warmup — the resulting health of
@@ -114,5 +126,6 @@ export type MailboxHealth = {
   warmupStartedAt: string | null;
   dailyCapOverride: number | null;
   sendRefusal: MailboxSendRefusal | null;
+  inboxTestResult: InboxTestResult | null;
 } & MailboxDailyStatus &
   MailboxBounceWindow;

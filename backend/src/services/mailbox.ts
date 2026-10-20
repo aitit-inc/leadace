@@ -4,6 +4,7 @@ import { alias } from 'drizzle-orm/pg-core'
 import type { Db } from '../db/connection'
 import { projectSendingIdentities, sendingIdentities, type SendingIdentityProvider } from '../db/schema'
 import { mailboxKind, type MailboxKind } from '../domain/sending-identity'
+import type { InboxTestResult } from '../domain/inbox-test'
 import { asSendingIdentityId, sendingIdentityIdSchema, type ProjectId, type ProjectRef, type SendingIdentityId, type TenantId } from '../domain/ids'
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
@@ -32,6 +33,7 @@ export type ProjectMailboxRow = {
   dailyCapOverride: number | null
   pausedUntil: Date | null
   sendRefusal: MailboxSendRefusal | null
+  inboxTestResult: InboxTestResult | null
   authRevokedAt: Date | null
   pollFailingSince: Date | null
   lastPollError: string | null
@@ -55,6 +57,7 @@ const mailboxColumns = {
   dailyCapOverride: sendingIdentities.dailyCapOverride,
   pausedUntil: sendingIdentities.pausedUntil,
   sendRefusal: sendingIdentities.sendRefusal,
+  inboxTestResult: sendingIdentities.inboxTestResult,
   authRevokedAt: sql`COALESCE(${parentIdentity.authRevokedAt}, ${sendingIdentities.authRevokedAt})`.mapWith(sendingIdentities.authRevokedAt),
   pollFailingSince: sql`COALESCE(${parentIdentity.pollFailingSince}, ${sendingIdentities.pollFailingSince})`.mapWith(sendingIdentities.pollFailingSince),
   lastPollError: sql`COALESCE(${parentIdentity.lastPollError}, ${sendingIdentities.lastPollError})`.mapWith(sendingIdentities.lastPollError),

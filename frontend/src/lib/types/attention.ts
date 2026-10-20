@@ -8,6 +8,7 @@ export type AttentionItem =
 	| { kind: 'gmail_disconnected' }
 	| { kind: 'gmail_auth_revoked'; fromEmail: string; since: string }
 	| { kind: 'mailbox_send_refused'; fromEmail: string; sentThatDay: number }
+	| { kind: 'mailbox_inbox_test_spam'; fromEmail: string; spam: number; delivered: number }
 	| { kind: 'no_outbound_channels' }
 	| { kind: 'quota_exhausted'; constraint: QuotaConstraint }
 	| { kind: 'credit_top_up_failed'; since: string }

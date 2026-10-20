@@ -41,6 +41,8 @@ import { createDb } from '../db/connection'
 import { runAccountActivityAlert } from '../services/account-activity'
 import { runDailyBetaStats } from '../services/beta-stats'
 import { runReplyIngest } from '../services/reply-ingest'
+import { parseInboxTestSeeds, runInboxTests } from '../services/inbox-test'
+import { sendContextOf } from '../services/pipeline/context'
 import { watchVerifierBalance } from '../services/email-verify'
 import { runDueSchedules } from './schedule-runner'
 import { threadRunner } from './thread-runner'
@@ -178,6 +180,16 @@ const handler = {
           })
           .catch((e: unknown) => {
             console.error('[scheduled] schedules failed', e)
+            Sentry.captureException(e)
+          }),
+      )
+      ctx.waitUntil(
+        runInboxTests(db, sendContextOf(env), parseInboxTestSeeds(env.INBOX_TEST_SEEDS), new Date(controller.scheduledTime))
+          .then((s) => {
+            console.log(`[scheduled] inbox-test tested=${s.tested} held=${s.held} sent=${s.sent} failed=${s.failed} seedReadErrors=${s.seedReadErrors}`)
+          })
+          .catch((e: unknown) => {
+            console.error('[scheduled] inbox-test failed', e)
             Sentry.captureException(e)
           }),
       )

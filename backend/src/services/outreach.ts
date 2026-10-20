@@ -1598,6 +1598,56 @@ export async function previewDraft(
   return ok({ footer: { kind: 'rendered', text: attachments.footer } })
 }
 
+export type RenderedEmail = {
+  subject: string
+  body: string
+  headers: Record<string, string>
+  senderDisplayName: string | null
+}
+
+// A sent email as its prospect got it, footer and headers rendered by the same
+// code as the send, for a copy sent elsewhere (the inbox test).
+export async function renderSentEmail(
+  db: Db,
+  tenantId: TenantId,
+  ctx: SendContext,
+  outreachLogId: number,
+): Promise<ServiceResult<RenderedEmail>> {
+  const [log] = await db
+    .select({ projectId: outreachLogs.projectId, prospectId: outreachLogs.prospectId, subject: outreachLogs.subject, body: outreachLogs.body })
+    .from(outreachLogs)
+    .where(and(
+      eq(outreachLogs.id, outreachLogId),
+      eq(outreachLogs.tenantId, tenantId),
+      eq(outreachLogs.channel, 'email'),
+      eq(outreachLogs.status, 'sent'),
+    ))
+    .limit(1)
+  if (!log) return err('NOT_FOUND', 'Sent email not found')
+
+  const [sendSettings, complianceResult] = await Promise.all([
+    loadProjectSendSettings(db, log.projectId as ProjectId),
+    assertTenantComplianceReady(db, tenantId),
+  ])
+  if (!complianceResult.ok) return complianceResult
+
+  const attachments = await buildOutreachFooter(db, tenantId, ctx, {
+    prospectId: log.prospectId,
+    outreachLogId,
+    compliance: complianceResult.value,
+    inquiryLandingEnabled: sendSettings.inquiryLandingEnabled,
+    unsubscribeEnabled: sendSettings.unsubscribeEnabled,
+    footerOverride: sendSettings.footerOverride,
+    targetLanguage: sendSettings.targetLanguage,
+  })
+  return ok({
+    subject: log.subject ?? '',
+    body: `${log.body}${attachments.footer}`,
+    headers: attachments.headers,
+    senderDisplayName: sendSettings.senderDisplayName,
+  })
+}
+
 // For form / SNS drafts delivered outside our system (user submits manually).
 // Email drafts must use /send (Gmail-backed) — this refuses channel=email so
 // the two paths stay distinct in the UI.
