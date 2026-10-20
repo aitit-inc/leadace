@@ -1186,6 +1186,35 @@ const SCENARIOS = [
       ];
     },
   },
+  {
+    name: 'mailbox-refused',
+    summary: 'Two mailboxes the provider refused: one after 1 send that day, one after 12',
+    stack: 'self-host',
+    setup: async (ctx) => {
+      // The dashboard lists what needs attention only beside a project.
+      await seedProject(ctx, { name: 'Northwind outbound', settings: { outboundMode: 'send' } });
+      const at = new Date().toISOString();
+      const refusal = (sentThatDay) => q(JSON.stringify({ since: at, lastAt: at, detail: '554 5.1.8 Sender Address Blocked', sentThatDay }));
+      psql(
+        `INSERT INTO sending_identities (tenant_id, identity_id, user_id, provider, from_email, scope, secret, sign_in_account, warmup_started_at, send_refusal, granted_at, updated_at)
+         VALUES (${q(ctx.persona.tenantId)}, 'ui-refused-first', ${q(ctx.persona.userId)}, 'gmail_oauth', 'sam@northwind-labs.example',
+                 'https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly',
+                 decode('00', 'hex'), true, NOW() - INTERVAL '40 days', ${refusal(1)}::jsonb, NOW(), NOW()),
+                (${q(ctx.persona.tenantId)}, 'ui-refused-later', ${q(ctx.persona.userId)}, 'gmail_oauth', 'hello@northwind-labs.example',
+                 'https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly',
+                 decode('00', 'hex'), false, NOW() - INTERVAL '40 days', ${refusal(12)}::jsonb, NOW(), NOW());`,
+      );
+      return [
+        {
+          name: 'mailboxes',
+          path: '/account-settings',
+          scrollTo: 'text=Mailboxes',
+          expect: ['Unblock it with the provider.', 'or set a daily cap below 12'],
+        },
+        { name: 'attention', path: '/dashboard', expect: ['unblock it with the provider', 'or set its daily cap below 12'] },
+      ];
+    },
+  },
 ];
 
 // ─── stack ──────────────────────────────────────────────────────────────────

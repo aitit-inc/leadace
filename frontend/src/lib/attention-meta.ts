@@ -95,7 +95,7 @@ export function attentionMeta(item: AttentionItem): AttentionMeta {
 				tone: 'danger',
 				title: 'Mail provider refused to send',
 				desc: `${item.fromEmail}: unblock it with the provider${
-					item.sentThatDay > 0 ? `, or set its daily cap below ${item.sentThatDay}` : ''
+					item.sentThatDay > 1 ? `, or set its daily cap below ${item.sentThatDay}` : ''
 				}`,
 				ctaLabel: 'Resolve',
 				href: '/account-settings',

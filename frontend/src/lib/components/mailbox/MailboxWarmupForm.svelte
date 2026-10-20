@@ -155,7 +155,7 @@
     </p>
     <div class="flex flex-wrap items-center gap-2">
       <span>
-        Unblock it with the provider{#if identity.sendRefusal.sentThatDay > 0}, or set a daily cap below {identity
+        Unblock it with the provider{#if identity.sendRefusal.sentThatDay > 1}, or set a daily cap below {identity
             .sendRefusal.sentThatDay}{/if}.
       </span>
       <button
