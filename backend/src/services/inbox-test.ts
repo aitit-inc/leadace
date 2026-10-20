@@ -4,7 +4,16 @@ import { runWithRls } from '../db/rls'
 import { sendingIdentities } from '../db/schema'
 import { sendForIdentity } from '../auth/google'
 import { asSendingIdentityId, asTenantId, type SendingIdentityId, type TenantId } from '../domain/ids'
-import { imapQuoted, imapTaggedStatus, parseSpecialUseMailboxes, parseUidSearch } from '../domain/imap'
+import { getHeader, parseTopHeaders } from '../domain/email-message'
+import {
+  imapQuoted,
+  imapSearchDate,
+  imapTaggedStatus,
+  parseFetchMessages,
+  parseSpecialUseMailboxes,
+  parseUidSearch,
+} from '../domain/imap'
+import { normalizeMessageId } from '../domain/reply'
 import {
   inboxTestDue,
   inboxTestHolds,
@@ -29,9 +38,8 @@ export type InboxTestSummary = { tested: number; held: number; sent: number; fai
 // seed) stay inside the cron's 15-minute wall time; mailboxes left over are due next tick.
 const SEND_BUDGET_MS = 4 * 60 * 1000
 const READ_DELAY_MS = 5 * 60 * 1000
-const SEED_READ_TIMEOUT_MS = 30_000
-// Keeps each seed's session inside its timeout.
-const MAX_PROBES_PER_RUN = 40
+const SEED_READ_TIMEOUT_MS = 60_000
+const DAY_MS = 24 * 60 * 60 * 1000
 
 // messageId: the copy's Message-ID as the provider sent it; null when it was
 // not read back, so the copy cannot be found.
@@ -104,9 +112,10 @@ async function readSeeds(seeds: InboxTestSeed[], probes: Probe[], summary: Inbox
   return observed
 }
 
-// Reports each copy as it is found; a copy is missing only once both folders
-// were searched. Without a \Junk mailbox nothing is reported: a copy outside
-// the inbox could be either.
+// A round trip from the cron took seconds, so each folder costs the same few
+// commands however many copies it holds. Reports each copy as it is found; a
+// copy is missing only once both folders were read. Without a \Junk mailbox
+// nothing is reported: a copy outside the inbox could be either.
 async function readSeed(seed: InboxTestSeed, messageIds: string[], onObserved: (messageId: string, placement: SeedPlacement) => void): Promise<void> {
   const conn = { host: seed.imapHost, port: seed.imapPort, username: seed.address, appPassword: seed.appPassword }
   await withImapSession(conn, SEED_READ_TIMEOUT_MS, async ({ command, expectOk }) => {
@@ -119,24 +128,32 @@ async function readSeed(seed: InboxTestSeed, messageIds: string[], onObserved: (
     }
     if (!trash) console.error(`[inbox-test] seed ${seed.address} names no \\Trash mailbox; read copies stay in place`)
 
+    const wanted = new Map(messageIds.map((id) => [normalizeMessageId(id), id]))
     const unfound = new Set(messageIds)
     const folders: Array<[string, SeedPlacement]> = [['INBOX', 'inbox'], [junk, 'spam']]
     for (const [folder, placement] of folders) {
       const select = await command(`SELECT ${imapQuoted(folder)}`)
       expectOk(select.tag, select.response, 'SELECT')
-      for (const id of [...unfound]) {
-        const search = await command(`UID SEARCH HEADER Message-ID ${imapQuoted(id)}`)
-        expectOk(search.tag, search.response, 'SEARCH')
-        const uids = parseUidSearch(search.response)
-        if (uids.length === 0) continue
-        unfound.delete(id)
-        onObserved(id, placement)
-        if (!trash) continue
-        // The copy carries a prospect's name and company; the provider empties its trash.
-        const move = await command(`UID MOVE ${uids.join(',')} ${imapQuoted(trash)}`)
-        if (imapTaggedStatus(move.response, move.tag) !== 'OK') {
-          console.error(`[inbox-test] seed ${seed.address} could not move a read copy to ${trash}`)
-        }
+      // SINCE is a date in the server's timezone; a day back covers copies sent minutes ago.
+      const search = await command(`UID SEARCH SINCE ${imapSearchDate(new Date(Date.now() - DAY_MS))}`)
+      expectOk(search.tag, search.response, 'SEARCH')
+      const recent = parseUidSearch(search.response)
+      if (recent.length === 0) continue
+      const fetch = await command(`UID FETCH ${recent.join(',')} (UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])`)
+      expectOk(fetch.tag, fetch.response, 'FETCH')
+      const copies: number[] = []
+      for (const { uid, raw } of parseFetchMessages(fetch.response)) {
+        const header = getHeader(parseTopHeaders(raw), 'message-id')
+        const id = header === null ? undefined : wanted.get(normalizeMessageId(header))
+        if (id === undefined) continue
+        copies.push(uid)
+        if (unfound.delete(id)) onObserved(id, placement)
+      }
+      if (!trash || copies.length === 0) continue
+      // The copy carries a prospect's name and company; the provider empties its trash.
+      const move = await command(`UID MOVE ${copies.join(',')} ${imapQuoted(trash)}`)
+      if (imapTaggedStatus(move.response, move.tag) !== 'OK') {
+        console.error(`[inbox-test] seed ${seed.address} could not move read copies to ${trash}`)
       }
     }
     for (const id of unfound) onObserved(id, 'missing')
@@ -183,7 +200,7 @@ async function sendProbes(db: Db, ctx: SendContext, seeds: InboxTestSeed[], now:
   const sendUntil = Date.now() + SEND_BUDGET_MS
   const probes: Probe[] = []
   for (const c of candidates) {
-    if (probes.length >= MAX_PROBES_PER_RUN || Date.now() > sendUntil) break
+    if (Date.now() > sendUntil) break
     const tenantId = asTenantId(c.tenant_id)
     const identityId = asSendingIdentityId(c.identity_id)
     try {

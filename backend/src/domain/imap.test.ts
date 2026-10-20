@@ -72,6 +72,19 @@ describe('parseFetchMessages', () => {
     expect(parseFetchMessages(buf)).toEqual([{ uid: 5, raw: m }])
   })
 
+  it('reads a header-only fetch, whose section names its fields in parentheses', () => {
+    const h1 = 'Message-ID: <a@mail.gmail.com>\r\n\r\n'
+    const h2 = 'Message-Id: <b@mail.gmail.com>\r\n\r\n'
+    const buf =
+      `* 1 FETCH (UID 5 BODY[HEADER.FIELDS (MESSAGE-ID)] {${h1.length}}\r\n${h1})\r\n` +
+      `* 2 FETCH (UID 8 BODY[HEADER.FIELDS (MESSAGE-ID)] {${h2.length}}\r\n${h2})\r\n` +
+      `a1 OK FETCH completed\r\n`
+    expect(parseFetchMessages(buf)).toEqual([
+      { uid: 5, raw: h1 },
+      { uid: 8, raw: h2 },
+    ])
+  })
+
   it('captures a raw message that itself contains parentheses', () => {
     const m = 'Subject: re (urgent) :)\r\n\r\nbody )('
     const buf = `* 1 FETCH (UID 3 BODY[] {${m.length}}\r\n${m})\r\na1 OK\r\n`
