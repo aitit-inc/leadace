@@ -66,7 +66,7 @@ OPENAI_API_KEY=""
 EMAILABLE_API_KEY=""
 
 # --- Inbox test (optional) ---
-# JSON array of seed mailboxes the daily inbox test sends to and reads over
+# JSON array of seed mailboxes the inbox test sends to and reads over
 # IMAP: [{"address":"seed@gmail.com","imapHost":"imap.gmail.com","appPassword":"..."}]
 # (imapPort defaults to 993). Empty: no tests run.
 INBOX_TEST_SEEDS=""

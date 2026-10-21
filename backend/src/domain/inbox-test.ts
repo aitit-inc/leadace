@@ -1,13 +1,17 @@
 import { z } from 'zod'
+import type { PolicyTarget } from './loop/change'
 
 // The inbox test re-sends a mailbox's latest cold email to seed mailboxes
 // LeadAce owns and reads where each copy landed. A recipient's own inbox is
 // invisible, and Postmaster Tools reports neither Workspace recipients nor
 // small volumes, so seeds are the only placement signal a sender can read.
 
-const INBOX_TEST_INTERVAL_MS = 23 * 60 * 60 * 1000
-// Only a mailbox that is sending is worth testing.
-const INBOX_TEST_ACTIVE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000
+// Bounds the prospects a mailbox can reach in spam before a test shows it;
+// each test costs one email per seed.
+const INBOX_TEST_EVERY = 100
+
+// The changes that alter what a project's cold emails say; settings carry the language.
+export const CONTENT_CHANGES = ['variant', 'business', 'sales_strategy', 'settings'] as const satisfies readonly PolicyTarget[]
 
 // INBOX_TEST_SEEDS: a JSON array of the seed mailboxes, read over IMAP with an
 // app password; the IMAP username is the address.
@@ -67,9 +71,12 @@ export function judgeInboxTest(
   return { testedAt: testedAt.toISOString(), ...counts }
 }
 
-// Daily while the mailbox sends; a held one sends nothing new, so only a test
-// the person starts can lift its hold.
-export function inboxTestDue(lastSentAt: Date, testSentAt: Date | null, result: InboxTestResult | null, now: Date): boolean {
-  if (testSentAt && now.getTime() - testSentAt.getTime() < INBOX_TEST_INTERVAL_MS) return false
-  return now.getTime() - lastSentAt.getTime() < INBOX_TEST_ACTIVE_WINDOW_MS && !inboxTestHolds(result)
+// contentChangedAt: the latest content change to the probe's project before the probe was sent.
+export type SinceInboxTest = { testSentAt: Date | null; firstTouches: number; contentChangedAt: Date | null }
+
+// A held mailbox sends nothing new, so only a test the person starts can lift its hold.
+export function inboxTestDue(since: SinceInboxTest, result: InboxTestResult | null): boolean {
+  if (inboxTestHolds(result)) return false
+  if (since.testSentAt === null) return true
+  return since.firstTouches >= INBOX_TEST_EVERY || (since.contentChangedAt !== null && since.contentChangedAt > since.testSentAt)
 }

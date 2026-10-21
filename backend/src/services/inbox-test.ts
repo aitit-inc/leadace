@@ -15,6 +15,7 @@ import {
 } from '../domain/imap'
 import { normalizeMessageId } from '../domain/reply'
 import {
+  CONTENT_CHANGES,
   inboxTestDue,
   inboxTestHolds,
   inboxTestSeedsSchema,
@@ -22,6 +23,7 @@ import {
   type InboxTestResult,
   type InboxTestSeed,
   type SeedPlacement,
+  type SinceInboxTest,
 } from '../domain/inbox-test'
 import { DEFAULT_WARMUP, mailboxDailyCap, type MailboxSendRefusal } from '../domain/warmup'
 import { withImapSession, type ImapSession } from './imap-poll'
@@ -79,7 +81,7 @@ export async function scheduleInboxTests(
   now: Date,
 ): Promise<number> {
   if (seeds.length === 0) return 0
-  const due = (await probeCandidates(db, null, now)).filter((c) => c.canSend && inboxTestDue(c.lastSentAt, c.testSentAt, c.previous, now))
+  const due = (await probeCandidates(db, null, now)).filter((c) => c.canSend && inboxTestDue(c.since, c.previous))
   return launchInboxTests(db, tests, due)
 }
 
@@ -118,16 +120,12 @@ async function launchInboxTests(db: Db, tests: Workflow<InboxTestParams>, candid
     targets.push({ tenantId, identityId, outreachLogId, previous, claimedAt: claimedAt.toISOString() })
   }
   if (targets.length === 0) return 0
-  try {
-    await tests.create({ params: { targets } })
-  } catch (e) {
-    for (const t of targets) await releaseInboxTest(db, t)
-    throw e
-  }
+  await tests.create({ params: { targets } })
   return targets.length
 }
 
 // Null: another test holds the mailbox, so a second press or an overlapping run does not test it twice.
+// A test that sends nothing keeps its claim, so a mailbox whose sends keep failing is not retried hourly.
 async function claimInboxTest(db: Db, tenantId: TenantId, identityId: SendingIdentityId): Promise<Date | null> {
   const at = new Date()
   const claimed = await db
@@ -142,20 +140,6 @@ async function claimInboxTest(db: Db, tenantId: TenantId, identityId: SendingIde
     )
     .returning({ identityId: sendingIdentities.identityId })
   return claimed.length > 0 ? at : null
-}
-
-// For a test that sent nothing: the mailbox is due again at the next run.
-export async function releaseInboxTest(db: Db, target: ProbeTarget): Promise<void> {
-  await db
-    .update(sendingIdentities)
-    .set({ inboxTestSentAt: null })
-    .where(
-      and(
-        eq(sendingIdentities.tenantId, target.tenantId),
-        eq(sendingIdentities.identityId, target.identityId),
-        eq(sendingIdentities.inboxTestSentAt, new Date(target.claimedAt)),
-      ),
-    )
 }
 
 // One copy per Workflow step, so a step the runtime reruns resends at most one
@@ -346,8 +330,9 @@ type CandidateRow = {
   tenant_id: string
   identity_id: string
   outreach_log_id: number | string
-  last_sent_at: string | Date
   test_sent_at: string | Date | null
+  first_touches: number | string
+  content_changed_at: string | Date | null
   result: string | null
   warmup_started_at: string | Date | null
   daily_cap_override: number | string | null
@@ -360,8 +345,7 @@ type Candidate = {
   identityId: SendingIdentityId
   outreachLogId: number
   previous: InboxTestResult | null
-  lastSentAt: Date
-  testSentAt: Date | null
+  since: SinceInboxTest
   canSend: boolean
 }
 
@@ -375,14 +359,22 @@ async function probeCandidates(
 ): Promise<Candidate[]> {
   // The probe is the mailbox's latest first touch: what it sends cold.
   const rows = await db.execute<CandidateRow>(sql`
-    SELECT si.tenant_id, si.identity_id, latest.id AS outreach_log_id, latest.sent_at AS last_sent_at,
+    SELECT si.tenant_id, si.identity_id, latest.id AS outreach_log_id,
       si.inbox_test_sent_at AS test_sent_at, si.inbox_test_result::text AS result,
+      (SELECT count(*) FROM outreach_logs ol
+        WHERE ol.tenant_id = si.tenant_id AND ol.sending_identity_id = si.identity_id
+          AND ol.channel = 'email' AND ol.status = 'sent' AND ol.touch_number = 1
+          AND ol.sent_at > si.inbox_test_sent_at) AS first_touches,
+      (SELECT max(pc.created_at) FROM policy_changes pc
+        WHERE pc.tenant_id = si.tenant_id AND pc.project_id = latest.project_id
+          AND pc.target IN (${sql.join(CONTENT_CHANGES.map((t) => sql`${t}`), sql`, `)})
+          AND pc.created_at < latest.sent_at) AS content_changed_at,
       si.warmup_started_at, si.daily_cap_override, si.paused_until, si.send_refusal::text AS send_refusal
     FROM sending_identities si
     LEFT JOIN sending_identities parent
       ON parent.tenant_id = si.tenant_id AND parent.identity_id = si.parent_identity_id
     JOIN LATERAL (
-      SELECT ol.id, ol.sent_at FROM outreach_logs ol
+      SELECT ol.id, ol.project_id, ol.sent_at FROM outreach_logs ol
       WHERE ol.tenant_id = si.tenant_id AND ol.sending_identity_id = si.identity_id
         AND ol.channel = 'email' AND ol.status = 'sent' AND ol.touch_number = 1
       ORDER BY ol.sent_at DESC
@@ -396,8 +388,7 @@ async function probeCandidates(
     identityId: asSendingIdentityId(c.identity_id),
     outreachLogId: Number(c.outreach_log_id),
     previous: parsed<InboxTestResult>(c.result),
-    lastSentAt: new Date(c.last_sent_at),
-    testSentAt: dated(c.test_sent_at),
+    since: { testSentAt: dated(c.test_sent_at), firstTouches: Number(c.first_touches), contentChangedAt: dated(c.content_changed_at) },
     // The person's pause or zero cap and a provider's refusal stop the probe
     // too; only the test's own hold does not.
     canSend:

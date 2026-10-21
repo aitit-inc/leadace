@@ -336,7 +336,7 @@ npx wrangler secret put OPENAI_API_KEY        --config wrangler.api.jsonc
 # API Worker — verifies the recipient mailbox just before sending (optional)
 npx wrangler secret put EMAILABLE_API_KEY --config wrangler.api.jsonc
 
-# API Worker — seed mailboxes for the daily inbox test (optional)
+# API Worker — seed mailboxes for the inbox test (optional)
 npx wrangler secret put INBOX_TEST_SEEDS --config wrangler.api.jsonc
 
 # MCP Worker — required

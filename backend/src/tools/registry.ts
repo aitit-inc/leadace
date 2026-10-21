@@ -613,7 +613,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_mailbox_health',
-    "Warmup and daily-cap state of the mailboxes this project sends from, in priority order (its listed mailboxes, else the sign-in Google account): the cap / used / remaining today over the mailboxes able to send and which one the next send uses, then per mailbox its address, warmup ramp (week X of N) or fixed cap override, today's cap / used / remaining, any pause, a revoked Google connection, an unresolved provider refusal, a trailing 30-day bounce rate (threaded-only lower bound), and the latest daily inbox test (inbox / spam / not arrived at seed mailboxes; spam holds sending). This per-mailbox email cap is separate from the plan/billing outreach quota — email sends only, resets at UTC midnight. Answers with a no-mailbox state when the project lists no mailbox and the sign-in Google account is not connected.",
+    "Warmup and daily-cap state of the mailboxes this project sends from, in priority order (its listed mailboxes, else the sign-in Google account): the cap / used / remaining today over the mailboxes able to send and which one the next send uses, then per mailbox its address, warmup ramp (week X of N) or fixed cap override, today's cap / used / remaining, any pause, a revoked Google connection, an unresolved provider refusal, a trailing 30-day bounce rate (threaded-only lower bound), and the latest inbox test (inbox / spam / not arrived at seed mailboxes; spam holds sending). This per-mailbox email cap is separate from the plan/billing outreach quota — email sends only, resets at UTC midnight. Answers with a no-mailbox state when the project lists no mailbox and the sign-in Google account is not connected.",
     {
       projectId: z.string().min(1).describe('Project name or ID'),
     },
@@ -666,7 +666,7 @@ export function buildToolRegistry(): ToolDef[] {
     {
       mailbox: z.email().describe('The mailbox address, as get_mailbox_health names it.'),
       resolveRefusal: z.literal(true).optional().describe('The person says the provider refusal is resolved, e.g. the account was unblocked.'),
-      resumeInboxTest: z.literal(true).optional().describe('The person chooses to send again despite the latest inbox test landing in spam; the next daily test judges again.'),
+      resumeInboxTest: z.literal(true).optional().describe('The person chooses to send again despite the latest inbox test landing in spam; the next inbox test judges again.'),
       dailyCap: z.number().int().min(0).nullable().optional().describe('Fixed daily email cap; null returns to the warmup ramp.'),
       pausedUntil: z.iso.datetime().nullable().optional().describe('Pause sending until this time (ISO 8601); null resumes a pause.'),
     },
@@ -720,7 +720,7 @@ export function buildToolRegistry(): ToolDef[] {
         if (resumeInboxTest) {
           facts.push({
             label: 'Inbox test',
-            value: `${current ? (current.inboxTestHeld ? 'held: email landed in spam' : 'not held') : 'unknown'} → send again until the next daily test`,
+            value: `${current ? (current.inboxTestHeld ? 'held: email landed in spam' : 'not held') : 'unknown'} → send again until the next inbox test`,
           })
         }
         if (dailyCap !== undefined) {

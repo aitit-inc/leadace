@@ -6,7 +6,6 @@ import {
   parseInboxTestSeeds,
   readSeeds,
   recordResults,
-  releaseInboxTest,
   sendCopy,
   type InboxTestParams,
   type Probe,
@@ -26,13 +25,7 @@ export class InboxTestWorkflow extends WorkflowEntrypoint<Env, InboxTestParams> 
         if (!sent) break
         copies.push({ address: seed.address, messageId: sent.messageId })
       }
-      if (copies.length > 0) {
-        probes.push({ target, copies })
-      } else {
-        await step.do(`release ${target.tenantId} ${target.identityId}`, () =>
-          withDb(this.env.DATABASE_URL, (db) => releaseInboxTest(db, target)).then(() => true),
-        )
-      }
+      if (copies.length > 0) probes.push({ target, copies })
     }
     if (probes.length === 0) return
     // Every copy measured arrived within seconds.

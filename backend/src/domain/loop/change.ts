@@ -7,7 +7,7 @@ import type { Locale } from '../locale'
 // new frame starts: the loop measures from the latest one. The tick's daily
 // reweighting is not in it; that is lever_decisions.
 export const POLICY_TARGETS = ['variant', 'strategy', 'business', 'sales_strategy', 'settings', 'frame'] as const
-type PolicyTarget = (typeof POLICY_TARGETS)[number]
+export type PolicyTarget = (typeof POLICY_TARGETS)[number]
 export type OptionTarget = Extract<PolicyTarget, 'variant' | 'strategy'>
 export type DocumentTarget = Extract<PolicyTarget, 'business' | 'sales_strategy'>
 

@@ -1166,9 +1166,7 @@ const SCENARIOS = [
           scrollTo: 'text=Mailboxes',
           expect: ['Held: landed in spam', 'copies of this', 'Resume sending', 'Test now'],
         },
-        // Both themes press it on the same mailbox. Its fake grant sends nothing,
-        // so a test releases its claim at once and the next press starts again,
-        // unless it comes before that release.
+        // Both themes press it on the same mailbox, so the second press finds the first one's test running.
         {
           name: 'started',
           path: '/account-settings',

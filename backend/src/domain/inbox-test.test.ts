@@ -53,17 +53,24 @@ describe('judgeInboxTest', () => {
 })
 
 describe('inboxTestDue', () => {
-  const now = new Date('2026-10-22T11:00:00.000Z')
-  const hoursAgo = (h: number) => new Date(now.getTime() - h * 3_600_000)
+  const tested = new Date('2026-10-20T11:00:00.000Z')
+  const since = (firstTouches: number, contentChangedAt: Date | null = null) => ({ testSentAt: tested, firstTouches, contentChangedAt })
 
-  it('tests a sending mailbox once a day, counted from the last test sent', () => {
-    expect(inboxTestDue(hoursAgo(2), null, null, now)).toBe(true)
-    expect(inboxTestDue(hoursAgo(2), hoursAgo(22), result(4, 0), now)).toBe(false)
-    expect(inboxTestDue(hoursAgo(2), hoursAgo(23), result(4, 0), now)).toBe(true)
+  it('tests a mailbox never tested at once', () => {
+    expect(inboxTestDue({ testSentAt: null, firstTouches: 0, contentChangedAt: null }, null)).toBe(true)
   })
 
-  it('does not test a mailbox that stopped sending or is held', () => {
-    expect(inboxTestDue(hoursAgo(24 * 8), hoursAgo(24), result(4, 0), now)).toBe(false)
-    expect(inboxTestDue(hoursAgo(2), hoursAgo(24), result(0, 4), now)).toBe(false)
+  it('tests again after 100 cold emails', () => {
+    expect(inboxTestDue(since(99), result(4, 0))).toBe(false)
+    expect(inboxTestDue(since(100), result(4, 0))).toBe(true)
+  })
+
+  it('tests the first email sent after a content change made since the last test', () => {
+    expect(inboxTestDue(since(1, new Date('2026-10-21T00:00:00.000Z')), result(4, 0))).toBe(true)
+    expect(inboxTestDue(since(1, new Date('2026-10-19T00:00:00.000Z')), result(4, 0))).toBe(false)
+  })
+
+  it('does not test a held mailbox', () => {
+    expect(inboxTestDue(since(100), result(0, 4))).toBe(false)
   })
 })
