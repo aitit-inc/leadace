@@ -13,6 +13,7 @@ import {
 import type { Db } from '../db/connection'
 import type { ProjectId, ProjectRef, SendingIdentityId, TenantId } from '../domain/ids'
 import type { JobOrigin } from '../domain/jobs'
+import { GUARDED_SETTINGS } from '../domain/project-settings'
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { listProjectMailboxIds } from './mailbox'
@@ -74,25 +75,7 @@ export const updateSettingsSchema = z
   .strict()
 export type UpdateSettingsPatch = z.infer<typeof updateSettingsSchema>
 
-// Fields that bound what the agent may do — the name it sends as, whether
-// sends wait for human review, what the footer discloses, what
-// the recipient-facing landing shows and where it sends them. Web UI only;
-// the agent proposes in chat.
-const UI_ONLY_SETTINGS = [
-  'outboundMode',
-  'senderDisplayName',
-  'senderCompanyName',
-  'senderJobTitle',
-  'footerOverride',
-  'inquiryVideoUrl',
-  'inquiryPdfUrl',
-  'inquiryBrandColor',
-  'inquiryBrandLogoUrl',
-  'inquiryDarkBackground',
-  'inquiryCtaType',
-  'inquiryCtaUrl',
-  'publicScoreboardEnabled',
-] as const satisfies readonly (keyof UpdateSettingsPatch)[]
+GUARDED_SETTINGS satisfies readonly (keyof UpdateSettingsPatch)[]
 
 // The settings row is seeded on project creation and backfilled for existing
 // projects, so its absence is an invariant violation, not "not configured yet".
@@ -180,30 +163,6 @@ export async function getOutboundMode(
     .where(eq(projectSettings.projectId, projectId))
     .limit(1)
   return assertSettingsRow(row, projectId).outboundMode
-}
-
-export const setOutboundModeSchema = z.object({ mode: z.enum(OUTBOUND_MODES) }).strict()
-
-// The chat is allowed because its call is held for the person's approval card;
-// an MCP client and an unattended run have no one to ask.
-export async function setOutboundMode(
-  db: Db,
-  tenantId: TenantId,
-  origin: JobOrigin,
-  projectRef: ProjectRef,
-  mode: OutboundMode,
-): Promise<ServiceResult<{ outboundMode: OutboundMode }>> {
-  if (origin !== 'ui' && origin !== 'chat') {
-    return err('FORBIDDEN', 'outboundMode: set from the Web UI or the web chat only')
-  }
-  const resolved = await resolveProject(db, tenantId, projectRef)
-  if (!resolved.ok) return resolved
-  const [row] = await db
-    .update(projectSettings)
-    .set({ outboundMode: mode, updatedAt: new Date() })
-    .where(eq(projectSettings.projectId, resolved.value))
-    .returning({ outboundMode: projectSettings.outboundMode })
-  return ok(assertSettingsRow(row, resolved.value))
 }
 
 export type ProjectSendSettings = {
@@ -423,15 +382,15 @@ export async function getProjectSettings(
 export async function updateProjectSettings(
   db: Db,
   tenantId: TenantId,
-  caller: 'browser' | 'agent',
+  origin: JobOrigin,
   projectRef: ProjectRef,
   patch: UpdateSettingsPatch,
   showcaseProjectId: string | null,
 ): Promise<ServiceResult<ProjectSettingsRow>> {
-  if (caller === 'agent') {
-    const blocked = UI_ONLY_SETTINGS.filter((k) => patch[k] !== undefined)
+  if (origin !== 'ui' && origin !== 'chat') {
+    const blocked = GUARDED_SETTINGS.filter((k) => patch[k] !== undefined)
     if (blocked.length > 0) {
-      return err('FORBIDDEN', `${blocked.join(', ')}: set from the Web UI (Project / Inquiry settings) only`)
+      return err('FORBIDDEN', `${blocked.join(', ')}: set from the Web UI (Project / Inquiry settings) or the web chat only`)
     }
   }
   const resolved = await resolveProject(db, tenantId, projectRef)
@@ -530,7 +489,7 @@ export async function updateProjectSettings(
 
   const { outboundChannels, targetCountries, targetLanguage } = patch
   if (outboundChannels !== undefined || targetCountries !== undefined || targetLanguage !== undefined) {
-    await applyReachChange(db, tenantId, projectId, { outboundChannels, targetCountries, targetLanguage }, authorOf(caller, null))
+    await applyReachChange(db, tenantId, projectId, { outboundChannels, targetCountries, targetLanguage }, authorOf(origin === 'ui' ? 'browser' : 'agent', null))
   }
 
   const followUpWasEnabled =

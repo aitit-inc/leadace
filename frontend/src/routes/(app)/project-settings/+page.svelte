@@ -330,6 +330,10 @@
             bind:value={s.senderDisplayName}
             class="field max-w-xs"
           />
+          <p class="mt-1.5 text-xs text-text-muted">
+            The From name, and the name every email signs off with. Empty: From shows your Gmail name
+            and emails end without a name.
+          </p>
         </div>
 
         <div class="flex items-start gap-2">

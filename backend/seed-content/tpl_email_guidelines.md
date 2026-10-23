@@ -45,7 +45,7 @@ Whatever the opener — a variant's brief or the shapes above — say what you o
 
 Personalization comes from the prospect's `overview` and `matchReason`, woven through the whole body — an email with only its opening changed reads as not written for them.
 
-Close light: a one-line sign-off in the send language (`Best,` for English), then your name from SALES_STRATEGY.md "Sender Information" on its own line, role only if it helps. No signature block and no company line — the footer already carries the legal identity.
+Close light: a one-line sign-off in the send language (`Best,` for English), then the sender's name on its own line — the project's sender display name, the same name the From line shows; none set → no name line. Role only if it helps. No signature block and no company line — the footer already carries the legal identity.
 
 ## CTA
 
@@ -53,7 +53,7 @@ Ask a question ("Could we find 15 minutes next week?"), not "See details here" o
 
 **Micro-reply escape hatch** (recommended on cold first-touch): one line turning the two common "no"s into a one-word reply — e.g. `Wrong person? Just reply "NOT ME". Bad timing? Reply "LATER".` The tokens are literal server-side matches, fixed per language (en: `NOT ME` / `LATER`; ja: `担当違い` / `またの機会に`); the sentence around them varies every send. Promise only what happens: LATER → we return later, NOT ME → we stop.
 
-**Meeting mode**: a scheduling link may go inline only when inquiry landing is off — it follows the CTA question, never stands alone. With inquiry landing on, the backend-appended landing URL is the only link.
+**Meeting mode**: the project's scheduling link (its meeting CTA URL, set in Inquiry page settings) may go inline only when inquiry landing is off — it follows the CTA question, never stands alone. With inquiry landing on, the backend-appended landing URL is the only link.
 
 **Signup mode** (`inquiryCtaType: signup`): the signup URL never appears in the body — inlining it lets the recipient bypass the landing page, so the click is never recorded. Invite them to the landing conversation instead (the backend appends its URL), keep reply as the backup, and offer no scheduling fallback — these projects have no scheduling link.
 

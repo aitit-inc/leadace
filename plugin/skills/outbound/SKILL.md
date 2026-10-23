@@ -57,7 +57,6 @@ Load `get_document` (`projectId: "$0"`) for
 
 - **Sales channels**: tactical preferences only (ordering, sub-channel, tone). Enablement is owned by `outboundChannels` in project settings, not this section
 - **Messaging**: what to emphasize and what never to claim on first contact. Body shape and length come from `tpl_email_guidelines` unless the picked variant's body approach overrides them; subject patterns and those briefs live server-side in `message_variants` (step 3) — neither is sourced here
-- **Sender information**: the name (+ optional role) for the light sign-off — not a signature block. Display name and address come from project settings; the backend appends the compliance footer
 - **SNS messages**: SNS DM messaging policy
 
 **Note:** Sending timing (day of week, time of day) is not controlled by this skill.
@@ -72,14 +71,14 @@ The targets response includes `Outbound mode: send | draft`. **Capture this valu
 From the settings response, surface for body composition:
 - `targetLanguage` (`en` | `ja`) — the language of every outbound message: subject, body, and sign-off. Compose in it regardless of any language phrasing in project documents; the server renders the footer in the same language.
 - `inquiryLandingEnabled` — drives the mail template branch in step 3.
-- `inquiryCtaType` (`meeting` | `signup`) — read alongside `inquiryLandingEnabled`; see step 3's "Inquiry-aware CTA branch".
+- `inquiryCtaType` (`meeting` | `signup`) and `inquiryCtaUrl` — read alongside `inquiryLandingEnabled`; see step 3's "Inquiry-aware CTA branch".
 - `inquiryChatBrief` (when non-empty) — what the recipient's inquiry chat can
   actually answer. Promise only what the brief covers (e.g. no "ask about
   pricing in chat" unless it carries pricing).
 - `inquiryOneLiner` (when non-empty) — the tagline the recipient sees on the landing page. Avoid contradicting it in the subject / opener.
-- `outboundMode`, `senderDisplayName`, and the `compliance` block (legal_name /
-  physical_address) — the backend applies all of these at send time; never
-  inline them in the body.
+- `senderDisplayName` (+ `senderJobTitle`) — the name to sign off with, the same one the From line shows. Empty → the sign-off line alone, no name.
+- `outboundMode` and the `compliance` block (legal_name / physical_address) — the
+  backend applies these at send time; never inline them in the body.
 
 And for channel selection in step 2:
 - **`outboundChannels`** (subset of `email | form | sns_twitter | sns_linkedin`): the enabled
@@ -187,7 +186,7 @@ Retrieve email guidelines via `get_master_document` with `slug: "tpl_email_guide
 
 There is no stored body template: every body is written for the one recipient, from the guidelines' shape, the facts in BUSINESS.md / SALES_STRATEGY.md, and the prospect's own material.
 
-Close with a light sign-off (name + optional role) drawn from the "Sender Information" section of SALES_STRATEGY.md — not a full signature block; the backend appends the compliance footer (legal name, address, unsubscribe) automatically. The `From:` address and display name are applied server-side (the project's sending mailbox + project settings) — do not pass them as arguments; each send result reports the From address actually used.
+Close with a light sign-off as `senderDisplayName` (+ optional role) — not a full signature block; the backend appends the compliance footer (legal name, address, unsubscribe) automatically. The `From:` address and display name are applied server-side (the project's sending mailbox + project settings) — do not pass them as arguments; each send result reports the From address actually used.
 
 **Message angle variation (weighted draw).** Message angles (subject pattern +
 optional body approach) live server-side in `message_variants`; the server picks
@@ -228,18 +227,17 @@ the email guidelines. Never invent a signal.
   fallback; `signup` → drop the scheduling fallback and lean on reply only (a "book
   a call" backup contradicts the self-serve framing the landing presents).
 
-When `inquiryLandingEnabled === false`, use the reply / scheduling-link /
-meeting-request CTA pattern per SALES_STRATEGY.md. Self-serve signup is not
+When `inquiryLandingEnabled === false`, the CTA is a reply; in `meeting` mode the
+project's scheduling link (`inquiryCtaUrl`) may follow it inline. Self-serve signup is not
 surfaced from the email in this mode — promote it via SALES_STRATEGY.md edits if
 the project's go-to-market is PLG.
 
 In both branches the backend appends the inquiry / unsubscribe URLs **and the
 compliance footer** (legal name, physical address) — never insert them in the body,
-and never carry a closing address block from "Sender Information" beyond the human
-signature (name + role + sign-off); duplicating the address yields a confused-looking
-footer. If `send_email_and_record` returns `412 Tenant compliance settings
-incomplete`, surface the message verbatim and tell the user to fill in Workspace
-settings at https://app.leadace.ai/workspace-settings before retrying.
+and never add a closing address block beyond the light sign-off (name + role);
+duplicating the address yields a confused-looking footer. If
+`send_email_and_record` returns `412 Tenant compliance settings incomplete`,
+surface the message verbatim and tell the user to fill in Workspace settings at https://app.leadace.ai/workspace-settings before retrying.
 
 **Body personalization.** Refer to each prospect's `overview` and `matchReason`, and write the entire body tailored to the recipient -- not just the opening. Reference specific numbers, achievements, and initiatives of the target company. Generic openers like "I visited your website" alone are insufficient.
 

@@ -158,6 +158,11 @@
   });
   // No project yet, or one whose first setup has not been written.
   let needsSetup = $derived(!data.projects.find((p) => p.id === (data.thread?.projectId ?? data.activeProjectId))?.setUp);
+  let signInName = $derived.by(() => {
+    const meta = (data.user?.user_metadata ?? {}) as Record<string, unknown>;
+    const v = meta['full_name'] ?? meta['name'];
+    return typeof v === 'string' ? v.trim() : '';
+  });
   // Asked for once the setup is written, so it never hides the website prompt.
   let showIdentityCard = $derived(data.attention.some((a) => a.kind === 'compliance_incomplete') && !needsSetup);
   let liveThreadJobs = $derived(
@@ -680,8 +685,8 @@
             <ConfirmCard {pending} busy={running || stopping} onrespond={respond} />
           {/if}
           {#if showIdentityCard}
-            {#key proposal.callId}
-              <SenderIdentityCard {proposal} {token} onsaved={identitySaved} />
+            {#key `${proposal.callId}:${data.thread?.projectId ?? data.activeProjectId}`}
+              <SenderIdentityCard {proposal} projectId={data.thread?.projectId ?? data.activeProjectId} name={signInName} {token} onsaved={identitySaved} />
             {/key}
           {/if}
           {#if error}

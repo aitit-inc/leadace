@@ -4,8 +4,6 @@ import {
   updateSettingsSchema,
   getProjectSettings,
   updateProjectSettings,
-  setOutboundModeSchema,
-  setOutboundMode,
 } from '../../services/project-settings'
 import { getDailyTarget } from '../../services/daily-target'
 import { projectRefParamSchema } from '../../services/projects'
@@ -47,27 +45,10 @@ projectSettingsRouter.put(
     const result = await updateProjectSettings(
       c.get('db'),
       c.get('tenantId'),
-      c.get('caller'),
+      c.get('origin'),
       c.req.valid('param').id,
       c.req.valid('json'),
       c.env.SHOWCASE_PROJECT_ID ?? null,
-    )
-    if (!result.ok) return respondWithError(c, result)
-    return c.json(result.value)
-  },
-)
-
-projectSettingsRouter.put(
-  '/projects/:id/outbound-mode',
-  zValidator('param', projectRefParamSchema),
-  zValidator('json', setOutboundModeSchema),
-  async (c) => {
-    const result = await setOutboundMode(
-      c.get('db'),
-      c.get('tenantId'),
-      c.get('origin'),
-      c.req.valid('param').id,
-      c.req.valid('json').mode,
     )
     if (!result.ok) return respondWithError(c, result)
     return c.json(result.value)

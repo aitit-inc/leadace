@@ -564,7 +564,7 @@ export const projectSettings = pgTable('project_settings', {
     .notNull()
     .references(() => tenants.id, { onDelete: 'cascade' }),
   // New projects draft until a human switches to send: in the Web UI, or on
-  // the chat's approval card (services/project-settings.ts setOutboundMode).
+  // the chat's approval card (update_project_settings).
   outboundMode: outboundModeEnum('outbound_mode').notNull().default('draft'),
   senderDisplayName: text('sender_display_name'),
   // Recipient-facing company / brand name (e.g. "Acme Inc."). Paired with

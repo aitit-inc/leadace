@@ -776,8 +776,8 @@ const SCENARIOS = [
         title: 'Run it every day',
         userText: 'Those looked right. Run this every weekday from now on.',
         modelText: 'The schedule is set. One more step makes it hands-off: let the runs send on their own.',
-        toolName: 'set_outbound_mode',
-        args: { projectId, mode: 'send' },
+        toolName: 'update_project_settings',
+        args: { projectId, outboundMode: 'send' },
         summary: {
           title: 'Send without review',
           facts: [
@@ -1165,6 +1165,12 @@ const SCENARIOS = [
           // The page scrolls in its own pane; the click brings the help text into the shot.
           click: 'text=Turning this on also picks up',
           expect: 'Auto follow-up on unanswered emails',
+        },
+        {
+          name: 'sender-name',
+          path: '/project-settings',
+          scrollTo: 'text=Sender display name',
+          expect: 'the name every email signs off with',
         },
         {
           name: 'unsaved',

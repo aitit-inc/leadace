@@ -141,7 +141,6 @@ You are an outbound sales agent. Please reach out to each company on the prospec
    Understand:
    - SALES_STRATEGY "Sales Channels" section: tactical preferences only (ordering, tone, sub-channel preferences). Channel enablement is owned by `outboundChannels` in project settings (applied in outbound/SKILL.md step 1).
    - Email messaging hints (First Outreach approach: what to emphasize, what never to claim). There is no stored body template — each body is written per recipient in the outbound step (outbound/SKILL.md)
-   - Sender information: signature block only (the `From:` address and display name are applied server-side by `send_email_and_record` from the project's sending mailbox + project settings)
    - SNS messaging policy
 
 2. Next, read `${CLAUDE_PLUGIN_ROOT}/skills/outbound/SKILL.md` and follow its procedure

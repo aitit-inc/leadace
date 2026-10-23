@@ -5,8 +5,9 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import type { ConfirmSummary, ToolEffect } from '../domain/chat'
 import { z } from 'zod'
-import { BUG_REPORT_CATEGORIES, EMPLOYEE_BANDS, OUTBOUND_CHANNELS, OUTBOUND_MODES, REACHABLE_STATUSES, REJECTION_PRIMARY_REASONS, REJECTION_RECONTACT_WINDOWS, prospectStatusEnum, prioritySchema, type OutboundMode, type ProspectStatus } from '../db/schema'
+import { BUG_REPORT_CATEGORIES, EMPLOYEE_BANDS, INQUIRY_CTA_TYPES, OUTBOUND_CHANNELS, OUTBOUND_MODES, REACHABLE_STATUSES, REJECTION_PRIMARY_REASONS, REJECTION_RECONTACT_WINDOWS, prospectStatusEnum, prioritySchema, type OutboundMode, type ProspectStatus } from '../db/schema'
 import { ALLOWED_SEND_COUNTRIES } from '../domain/country'
+import { GUARDED_SETTINGS, type GuardedSetting } from '../domain/project-settings'
 import { discoveryStrategySchema, suggestionKindSchema, variantIdSchema } from '../domain/ids'
 import { localeSchema } from '../domain/locale'
 import { AGENT_NOTIFICATION_CATEGORIES } from '../domain/notifications'
@@ -73,6 +74,30 @@ async function readApi(ctx: ToolCtx, path: string): Promise<unknown> {
 const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`
 
 const ENDED_STATUSES: readonly ProspectStatus[] = ['rejected', 'inactive']
+
+const GUARDED_LABELS: Record<Exclude<GuardedSetting, 'outboundMode'>, string> = {
+  senderDisplayName: 'From and sign-off',
+  senderCompanyName: 'Company',
+  senderJobTitle: 'Job title',
+  footerOverride: 'Footer',
+  inquiryVideoUrl: 'Landing video',
+  inquiryPdfUrl: 'Landing PDF',
+  inquiryBrandColor: 'Landing color',
+  inquiryBrandLogoUrl: 'Landing logo',
+  inquiryDarkBackground: 'Landing dark background',
+  inquiryCtaType: 'Landing button',
+  inquiryCtaUrl: 'Landing button link',
+  publicScoreboardEnabled: 'Public scoreboard',
+}
+
+const OUTBOUND_MODE_FACTS: Record<OutboundMode, Array<{ label: string; value: string }>> = {
+  send: [
+    { label: 'After this', value: 'Each run sends its email on its own, scheduled runs included' },
+    { label: 'Still applies', value: "Your mailbox's daily cap and the do-not-contact list" },
+    { label: 'To undo', value: 'Switch back any time in Project settings' },
+  ],
+  draft: [{ label: 'After this', value: 'Nothing is sent until you approve it — scheduled runs only prepare drafts' }],
+}
 
 async function projectLabel(ctx: ToolCtx, projectRef: string): Promise<string> {
   const data = await readApi(ctx, '/projects')
@@ -2214,9 +2239,26 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'update_project_settings',
-    'Update the project settings the agent owns. Any omitted field keeps its current value; null clears nullable fields. Outbound mode, sender display name, footer override, the landing CTA / media / branding and publicScoreboardEnabled are Web UI only (Project / Inquiry settings) — propose them to the user instead. Which mailboxes a project sends from is set_project_mailboxes (chat only).',
+    'Update a project\'s settings. Any omitted field keeps its current value; null clears nullable fields. In the web chat, outbound mode, the sender, the footer, the landing media / CTA / branding and publicScoreboardEnabled wait for the person\'s approval card; over MCP they are refused (Web UI only). Which mailboxes a project sends from is set_project_mailboxes (chat only).',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
+      outboundMode: z.enum(OUTBOUND_MODES).optional()
+        .describe('"send" sends each run\'s email on its own; "draft" holds every message for review.'),
+      senderDisplayName: z.string().min(1).max(200).nullable().optional()
+        .describe('The From name, which every email also signs off with.'),
+      senderCompanyName: z.string().min(1).max(200).nullable().optional(),
+      senderJobTitle: z.string().min(1).max(200).nullable().optional(),
+      footerOverride: z.string().min(1).max(2000).nullable().optional()
+        .describe('Verbatim replacement for the default legal footer; null restores the default.'),
+      inquiryVideoUrl: z.string().max(500).nullable().optional(),
+      inquiryPdfUrl: z.string().max(500).nullable().optional(),
+      inquiryBrandColor: z.string().nullable().optional().describe('Hex color, e.g. #1E6E68.'),
+      inquiryBrandLogoUrl: z.string().max(500).nullable().optional(),
+      inquiryDarkBackground: z.boolean().optional(),
+      inquiryCtaType: z.enum(INQUIRY_CTA_TYPES).optional(),
+      inquiryCtaUrl: z.string().max(500).nullable().optional()
+        .describe('The landing page button\'s scheduling link (meeting) or signup page (signup).'),
+      publicScoreboardEnabled: z.boolean().optional(),
       unsubscribeEnabled: z.boolean().optional()
         .describe('Attach the RFC 8058 List-Unsubscribe one-click headers to outbound email.'),
       inquiryLandingEnabled: z.boolean().optional()
@@ -2252,6 +2294,29 @@ export function buildToolRegistry(): ToolDef[] {
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
       }
       return { content: [{ type: 'text' as const, text: `${JSON.stringify(data, null, 2)}\n${await dailyTargetLine(ctx, projectId)}` }] }
+    },
+    {
+      confirm: async ({ projectId, ...patch }, ctx) => {
+        const changes = GUARDED_SETTINGS.filter((k) => patch[k] !== undefined)
+        if (changes.length === 0) return null
+        const now = (await readApi(ctx, `/projects/${encodeURIComponent(projectId)}/settings`)) as Record<string, unknown> | null
+        const shown = (v: unknown) => (v === null ? 'none' : String(v))
+        const facts = [
+          { label: 'Project', value: await projectLabel(ctx, projectId) },
+          ...(patch.outboundMode ? OUTBOUND_MODE_FACTS[patch.outboundMode] : []),
+        ]
+        for (const k of changes) {
+          if (k === 'outboundMode') continue
+          // A current value that could not be read is left out, never shown as unset.
+          facts.push({ label: GUARDED_LABELS[k], value: `${shown(patch[k])}${now ? ` (now ${shown(now[k])})` : ''}` })
+        }
+        const mode = changes.length === 1 && patch.outboundMode
+        return {
+          title: mode === 'send' ? 'Send without review' : mode === 'draft' ? 'Review before sending' : 'Change project settings',
+          facts,
+          confirmLabel: mode === 'send' ? 'Send without review' : mode === 'draft' ? 'Hold for review' : 'Save settings',
+        }
+      },
     },
   )
 
@@ -2517,48 +2582,6 @@ export function buildToolRegistry(): ToolDef[] {
           body: existing?.prompt ?? '',
           confirmLabel: 'Remove schedule',
         }
-      },
-    },
-  )
-
-  defineTool(
-    'set_outbound_mode',
-    'Switch whether a project sends on its own ("send") or holds every message as a draft for review ("draft"). Answers with the saved mode.',
-    {
-      projectId: z.string().min(1).describe('Project name or ID'),
-      mode: z.enum(OUTBOUND_MODES),
-    },
-    async ({ projectId, mode }, ctx) => {
-      const { ok, data } = await ctx.callApi('PUT', `/projects/${encodeURIComponent(projectId)}/outbound-mode`, { mode })
-      if (!ok) {
-        const e = data as { error: string; detail?: string }
-        return { content: [{ type: 'text' as const, text: `Error: ${e.detail ? `${e.error}: ${e.detail}` : e.error}` }], isError: true }
-      }
-      return { content: [{ type: 'text' as const, text: `Saved: outbound mode is ${(data as { outboundMode: OutboundMode }).outboundMode}.` }] }
-    },
-    {
-      surface: 'chat',
-      confirm: async ({ projectId, mode }, ctx) => {
-        const project = { label: 'Project', value: await projectLabel(ctx, projectId) }
-        return mode === 'send'
-          ? {
-              title: 'Send without review',
-              facts: [
-                project,
-                { label: 'After this', value: 'Each run sends its email on its own, scheduled runs included' },
-                { label: 'Still applies', value: "Your mailbox's daily cap and the do-not-contact list" },
-                { label: 'To undo', value: 'Switch back any time in Project settings' },
-              ],
-              confirmLabel: 'Send without review',
-            }
-          : {
-              title: 'Review before sending',
-              facts: [
-                project,
-                { label: 'After this', value: 'Nothing is sent until you approve it — scheduled runs only prepare drafts' },
-              ],
-              confirmLabel: 'Hold for review',
-            }
       },
     },
   )

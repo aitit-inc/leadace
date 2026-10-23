@@ -63,7 +63,7 @@ If any document call returns "Project not found", abort and instruct the user to
 
 Hold project settings (`outboundMode`, `senderDisplayName`, `senderCompanyName`, `unsubscribeEnabled`, `inquiryChatBrief`, `inquiryOneLiner`) as `SETTINGS`, and the workspace identity (`legalName`, `physicalAddress`, `defaultSenderCountry`) as `TENANT_SETTINGS`.
 
-**Migration check (Mode A, update sub-mode only):** If the existing SALES_STRATEGY.md has a "Sender Information" section containing a sender email or display name (older versions), and `SETTINGS.senderDisplayName` is empty, tell the user the display name now lives in the Web UI → Project settings (https://app.leadace.ai/project-settings) and the sending address is a mailbox listed there, show the values found, and strip them from the document.
+**Sender Information migration (Mode A, update sub-mode only):** If the existing SALES_STRATEGY.md has a "Sender Information" section (older versions), drop it. Show the user what it held and where each now lives: the name in the Web UI → Project settings (https://app.leadace.ai/project-settings), where it is the From name and every email's sign-off; a scheduling or signup URL in the Web UI → Inquiry page settings (https://app.leadace.ai/inquiry-settings). Move a phone number into BUSINESS.md's Organization Overview.
 
 **Notification recipient migration (Mode A, update sub-mode only):** If the existing SALES_STRATEGY.md has a "Notification Settings" section (older versions), tell the user the recipient now lives in the Web UI → Workspace settings (it defaults to the sign-in Google account) and strip the section. Never copy the address anywhere.
 
@@ -86,7 +86,7 @@ Check completeness of each section in existing `SALES_STRATEGY.md`:
 | Track record / social proof | At least 1 specific achievement or number |
 | Outbound mode | send / draft is set in project settings |
 | Sales channels | Optional — tactical notes (ordering, tone) present, OR explicitly empty when no project-specific notes. Channel enablement lives in Project Settings (`outboundChannels`), not here. |
-| Sender information | Display name in project settings; sending mailboxes (Google accounts, Send-As aliases, SMTP) in Account / Project settings; phone + signature in document |
+| Sender identity | Display name in project settings; sending mailboxes (Google accounts, Send-As aliases, SMTP) in Account / Project settings |
 | Messaging | First Outreach approach present |
 | Response definition | Conditions counting as response specified |
 | KPI | Metrics set |
@@ -196,12 +196,8 @@ Where to find prospect candidates (depends on target market, industry, region). 
 - Prefer sources where the 4-2 Prerequisites are observable (individuals' code, registries, posts, job ads) over ones that only prove a company exists.
 - "Up to you" → reasonable defaults by target market, formulated as named strategies.
 
-#### 4-7. Sender Information
-Collect 2 items (both required; "up to you" not allowed):
-1. Organization phone number (used by contact forms).
-2. Signature line (human signature only — name, title, sign-off; no postal address, no legal entity name, no phone block).
-
-Both stay in SALES_STRATEGY.md "Sender Information". The sender identity recipients see — display name, company / brand name, the sending mailboxes (Google accounts, Send-As aliases under them, SMTP mailboxes) — and the compliance footer (legal name, postal address, sender country) are Web UI settings (https://app.leadace.ai/account-settings, https://app.leadace.ai/project-settings and https://app.leadace.ai/workspace-settings); never write them into the document or ask for them here. If `SETTINGS` / `TENANT_SETTINGS` (Step 3) show any of them unset, carry that into the Step 8 hand-off. A Send-As alias must be verified in Gmail (Settings → Accounts → "Send mail as") before `/outbound`, or Gmail rejects the send.
+#### 4-7. Sender Identity
+Collect the organization phone number for BUSINESS.md's Organization Overview (required, contact forms ask for one; "up to you" not allowed). Every email signs off with the project's sender display name. The sender identity recipients see — display name, company / brand name, the sending mailboxes (Google accounts, Send-As aliases under them, SMTP mailboxes) — and the compliance footer (legal name, postal address, sender country) are Web UI settings (https://app.leadace.ai/account-settings, https://app.leadace.ai/project-settings and https://app.leadace.ai/workspace-settings); never write them into the document or ask for them here. If `SETTINGS` / `TENANT_SETTINGS` (Step 3) show any of them unset, carry that into the Step 8 hand-off. A Send-As alias must be verified in Gmail (Settings → Accounts → "Send mail as") before `/outbound`, or Gmail rejects the send.
 
 #### 4-8. Channels, Target Countries & Language
 
@@ -226,7 +222,6 @@ Guards:
 - `targetCountries`: omit the field unless the user explicitly restricts delivery. Never send `[]` or `null` — that is the default and writing it changes nothing meaningful while risking clobbering an existing restriction.
 
 #### 4-9. Scheduling and Response Definition
-- Scheduling link(s) (Calendly / Cal.com / HubSpot Meetings — URL; "None" if N/A; multiple OK).
 - Response definition: what counts as a "response". Options: (1) Direct email reply, (2) Scheduling completion notification, (3) Reply via contact form. Confirm or extend.
 - Scheduling service name(s). **Auto-resolve notification domain**: call `get_master_document` with `slug: "ref_scheduling_services"`, look up each named service, record the domain in SALES_STRATEGY.md without asking (e.g., `Calendly — calendly.com`). Only ask if not in the reference list.
 - "Up to you" → defaults: (1)(2)(3).
@@ -256,9 +251,8 @@ For each of the following, draft a 1-3 sentence value from `URL_CONTENT`. Do **n
 - Track record / social proof (4-4 equivalent) — if absent, leave a placeholder note "Add 1 trust foundation later"
 - Pricing (4-5 equivalent) — if absent, mark as "TBD"
 - Sender company / brand name (Web UI value — hold in `UI_HANDOFF`) — extract the canonical company name from `URL_CONTENT` (page title, header logo alt, footer "© ..."). Strip "Inc." / "Ltd." only if the homepage itself uses the bare form. Skip if no clear name is on the page.
-- Organization phone number (part of 4-7) — only if published on the page.
+- Organization phone number (BUSINESS.md Organization Overview, 4-7) — only if published on the page.
 - **Workspace identity** (Web UI values — hold in `UI_HANDOFF`) — infer **only the fields `TENANT_SETTINGS` reports as `(not set)`**. `legalName` / `physicalAddress` come verbatim from the page (footer, copyright line, company / about / legal / imprint page — a Japanese 特定商取引法 page carries both); `defaultSenderCountry` is the ISO 3166-1 alpha-2 code of that address's country. Leave a field blank rather than guessing — these render into every recipient's compliance footer, and the user enters them in the Web UI.
-- Scheduling links (part of 4-9) — only if visibly linked
 - **Inquiry landing extras** (Web UI values — hold in `UI_HANDOFF`; only when the homepage explicitly surfaces them, never invent): the first embedded YouTube / Vimeo URL; the first PDF that looks like a brochure / whitepaper / deck; the CTA — a scheduling link (Calendly / TimeRex / Cal.com / HubSpot Meetings) as the meeting CTA, or an unmistakable self-serve signup page URL as the signup CTA (prefer the scheduling link when both appear, unless the page is clearly PLG with no sales contact). Logo URL and brand color cannot be read from the text extraction — leave them out.
 - `inquiry_chat_brief` — ~1000-character system-prompt fragment composed per the Step 7.5 "Content / style spec" (using `URL_CONTENT` as the source). Includes elevator pitch, problems solved, pricing, trust foundation, and 2-4 FAQ items.
 - `inquiry_one_liner` — single hooky tagline (≤140 chars) for the recipient landing page, derived from the elevator pitch.
@@ -325,7 +319,7 @@ save_document
 - **Initial** (both modes): Retrieve template `tpl_sales_strategy`. Generate following structure.
 - **Update** (Mode A): Use existing from Step 3. Update only changed sections. **Evaluate-managed sections (targeting, KPI, search keywords) are only rewritten when user explicitly instructs an update.** Messaging and channels are user-authored hints (subject lines & channel ranking are auto-optimized by the lever tick) — rewrite only on explicit user request.
 
-**Sender Information section**: Write only the organization's phone number and a short human signature line (name, title, sign-off). Sender display name and sender company name are Web UI project settings and the `From:` address is one of the project's sending mailboxes (a Google account, a Send-As alias under it, or an SMTP mailbox); legal name, physical address, and the unsubscribe line live in Workspace Settings and are appended automatically by the backend at send time. **Do not duplicate any of these in the document signature** — duplicated address blocks make the recipient-side footer look broken. If the template prompts for legal name / postal address / unsubscribe, replace with `Legal identity + footer: managed in Workspace Settings (https://app.leadace.ai/workspace-settings)`. A custom footer (`footerOverride`, Web UI only) replaces these server-appended disclosures verbatim — never propose it as a way to change them.
+**Sender identity and footer**: the sender display name and company name are Web UI project settings, the `From:` address is one of the project's sending mailboxes, and the legal name, physical address and unsubscribe line live in Workspace Settings and are appended by the backend at send time. Never write any of them into the documents — duplicated address blocks make the recipient-side footer look broken. A custom footer (`footerOverride`, Web UI only) replaces these server-appended disclosures verbatim — never propose it as a way to change them.
 
 **Outbound mode**: Do not write `send`/`draft` into the document — it lives in project settings. A one-line note near "Sales channels" is fine: `Outbound mode: managed in Project Settings`.
 

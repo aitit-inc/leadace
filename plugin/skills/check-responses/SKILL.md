@@ -17,6 +17,7 @@ allowed-tools:
   - mcp__plugin_leadace_leadace__record_response
   - mcp__plugin_leadace_leadace__update_prospect_status
   - mcp__plugin_leadace_leadace__get_document
+  - mcp__plugin_leadace_leadace__get_project_settings
   - mcp__plugin_leadace_leadace__get_master_document
 ---
 
@@ -192,9 +193,9 @@ If step 5 recorded a positive response (`responded`) for any prospect, use Gmail
 
 **Draft creation steps:**
 
-1. Refer to the "Messaging" section of `$0/SALES_STRATEGY.md` for tone and structure, and the "Sender Information" section for the signature block to append (sender display name and email come from project settings — Gmail MCP creates drafts in the user's own account, so they're not needed as arguments here)
+1. Refer to the "Messaging" section of `$0/SALES_STRATEGY.md` for tone and structure. Sign off as `senderDisplayName` from `get_project_settings` (`projectId: "$0"`); empty → the sign-off line alone. Gmail MCP creates drafts in the user's own account, so From is not an argument here
 2. Write the draft in the language of the prospect's message (normally the project's `targetLanguage`). Create an appropriate draft based on the reply content:
-   - **Positive reply (interested)** -> Thank you + scheduling link or 3 time slot options
+   - **Positive reply (interested)** -> Thank you + the scheduling link (`inquiryCtaUrl` in `meeting` mode) or 3 time slot options
    - **Material request** -> Thank you + note that materials will be sent (the user will attach the actual materials after the draft)
    - **Question / inquiry** -> Draft answer to the question + next step suggestion
    - **Scheduling confirmation** -> Thank you for confirming + details for the day

@@ -38,22 +38,9 @@ Note: Even at an early stage with no case studies yet, include estimated effects
 ## Sales Channels
 (Channel ordering, tone, sub-channel preferences. Optional.)
 
-## Sender Information
-- Signature: (A light sign-off in the send language appended to emails — e.g., `Best,` (English) + your full name, optionally your role. Keep it light; avoid phone / postal address / multiple URLs. The backend appends the email footer automatically (by default: legal name + physical address + opt-out).)
-- Scheduling link: (Timerex / Calendly / Cal.com URL. In meeting CTA mode, the inquiry-landing page uses this URL behind its "Book a meeting" button. If inquiry landing is disabled, this URL is also embedded inline in email CTAs as the meeting fallback.)
-- Signup URL: (SaaS self-serve signup / "Get started" / "Start your trial" URL. In signup CTA mode, the inquiry-landing page uses this URL behind its "Sign up" button. **Never embedded in email bodies** — the recipient reaches the signup page through the inquiry-landing footer link. Mutually exclusive with the scheduling link — the project picks one CTA mode.)
-
 ## Messaging
 ### First Outreach (Email/Form)
 (What to emphasize and what never to claim on first contact — the angle, the proof worth citing, wording the business must avoid. Body shape, length and CTA form come from the `tpl_email_guidelines` master document, and subject patterns plus per-angle body briefs live server-side in `message_variants` — do not restate either here.)
-### Inquiry Landing CTA Mode
-
-The project picks one CTA mode for the inquiry-landing page (`/q/<short_id>`):
-
-- **meeting** (default): the landing page renders a "Book a meeting" / "Request a meeting" button. The recipient who arrives at the landing page can request a meeting in-place; backend records it as a `lead` outcome
-- **signup** (SaaS self-serve): the landing page renders a "Sign up" button linking to the project's signup URL. The recipient who arrives at the landing page can self-serve via the signup URL; backend records it as a `signup_clicked` outcome
-
-The two modes are mutually exclusive per project — the inquiry-settings page enforces a single CTA URL. The CTA mode shapes the landing-page button only; outbound email bodies link only to the inquiry-landing page (backend-appended footer) and never to the scheduling or signup URL directly. Email CTA framing details are in the `tpl_email_guidelines` master document.
 ### SNS Messages
 (Short and concise. Self-introduction → value proposition → action.)
 - **Prerequisite:** If using SNS DMs, log into each enabled SNS account in Chrome beforehand

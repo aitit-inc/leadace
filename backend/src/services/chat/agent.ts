@@ -60,8 +60,9 @@ export type ChatEvent =
   | { type: 'error'; message: string }
 
 // Each persistence call runs inside `run` — one short RLS transaction.
-// `signal` is Stop: a tool call already running finishes, nothing further
-// starts, and what ran is recorded.
+// `signal` is Stop: nothing further starts, a write already running is waited
+// for (up to CALL_DEADLINE_MS) so what it did is recorded, a read-only call is
+// let go, and the turn ends.
 export type ChatTurnDeps = {
   run: <T>(fn: (db: Db) => Promise<T>) => Promise<T>
   signal: AbortSignal
@@ -92,6 +93,12 @@ export function termsChanged(shown: ConfirmSummary, now: ConfirmSummary): boolea
 const DECLINED: ToolResult = { ok: false, text: 'The person declined this call.' }
 
 const INTERRUPTED: ToolResult = { ok: false, text: 'This call was interrupted before it produced a result.' }
+
+// A call that never returns would hold the turn, and Stop, for good. The
+// slowest call that returns, find_competitors, takes at most 180 s.
+const CALL_DEADLINE_MS = 300_000
+
+const TIMED_OUT: ToolResult = { ok: false, text: `This call did not return within ${CALL_DEADLINE_MS / 60_000} minutes. It may still finish: check what it was doing before repeating it.` }
 
 const outputItem = (r: ToolResponse): ResponseInputItem => ({ type: 'function_call_output', call_id: r.id, output: JSON.stringify(r.response) })
 
@@ -203,11 +210,33 @@ function withThread(call: Call, threadId: string): Record<string, unknown> {
 
 // A tool that throws (dispatch failure, non-JSON body) is an error result
 // for the model, not the end of the turn.
-function runCall(deps: ChatTurnDeps, threadId: string, call: Call): Promise<ToolResult> {
-  return deps.tools.execute(call.name, withThread(call, threadId)).catch((e: unknown): ToolResult => {
-    console.error(`[chat] tool ${call.name} threw`, e)
-    return { ok: false, text: `Tool failed: ${e instanceof Error ? e.message : String(e)}` }
-  })
+async function runCall(deps: ChatTurnDeps, threadId: string, call: Call): Promise<ToolResult> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let onStop: (() => void) | undefined
+  const ends: Array<Promise<ToolResult>> = [
+    deps.tools.execute(call.name, withThread(call, threadId)).catch((e: unknown): ToolResult => {
+      console.error(`[chat] tool ${call.name} threw`, e)
+      return { ok: false, text: `Tool failed: ${e instanceof Error ? e.message : String(e)}` }
+    }),
+    new Promise((resolve) => {
+      timer = setTimeout(() => {
+        console.warn(`[chat] tool ${call.name} did not return in ${CALL_DEADLINE_MS / 1000}s thread=${threadId}`)
+        resolve(TIMED_OUT)
+      }, CALL_DEADLINE_MS)
+    }),
+  ]
+  if (deps.tools.isReadOnly(call.name)) {
+    ends.push(new Promise((resolve) => {
+      onStop = () => resolve(INTERRUPTED)
+      deps.signal.addEventListener('abort', onStop, { once: true })
+    }))
+  }
+  try {
+    return await Promise.race(ends)
+  } finally {
+    clearTimeout(timer)
+    if (onStop) deps.signal.removeEventListener('abort', onStop)
+  }
 }
 
 async function* reportCall(deps: ChatTurnDeps, threadId: string, call: Call, result: ToolResult): AsyncGenerator<ChatEvent, void> {

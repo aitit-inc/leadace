@@ -156,7 +156,7 @@ function compositionPrompt(args: {
   const cycle = p.cycle
   const inquiry = s.inquiryLandingEnabled
     ? `Inquiry landing is ON (CTA type ${s.inquiryCtaType}). Primary CTA: invite a short recipient-led AI conversation on the landing page — the backend appends its URL, never write one. Backup CTA: reply${s.inquiryCtaType === 'meeting' ? ' or a call' : ' only (no scheduling fallback in signup mode)'}.${s.inquiryChatBrief ? ` The landing chat can answer about: ${s.inquiryChatBrief.slice(0, 600)}` : ''}${s.inquiryOneLiner ? ` Landing tagline (do not contradict): ${s.inquiryOneLiner}` : ''}`
-    : 'Inquiry landing is OFF: the only CTA is a reply (or the scheduling link named in SALES_STRATEGY Sender Information when it exists). Never reference or invent a landing URL.'
+    : `Inquiry landing is OFF: the only CTA is a reply${s.inquiryCtaType === 'meeting' && s.inquiryCtaUrl ? `, or the scheduling link ${s.inquiryCtaUrl}` : ''}. Never reference or invent a landing URL.`
   const cycleNote =
     cycle.kind === 'first'
       ? 'First touch.'
@@ -167,12 +167,18 @@ function compositionPrompt(args: {
           : `Re-approach after a substantive response (${cycle.lastResponse?.responseType ?? 'reply'}${cycle.lastResponse?.rejectionFeedback ? `, stated reason: ${cycle.lastResponse.rejectionFeedback.primaryReason}${cycle.lastResponse.rejectionFeedback.freeText ? ` — "${cycle.lastResponse.rejectionFeedback.freeText}"` : ''}` : ''}). Open against the actual objection without quoting it, then lead with what has concretely changed. Nothing changed → decision "skip" (no_fresh_material). Collegial, never pitchy.`
   const signalsAt = p.overview.indexOf('## Recent Signals')
   const signals = signalsAt >= 0 ? p.overview.slice(signalsAt) : null
-  return `You are Ace, writing one ${args.channel === 'email' ? 'cold email' : args.channel === 'form' ? 'contact-form message' : 'social DM'} for one recipient, in ${languageNameOf(s.targetLanguage)}. Today is ${args.today}.
+  const sender = s.senderDisplayName
+    ? `${s.senderDisplayName}${s.senderJobTitle ? `, ${s.senderJobTitle}` : ''}${s.senderCompanyName ? ` at ${s.senderCompanyName}` : ''}. Sign off as them.`
+    : 'No name is set: close on the sign-off line alone, with no name under it.'
+  return `You are Ace, writing one ${args.channel === 'email' ? 'cold email' : args.channel === 'form' ? 'contact-form message' : 'social DM'} for one recipient on behalf of the sender below, in ${languageNameOf(s.targetLanguage)}. Today is ${args.today}.
+
+## Sender (the name the recipient sees in From)
+${sender}
 
 ## The business (BUSINESS.md)
 ${ctx.business}
 
-## Strategy (SALES_STRATEGY.md — Messaging governs what to emphasize and what never to claim; Sender Information gives the light sign-off)
+## Strategy (SALES_STRATEGY.md — Messaging governs what to emphasize and what never to claim)
 ${ctx.salesStrategy}
 
 ${ctx.reviewFeedback ? `
@@ -215,7 +221,7 @@ ${inquiry}
 Judge from the material above whether a concrete, clearly negative event (layoffs, wind-down, buyer left, post-acquisition freeze) makes now a bad moment → decision "skip", reason bad_timing, one-line note. When in doubt, send.
 
 ## Output
-decision "send": subject (40–60 characters, recipient benefit, no "Proposal" / "Announcement") and body — the complete message in the recipient's language: salutation per the guidelines, personalization woven through the whole body from overview and matchReason, one reply CTA, light sign-off from Sender Information. No footer, no legal lines, no links to our own hosts, no placeholders, no claim about who uses our product or what it has achieved beyond what BUSINESS.md or SALES_STRATEGY states; skipReason and skipNote null. ${args.channel === 'email' ? '' : args.channel === 'form' ? 'Concise for a form field; the subject is the form topic line.' : 'Short DM; subject is unused but still required.'}
+decision "send": subject (40–60 characters, recipient benefit, no "Proposal" / "Announcement") and body — the complete message in the recipient's language: salutation per the guidelines, personalization woven through the whole body from overview and matchReason, one reply CTA, light sign-off as the sender. No footer, no legal lines, no links to our own hosts, no placeholders, no claim about who uses our product or what it has achieved beyond what BUSINESS.md or SALES_STRATEGY states; skipReason and skipNote null. ${args.channel === 'email' ? '' : args.channel === 'form' ? 'Concise for a form field; the subject is the form topic line.' : 'Short DM; subject is unused but still required.'}
 decision "skip": skipReason and a one-line skipNote; subject and body null.`
 }
 

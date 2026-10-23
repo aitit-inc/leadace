@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { eq, and, or, count, exists, sql } from 'drizzle-orm'
+import { eq, and, or, count, desc, exists, isNotNull, sql } from 'drizzle-orm'
 import type { Db } from '../db/connection'
 import { projects, projectDocuments, projectSettings } from '../db/schema'
 import { getTenantPlan, getPlanLimits } from './plan-limits'
@@ -128,12 +128,21 @@ export async function createProject(
 
   const id = asProjectId(generateProjectId())
   const now = new Date()
+  // The display name signs every email: a later project starts with the one the
+  // person already sends as (the first gets it from the sender identity card).
+  const [named] = await db
+    .select({ senderDisplayName: projectSettings.senderDisplayName })
+    .from(projectSettings)
+    .where(and(eq(projectSettings.tenantId, tenantId), isNotNull(projectSettings.senderDisplayName)))
+    .orderBy(desc(projectSettings.updatedAt))
+    .limit(1)
   await db.insert(projects).values({ id, tenantId, name, createdAt: now, updatedAt: now })
   // New projects opt in to follow-up sequencing (opt-out for new data); existing
   // rows store {} and read back disabled.
   await db.insert(projectSettings).values({
     projectId: id,
     tenantId,
+    senderDisplayName: named?.senderDisplayName ?? null,
     followUpSequence: { enabled: true },
     createdAt: now,
     updatedAt: now,

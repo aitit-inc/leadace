@@ -36,7 +36,7 @@ strategyDraftRouter.post(
   zValidator('param', projectRefParamSchema),
   zValidator('json', applyStrategyDraftSchema),
   async (c) => {
-    const result = await applyStrategyDraft(c.get('db'), c.get('tenantId'), c.env, c.req.valid('param').id, c.req.valid('json'))
+    const result = await applyStrategyDraft(c.get('db'), c.get('tenantId'), c.env, c.get('origin'), c.req.valid('param').id, c.req.valid('json'))
     if (!result.ok) return respondWithError(c, result)
     return c.json(result.value)
   },

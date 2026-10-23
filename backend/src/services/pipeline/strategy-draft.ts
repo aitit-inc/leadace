@@ -5,6 +5,7 @@
 import { z } from 'zod'
 import type { Db } from '../../db/connection'
 import type { ProjectId, ProjectRef, TenantId } from '../../domain/ids'
+import type { JobOrigin } from '../../domain/jobs'
 import { applyStrategyDraftSchema, competitorsInputSchema, readPagesSchema, type ApplyStrategyDraftInput } from '../../domain/strategy-draft'
 import { ok, err, type ServiceResult } from '../result'
 import { callLlmFollowUpJson, callLlmGroundedText, LlmError, type Citation } from '../llm'
@@ -108,7 +109,7 @@ Write it from everything the person shared in this chat: the pages you read, the
 - targetLanguage: "ja" when the company's own material is mainly Japanese, else "en". Every document, brief and subject is written in that language.
 - business: a full markdown BUSINESS.md following this template exactly (write "Not available" where nothing says; its Competition section lists only the competitors the person named or confirmed, else "To be confirmed"; ~80 lines max):
 ${tplBusiness}
-- salesStrategy: a full markdown SALES_STRATEGY.md following this template exactly (~180 lines max; Target with Prerequisites and Not a fit inferred from the product's nature; Track Record "Add 1 trust foundation later" when absent; Pricing "TBD" when absent; ≥ 10 search keywords; Sender Information = a phone number the material shows and a signature: a sign-off natural in targetLanguage, then the sender's name on its own line (the founder / contact person only if named, else "(your name)"); no legal name / address / unsubscribe — those come from Workspace Settings; a one-line "Outbound mode: managed in Project Settings" under Sales Channels; no Discovery Strategies section):
+- salesStrategy: a full markdown SALES_STRATEGY.md following this template exactly (~180 lines max; Target with Prerequisites and Not a fit inferred from the product's nature; Track Record "Add 1 trust foundation later" when absent; Pricing "TBD" when absent; ≥ 10 search keywords; a one-line "Outbound mode: managed in Project Settings" under Sales Channels; no Discovery Strategies section):
 ${tplStrategy}
 Use this guide for persona, USP, KPI reverse calculation and keyword design:
 ${targetingGuide}
@@ -150,6 +151,7 @@ export async function applyStrategyDraft(
   db: Db,
   tenantId: TenantId,
   env: HostedEnv,
+  origin: JobOrigin,
   projectRef: ProjectRef,
   input: ApplyStrategyDraftInput,
 ): Promise<ServiceResult<ApplyStrategyDraftResult>> {
@@ -179,7 +181,7 @@ export async function applyStrategyDraft(
   const settings = await updateProjectSettings(
     db,
     tenantId,
-    STAGE_CALLER,
+    origin,
     projectId,
     {
       outboundChannels: input.outboundChannels,

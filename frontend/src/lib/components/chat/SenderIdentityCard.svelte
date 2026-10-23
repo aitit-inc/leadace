@@ -1,6 +1,7 @@
 <script lang="ts">
   import { BadgeCheck } from '@lucide/svelte';
   import { ApiError } from '$lib/api';
+  import { updateProjectSettings } from '$lib/api/project-settings';
   import { updateWorkspaceSettings } from '$lib/api/workspace-settings';
   import { SUPPORTED_COUNTRIES } from '$lib/countries';
 
@@ -13,9 +14,11 @@
 
   let {
     proposal,
+    projectId,
+    name,
     token,
     onsaved,
-  }: { proposal: SenderIdentityProposal; token: string; onsaved: () => void } = $props();
+  }: { proposal: SenderIdentityProposal; projectId: string | null; name: string; token: string; onsaved: () => void } = $props();
 
   // svelte-ignore state_referenced_locally
   let legalName = $state(proposal.legalName ?? '');
@@ -25,6 +28,8 @@
   let defaultSenderCountry = $state<string | null>(
     SUPPORTED_COUNTRIES.some((c) => c.code === proposal.senderCountry) ? proposal.senderCountry : null,
   );
+  // svelte-ignore state_referenced_locally
+  let senderDisplayName = $state(name);
   let saving = $state(false);
   let error = $state('');
 
@@ -34,7 +39,11 @@
     if (!complete || saving) return;
     saving = true;
     error = '';
+    // The name goes first: saving the workspace identity retires this card,
+    // and a name that failed after it would have no card left to retry from.
+    const target = projectId;
     try {
+      if (target) await updateProjectSettings(target, { senderDisplayName: senderDisplayName.trim() || null }, fetch, token);
       await updateWorkspaceSettings(
         { legalName: legalName.trim(), physicalAddress: physicalAddress.trim(), defaultSenderCountry },
         fetch,
@@ -87,6 +96,11 @@
         <option value={code}>{label}</option>
       {/each}
     </select>
+  </label>
+  <label class="block space-y-1.5">
+    <span class="text-sm font-medium text-text">Your name</span>
+    <input type="text" maxlength="200" bind:value={senderDisplayName} disabled={saving} class="field" />
+    <span class="block text-xs text-text-muted">Every email comes from and signs off with it.</span>
   </label>
   {#if error}
     <p class="text-sm text-danger">{error}</p>
