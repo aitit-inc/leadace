@@ -26,10 +26,11 @@ import {
   type ProposalStatus,
   type ProposedChange,
 } from '../../domain/loop/proposal'
+import { applySectionEdits } from '../../domain/document-sections'
 import { ok, err, type ServiceResult } from '../result'
 import { resolveProject } from '../projects'
 import { loadLeverConfig, loadProjectOutboundAllowlist } from '../project-settings'
-import { applyFrameChange, applyReachChange, loadReach } from './change'
+import { applyFrameChange, applyReachChange, latestDocument, loadReach } from './change'
 
 export const listProposalsQuerySchema = z.object({
   status: z.enum(PROPOSAL_STATUSES).optional(),
@@ -121,17 +122,20 @@ type FrameInput = Omit<FrameBody, 'reason'>
 
 type FrameLimits = Pick<LeverConfig, 'maxActiveArms' | 'maxActiveStrategies'>
 
-// The frame as it would apply now: its angles take ids no variant has used,
-// a strategy slug the project already used is left out (a slug is a measured
-// identity).
+// The frame as it would apply now, or why it cannot: its sales strategy is
+// the version read with the frame's sections in place, its angles take ids no
+// variant has used, a strategy slug the project already used is left out (a
+// slug is a measured identity).
 async function frameOf(
   db: Db,
   projectId: ProjectId,
   input: FrameInput,
-  reach: ReachSettings,
+  read: { salesStrategy: string; reach: ReachSettings },
   today: string,
   limits: FrameLimits,
-): Promise<Frame | null> {
+): Promise<{ ok: true; frame: Frame } | { ok: false; why: string }> {
+  const salesStrategy = applySectionEdits(read.salesStrategy, input.salesStrategyEdits)
+  if (!salesStrategy.ok) return { ok: false, why: `its sales strategy edits do not apply: ${salesStrategy.why}` }
   const [variantRows, strategyRows] = await Promise.all([
     db.select({ id: messageVariants.variantId }).from(messageVariants).where(eq(messageVariants.projectId, projectId)),
     db.select({ slug: discoveryStrategies.slug }).from(discoveryStrategies).where(eq(discoveryStrategies.projectId, projectId)),
@@ -139,20 +143,21 @@ async function frameOf(
   const taken = new Set(strategyRows.map((r) => r.slug))
   const strategies = [...new Map(input.strategies.filter((st) => !taken.has(st.slug)).map((st) => [st.slug, st])).values()]
     .slice(0, limits.maxActiveStrategies)
-  if (strategies.length < 2) return null
+  if (strategies.length < 2) return { ok: false, why: 'it needs at least two search strategies on slugs the project has not used' }
   const variants = input.variants.slice(0, limits.maxActiveArms)
   const ids = freshVariantIds(new Set(variantRows.map((r) => r.id)), today, variants.length)
   return {
-    salesStrategy: input.salesStrategy,
-    reach: frameReach(reach, input),
-    variants: variants.map((v, i) => ({ variantId: ids[i]!, ...v })),
-    strategies,
+    ok: true,
+    frame: {
+      salesStrategy: salesStrategy.content,
+      reach: frameReach(read.reach, input),
+      variants: variants.map((v, i) => ({ variantId: ids[i]!, ...v })),
+      strategies,
+    },
   }
 }
 
-export type RecordFrameResult =
-  | { recorded: true; id: number; applyOn: string }
-  | { recorded: false; why: 'one is pending' | 'too few new strategies' | 'Ace sends on none of its channels' }
+export type RecordFrameResult = { recorded: true; id: number; applyOn: string } | { recorded: false; why: string }
 
 // `read` is what the review read: the sales strategy version and the reach the
 // frame is written against, however long the model took, and the outbound mode.
@@ -161,16 +166,16 @@ export async function recordFrame(
   tenantId: TenantId,
   projectId: ProjectId,
   input: FrameInput & { title: string; body: string; reason: string },
-  read: { salesStrategyId: number; reach: ReachSettings; mode: OutboundMode },
+  read: { salesStrategyId: number; salesStrategy: string; reach: ReachSettings; mode: OutboundMode },
   today: string,
   limits: FrameLimits,
 ): Promise<RecordFrameResult> {
   // A frame is measured only by what the cycle sends; one it cannot send on is never measured.
   if (!input.outboundChannels.some((c) => hostedChannels(read.mode).includes(c))) return { recorded: false, why: 'Ace sends on none of its channels' }
-  const frame = await frameOf(db, projectId, input, read.reach, today, limits)
-  if (frame === null) return { recorded: false, why: 'too few new strategies' }
+  const built = await frameOf(db, projectId, input, read, today, limits)
+  if (!built.ok) return { recorded: false, why: built.why }
   const applyOn = applyOnFor(today)
-  const change: ProposedChange = { kind: 'frame', applyOn, reason: input.reason, salesStrategyFrom: read.salesStrategyId, reachFrom: read.reach, ...frame }
+  const change: ProposedChange = { kind: 'frame', applyOn, reason: input.reason, salesStrategyFrom: read.salesStrategyId, reachFrom: read.reach, ...built.frame }
   const [row] = await db
     .insert(proposals)
     .values({ tenantId, projectId, change, title: input.title, body: input.body })
@@ -192,16 +197,17 @@ export async function applyFrameNow(
   if (origin !== 'ui' && origin !== 'chat') return err('FORBIDDEN', 'A new frame needs the person\'s approval')
   const resolved = await resolveProject(db, tenantId, projectRef)
   if (!resolved.ok) return resolved
-  const [config, reach] = await Promise.all([loadLeverConfig(db, resolved.value), loadReach(db, resolved.value)])
+  const [config, reach, strategy] = await Promise.all([loadLeverConfig(db, resolved.value), loadReach(db, resolved.value), latestDocument(db, resolved.value, 'sales_strategy')])
   const { reason, ...input } = body
-  const frame = await frameOf(db, resolved.value, input, reach, new Date().toISOString().slice(0, 10), config)
-  if (frame === null) return err('INVALID_INPUT', 'A frame needs at least two search strategies with slugs the project has not used')
+  const built = await frameOf(db, resolved.value, input, { salesStrategy: strategy?.content ?? '', reach }, new Date().toISOString().slice(0, 10), config)
+  if (!built.ok) return err('INVALID_INPUT', 'The frame cannot apply', built.why)
   // Locked before the policy, as applying a proposal locks it.
   const stale = await db.select({ id: proposals.id }).from(proposals)
     .where(and(eq(proposals.projectId, resolved.value), eq(proposals.status, 'pending'), appliesOnItsDay))
     .for('update')
-  const applied = await applyFrameChange(db, tenantId, resolved.value, frame, { actor: 'user', reason }, (current) => sameReach(current.reach, reach))
-  if (!applied) return err('CONFLICT', 'The settings or the frame\'s names changed meanwhile; nothing changed')
+  const applied = await applyFrameChange(db, tenantId, resolved.value, built.frame, { actor: 'user', reason },
+    (current) => sameReach(current.reach, reach) && current.salesStrategyId === (strategy?.id ?? null))
+  if (!applied) return err('CONFLICT', 'The settings, the sales strategy or the frame\'s names changed meanwhile; nothing changed')
   if (stale.length > 0) await db.update(proposals).set({ status: 'outdated' }).where(inArray(proposals.id, stale.map((p) => p.id)))
   return ok({ applied: true })
 }

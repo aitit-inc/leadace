@@ -97,10 +97,10 @@ Classify sections:
 | Category | Sections | Behavior |
 |---|---|---|
 | Not set | Missing / empty / incomplete | Subject to completion |
-| evaluate-managed | targeting, KPI, search keywords (when already populated) | **Do not touch by default** |
-| Static settings | Sender info, response def, track record, messaging, channels | Update only if user explicitly requests |
+| evaluate-managed | Target (when already populated) | **Do not touch by default** |
+| Static settings | Sender info, response def, track record, messaging, channels, KPI, search keywords | Update only if user explicitly requests |
 
-`/evaluate` auto-tunes targeting / KPI / search keywords once a project has activity, so treat those sections as evaluate-managed whenever they already carry content. An empty such section is simply "not set" and is fillable here; missing `Prerequisites` / `Not a fit` count as not set even when the rest of Target is populated. (Discovery strategies live in the registry, not this document — `get_lever_state` → `discovery.strategies`; same evaluate-managed rule applies once populated.)
+`/evaluate` auto-tunes the Target once a project has activity, so treat it as evaluate-managed whenever it already carries content. An empty Target is simply "not set" and is fillable here; missing `Prerequisites` / `Not a fit` count as not set even when the rest of Target is populated. (Discovery strategies live in the registry, not this document — `get_lever_state` → `discovery.strategies`; same evaluate-managed rule applies once populated.)
 
 **Template update detection:** Compare section headings in `tpl_sales_strategy` master document with the existing file. Sections present in template but missing in file → report as "possibly added by an update".
 
@@ -317,7 +317,7 @@ save_document
 ## Step 7. Generate / Update SALES_STRATEGY.md
 
 - **Initial** (both modes): Retrieve template `tpl_sales_strategy`. Generate following structure.
-- **Update** (Mode A): Use existing from Step 3. Update only changed sections. **Evaluate-managed sections (targeting, KPI, search keywords) are only rewritten when user explicitly instructs an update.** Messaging and channels are user-authored hints (subject lines & channel ranking are auto-optimized by the lever tick) — rewrite only on explicit user request.
+- **Update** (Mode A): Use existing from Step 3. Update only changed sections. **The evaluate-managed Target is only rewritten when user explicitly instructs an update.** Messaging and channels are user-authored hints (subject lines & channel ranking are auto-optimized by the lever tick) — rewrite only on explicit user request.
 
 **Sender identity and footer**: the sender display name and company name are Web UI project settings, the `From:` address is one of the project's sending mailboxes, and the legal name, physical address and unsubscribe line live in Workspace Settings and are appended by the backend at send time. Never write any of them into the documents — duplicated address blocks make the recipient-side footer look broken. A custom footer (`footerOverride`, Web UI only) replaces these server-appended disclosures verbatim — never propose it as a way to change them.
 

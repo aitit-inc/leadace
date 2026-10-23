@@ -86,7 +86,7 @@ Run every cycle.
 Include the following in the prompt:
 - Project ID: `$0`
 - Read `${CLAUDE_PLUGIN_ROOT}/skills/evaluate/SKILL.md` and follow its procedure
-- Return to main with **only a 3-line summary**. Example: "Response rate 4.2%. 2 search keywords added, 1 discovery strategy demoted. Levers: angle v2 leading, email affinity in software_tech."
+- Return to main with **only a 3-line summary**. Example: "Response rate 4.2%. Target narrowed, 1 discovery strategy demoted. Levers: angle v2 leading, email affinity in software_tech."
 
 After receiving the summary from the sub-agent, report it to the user.
 

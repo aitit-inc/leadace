@@ -142,8 +142,9 @@ propose_frame() { # sales-strategy-from apply_on tag → id
               RETURNING id;" | head -1
 }
 active_options() { psql_local "SELECT (SELECT string_agg(variant_id, ',' ORDER BY variant_id) FROM message_variants WHERE project_id = '$PROJECT_ID' AND archived_at IS NULL) || ' | ' || (SELECT string_agg(slug, ',' ORDER BY slug) FROM discovery_strategies WHERE project_id = '$PROJECT_ID' AND archived_at IS NULL);"; }
-frame_body() { # tag
-  jq -nc --arg t "$1" '{salesStrategy:("# Strategy " + $t), outboundChannels:["email"], targetCountries:["JP"], targetLanguage:"en",
+frame_body() { # tag [target section]
+  jq -nc --arg t "$1" --arg s "${2:-## Target
+$1}" '{salesStrategyEdits:[{heading:"Target", content:$s}], outboundChannels:["email"], targetCountries:["JP"], targetLanguage:"en",
     variants:[{label:"C", subjectPattern:"u {{org}}", bodyApproach:"b"}, {label:"D", subjectPattern:"v {{org}}", bodyApproach:"b"}],
     strategies:[{slug:($t + "-a"), approach:"a"}, {slug:($t + "-b"), approach:"b"}], reason:"the person asked for clinics"}'
 }
@@ -263,10 +264,10 @@ assert_eq "the tick decided on the frame signal" \
   "$(psql_local "SELECT decision ? 'frame' FROM lever_decisions WHERE project_id = '$PROJECT_ID' ORDER BY cycle_date DESC LIMIT 1;")" "t"
 OLD_DOC="$(strategy_doc_id)"
 F2="$(propose_frame "$OLD_DOC" "$TOMORROW" clinic)"
-ui PUT "/api/projects/$PROJECT_ID/documents/sales_strategy" '{"content":"# Strategy edited by the person"}' > /dev/null
+ui PUT "/api/projects/$PROJECT_ID/documents/sales_strategy" '{"content":"# Strategy edited by the person\n\n## Target\nschools"}' > /dev/null
 STATUS="$(ui POST "/api/proposals/$F2/apply")"
 assert_eq "written against an older sales strategy: outdated" "$STATUS $(status_of "$F2")" "200 outdated"
-assert_eq "the person's edit stands" "$(psql_local "SELECT content FROM project_documents WHERE id = $(strategy_doc_id);")" "# Strategy edited by the person"
+assert_eq "the person's edit stands" "$(psql_local "SELECT content FROM project_documents WHERE id = $(strategy_doc_id);")" $'# Strategy edited by the person\n\n## Target\nschools'
 assert_eq "the options untouched" "$(active_options)" "frame_nurse_1,frame_nurse_2 | nurse-a,nurse-b"
 F3="$(propose_frame "$(strategy_doc_id)" "$TOMORROW" dental)"
 ui PUT "$SETTINGS" '{"targetLanguage":"ja"}' > /dev/null
@@ -276,11 +277,16 @@ STATUS="$(mcp POST "/api/projects/$PROJECT_ID/frame" "$(frame_body clinic)")"
 assert_eq "MCP frame → 403" "$STATUS" "403"
 STATUS="$(ui POST "/api/projects/$PROJECT_ID/frame" "$(frame_body nurse)")"
 assert_eq "slugs the project used → 400" "$STATUS" "400"
+STATUS="$(ui POST "/api/projects/$PROJECT_ID/frame" "$(frame_body clinic clinic)")"
+assert_eq "sales strategy edits that do not apply → 400, with why" "$STATUS $(api_body | jq -r '.detail')" \
+  '400 its sales strategy edits do not apply: the new "Target" section does not open with its ## heading'
 P6="$(propose '["email","form"]' '["email","form","sns_linkedin"]' "$TOMORROW")"
 STATUS="$(ui POST "/api/projects/$PROJECT_ID/frame" "$(frame_body clinic)")"
 assert_eq "an approved frame applies at once → 200" "$STATUS" "200"
 assert_eq "the reach is the frame's" "$(psql_local "SELECT array_to_string(outbound_channels, ',') || ' ' || array_to_string(target_countries, ',') || ' ' || target_language FROM project_settings WHERE project_id = '$PROJECT_ID';")" "email JP en"
 assert_eq "the pending loosening is outdated" "$(status_of "$P6")" "outdated"
+assert_eq "the person's strategy stays, with the frame's section" \
+  "$(psql_local "SELECT content FROM project_documents WHERE id = $(strategy_doc_id);")" $'# Strategy edited by the person\n\n## Target\nclinic'
 assert_eq "its options, on fresh ids" "$(active_options)" "frame_${TODAY//-/}_1,frame_${TODAY//-/}_2 | clinic-a,clinic-b"
 assert_eq "a frame row by the person" \
   "$(psql_local "SELECT actor || ' | ' || reason FROM policy_changes WHERE project_id = '$PROJECT_ID' AND target = 'frame' ORDER BY id DESC LIMIT 1;")" "user | the person asked for clinics"

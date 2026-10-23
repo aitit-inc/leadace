@@ -33,13 +33,14 @@ import { loadMasterDoc, noProgress, requireStrategyDocs, STAGE_CALLER, type Host
 import { utcDateKey } from '../../domain/time'
 import { runWithRls } from '../../db/rls'
 import { draftReviewSection } from '../../domain/draft-review'
+import { applySectionEdits, sectionEditSchemaFor } from '../../domain/document-sections'
 import { getDraftReviewFeedback } from '../draft-reviews'
 
-const evaluationSchema = z.object({
+const evaluationSchemaFor = (salesStrategy: string) => z.object({
   // The narration a person reads (markdown): KPIs, findings, lever
   // observability, tactical rejection signals, next actions.
   report: z.string().min(1),
-  salesStrategy: z.object({ content: z.string().min(1), why: changeReasonSchema, signals: changeSignalsSchema }).nullable(),
+  salesStrategy: sectionEditSchemaFor(salesStrategy).extend({ content: z.string().min(1), why: changeReasonSchema, signals: changeSignalsSchema }).nullable(),
   newVariant: z
     .object({
       variantId: variantIdSchema,
@@ -281,7 +282,7 @@ ${measuredSections(judged.value)}
 - Data sufficient is ${sufficient} (n=${evidence.kpi.trials.toFixed(1)}). When false: salesStrategy and newVariant must be null; strategyUpserts, loosen and addMeans that rest on discovery, not replies, still apply.
 - Stability: change only on patterns repeated across cycles; leave a thing alone while its last change cannot be measured yet.
 - A finding goes in as a change to what it is about, with the finding and its numbers as the why: who to reach → salesStrategy; where to search → strategyUpserts; what to say and how → newVariant; a limit the person set → loosen; a means that needs an account set up → addMeans.
-- salesStrategy: return { content: the full document with only Target (Primary / Secondary / Prerequisites / Not a fit), KPI and Search Keywords changed, why }, or null. Adjust within the frame; never write a frame change (offer, market, industry, country, channel — past sends no longer apply). Judge Target as a premise (can they use and buy it?) before the positive rate. The noes say where it is off: not_decision_maker points at the role, not_relevant or already_have_solution gathered in one industry or size points at that segment. A wrong-prospect call in Draft review tells you the Target: when it names a kind of organization, reflect it in "Not a fit". null while a new frame is pending (${pendingFrame !== undefined}).
+- salesStrategy: the Target section (Primary / Secondary / Prerequisites / Not a fit) rewritten whole, its ## heading line first, with why and signals; every other section stays as it is. Or null. Adjust within the frame; never write a frame change (offer, market, industry, country, channel — past sends no longer apply). Judge Target as a premise (can they use and buy it?) before the positive rate. The noes say where it is off: not_decision_maker points at the role, not_relevant or already_have_solution gathered in one industry or size points at that segment. A wrong-prospect call in Draft review tells you the Target: when it names a kind of organization, reflect it in "Not a fit". null while a new frame is pending (${pendingFrame !== undefined}).
 - newVariant: when today's tick asks for one (${lever.needsReplenishment}), into the free slot (replaces: null). Otherwise only when the replied sends show an angle no listed variant takes, in place of one of: ${replaceable.join(', ') || 'none today'} (replaces: its id; these are out of their grace and not today's likeliest best). One angle most different from every listed one: what it promises, how it opens, why now (subject pattern ≤ 80 chars using only {{org}} / {{name}} / {{signal}} placeholders, a 2–5 line body approach, a label, why: what in the replies points to it and how it differs from the listed ones) on a fresh slug like gen_${utcDateKey().replace(/-/g, '')}; otherwise null.
 - strategyUpserts: the goal is up to ${config.targetActiveStrategies} active strategies (${activeStrategies.size} now), each still finding organizations in the Target with a usable contact. Judge strategies on their explored numbers and on the noes and bounces their sends drew; the tick already weighs positive rates. Archive one whose finds are mostly not targeted, with no contact found, not new, bouncing, or mostly answered not_relevant or already_have_solution (archived: true, approach echoed unchanged), and register its replacement in the same run. A new strategy takes a new kebab-case slug and a 2–5 line approach: where and how to search, and why it should work; prefer sources where the Prerequisites are observable. Never reuse a slug for a different idea. why: the evidence for an archive, the hypothesis for a new strategy.
 - loosen: when a channel that is off or the country list keeps organizations in the Target from being reached, and the numbers show it is worth it: outboundChannels = the full list with the channel added, targetCountries = the full list with the country added or [] to lift the limit, null for the one left as it is; a title naming the change; a body with the numbers and what it means for the person (a form or SNS message waits for them to send it); why. It applies tomorrow unless the person stops it. null while one or a new frame is pending (${pendingLoosen !== undefined || pendingFrame !== undefined}). Never repeat one the person stopped.
@@ -290,9 +291,9 @@ ${measuredSections(judged.value)}
 - signals: every kind of evidence a salesStrategy, newVariant or strategyUpserts change rests on: replies (positive and interested against silence), declines (the noes and their reasons), bounces, discovery (Target fit, contacts, channels, cost), person (Draft review).
 - report (markdown): key KPIs; inquiry-landing conversions when any outcome is non-zero; changes since the last cycle; discovery strategy performance (skip when no send carries a slug); proposals recorded; findings; improvements applied; tactical rejection signals (distribution, recontact queue, decision-maker referrals) when total > 0; lever observability (leading options with w / p and maturity at n ≥ ${lever.minSamplePerArm}, archived options — "rotated" is for freshness, not a loser; "none yet" without data); next actions. Never imply progress the numbers do not show.`
 
-  let out: z.infer<typeof evaluationSchema>
+  let out: z.infer<ReturnType<typeof evaluationSchemaFor>>
   try {
-    out = await callLlmJson(env, 'evaluate', { prompt, schema: evaluationSchema })
+    out = await callLlmJson(env, 'evaluate', { prompt, schema: evaluationSchemaFor(docs.salesStrategy) })
   } catch (e) {
     if (e instanceof LlmError) return err('BAD_GATEWAY', 'Evaluation failed upstream', e.message)
     throw e
@@ -302,10 +303,15 @@ ${measuredSections(judged.value)}
   const wrote: string[] = []
   if (sufficient) {
     const { salesStrategy: newStrategy, newVariant } = out
-    if (newStrategy !== null && pendingFrame === undefined && newStrategy.content !== docs.salesStrategy) {
-      const written = await runWithRls(db, tenantId, (tx) =>
-        applySalesStrategyEdit(tx, tenantId, projectId, newStrategy.content, authorOf(STAGE_CALLER, newStrategy.why, newStrategy.signals), docs.salesStrategyId))
-      if (written) wrote.push('sales_strategy')
+    if (newStrategy !== null && pendingFrame === undefined) {
+      const { why, signals, ...edit } = newStrategy
+      const edited = applySectionEdits(docs.salesStrategy, [edit])
+      if (!edited.ok) console.warn(`[evaluate] sales strategy edit for ${projectId} not applied: ${edited.why}`)
+      else if (edited.content !== docs.salesStrategy) {
+        const written = await runWithRls(db, tenantId, (tx) =>
+          applySalesStrategyEdit(tx, tenantId, projectId, edited.content, authorOf(STAGE_CALLER, why, signals), docs.salesStrategyId))
+        if (written) wrote.push('sales_strategy')
+      }
     }
     const outgoing = newVariant?.replaces && !lever.needsReplenishment && replaceable.includes(newVariant.replaces) ? newVariant.replaces : null
     if (newVariant && (lever.needsReplenishment || outgoing) && !variants.value.variants.some((v) => v.variantId === newVariant.variantId)) {
@@ -354,8 +360,9 @@ ${measuredSections(judged.value)}
   })
 }
 
-const frameReviewSchema = z.object({
+const frameReviewSchemaFor = (salesStrategy: string) => z.object({
   frame: frameBodySchema.omit({ reason: true }).extend({
+    salesStrategyEdits: z.array(sectionEditSchemaFor(salesStrategy)),
     title: z.string().min(1).max(120),
     body: z.string().min(1).max(2000),
     why: changeReasonSchema,
@@ -427,13 +434,13 @@ ${history.map(framePeriodLine).join('\n')}
 ${measuredSections(judged.value)}
 
 ## Output
-- frame: title naming the change (≤ 120 chars); body for the person: the numbers behind the review, what was tried, the new hypothesis and how it differs from every frame so far, and what it means for them; why: one short line for the change log; salesStrategy: the full new document, in the current one's sections; outboundChannels, targetCountries, targetLanguage: the frame's, changed or not ([] countries for any); variants: 2–${config.maxActiveArms} angles for the new frame, each a label, a subject pattern ≤ 80 chars using only {{org}} / {{name}} / {{signal}}, and a 2–5 line body approach; strategies: 2–${config.maxActiveStrategies} search strategies, each a new kebab-case slug (not ${taken.join(', ') || 'none taken'}) and a 2–5 line approach: where and how to search, and why it should work. It applies tomorrow unless the person stops it, and measuring restarts then. Never repeat a frame the person stopped.
+- frame: title naming the change (≤ 120 chars); body for the person: the numbers behind the review, what was tried, the new hypothesis and how it differs from every frame so far, and what it means for them; why: one short line for the change log; salesStrategyEdits: each sales strategy section the frame changes, written whole; a section left out stays as it is; outboundChannels, targetCountries, targetLanguage: the frame's, changed or not ([] countries for any); variants: 2–${config.maxActiveArms} angles for the new frame, each a label, a subject pattern ≤ 80 chars using only {{org}} / {{name}} / {{signal}}, and a 2–5 line body approach; strategies: 2–${config.maxActiveStrategies} search strategies, each a new kebab-case slug (not ${taken.join(', ') || 'none taken'}) and a 2–5 line approach: where and how to search, and why it should work. It applies tomorrow unless the person stops it, and measuring restarts then. Never repeat a frame the person stopped.
 - frame: null only when the replies show that no frame would get positives (the price, a missing capability); note then says why, with the evidence, to the person.
 - note: otherwise one line.`
 
-  let out: z.infer<typeof frameReviewSchema>
+  let out: z.infer<ReturnType<typeof frameReviewSchemaFor>>
   try {
-    out = await callLlmJson(env, 'evaluate', { prompt, schema: frameReviewSchema })
+    out = await callLlmJson(env, 'evaluate', { prompt, schema: frameReviewSchemaFor(docs.salesStrategy) })
   } catch (e) {
     if (e instanceof LlmError) return err('BAD_GATEWAY', 'Frame review failed upstream', e.message)
     throw e
@@ -443,7 +450,7 @@ ${measuredSections(judged.value)}
     return ok({ summary: `no new frame: ${out.note}` })
   }
   const { title, body, why: reason, ...frame } = out.frame
-  const r = await runWithRls(db, tenantId, (tx) => recordFrame(tx, tenantId, projectId, { ...frame, title, body, reason }, { salesStrategyId: docs.salesStrategyId, reach, mode }, utcDateKey(), config))
+  const r = await runWithRls(db, tenantId, (tx) => recordFrame(tx, tenantId, projectId, { ...frame, title, body, reason }, { salesStrategyId: docs.salesStrategyId, salesStrategy: docs.salesStrategy, reach, mode }, utcDateKey(), config))
   if (!r.recorded) return ok({ summary: `no new frame: ${r.why}` })
   await announceProposal(db, tenantId, env, projectId, { id: r.id, applyOn: r.applyOn, title, body })
   return ok({ summary: `proposed a new frame: ${title} (applies ${r.applyOn})` })

@@ -376,9 +376,19 @@ assert_eq "dashboard journal leads with today's sales_strategy edit" \
 assert_eq "dashboard journal carries the tick's archive of v3" \
   "$(echo "$DASH" | jq -r '[.journal[] | select(.kind == "rule_archive" and .optionId == "v3")] | length')" "1"
 assert_eq "an empty sales strategy is refused" \
-  "$(api PUT "/api/projects/$PROJECT_ID/documents/sales_strategy" "$(jq -nc '{content:""}')" | jq -r '.detail.fieldErrors.content | length')" "1"
+  "$(api PUT "/api/projects/$PROJECT_ID/documents/sales_strategy" "$(jq -nc '{content:""}')" | jq -r '.error')" "Invalid input"
 assert_eq "lever-decisions carries every change of the day, the sales_strategy edit with its reason" \
   "$(api GET "/api/projects/$PROJECT_ID/lever-decisions" | jq -rc '[.decisions[0].changes[] | select(.target == "sales_strategy") | .reason]')" '["e2e: first draft"]'
+latest_strategy() { psql_local "SELECT content FROM project_documents WHERE project_id='$PROJECT_ID' AND slug='sales_strategy' ORDER BY created_at DESC, id DESC LIMIT 1;"; }
+api PUT "/api/projects/$PROJECT_ID/documents/sales_strategy" "$(jq -nc '{sections:[{heading:"", content:"# Strategy v1\n\n## Target\nclinics"}]}')" > /dev/null
+api PUT "/api/projects/$PROJECT_ID/documents/sales_strategy" "$(jq -nc '{sections:[{heading:"## Target", content:"## Target\ndentists"}]}')" > /dev/null
+assert_eq "sections: the latest version with only the named section changed" "$(latest_strategy)" $'# Strategy v1\n\n## Target\ndentists'
+assert_eq "sections that do not apply are refused, with why" \
+  "$(api PUT "/api/projects/$PROJECT_ID/documents/sales_strategy" "$(jq -nc '{sections:[{heading:"Sales Strategy", content:"## Sales Strategy\nall"}]}')" | jq -r '.detail')" \
+  'the document has no "Sales Strategy" section; its sections are "", "Target"'
+assert_eq "content and sections together are refused" \
+  "$(api PUT "/api/projects/$PROJECT_ID/documents/sales_strategy" "$(jq -nc '{content:"# x", sections:[{heading:"", content:"# y"}]}')" | jq -r '.error')" "Invalid input"
+assert_eq "a refused save writes nothing" "$(latest_strategy)" $'# Strategy v1\n\n## Target\ndentists'
 
 step "get_outbound_targets surfaces per-prospect channel affinity"
 RT="$(api GET "/api/projects/$PROJECT_ID/prospects/reachable?limit=10")"

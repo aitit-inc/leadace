@@ -23,6 +23,7 @@ import { DAYS_OF_WEEK, daysSchema, hourSchema, promptSchema, timezoneSchema } fr
 import { applyStrategyDraftSchema, competitorsInputSchema, readPagesSchema } from '../domain/strategy-draft'
 import { changeReasonSchema, reachDiff, reachLine, type ReachSettings } from '../domain/loop/change'
 import { frameBodySchema, frameReach, proposalWhat, PROPOSAL_STATUSES, type ProposedChange } from '../domain/loop/proposal'
+import { sectionEditSchema } from '../domain/document-sections'
 
 // MIN_PLUGIN_VERSION is the gate: any plugin older than this MUST be told to
 // run `/plugin update leadace@leadace` because backend behavior assumes the
@@ -2005,18 +2006,19 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'save_document',
-    'Save a project document by slug as a new immutable version; prior versions preserved. A playbook_<strategy-slug> version saved here stays pending until the user approves it in the Web UI → Documents; skills follow only approved playbook versions. public_journal is anonymized server-side (third-party names → industry + role/size) before it is stored.',
+    'Save a project document by slug as a new immutable version; prior versions preserved. Pass the whole document as content, or only the sections that change as sections. A playbook_<strategy-slug> version saved here stays pending until the user approves it in the Web UI → Documents; skills follow only approved playbook versions. public_journal is anonymized server-side (third-party names → industry + role/size) before it is stored.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       slug: z.string().describe('Document slug: "business", "sales_strategy", "search_notes", "public_journal", or "playbook_<strategy-slug>"'),
-      content: z.string().describe('Full markdown content of the document'),
+      content: z.string().optional().describe('The whole markdown document'),
+      sections: z.array(sectionEditSchema).optional().describe('In place of content: each section that changes, written whole; every other section of the latest version stays as it is'),
       reason: changeReason.describe('Why, in one line; kept in the change log for business and sales_strategy.'),
     },
-    async ({ projectId, slug, content, reason }, ctx) => {
-      const { ok, data } = await ctx.callApi('PUT', `/projects/${encodeURIComponent(projectId)}/documents/${slug}`, { content, reason })
+    async ({ projectId, slug, content, sections, reason }, ctx) => {
+      const { ok, data } = await ctx.callApi('PUT', `/projects/${encodeURIComponent(projectId)}/documents/${slug}`, { content, sections, reason })
       if (!ok) {
-        const err = data as { error: string }
-        return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
+        const err = data as { error: string; detail?: unknown }
+        return { content: [{ type: 'text' as const, text: `Error: ${err.error}${typeof err.detail === 'string' ? `: ${err.detail}` : ''}` }], isError: true }
       }
       const result = data as { id: number; slug: string; createdAt: string }
       return { content: [{ type: 'text' as const, text: `Document "${slug}" saved (version id: ${result.id}).` }] }
@@ -2690,7 +2692,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'apply_frame_change',
-    'Start a new frame for a project: the full new sales strategy, its channels, countries and language, and the angles and search strategies that test it. Every active angle and strategy not in it is archived, and the loop measures from now. For a different audience, offer or channel set the user asked for, including in place of a frame proposal they stopped. Answers whether the frame started.',
+    'Start a new frame for a project: the sales strategy sections it changes, its channels, countries and language, and the angles and search strategies that test it. Every active angle and strategy not in it is archived, and the loop measures from now. For a different audience, offer or channel set the user asked for, including in place of a frame proposal they stopped. Answers whether the frame started.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       frame: frameBodySchema,
@@ -2714,8 +2716,9 @@ export function buildToolRegistry(): ToolDef[] {
             { label: 'Reach', value: current === null ? 'unknown' : reachLine(reachDiff(current, frameReach(current, frame))) || 'unchanged' },
             { label: 'Message angles', value: `${frame.variants.map((v) => v.label).join(', ')}, in place of the current ones` },
             { label: 'Search strategies', value: `${frame.strategies.map((st) => st.slug).join(', ')}, in place of the current ones` },
+            { label: 'Sales strategy', value: frame.salesStrategyEdits.length === 0 ? 'unchanged' : `${frame.salesStrategyEdits.map((e) => e.heading || 'the top').join(', ')} rewritten below; the rest stays as it is` },
           ],
-          body: frame.salesStrategy,
+          body: frame.salesStrategyEdits.map((e) => e.content.trim() || `Removes the section "${e.heading}".`).join('\n\n'),
           warning: 'Measuring restarts: results so far stop steering this project.',
           confirmLabel: 'Start the new frame',
         }

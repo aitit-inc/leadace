@@ -39,7 +39,7 @@ async function log(db: Db, tenantId: TenantId, projectId: ProjectId, rows: Chang
 
 // Held to commit, so a concurrent write to the same option or document waits
 // and then reads the state this one left: the ops it logs are its own.
-async function lockTarget(db: Db, projectId: ProjectId, target: string, key: string): Promise<void> {
+export async function lockTarget(db: Db, projectId: ProjectId, target: string, key: string): Promise<void> {
   await db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`policy:${projectId}:${target}:${key}`}))`)
 }
 
@@ -298,14 +298,14 @@ export async function loadReach(db: Db, projectId: ProjectId): Promise<ReachSett
   return row as ReachSettings
 }
 
-export async function latestSalesStrategyId(db: Db, projectId: ProjectId): Promise<number | null> {
+export async function latestDocument(db: Db, projectId: ProjectId, slug: string): Promise<{ id: number; content: string } | null> {
   const [row] = await db
-    .select({ id: projectDocuments.id })
+    .select({ id: projectDocuments.id, content: projectDocuments.content })
     .from(projectDocuments)
-    .where(and(eq(projectDocuments.projectId, projectId), eq(projectDocuments.slug, 'sales_strategy')))
+    .where(and(eq(projectDocuments.projectId, projectId), eq(projectDocuments.slug, slug)))
     .orderBy(desc(projectDocuments.createdAt), desc(projectDocuments.id))
     .limit(1)
-  return row?.id ?? null
+  return row ?? null
 }
 
 // A new frame in one transaction: the sales strategy, the reach, the options
@@ -322,7 +322,7 @@ export async function applyFrameChange(
 ): Promise<boolean> {
   await lockTarget(db, projectId, 'sales_strategy', '')
   await lockTarget(db, projectId, 'settings', '')
-  if (!when({ salesStrategyId: await latestSalesStrategyId(db, projectId), reach: await loadReach(db, projectId) })) return false
+  if (!when({ salesStrategyId: (await latestDocument(db, projectId, 'sales_strategy'))?.id ?? null, reach: await loadReach(db, projectId) })) return false
   // The frame row carries what the frame rests on; the rows it writes are its content.
   const part: ChangeAuthor = by.actor === 'ace' ? { ...by, evidence: null } : by
   // Its ids were fresh when it was written; one taken since would rewrite a measured option.
@@ -364,7 +364,7 @@ export async function applySalesStrategyEdit(
   from: number,
 ): Promise<boolean> {
   await lockTarget(db, projectId, 'sales_strategy', '')
-  if ((await latestSalesStrategyId(db, projectId)) !== from) return false
+  if ((await latestDocument(db, projectId, 'sales_strategy'))?.id !== from) return false
   await applyDocumentChange(db, tenantId, projectId, 'sales_strategy', content, by)
   return true
 }

@@ -789,7 +789,10 @@ const SCENARIOS = [
           confirmLabel: 'Send without review',
         },
       });
-      const FRAME_STRATEGY = '## Target\n- Primary: dental clinics with 3+ chairs that book by phone\n- Prerequisites: online booking is not offered\n\n## Value Proposition\nFewer phone calls: patients book and confirm by email.\n\n## KPI\n- Positive reply rate ≥ 2%';
+      const FRAME_EDITS = [
+        { heading: 'Target', content: '## Target\n- Primary: dental clinics with 3+ chairs that book by phone\n- Prerequisites: online booking is not offered' },
+        { heading: 'Value Proposition', content: '## Value Proposition\nFewer phone calls: patients book and confirm by email.' },
+      ];
       const frame = seedThread(ctx, {
         projectId,
         title: 'Try dental clinics instead',
@@ -799,7 +802,7 @@ const SCENARIOS = [
         args: {
           projectId,
           frame: {
-            salesStrategy: FRAME_STRATEGY,
+            salesStrategyEdits: FRAME_EDITS,
             outboundChannels: ['email', 'form'],
             targetCountries: [],
             targetLanguage: 'en',
@@ -821,8 +824,9 @@ const SCENARIOS = [
             { label: 'Reach', value: 'Channels: email → email, form' },
             { label: 'Message angles', value: 'Phone-free booking, No-show reminders, in place of the current ones' },
             { label: 'Search strategies', value: 'dental-clinic-directories, phone-only-booking-pages, in place of the current ones' },
+            { label: 'Sales strategy', value: 'Target, Value Proposition rewritten below; the rest stays as it is' },
           ],
-          body: FRAME_STRATEGY,
+          body: FRAME_EDITS.map((e) => e.content).join('\n\n'),
           warning: 'Measuring restarts: results so far stop steering this project.',
           confirmLabel: 'Start the new frame',
         },

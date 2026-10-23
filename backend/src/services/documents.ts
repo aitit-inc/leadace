@@ -15,8 +15,9 @@ import { applyAddMeans } from './loop/proposals'
 import { PUBLIC_JOURNAL_SLUG } from './public-scoreboard'
 import { redactPublicJournal } from './public-journal'
 import type { OpenAIEnv } from './openai'
-import { applyDocumentChange } from './loop/change'
+import { applyDocumentChange, latestDocument, lockTarget } from './loop/change'
 import { authorOf, changeReasonSchema, isDocumentTarget } from '../domain/loop/change'
+import { applySectionEdits, sectionEditSchema, type SectionEditResult } from '../domain/document-sections'
 
 // public_journal: one version per daily cycle, served on /live while the
 // project's publicScoreboardEnabled setting is on.
@@ -37,11 +38,11 @@ export const documentHistoryQuerySchema = z.object({
 })
 export type DocumentHistoryQuery = z.infer<typeof documentHistoryQuerySchema>
 
-export const saveDocumentSchema = z.object({
-  content: z.string().min(1),
-  // Kept in the change log for business / sales_strategy.
-  reason: changeReasonSchema.optional(),
-})
+// reason is kept in the change log for business / sales_strategy.
+export const saveDocumentSchema = z.union([
+  z.strictObject({ content: z.string().min(1), reason: changeReasonSchema.optional() }),
+  z.strictObject({ sections: z.array(sectionEditSchema).min(1), reason: changeReasonSchema.optional() }),
+])
 export type SaveDocumentInput = z.infer<typeof saveDocumentSchema>
 
 export const approveDocumentSchema = z.object({
@@ -172,6 +173,13 @@ export type SaveDocumentResult = {
   approvedAt: Date | null
 }
 
+async function contentOf(db: Db, projectId: ProjectId, slug: string, input: SaveDocumentInput): Promise<SectionEditResult> {
+  if (!('sections' in input)) return { ok: true, content: input.content }
+  // Under the lock a document change takes, so edits are never spliced into a version a save in between replaced.
+  await lockTarget(db, projectId, slug, '')
+  return applySectionEdits((await latestDocument(db, projectId, slug))?.content ?? '', input.sections)
+}
+
 export async function saveDocument(
   db: Db,
   tenantId: TenantId,
@@ -192,8 +200,10 @@ export async function saveDocument(
   if (!resolved.ok) return resolved
   const projectId = resolved.value
 
+  const written = await contentOf(db, projectId, slug, input)
+  if (!written.ok) return err('INVALID_INPUT', 'The section edits do not apply', written.why)
   const content =
-    slug === PUBLIC_JOURNAL_SLUG ? await redactPublicJournal(env, input.content) : ok(input.content)
+    slug === PUBLIC_JOURNAL_SLUG ? await redactPublicJournal(env, written.content) : ok(written.content)
   if (!content.ok) return content
 
   const approvedAt = caller === 'browser' ? new Date() : null

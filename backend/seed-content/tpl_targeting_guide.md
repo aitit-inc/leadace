@@ -58,7 +58,7 @@ The KPI section of SALES_STRATEGY.md should include the following reverse calcul
 Revenue target → Required conversions → Required meetings → Required responses → Required sends → Required list size
 ```
 
-Set conversion rates at each step using industry averages as initial values, then update based on actual results via /evaluate:
+Set conversion rates at each step using industry averages as initial values, then revise them against actual results:
 - Email response rate: 1–5% (varies by industry and target)
 - Response → meeting rate: 30–50%
 - Meeting → close rate: 20–40%

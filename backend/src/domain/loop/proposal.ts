@@ -3,6 +3,7 @@ import { OUTBOUND_CHANNELS, type OutboundChannel } from '../outbound-channel'
 import { ALLOWED_SEND_COUNTRIES, type AllowedSendCountry } from '../country'
 import { discoveryStrategySchema } from '../ids'
 import { localeSchema } from '../locale'
+import { sectionEditSchema } from '../document-sections'
 import { changeReasonSchema, reachDiff, reachLine, type ChangeSignal, type ReachDiff, type ReachSettings } from './change'
 
 // What Ace hands the person to decide (product_principles §2.2). A loosening or
@@ -22,13 +23,13 @@ export type FrameVariant = { variantId: string; label: string; subjectPattern: s
 export type FrameStrategy = { slug: string; approach: string }
 
 // The outer layer's change: who to reach and what to lead with (the full sales
-// strategy), on which channels, in which countries and language, and the
-// options that test it. Every active option not in it is archived, and
-// measuring restarts when it applies.
+// strategy, as its edits leave it), on which channels, in which countries and
+// language, and the options that test it. Every active option not in it is
+// archived, and measuring restarts when it applies.
 export type Frame = { salesStrategy: string; reach: ReachSettings; variants: FrameVariant[]; strategies: FrameStrategy[] }
 
 export const frameBodySchema = z.object({
-  salesStrategy: z.string().min(1).describe('The full new sales strategy document'),
+  salesStrategyEdits: z.array(sectionEditSchema).describe('The sales strategy sections the frame changes; every other section stays as it is'),
   outboundChannels: z.array(z.enum(OUTBOUND_CHANNELS)).min(1).describe('The channels'),
   targetCountries: z.array(z.enum(ALLOWED_SEND_COUNTRIES)).describe('The countries ([] for any)'),
   targetLanguage: localeSchema.describe('The outreach language'),

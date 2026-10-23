@@ -21,7 +21,7 @@ allowed-tools:
 
 # Evaluate - PDCA Evaluation & Improvement
 
-A skill that analyzes sales activity result data, reports on performance, and applies the improvements it still owns — targeting definitions / search keywords (hypothesis generation that steers /build-list) and the discovery-strategy portfolio (the registry managed via `upsert_discovery_strategy`). Messaging (message angles), channel ranking, and the outbound selection order (measured targeting lifts × ordering score) are optimized deterministically by the daily lever tick; evaluate **reads and narrates** those, it does not rewrite them as strategy prose and it does not touch selection order.
+A skill that analyzes sales activity result data, reports on performance, and applies the improvements it still owns — the Target (who to reach, which steers /build-list) and the discovery-strategy portfolio (the registry managed via `upsert_discovery_strategy`). Messaging (message angles), channel ranking, and the outbound selection order (measured targeting lifts × ordering score) are optimized deterministically by the daily lever tick; evaluate **reads and narrates** those, it does not rewrite them as strategy prose and it does not touch selection order.
 
 **Before starting:** `Read` `${CLAUDE_PLUGIN_ROOT}/references/workspace-conventions.md` and follow the cross-cutting conventions there (data storage, MCP error handling, document writes, output discipline).
 
@@ -133,18 +133,13 @@ Before deciding on improvement actions, review the changes in `get_lever_decisio
 
 **Where a finding goes:** into a change to what it is about, with the finding and its numbers as the change's `reason`: who to reach → the Target (below); where to search → the discovery portfolio; what to say → the next message angle (pool replenishment); what only the user can change — a Messaging rule that should hold for every message, a channel or contact setting → the report's next actions, for the user to decide.
 
-**Update SALES_STRATEGY.md (targeting & KPI only) — premise first:**
+**Update the Target in SALES_STRATEGY.md — premise first:**
 The Target section is a hypothesis about who can use and buy the product — judge it by that, not by reply rate. It is failing when `not_relevant` rejecters or reply texts show senders who cannot use the product, when replies never become positive sentiment or inquiry outcomes, or when active strategies' `approach` does not select for the `Prerequisites`. Then fix upstream — rewrite Target (`Prerequisites`, `Not a fit`) and point discovery at sources where the Prerequisites are observable — before any messaging change; the stability discipline gates this too. Redefining the target within what the business sells is this skill's call; an audience beyond what the business serves is the user's — the report's next actions (below).
 - Narrow or broaden targeting
-- Update KPI goals
 
 Do **not** edit messaging (subject line / body) or channel priority here — those are optimized deterministically by the daily lever tick (message-variant draw weights, channel affinity). Report their measured performance in Step 5; do not encode it as prose. (Tone/sub-channel preferences a user wrote in SALES_STRATEGY stay as their authored hints; evaluate just doesn't rewrite them.)
 
-Save the updated document via `save_document` with `projectId: "$0"`, `slug: "sales_strategy"`, the full markdown content, and a `reason` naming the finding and its numbers — it is kept in the change log the person reads.
-
-**Update search keywords:**
-- Add keywords related to high-response segments
-- Remove ineffective keywords
+Save it via `save_document` with `projectId: "$0"`, `slug: "sales_strategy"`, `sections` holding only the Target section, written whole, and a `reason` naming the finding and its numbers — it is kept in the change log the person reads.
 
 **Update the discovery-strategy portfolio (registry, via `upsert_discovery_strategy`):**
 Evaluate supplies and narrates this lever; the daily tick owns reply-based selection — it re-weights active strategies (Thompson draw weights in step 1's `get_lever_state` → `discovery.weights`) and archives dominated ones, never below two active. The current portfolio is `discovery.strategies`:
