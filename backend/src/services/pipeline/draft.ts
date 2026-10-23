@@ -168,8 +168,8 @@ function compositionPrompt(args: {
   const signalsAt = p.overview.indexOf('## Recent Signals')
   const signals = signalsAt >= 0 ? p.overview.slice(signalsAt) : null
   const sender = s.senderDisplayName
-    ? `${s.senderDisplayName}${s.senderJobTitle ? `, ${s.senderJobTitle}` : ''}${s.senderCompanyName ? ` at ${s.senderCompanyName}` : ''}. Sign off as them.`
-    : 'No name is set: close on the sign-off line alone, with no name under it.'
+    ? `${s.senderDisplayName}${s.senderJobTitle ? `, ${s.senderJobTitle}` : ''}${s.senderCompanyName ? ` at ${s.senderCompanyName}` : ''}. Sign off as them, unless SALES_STRATEGY says how to sign off.`
+    : 'No name is set: unless SALES_STRATEGY says how to sign off, close on the sign-off line alone, with no name under it.'
   return `You are Ace, writing one ${args.channel === 'email' ? 'cold email' : args.channel === 'form' ? 'contact-form message' : 'social DM'} for one recipient on behalf of the sender below, in ${languageNameOf(s.targetLanguage)}. Today is ${args.today}.
 
 ## Sender (the name the recipient sees in From)

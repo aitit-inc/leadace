@@ -76,7 +76,7 @@ From the settings response, surface for body composition:
   actually answer. Promise only what the brief covers (e.g. no "ask about
   pricing in chat" unless it carries pricing).
 - `inquiryOneLiner` (when non-empty) — the tagline the recipient sees on the landing page. Avoid contradicting it in the subject / opener.
-- `senderDisplayName` (+ `senderJobTitle`) — the name to sign off with, the same one the From line shows. Empty → the sign-off line alone, no name.
+- `senderDisplayName` (+ `senderJobTitle`) — the From name, and the name to sign off with unless SALES_STRATEGY.md says how to sign off. Neither → the sign-off line alone, no name.
 - `outboundMode` and the `compliance` block (legal_name / physical_address) — the
   backend applies these at send time; never inline them in the body.
 
@@ -186,7 +186,7 @@ Retrieve email guidelines via `get_master_document` with `slug: "tpl_email_guide
 
 There is no stored body template: every body is written for the one recipient, from the guidelines' shape, the facts in BUSINESS.md / SALES_STRATEGY.md, and the prospect's own material.
 
-Close with a light sign-off as `senderDisplayName` (+ optional role) — not a full signature block; the backend appends the compliance footer (legal name, address, unsubscribe) automatically. The `From:` address and display name are applied server-side (the project's sending mailbox + project settings) — do not pass them as arguments; each send result reports the From address actually used.
+Close with the guidelines' light sign-off — not a full signature block; the backend appends the compliance footer (legal name, address, unsubscribe) automatically. The `From:` address and display name are applied server-side (the project's sending mailbox + project settings) — do not pass them as arguments; each send result reports the From address actually used.
 
 **Message angle variation (weighted draw).** Message angles (subject pattern +
 optional body approach) live server-side in `message_variants`; the server picks

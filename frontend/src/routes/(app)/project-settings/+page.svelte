@@ -331,8 +331,8 @@
             class="field max-w-xs"
           />
           <p class="mt-1.5 text-xs text-text-muted">
-            The From name, and the name every email signs off with. Empty: From shows your Gmail name
-            and emails end without a name.
+            The From name, and the name emails sign off with unless the sales strategy says another.
+            Empty: From shows your Gmail name.
           </p>
         </div>
 

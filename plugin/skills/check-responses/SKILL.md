@@ -193,7 +193,7 @@ If step 5 recorded a positive response (`responded`) for any prospect, use Gmail
 
 **Draft creation steps:**
 
-1. Refer to the "Messaging" section of `$0/SALES_STRATEGY.md` for tone and structure. Sign off as `senderDisplayName` from `get_project_settings` (`projectId: "$0"`); empty → the sign-off line alone. Gmail MCP creates drafts in the user's own account, so From is not an argument here
+1. Refer to the "Messaging" section of `$0/SALES_STRATEGY.md` for tone and structure. Sign off as SALES_STRATEGY.md says, else as `senderDisplayName` from `get_project_settings` (`projectId: "$0"`); neither → the sign-off line alone. Gmail MCP creates drafts in the user's own account, so From is not an argument here
 2. Write the draft in the language of the prospect's message (normally the project's `targetLanguage`). Create an appropriate draft based on the reply content:
    - **Positive reply (interested)** -> Thank you + the scheduling link (`inquiryCtaUrl` in `meeting` mode) or 3 time slot options
    - **Material request** -> Thank you + note that materials will be sent (the user will attach the actual materials after the draft)

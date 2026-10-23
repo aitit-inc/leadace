@@ -1174,7 +1174,7 @@ const SCENARIOS = [
           name: 'sender-name',
           path: '/project-settings',
           scrollTo: 'text=Sender display name',
-          expect: 'the name every email signs off with',
+          expect: 'the name emails sign off with unless the sales strategy says another',
         },
         {
           name: 'unsaved',

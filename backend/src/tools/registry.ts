@@ -2247,7 +2247,7 @@ export function buildToolRegistry(): ToolDef[] {
       outboundMode: z.enum(OUTBOUND_MODES).optional()
         .describe('"send" sends each run\'s email on its own; "draft" holds every message for review.'),
       senderDisplayName: z.string().min(1).max(200).nullable().optional()
-        .describe('The From name, which every email also signs off with.'),
+        .describe('The From name; emails also sign off with it unless the sales strategy says how to sign off.'),
       senderCompanyName: z.string().min(1).max(200).nullable().optional(),
       senderJobTitle: z.string().min(1).max(200).nullable().optional(),
       footerOverride: z.string().min(1).max(2000).nullable().optional()

@@ -45,7 +45,7 @@ Whatever the opener — a variant's brief or the shapes above — say what you o
 
 Personalization comes from the prospect's `overview` and `matchReason`, woven through the whole body — an email with only its opening changed reads as not written for them.
 
-Close light: a one-line sign-off in the send language (`Best,` for English), then the sender's name on its own line — the project's sender display name, the same name the From line shows; none set → no name line. Role only if it helps. No signature block and no company line — the footer already carries the legal identity.
+Close light: a one-line sign-off in the send language (`Best,` for English), then the sender's name on its own line — the sign-off SALES_STRATEGY.md gives, else the project's sender display name (the From name); neither → no name line. Role only if it helps. No signature block and no company line — the footer already carries the legal identity.
 
 ## CTA
 

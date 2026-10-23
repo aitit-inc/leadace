@@ -63,7 +63,7 @@ If any document call returns "Project not found", abort and instruct the user to
 
 Hold project settings (`outboundMode`, `senderDisplayName`, `senderCompanyName`, `unsubscribeEnabled`, `inquiryChatBrief`, `inquiryOneLiner`) as `SETTINGS`, and the workspace identity (`legalName`, `physicalAddress`, `defaultSenderCountry`) as `TENANT_SETTINGS`.
 
-**Sender Information migration (Mode A, update sub-mode only):** If the existing SALES_STRATEGY.md has a "Sender Information" section (older versions), drop it. Show the user what it held and where each now lives: the name in the Web UI → Project settings (https://app.leadace.ai/project-settings), where it is the From name and every email's sign-off; a scheduling or signup URL in the Web UI → Inquiry page settings (https://app.leadace.ai/inquiry-settings). Move a phone number into BUSINESS.md's Organization Overview.
+**Sender Information migration (Mode A, update sub-mode only):** If the existing SALES_STRATEGY.md has a "Sender Information" section (older versions), drop it. Show the user what it held and where each now lives: the name in the Web UI → Project settings (https://app.leadace.ai/project-settings), where it is the From name and the default sign-off (a different sign-off, such as a surname alone, moves into Messaging); a scheduling or signup URL in the Web UI → Inquiry page settings (https://app.leadace.ai/inquiry-settings). Move a phone number into BUSINESS.md's Organization Overview.
 
 **Notification recipient migration (Mode A, update sub-mode only):** If the existing SALES_STRATEGY.md has a "Notification Settings" section (older versions), tell the user the recipient now lives in the Web UI → Workspace settings (it defaults to the sign-in Google account) and strip the section. Never copy the address anywhere.
 
@@ -98,7 +98,7 @@ Classify sections:
 |---|---|---|
 | Not set | Missing / empty / incomplete | Subject to completion |
 | evaluate-managed | Target (when already populated) | **Do not touch by default** |
-| Static settings | Sender info, response def, track record, messaging, channels, KPI, search keywords | Update only if user explicitly requests |
+| Static settings | Response def, track record, messaging, channels, KPI, search keywords | Update only if user explicitly requests |
 
 `/evaluate` auto-tunes the Target once a project has activity, so treat it as evaluate-managed whenever it already carries content. An empty Target is simply "not set" and is fillable here; missing `Prerequisites` / `Not a fit` count as not set even when the rest of Target is populated. (Discovery strategies live in the registry, not this document — `get_lever_state` → `discovery.strategies`; same evaluate-managed rule applies once populated.)
 
@@ -197,7 +197,7 @@ Where to find prospect candidates (depends on target market, industry, region). 
 - "Up to you" → reasonable defaults by target market, formulated as named strategies.
 
 #### 4-7. Sender Identity
-Collect the organization phone number for BUSINESS.md's Organization Overview (required, contact forms ask for one; "up to you" not allowed). Every email signs off with the project's sender display name. The sender identity recipients see — display name, company / brand name, the sending mailboxes (Google accounts, Send-As aliases under them, SMTP mailboxes) — and the compliance footer (legal name, postal address, sender country) are Web UI settings (https://app.leadace.ai/account-settings, https://app.leadace.ai/project-settings and https://app.leadace.ai/workspace-settings); never write them into the document or ask for them here. If `SETTINGS` / `TENANT_SETTINGS` (Step 3) show any of them unset, carry that into the Step 8 hand-off. A Send-As alias must be verified in Gmail (Settings → Accounts → "Send mail as") before `/outbound`, or Gmail rejects the send.
+Collect the organization phone number for BUSINESS.md's Organization Overview (required, contact forms ask for one; "up to you" not allowed). Every email signs off with the project's sender display name, unless Messaging says how to sign off. The sender identity recipients see — display name, company / brand name, the sending mailboxes (Google accounts, Send-As aliases under them, SMTP mailboxes) — and the compliance footer (legal name, postal address, sender country) are Web UI settings (https://app.leadace.ai/account-settings, https://app.leadace.ai/project-settings and https://app.leadace.ai/workspace-settings); never write them into the document or ask for them here. If `SETTINGS` / `TENANT_SETTINGS` (Step 3) show any of them unset, carry that into the Step 8 hand-off. A Send-As alias must be verified in Gmail (Settings → Accounts → "Send mail as") before `/outbound`, or Gmail rejects the send.
 
 #### 4-8. Channels, Target Countries & Language
 
