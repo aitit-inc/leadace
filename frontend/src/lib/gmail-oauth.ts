@@ -7,6 +7,10 @@ import { NEXT_COOKIE } from '$lib/redirect';
 // `state` Google echoes and the user id with the session finishing the flow.
 export const GOOGLE_MAILBOX_STATE_COOKIE = 'lp-gmail-state';
 
+// Set by the callback when it lands back in the chat: proof, which no link can
+// forge, that the connection just finished in this browser.
+export const GOOGLE_MAILBOX_CONNECTED_COOKIE = 'lp-gmail-connected';
+
 // Connect a Google account as a mailbox: the one signed in with, or any other.
 // The callback returns to this page. On success the browser navigates away to
 // Google, so a returned string is always an error.

@@ -31,13 +31,13 @@ function attended(): { tools: ToolExecutor; ran: string[] } {
 describe('unattendedTools', () => {
   it('runs a tool no one has to approve', async () => {
     const { tools, ran } = attended()
-    await expect(unattendedTools(tools).execute('list_drafts', {})).resolves.toMatchObject({ ok: true })
+    await expect(unattendedTools(tools, 'p1').execute('list_drafts', {})).resolves.toMatchObject({ ok: true })
     expect(ran).toEqual(['list_drafts'])
   })
 
   it('refuses a gated tool instead of running it unapproved', async () => {
     const { tools, ran } = attended()
-    const result = await unattendedTools(tools).execute('send_email_and_record', { prospectId: 1 })
+    const result = await unattendedTools(tools, 'p1').execute('send_email_and_record', { prospectId: 1 })
     expect(result.ok).toBe(false)
     expect(result.text).toContain("needs a person's approval")
     expect(ran).toEqual([])
@@ -45,26 +45,32 @@ describe('unattendedTools', () => {
 
   it('refuses a gated tool whose card this call would not raise', async () => {
     const { tools, ran } = attended()
-    await expect(unattendedTools(tools).execute('set_prospect_do_not_contact', { prospectId: 1, doNotContact: true })).resolves.toMatchObject({ ok: false })
-    await expect(unattendedTools(tools).execute('set_schedule', { scheduleId: 's1', enabled: false })).resolves.toMatchObject({ ok: false })
+    await expect(unattendedTools(tools, 'p1').execute('set_prospect_do_not_contact', { prospectId: 1, doNotContact: true })).resolves.toMatchObject({ ok: false })
+    await expect(unattendedTools(tools, 'p1').execute('set_schedule', { scheduleId: 's1', enabled: false })).resolves.toMatchObject({ ok: false })
     expect(ran).toEqual([])
   })
 
   it('starts a job, the one action registering a schedule authorizes', async () => {
     const { tools, ran } = attended()
-    await expect(unattendedTools(tools).execute('start_job', { params: { kind: 'daily_cycle', outboundCount: 30 } })).resolves.toMatchObject({ ok: true })
+    await expect(unattendedTools(tools, 'p1').execute('start_job', { projectId: 'p1', params: { kind: 'daily_cycle', outboundCount: 30 } })).resolves.toMatchObject({ ok: true })
     expect(ran).toEqual(['start_job'])
+  })
+
+  it("refuses a job on another project — the schedule was approved on its own project's mode", async () => {
+    const { tools, ran } = attended()
+    await expect(unattendedTools(tools, 'p1').execute('start_job', { projectId: 'p2', params: { kind: 'daily_cycle' } })).resolves.toMatchObject({ ok: false })
+    expect(ran).toEqual([])
   })
 
   it('refuses a send job — those drafts were written for a person to approve', async () => {
     const { tools, ran } = attended()
-    const result = await unattendedTools(tools).execute('start_job', { params: { kind: 'send', draftIds: [1, 2] } })
+    const result = await unattendedTools(tools, 'p1').execute('start_job', { projectId: 'p1', params: { kind: 'send', draftIds: [1, 2] } })
     expect(result.ok).toBe(false)
     expect(ran).toEqual([])
   })
 
   it('holds nothing for approval, so a run never parks on a card', () => {
     const { tools } = attended()
-    expect(unattendedTools(tools).confirmSummary('send_email_and_record', {})).toBeNull()
+    expect(unattendedTools(tools, 'p1').confirmSummary('send_email_and_record', {})).toBeNull()
   })
 })

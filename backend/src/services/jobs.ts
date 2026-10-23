@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import type { Db } from '../db/connection'
 import type { TenantRun } from '../db/rls'
-import { jobs, projects } from '../db/schema'
+import { jobs, outreachLogs, projects } from '../db/schema'
 import type { ProjectId, ProjectRef, TenantId } from '../domain/ids'
 import { asProjectId, asTenantId, projectRefSchema } from '../domain/ids'
 import {
@@ -127,6 +127,22 @@ export async function startJob(
       'No active discovery strategies',
       'Register at least one discovery strategy before collecting prospects — upsert_discovery_strategy adds one; onboarding in the chat sets up a full first set.',
     )
+  }
+  if (body.params.kind === 'send') {
+    const waiting = await db
+      .select({ id: outreachLogs.id })
+      .from(outreachLogs)
+      .where(and(
+        eq(outreachLogs.tenantId, tenantId),
+        eq(outreachLogs.projectId, projectId),
+        eq(outreachLogs.status, 'pending_review'),
+        inArray(outreachLogs.id, body.params.draftIds),
+      ))
+    const found = new Set(waiting.map((r) => r.id))
+    const elsewhere = body.params.draftIds.filter((id) => !found.has(id))
+    if (elsewhere.length > 0) {
+      return err('INVALID_INPUT', 'Not drafts waiting for review in this project', `Draft ids ${elsewhere.join(', ')}: list_drafts shows the project's drafts.`)
+    }
   }
   return insertAndRun(db, tenantId, projectId, runner, origin, body.params, body.threadId ?? null, now)
 }

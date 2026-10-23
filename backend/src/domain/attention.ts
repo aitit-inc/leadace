@@ -105,6 +105,8 @@ export type AttentionInput = {
   hasProject: boolean
   compliance: { ready: boolean; missing: string[] }
   gmailConnected: boolean
+  emailDraftsWaiting: boolean
+  sendsWithoutReview: boolean
   identities: IdentityHealthInput[]
   refusedMailboxes: Array<{ fromEmail: string; sentThatDay: number }>
   spamHeldMailboxes: Array<{ fromEmail: string; spam: number; delivered: number }>
@@ -135,7 +137,11 @@ export function deriveAttentionItems(input: AttentionInput): AttentionItem[] {
   if (!input.compliance.ready) {
     items.push({ kind: 'compliance_incomplete', missing: input.compliance.missing })
   }
-  if (!input.gmailConnected) items.push({ kind: 'gmail_disconnected' })
+  // Not connected is how every account starts; it needs the person once
+  // something waits to go out.
+  if (!input.gmailConnected && (input.emailDraftsWaiting || input.sendsWithoutReview)) {
+    items.push({ kind: 'gmail_disconnected' })
+  }
   items.push(...revoked)
   for (const m of input.refusedMailboxes) items.push({ kind: 'mailbox_send_refused', ...m })
   for (const m of input.spamHeldMailboxes) items.push({ kind: 'mailbox_inbox_test_spam', ...m })

@@ -1,6 +1,6 @@
 import { and, eq, gte, inArray, isNotNull, or, sql } from 'drizzle-orm'
 import type { Db } from '../db/connection'
-import { isUniqueViolation } from '../db/errors'
+import { isUniqueViolation, secretQuery } from '../db/errors'
 import { outreachLogs, projects, prospects, responses, sendingIdentities } from '../db/schema'
 import { asSendingIdentityId, asTenantId, type TenantId } from '../domain/ids'
 import { hasReplyReadScope, parseSendingIdentitySecret } from '../domain/sending-identity'
@@ -337,11 +337,11 @@ async function ingestIdentity(
 
   // Decrypt per-identity (inside this scope, under the caller's per-identity
   // catch) so one undecryptable secret fails only this identity, not the run.
-  const [secretRow] = await db.execute<{ secret: string | null }>(sql`
+  const [secretRow] = await secretQuery(db.execute<{ secret: string | null }>(sql`
     SELECT pgp_sym_decrypt(secret, ${env.GMAIL_TOKEN_ENCRYPTION_KEY})::text AS secret
     FROM sending_identities
     WHERE tenant_id = ${identity.tenant_id} AND identity_id = ${identity.identity_id}
-  `)
+  `))
   if (!secretRow?.secret) {
     summary.pollErrors++
     await markPollFailed(db, tenantId, identity.identity_id, 'stored secret could not be decrypted')

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { and, asc, eq, or, sql } from 'drizzle-orm'
 import type { Db } from '../db/connection'
+import { secretQuery } from '../db/errors'
 import { projects, sendingIdentities, projectSendingIdentities, type SendingIdentityProvider } from '../db/schema'
 import {
   GoogleAuthError,
@@ -216,16 +217,18 @@ export async function listSendingIdentities(
   encryptionKey: string,
   now: Date = new Date(),
 ): Promise<SendingIdentitySummary[]> {
-  const rows = await db
-    .select({
-      ...summaryColumns,
-      // Decrypt only smtp_imap secrets (for the connection view) — never the gmail
-      // refresh token, which this endpoint has no need to touch.
-      secret: sql<string | null>`CASE WHEN ${sendingIdentities.provider} = 'smtp_imap' THEN pgp_sym_decrypt(${sendingIdentities.secret}, ${encryptionKey})::text END`,
-    })
-    .from(sendingIdentities)
-    .where(eq(sendingIdentities.tenantId, tenantId))
-    .orderBy(asc(sendingIdentities.grantedAt))
+  const rows = await secretQuery(
+    db
+      .select({
+        ...summaryColumns,
+        // Decrypt only smtp_imap secrets (for the connection view) — never the gmail
+        // refresh token, which this endpoint has no need to touch.
+        secret: sql<string | null>`CASE WHEN ${sendingIdentities.provider} = 'smtp_imap' THEN pgp_sym_decrypt(${sendingIdentities.secret}, ${encryptionKey})::text END`,
+      })
+      .from(sendingIdentities)
+      .where(eq(sendingIdentities.tenantId, tenantId))
+      .orderBy(asc(sendingIdentities.grantedAt)),
+  )
   const [usedByIdentity, bounceByIdentity, projectsByIdentity] = await Promise.all([
     countMailboxEmailSendsTodayByIdentity(db, tenantId, now),
     countMailboxBounceWindowByIdentity(db, tenantId, now),
@@ -314,7 +317,7 @@ export async function registerSmtpIdentity(
   // ON CONFLICT (not a caught 23505): a unique violation would abort this
   // RLS-wrapped transaction and break the load below. Empty RETURNING = the
   // fromEmail race the pre-check above missed → clean 409, not a raw 500.
-  const inserted = await db.execute<{ identity_id: string }>(sql`
+  const inserted = await secretQuery(db.execute<{ identity_id: string }>(sql`
     INSERT INTO sending_identities
       (tenant_id, identity_id, user_id, provider, from_email, scope, secret, granted_at, updated_at)
     VALUES (
@@ -323,7 +326,7 @@ export async function registerSmtpIdentity(
     )
     ON CONFLICT (tenant_id, from_email) DO NOTHING
     RETURNING identity_id
-  `)
+  `))
   if (inserted.length === 0) {
     return err('CONFLICT', 'Sending address already in use', `An identity already sends from ${input.fromEmail}.`)
   }

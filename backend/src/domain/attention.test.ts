@@ -111,6 +111,8 @@ describe('deriveAttentionItems', () => {
     hasProject: true,
     compliance: { ready: true, missing: [] },
     gmailConnected: true,
+    emailDraftsWaiting: false,
+    sendsWithoutReview: false,
     identities: [],
     refusedMailboxes: [],
     spamHeldMailboxes: [],
@@ -142,6 +144,7 @@ describe('deriveAttentionItems', () => {
       hasProject: false,
       compliance: { ready: false, missing: ['legalName'] },
       gmailConnected: false,
+      emailDraftsWaiting: true,
       identities: [
         gmail({
           fromEmail: 'dead@example.com',
@@ -185,6 +188,13 @@ describe('deriveAttentionItems', () => {
       { kind: 'outreach_futility', projectId: 'p-acme', projectName: 'Acme', sends: 400, engaged: 0 },
       { kind: 'outreach_futility', projectId: 'p-globex', projectName: 'Globex', sends: 310, engaged: 0 },
     ])
+  })
+
+  it('asks for Gmail only once something waits to go out', () => {
+    const unconnected = { ...clean, gmailConnected: false }
+    expect(deriveAttentionItems(unconnected)).toEqual([])
+    expect(deriveAttentionItems({ ...unconnected, emailDraftsWaiting: true })).toEqual([{ kind: 'gmail_disconnected' }])
+    expect(deriveAttentionItems({ ...unconnected, sendsWithoutReview: true })).toEqual([{ kind: 'gmail_disconnected' }])
   })
 
   it('places a revoked credential with the send blockers, not the degradation tail', () => {

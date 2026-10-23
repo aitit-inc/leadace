@@ -72,7 +72,7 @@ export class LeadAceJobWorkflow extends WorkflowEntrypoint<Env, JobWorkflowParam
             kind: job.kind,
             status: outcome.ok ? 'succeeded' : 'failed',
             summary: outcome.ok ? outcome.result.summary : outcome.error,
-          }, job.startedBy),
+          }),
         )
         return true
       })

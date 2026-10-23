@@ -19,13 +19,18 @@ function preAuthorized(name: string, args: Record<string, unknown>): boolean {
   return kind !== 'send'
 }
 
-export function unattendedTools(tools: ToolExecutor): ToolExecutor {
+export function unattendedTools(tools: ToolExecutor, projectId: string): ToolExecutor {
   return {
     ...tools,
     // Nothing is held: a gated call is refused below instead, so the thread
     // never parks on a confirmation no one will answer.
     confirmSummary: () => null,
     execute: (name, args) => {
+      // The schedule's approval — or, while its project holds drafts for
+      // review, the lack of one — was decided on that project's mode.
+      if (name === 'start_job' && args['projectId'] !== projectId) {
+        return Promise.resolve({ ok: false, text: `A scheduled run starts jobs on its own project only: projectId ${projectId}.` })
+      }
       if (tools.isGated(name) && !preAuthorized(name, args)) {
         return Promise.resolve({
           ok: false,

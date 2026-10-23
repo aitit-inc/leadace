@@ -13,7 +13,7 @@ import { runKey } from '../domain/schedules'
 import { runChatTurn } from '../services/chat/agent'
 import { withPaidCallScope } from '../services/paid-calls'
 import { unattendedTools } from '../services/chat/unattended'
-import { appendMessage, createThread, titleFromMessage } from '../services/chat/threads'
+import { createThread, postInstruction, titleFromMessage } from '../services/chat/threads'
 import { notify, notifyCtxOf } from '../services/notifications'
 import {
   attachScheduleThread,
@@ -47,8 +47,7 @@ async function runOne(env: Env, ctx: ExecutionContext, dispatch: InternalDispatc
       return created.value.id
     }))
 
-  // Read where it lands: this run answers it, the thread runner does not.
-  const instruction = await run((db) => appendMessage(db, schedule.tenantId, threadId, { role: 'user', parts: [{ text: schedule.prompt }] }))
+  const instruction = await run((db) => postInstruction(db, schedule.tenantId, threadId, schedule.prompt))
   const deps = {
     run,
     signal: new AbortController().signal,
@@ -56,7 +55,7 @@ async function runOne(env: Env, ctx: ExecutionContext, dispatch: InternalDispatc
     // The run acts as the person who registered the schedule.
     userId: schedule.userId,
     env,
-    tools: unattendedTools(buildToolExecutor(env, ctx, dispatch, { origin: 'cron', userId: schedule.userId })),
+    tools: unattendedTools(buildToolExecutor(env, ctx, dispatch, { origin: 'cron', userId: schedule.userId }), schedule.projectId),
   }
 
   let failure: string | null = null

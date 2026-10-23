@@ -7,7 +7,6 @@ import type { Db } from '../../db/connection'
 import { chatMessages, chatThreads } from '../../db/schema'
 import type { ChatContent, ChatRole, ChatUserPart, PendingCall } from '../../domain/chat'
 import { attachmentIdsSchema, type FileRef } from '../../domain/chat-attachment'
-import type { JobOrigin } from '../../domain/jobs'
 import { asProjectId, projectRefSchema, type ProjectId, type TenantId } from '../../domain/ids'
 import { randomFromAlphabet } from '../../auth/random-id'
 import { ok, err, type ServiceResult } from '../result'
@@ -173,8 +172,7 @@ export async function listMessages(
   return ok({ messages: rows.reverse() })
 }
 
-// A row the agent reads where it lands: its own messages and tool results, a
-// schedule's instruction.
+// A row the agent reads where it lands: its own messages and tool results.
 export function appendMessage(db: Db, tenantId: TenantId, threadId: string, content: ChatContent): Promise<MessageView> {
   return insertMessage(db, tenantId, threadId, content, 0)
 }
@@ -210,17 +208,24 @@ export async function postMessage(
   if (!thread.ok) return thread
   const title = thread.value.title === DEFAULT_THREAD_TITLE ? titleFromMessage(text || (files[0]?.name ?? '')) : ''
   if (title) await renameThread(db, tenantId, threadId, title)
-  await supersedePendingCall(db, tenantId, threadId)
+  await supersedePendingCall(db, tenantId, threadId, 'The person did not approve this call and continued the conversation.')
   // Files first: the model sees the material before the ask.
   const parts: ChatUserPart[] = [...files.map((file) => ({ file })), ...(text ? [{ text }] : [])]
   return ok(await insertMessage(db, tenantId, threadId, { role: 'user', parts }, null))
 }
 
-const SUPERSEDED = { error: 'The person did not approve this call and continued the conversation.' }
+// A schedule's instruction, which its own run answers. The card still waiting
+// ends with it, unanswered: rows the run writes after it would cut the call
+// off from its answer, and the run's job notices raise the card again with
+// what is waiting by then.
+export async function postInstruction(db: Db, tenantId: TenantId, threadId: string, text: string): Promise<MessageView> {
+  await supersedePendingCall(db, tenantId, threadId, 'Not answered before the next scheduled run started.')
+  return insertMessage(db, tenantId, threadId, { role: 'user', parts: [{ text }] }, 0)
+}
 
 // Answers the call awaiting approval, and the rest of its model turn, as not
 // approved. A call held before cards carried a summary goes the same way.
-async function supersedePendingCall(db: Db, tenantId: TenantId, threadId: string): Promise<void> {
+async function supersedePendingCall(db: Db, tenantId: TenantId, threadId: string, reason: string): Promise<void> {
   const [row] = await db
     .update(chatThreads)
     .set({ pendingCall: null })
@@ -228,7 +233,7 @@ async function supersedePendingCall(db: Db, tenantId: TenantId, threadId: string
     .returning({ pendingCall: sql<PendingCall>`(SELECT pending_call FROM chat_threads WHERE id = ${threadId})` })
   const p = row?.pendingCall
   if (!p) return
-  const declined = (id: string, name: string) => ({ functionResponse: { id, name, response: SUPERSEDED } })
+  const declined = (id: string, name: string) => ({ functionResponse: { id, name, response: { error: reason } } })
   await appendMessage(db, tenantId, threadId, {
     role: 'tool',
     parts: [...p.otherResponses.map((r) => ({ functionResponse: r })), declined(p.callId, p.name), ...p.remaining.map((c) => declined(c.callId, c.name))],
@@ -312,17 +317,15 @@ export async function setThreadProject(db: Db, tenantId: TenantId, threadId: str
     .where(and(eq(chatThreads.tenantId, tenantId), eq(chatThreads.id, threadId)))
 }
 
-// A job finished: the notice the UI shows as a card. The agent answers it only
-// for a job the conversation started; a schedule's jobs are its log, not
-// questions. Silently a no-op when the thread is gone.
+// A job finished: the notice the UI shows as a card, which the agent answers.
+// Silently a no-op when the thread is gone.
 export async function appendJobNotice(
   db: Db,
   tenantId: TenantId,
   threadId: string,
   notice: { jobId: string; kind: string; status: string; summary: string },
-  startedBy: JobOrigin,
 ): Promise<void> {
   const thread = await getThread(db, tenantId, threadId)
   if (!thread.ok) return
-  await insertMessage(db, tenantId, threadId, { role: 'job', ...notice }, startedBy === 'chat' ? null : 0)
+  await insertMessage(db, tenantId, threadId, { role: 'job', ...notice }, null)
 }

@@ -72,34 +72,38 @@ const factValue = (summary: { facts: Array<{ label: string; value: string }> }, 
 
 describe('start_job approval card', () => {
   it('says mail leaves when the project sends', () => {
-    const summary = startJobConfirmSummary({ kind: 'daily_cycle', outboundCount: 10 }, 'Acme', preview('send'))!
+    const summary = startJobConfirmSummary({ kind: 'daily_cycle', outboundCount: 10 }, 'Acme', preview('send'), [])!
     expect(factValue(summary, 'What happens')).toContain('sent')
     expect(factValue(summary, 'How many')).toBe('up to 10 new prospects, plus the follow-ups and re-approaches that are due')
     expect(factValue(summary, 'From')).toBe('me@example.com')
     expect(summary.confirmLabel).toBe('Send to up to 10 new prospects')
     expect(summary.warning).toContain('cannot be recalled')
   })
-  it('says nothing is sent when the project drafts', () => {
-    const summary = startJobConfirmSummary({ kind: 'daily_cycle', outboundCount: 10 }, 'Acme', preview('draft'))!
-    expect(factValue(summary, 'What happens')).toContain('nothing is sent')
-    expect(summary.confirmLabel).toBe('Draft for up to 10 new prospects')
-    expect(summary.warning).toBeUndefined()
+  it('asks nothing when the project holds what the job writes for review', () => {
+    expect(startJobConfirmSummary({ kind: 'daily_cycle', outboundCount: 10 }, 'Acme', preview('draft'), [])).toBeNull()
+    expect(startJobConfirmSummary({ kind: 'draft', count: 5 }, 'Acme', preview('draft'), [])).toBeNull()
   })
   it('never claims a direction it could not read', () => {
-    const summary = startJobConfirmSummary({ kind: 'daily_cycle', outboundCount: 10 }, 'Acme', null)!
+    const summary = startJobConfirmSummary({ kind: 'daily_cycle', outboundCount: 10 }, 'Acme', null, [])!
     expect(factValue(summary, 'What happens')).toContain('outbound mode decides')
     expect(summary.confirmLabel).toBe('Start')
   })
   it("shows the project's daily number when the run names none", () => {
-    const summary = startJobConfirmSummary({ kind: 'daily_cycle' }, 'Acme', preview('send'))!
+    const summary = startJobConfirmSummary({ kind: 'daily_cycle' }, 'Acme', preview('send'), [])!
     expect(factValue(summary, 'How many')).toBe("the project's daily number of new prospects (14 as of now), plus the follow-ups and re-approaches that are due")
     expect(summary.confirmLabel).toBe("Send to today's new prospects")
-    const unread = startJobConfirmSummary({ kind: 'daily_cycle' }, 'Acme', null)!
+    const unread = startJobConfirmSummary({ kind: 'daily_cycle' }, 'Acme', null, [])!
     expect(factValue(unread, 'How many')).toBe("the project's daily number of new prospects, plus the follow-ups and re-approaches that are due")
   })
-  it('sends the given drafts whatever the mode says', () => {
-    const summary = startJobConfirmSummary({ kind: 'send', draftIds: [1, 2, 3] }, 'Acme', preview('draft'))!
+  it('sends the given drafts whatever the mode says, showing each email', () => {
+    const drafts = [
+      { prospectName: 'Dana', prospectEmail: 'dana@example.com', subject: 'Hello', body: 'First body' },
+      { prospectName: 'Miles', prospectEmail: 'miles@example.com', subject: 'Hi', body: 'Second body' },
+    ]
+    const summary = startJobConfirmSummary({ kind: 'send', draftIds: [1, 2, 3] }, 'Acme', preview('draft'), drafts)!
     expect(factValue(summary, 'How many')).toBe('3 drafts')
     expect(summary.confirmLabel).toBe('Send 3 emails')
+    expect(summary.body).toContain('To: Dana <dana@example.com>\nSubject: Hello\n\nFirst body')
+    expect(summary.body).toContain('Second body')
   })
 })

@@ -95,6 +95,12 @@ export type RecentOutreachQuery = z.infer<typeof recentOutreachQuerySchema>
 export const listDraftsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(100),
   offset: z.coerce.number().int().min(0).default(0),
+  ids: z
+    .string()
+    .regex(/^\d+(,\d+){0,199}$/)
+    .transform((s) => s.split(',').map(Number))
+    .pipe(z.array(z.number().int().min(1).max(2_147_483_647)))
+    .optional(),
 })
 export type ListDraftsQuery = z.infer<typeof listDraftsQuerySchema>
 
@@ -1351,11 +1357,12 @@ export async function listDrafts(
   if (!resolved.ok) return resolved
   const projectId = resolved.value
 
-  const { limit, offset } = query
+  const { limit, offset, ids } = query
 
   const where = and(
     eq(outreachLogs.projectId, projectId),
     eq(outreachLogs.status, 'pending_review'),
+    ids ? inArray(outreachLogs.id, ids) : undefined,
   )
 
   const [drafts, countRows] = await Promise.all([

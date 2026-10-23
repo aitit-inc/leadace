@@ -543,6 +543,42 @@ carries no subscription id, so `/me/subscription` answers 404 and the
 plan-change cards are absent from the screenshot rather than merely
 unexercised.
 
+### Recording a flow
+
+```bash
+npm run ui -- record approval /abs/path/edit-a-draft.mjs   # → e2e/output/recordings/edit-a-draft.mp4
+```
+
+The scenario seeds the account; a steps file written for that one recording
+drives it in the real UI, against the real model and jobs:
+
+```js
+// Optional: seed more, or open another of the scenario's pages. Runs before
+// the browser opens; returns the path to open (default: the first page).
+// s: { persona, api, psql, q, pages } — api('POST', '/api/...', body)
+// calls as the account; pages maps page names to paths.
+export async function start(s) {
+  return s.pages['send-drafts'];
+}
+
+export default async function (r) {
+  await r.say('Caption at the top of the screen');
+  await r.type('Typed into the chat and sent');
+  // Waits for Ace; approves each card (unless the function says no) and saves
+  // the sender identity form, until the thread goes quiet.
+  await r.drive((title) => !/without review/i.test(title));
+  // Also: r.settle() (the next card, form or quiet), r.page (Playwright),
+  // r.persona, r.api, r.psql, r.q, r.appUrl, r.apiUrl.
+}
+```
+
+Stretches where only a job runs play fast in the mp4 and are marked ⏩.
+`--headed` shows the browser. It also needs `ffmpeg` on `PATH` to encode,
+and Playwright's own to capture (`npx playwright-core install ffmpeg` in
+`frontend/`, once). Before deleting the account, every mode stops its jobs
+and chat turns; one that will not stop keeps the account, and the run says
+so.
+
 ## Claude Code cloud sessions (claude.ai/code)
 
 The harness also runs inside a Claude Code cloud session, where the whole

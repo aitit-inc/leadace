@@ -42,15 +42,14 @@ import { primaryReasonOf } from '../domain/rejection-feedback'
 import type { RejectionRecontactWindow } from '../db/schema'
 import { ok, type ServiceResult } from './result'
 import { resolveProject } from './projects'
-import { loadLeverConfig, loadProjectOutboundAllowlist } from './project-settings'
+import { loadLeverConfig } from './project-settings'
 import { getLeverStateById } from './loop/policy'
 import { listChanges } from './loop/change'
 import { frameHistory } from './loop/observe'
 import { listMessageVariantsById, type MessageVariantRow } from './message-variants'
 import { getRejectionFeedbackSummaryById } from './responses'
 import { listRecentOutreachById } from './outreach'
-import { deriveAttentionItems } from '../domain/attention'
-import { loadTenantAttentionInput } from './attention'
+import { listProjectAttention } from './attention'
 
 export const dashboardQuerySchema = z.object({
   period: z.enum(DASHBOARD_PERIODS).default('30d'),
@@ -58,9 +57,6 @@ export const dashboardQuerySchema = z.object({
 export type DashboardQuery = z.infer<typeof dashboardQuerySchema>
 
 const DAY_MS = 24 * 60 * 60 * 1000
-
-// No per-lead seen/handled state exists, so this is "recent" rather than a true unread count.
-const HOT_LEADS_WINDOW_DAYS = 7
 
 const RECENT_ACTIVITY_LIMIT = 8
 // listRecentOutreach orders by sent_at, but the feed sorts by event time (reply/visit/sent);
@@ -88,7 +84,6 @@ export async function getDashboardSummary(
   const { curStart, prevStart } = periodToWindow(query.period, now)
   const curIso = curStart.toISOString()
   const prevIso = prevStart.toISOString()
-  const hotSinceIso = new Date(now.getTime() - HOT_LEADS_WINDOW_DAYS * DAY_MS).toISOString()
   const journalStartDay = new Date(now.getTime() - JOURNAL_WINDOW_DAYS * DAY_MS).toISOString().slice(0, 10)
   const trendSinceIso = trendWindowStartIso(now)
   const windowDays = query.period === '7d' ? 7 : query.period === '30d' ? 30 : undefined
@@ -105,20 +100,17 @@ export async function getDashboardSummary(
     wonRows,
     replyRows,
     sessionRows,
-    hotLeadsRows,
     dailySentRows,
     dailyResponseRows,
     lastCycleRows,
     proposalRows,
-    pendingDraftsRows,
     contactedRows,
-    outboundAllowlist,
     leverRes,
     changes,
     variantsRes,
     rejectionRes,
     recentRes,
-    attentionInputRes,
+    attentionRes,
     frames,
   ] = await Promise.all([
     // The four KPI stage queries below define the funnel-stage events. They MUST stay
@@ -220,22 +212,6 @@ export async function getDashboardSummary(
         eq(outreachLogs.status, 'sent'),
         inArray(inquirySessions.outcome, [...REWARDED_INQUIRY_OUTCOMES]),
       )),
-    // hot leads = distinct prospects who requested a meeting in the last 7 days (fixed).
-    // Self-serve signups (signup_clicked) are excluded — this card routes to /responses
-    // (the meeting/reply queue), where a signup wouldn't appear.
-    raw<{ count: string | number }>(sql`
-      WITH ev AS (
-        SELECT ol.prospect_id AS pid
-        FROM responses r JOIN outreach_logs ol ON ol.id = r.outreach_log_id
-        WHERE ol.project_id = ${projectId} AND r.response_type = 'meeting_request'
-          AND r.received_at >= ${hotSinceIso}::timestamptz
-        UNION
-        SELECT s.prospect_id AS pid
-        FROM inquiry_sessions s JOIN outreach_logs ol ON ol.id = s.outreach_log_id
-        WHERE ol.project_id = ${projectId} AND s.outcome = 'lead'
-          AND s.opened_at >= ${hotSinceIso}::timestamptz
-      )
-      SELECT COUNT(DISTINCT pid)::int AS count FROM ev`),
     raw<{ day: string; count: string | number }>(sql`
       SELECT (sent_at AT TIME ZONE 'UTC')::date::text AS day, COUNT(*)::int AS count
       FROM outreach_logs
@@ -255,10 +231,6 @@ export async function getDashboardSummary(
       .select({ title: proposals.title, status: proposals.status, change: proposals.change, createdAt: proposals.createdAt })
       .from(proposals)
       .where(and(eq(proposals.projectId, projectId), gte(proposals.createdAt, new Date(`${journalStartDay}T00:00:00Z`)))),
-    db
-      .select({ count: sql<number>`COUNT(*)::int` })
-      .from(outreachLogs)
-      .where(and(eq(outreachLogs.projectId, projectId), eq(outreachLogs.status, 'pending_review'))),
     // Segments are on the rates' unit: prospects contacted in the window, counted once.
     db
       .selectDistinct({
@@ -273,7 +245,6 @@ export async function getDashboardSummary(
       .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
       .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
       .where(and(eq(outreachLogs.projectId, projectId), eq(outreachLogs.status, 'sent'), gte(outreachLogs.sentAt, curStart))),
-    loadProjectOutboundAllowlist(db, projectId),
     getLeverStateById(db, tenantId, projectId),
     listChanges(db, projectId, new Date(`${journalStartDay}T00:00:00Z`)),
     listMessageVariantsById(db, tenantId, projectId),
@@ -285,7 +256,7 @@ export async function getDashboardSummary(
       ...(windowDays !== undefined ? { windowDays } : {}),
     }),
     listRecentOutreachById(db, tenantId, projectId, { limit: RECENT_ACTIVITY_CANDIDATES, offset: 0, period: 'all' }),
-    loadTenantAttentionInput(db, tenantId, userId, edition),
+    listProjectAttention(db, tenantId, userId, edition, projectId, now),
     loadLeverConfig(db, projectId).then((config) => frameHistory(db, projectId, config, now)),
   ])
 
@@ -294,7 +265,7 @@ export async function getDashboardSummary(
   if (!variantsRes.ok) return variantsRes
   if (!rejectionRes.ok) return rejectionRes
   if (!recentRes.ok) return recentRes
-  if (!attentionInputRes.ok) return attentionInputRes
+  if (!attentionRes.ok) return attentionRes
 
   const approached = toKpi(Number(approachedRows[0]?.current ?? 0), Number(approachedRows[0]?.previous ?? 0))
   const delivered = toKpi(Number(deliveredRows[0]?.current ?? 0), Number(deliveredRows[0]?.previous ?? 0))
@@ -360,17 +331,6 @@ export async function getDashboardSummary(
     .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
     .slice(0, RECENT_ACTIVITY_LIMIT)
 
-  const attention = deriveAttentionItems({
-    ...attentionInputRes.value,
-    // Own project only — the tenant-wide bell still names every futile project.
-    futileProjects: attentionInputRes.value.futileProjects.filter((p) => p.projectId === projectId),
-    project: {
-      outboundChannelsConfigured: outboundAllowlist.outboundChannels.length > 0,
-      pendingDrafts: Number(pendingDraftsRows[0]?.count ?? 0),
-      hotLeadsRecent: Number(hotLeadsRows[0]?.count ?? 0),
-    },
-  })
-
   return ok({
     period: query.period,
     kpis: { approached, delivered, reached, engaged, won },
@@ -387,7 +347,7 @@ export async function getDashboardSummary(
     rejections,
     segments,
     recentActivity,
-    attention,
+    attention: attentionRes.value,
   })
 }
 

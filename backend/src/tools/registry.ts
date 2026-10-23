@@ -107,14 +107,27 @@ async function outboundPreview(ctx: ToolCtx, projectRef: string): Promise<Outbou
     message?: string
   }
   const h = health as { kind: 'no_mailbox' } | { kind: 'active'; next: string | null; remaining: number } | null
+  const blocked = [
+    r.outboundBlocked ? (r.message ?? 'Nothing can go out right now.') : null,
+    h?.kind === 'no_mailbox' ? 'No mailbox can send for this project yet, so nothing goes out until one is connected.' : null,
+  ].filter((b) => b !== null)
   return {
     outboundMode: r.outboundMode,
     reachable: r.total,
     quota: r.quota,
     mailbox: h?.kind === 'active' ? { next: h.next, remaining: h.remaining } : null,
-    blocked: r.outboundBlocked ? (r.message ?? 'Nothing can go out right now.') : null,
+    blocked: blocked.length > 0 ? blocked.join(' ') : null,
     dailyTarget: daily ? (daily as DailyTarget).target : null,
   }
+}
+
+async function draftsToSend(ctx: ToolCtx, projectRef: string, ids: number[]): Promise<DraftToSend[]> {
+  const data = await readApi(ctx, `/projects/${encodeURIComponent(projectRef)}/drafts?ids=${ids.join(',')}&limit=200`)
+  const byId = new Map(((data as { drafts: Array<DraftToSend & { id: number }> } | null)?.drafts ?? []).map((d) => [d.id, d]))
+  return ids.flatMap((id) => {
+    const d = byId.get(id)
+    return d ? [d] : []
+  })
 }
 
 const QUOTA_WINDOW: Record<QuotaWindowKind, string> = {
@@ -128,7 +141,7 @@ function formatQuotaUsage(q: ProspectQuota, which: 'contacted' | 'found'): strin
   return `${u.remaining} of ${u.limit} left ${QUOTA_WINDOW[q.window]}${creditsCoverOverage(q.credits, USAGE_PRICE_CENTS[which]) ? ' (credits cover more)' : ''}`
 }
 
-// The one definition of which job kinds need approval.
+// The one definition of which job kinds can send, so need approval.
 // count null = the cycle's own number, which it works out when it runs.
 type SendScope = { count: number | null; noun: 'prospect' | 'new prospect' | 'draft'; upTo: boolean }
 
@@ -145,14 +158,23 @@ function sendingScope(params: JobParams): SendScope | null {
   }
 }
 
+export type DraftToSend = { prospectName: string; prospectEmail: string | null; subject: string | null; body: string }
+
+function emailText(d: DraftToSend): string {
+  return `To: ${d.prospectName}${d.prospectEmail ? ` <${d.prospectEmail}>` : ''}\nSubject: ${d.subject ?? ''}\n\n${d.body}`
+}
+
 export function startJobConfirmSummary(
   params: JobParams,
   projectName: string,
   preview: OutboundPreview | null,
+  drafts: DraftToSend[],
 ): ConfirmSummary | null {
   const scope = sendingScope(params)
   if (!scope) return null
   const mode = params.kind === 'send' ? 'send' : (preview?.outboundMode ?? 'unknown')
+  // Held for review, nothing the job writes goes out: nothing to approve.
+  if (mode === 'draft') return null
   const counted = (noun: string) =>
     scope.count === null ? "today's new prospects" : `${scope.upTo ? 'up to ' : ''}${plural(scope.count, noun)}`
   // The plan's pace can move between approval and the run, so the number is
@@ -166,15 +188,12 @@ export function startJobConfirmSummary(
       value:
         mode === 'send'
           ? 'Every message is sent as it is written'
-          : mode === 'draft'
-            ? 'Drafts are created for your review — nothing is sent'
-            : "Your project's outbound mode decides whether these are sent or held as drafts",
+          : "Your project's outbound mode decides whether these are sent or held as drafts",
     },
     { label: 'How many', value: `${scope.count === null ? "the project's daily number of new prospects" : counted(scope.noun)}${dailyNow}${cycle ? ', plus the follow-ups and re-approaches that are due' : ''}` },
   ]
   if (preview && scope.noun !== 'draft') facts.push({ label: 'Reachable now', value: plural(preview.reachable, 'prospect') })
-  // In draft mode nothing leaves and no quota is spent: these would be noise.
-  if (mode !== 'draft' && preview) {
+  if (preview) {
     const { mailbox, quota } = preview
     if (mailbox) {
       facts.push({ label: 'From', value: mailbox.next ?? 'no mailbox with sends left today' })
@@ -182,18 +201,22 @@ export function startJobConfirmSummary(
     }
     if (quota) facts.push({ label: 'New prospects', value: formatQuotaUsage(quota, 'contacted') })
   }
-  const warning = [preview?.blocked, mode === 'send' ? 'Sent email cannot be recalled.' : null].filter((w) => w !== null).join(' ')
+  const unshown = params.kind === 'send' ? params.draftIds.length - drafts.length : 0
+  const warning = [
+    unshown > 0 ? `${plural(unshown, 'draft')} could not be shown here.` : null,
+    preview?.blocked,
+    mode === 'send' ? 'Sent email cannot be recalled.' : null,
+  ].filter((w) => w !== null).join(' ')
   return {
     title:
       params.kind === 'daily_cycle' ? "Run today's cycle" : params.kind === 'send' ? 'Send these drafts' : 'Write outreach',
     facts,
+    ...(drafts.length > 0 ? { body: drafts.map(emailText).join('\n\n— — —\n\n') } : {}),
     ...(warning ? { warning } : {}),
     confirmLabel:
       mode === 'send'
         ? cycle ? `Send to ${counted(scope.noun)}` : `Send ${counted('email')}`
-        : mode === 'draft'
-          ? cycle ? `Draft for ${counted(scope.noun)}` : `Draft ${counted('message')}`
-          : 'Start',
+        : 'Start',
   }
 }
 
@@ -1161,9 +1184,9 @@ export function buildToolRegistry(): ToolDef[] {
         revokedSince?: string | null
       }
       const text = !result.connected
-        ? 'Gmail not connected. Have the user connect it at https://app.leadace.ai (Account settings).'
+        ? 'Gmail not connected. Have the user connect it at https://app.leadace.ai.'
         : result.revokedSince
-          ? `Gmail connected as ${result.email}, but Google revoked the stored access on ${result.revokedSince} — sending and reply collection fail until the user reconnects at https://app.leadace.ai (Account settings).`
+          ? `Gmail connected as ${result.email}, but Google revoked the stored access on ${result.revokedSince} — sending and reply collection fail until the user reconnects it at https://app.leadace.ai.`
           : `Gmail connected as ${result.email} (granted: ${result.grantedAt}, last refreshed: ${result.updatedAt}).`
       return { content: [{ type: 'text' as const, text }] }
     },
@@ -1305,16 +1328,19 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'list_drafts',
-    'List pending_review drafts for a project, newest first. Returns total and rows with a truncated bodyPreview; doNotContact marks drafts whose recipient became DNC after drafting — discard those, sending is blocked.',
+    'List pending_review drafts for a project, newest first. Returns total and rows with a truncated bodyPreview; with ids, just those drafts with their full body. doNotContact marks drafts whose recipient became DNC after drafting — discard those, sending is blocked.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
+      ids: z.array(z.number().int().positive()).min(1).max(200).optional().describe('Only these drafts, with their full body.'),
       limit: z.number().int().min(1).max(200).default(20),
       offset: z.number().int().min(0).default(0),
     },
-    async ({ projectId, limit, offset }, ctx) => {
+    async ({ projectId, ids, limit, offset }, ctx) => {
       const { ok, data } = await ctx.callApi(
         'GET',
-        `/projects/${encodeURIComponent(projectId)}/drafts?limit=${limit}&offset=${offset}`,
+        ids
+          ? `/projects/${encodeURIComponent(projectId)}/drafts?ids=${ids.join(',')}&limit=200`
+          : `/projects/${encodeURIComponent(projectId)}/drafts?limit=${limit}&offset=${offset}`,
         null,
       )
       if (!ok) {
@@ -1342,18 +1368,36 @@ export function buildToolRegistry(): ToolDef[] {
         prospectEmail: d.prospectEmail,
         channel: d.channel,
         subject: d.subject,
-        bodyPreview: d.body.length > 200 ? `${d.body.slice(0, 200)}…` : d.body,
+        ...(ids ? { body: d.body } : { bodyPreview: d.body.length > 200 ? `${d.body.slice(0, 200)}…` : d.body }),
         ...(d.doNotContact ? { doNotContact: true } : {}),
         createdAt: d.createdAt,
       }))
       return {
         content: [{
           type: 'text' as const,
-          text: `${total} pending_review draft(s); showing ${rows.length} from offset ${offset}. Full review/edit/send at https://app.leadace.ai/drafts.\n${JSON.stringify(rows, null, 2)}`,
+          text: `${total} pending_review draft(s); showing ${rows.length}${ids ? '' : ` from offset ${offset}`}.\n${JSON.stringify(rows, null, 2)}`,
         }],
       }
     },
     { readOnly: true },
+  )
+
+  defineTool(
+    'update_draft',
+    'Rewrite a pending_review draft\'s subject and/or body with the person\'s correction, recorded as their edit. Answers with the draft id.',
+    {
+      id: z.number().int().positive().describe('Draft id from list_drafts.'),
+      subject: z.string().min(1).optional(),
+      body: z.string().min(1).optional().describe('The whole new body, not a diff.'),
+    },
+    async ({ id, subject, body }, ctx) => {
+      const { ok, data } = await ctx.callApi('PUT', `/outreach/drafts/${id}`, { subject, body })
+      if (!ok) {
+        const err = data as { error: string; detail?: string }
+        return { content: [{ type: 'text' as const, text: `Error: ${err.detail ? `${err.error}: ${err.detail}` : err.error}` }], isError: true }
+      }
+      return { content: [{ type: 'text' as const, text: `Updated draft ${(data as { id: number }).id}.` }] }
+    },
   )
 
   defineTool(
@@ -2270,8 +2314,12 @@ export function buildToolRegistry(): ToolDef[] {
     {
       confirm: async ({ projectId, params }, ctx) => {
         if (!sendingScope(params)) return null
-        const [name, preview] = await Promise.all([projectLabel(ctx, projectId), outboundPreview(ctx, projectId)])
-        return startJobConfirmSummary(params, name, preview)
+        const [name, preview, drafts] = await Promise.all([
+          projectLabel(ctx, projectId),
+          outboundPreview(ctx, projectId),
+          params.kind === 'send' ? draftsToSend(ctx, projectId, params.draftIds) : [],
+        ])
+        return startJobConfirmSummary(params, name, preview, drafts)
       },
     },
   )
@@ -2413,23 +2461,27 @@ export function buildToolRegistry(): ToolDef[] {
         // Switching one off grants nothing, so it is not a card.
         if (enabled === false) return null
         const existing = scheduleId ? await findSchedule(ctx, scheduleId) : undefined
+        // An edit runs on the stored schedule's project, whatever projectId says.
+        const target = scheduleId ? existing?.projectId : projectId
         const when = whenLine({
           hour: hour ?? existing?.hour ?? 0,
           days: days ?? existing?.days ?? [...DAYS_OF_WEEK],
           timezone: timezone ?? existing?.timezone ?? 'UTC',
         })
-        const preview = await outboundPreview(ctx, projectId ?? existing?.projectId ?? '')
+        const preview = target ? await outboundPreview(ctx, target) : null
         return {
           title: scheduleId ? 'Change this scheduled run' : 'Run this on a schedule',
           facts: [
-            { label: 'Project', value: await projectLabel(ctx, projectId ?? existing?.projectId ?? '') },
+            { label: 'Project', value: await projectLabel(ctx, target ?? '') },
             { label: 'When', value: when },
             {
               label: 'What it may do',
               value:
                 preview?.outboundMode === 'send'
                   ? 'Read your data and start jobs — including sending email, because this project sends without review'
-                  : 'Read your data and start jobs; outreach is held as drafts for your review',
+                  : preview?.outboundMode === 'draft'
+                    ? 'Read your data and start jobs; outreach is held as drafts for your review'
+                    : "Read your data and start jobs; the project's outbound mode decides whether outreach is sent",
             },
             { label: 'What it may never do', value: 'Delete anything, set do-not-contact, or change a schedule' },
           ],
@@ -2503,7 +2555,7 @@ export function buildToolRegistry(): ToolDef[] {
               title: 'Review before sending',
               facts: [
                 project,
-                { label: 'After this', value: 'Nothing is sent until you send it from the Drafts page — scheduled runs only prepare drafts' },
+                { label: 'After this', value: 'Nothing is sent until you approve it — scheduled runs only prepare drafts' },
               ],
               confirmLabel: 'Hold for review',
             }

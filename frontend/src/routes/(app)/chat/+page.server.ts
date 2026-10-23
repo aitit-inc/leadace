@@ -3,11 +3,12 @@ import { getThread, listThreads } from '$lib/api/chat';
 import { listProjectJobs, listThreadJobs } from '$lib/api/jobs';
 import type { Job } from '$lib/types/jobs';
 import { ApiError } from '$lib/api';
+import { GOOGLE_MAILBOX_CONNECTED_COOKIE } from '$lib/gmail-oauth';
 import type { ChatMessage, ChatThread } from '$lib/types/chat';
 import type { PageServerLoad } from './$types';
 
 // The selected thread lives in ?t= so a reload or a shared link lands on it.
-export const load: PageServerLoad = async ({ fetch, parent, url, locals, depends }) => {
+export const load: PageServerLoad = async ({ fetch, parent, url, locals, depends, cookies }) => {
   depends('app:chat');
   const { activeProjectId } = await parent();
   const token = locals.session?.access_token;
@@ -34,5 +35,7 @@ export const load: PageServerLoad = async ({ fetch, parent, url, locals, depends
   } else if (activeProjectId) {
     jobs = await listProjectJobs(activeProjectId, fetch, token);
   }
-  return { activeProjectId, threads, thread, messages, jobs };
+  const mailboxConnected = cookies.get(GOOGLE_MAILBOX_CONNECTED_COOKIE) !== undefined;
+  if (mailboxConnected) cookies.delete(GOOGLE_MAILBOX_CONNECTED_COOKIE, { path: '/chat' });
+  return { activeProjectId, threads, thread, messages, jobs, mailboxConnected };
 };

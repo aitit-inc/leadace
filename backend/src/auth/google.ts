@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import type { Db } from '../db/connection'
+import { secretQuery } from '../db/errors'
 import { signUnsubscribeToken } from './unsubscribe-token'
 import { randomFromAlphabet } from './random-id'
 import {
@@ -74,14 +75,14 @@ export async function getGmailAccessToken(
   switch (rejection) {
     case 'revoked':
       // Only the rejected token is dead: a reconnect that landed during this request stored a new one.
-      await db.execute(sql`
+      await secretQuery(db.execute(sql`
         UPDATE sending_identities
         SET auth_revoked_at = COALESCE(auth_revoked_at, now())
         WHERE tenant_id = ${args.tenantId}
           AND identity_id = ${args.credentialIdentityId}
           AND provider = 'gmail_oauth'
           AND pgp_sym_decrypt(secret, ${args.encryptionKey})::text = ${args.refreshToken}
-      `)
+      `))
       return { ok: false, rejection, detail }
     case 'blocked':
       return { ok: false, rejection, detail }
@@ -355,7 +356,7 @@ export async function saveGmailRefreshToken(
   const conflictTarget = args.signIn
     ? sql`(tenant_id, user_id) WHERE sign_in_account`
     : sql`(tenant_id, from_email)`
-  const [row] = await db.execute<{ identity_id: string; first_connect: boolean }>(sql`
+  const [row] = await secretQuery(db.execute<{ identity_id: string; first_connect: boolean }>(sql`
     INSERT INTO sending_identities
       (tenant_id, identity_id, user_id, provider, from_email, sign_in_account, scope, secret, granted_at, updated_at)
     VALUES (
@@ -381,7 +382,7 @@ export async function saveGmailRefreshToken(
       updated_at = now()
     WHERE sending_identities.parent_identity_id IS NULL
     RETURNING identity_id, (granted_at = updated_at) AS first_connect
-  `)
+  `))
   if (!row) return null
   return { identityId: asSendingIdentityId(row.identity_id), firstConnect: row.first_connect }
 }
@@ -427,7 +428,7 @@ export async function loadSendingIdentitySecret(
     encryptionKey: string
   },
 ): Promise<{ identityId: SendingIdentityId; fromEmail: string; secret: GmailOAuthSecret } | null> {
-  const rows = await db.execute<{
+  const rows = await secretQuery(db.execute<{
     identity_id: string
     provider: 'gmail_oauth'
     from_email: string
@@ -443,7 +444,7 @@ export async function loadSendingIdentitySecret(
       AND user_id = ${args.userId}
       AND sign_in_account
     LIMIT 1
-  `)
+  `))
   const row = rows[0]
   if (!row) return null
   return {
@@ -464,7 +465,7 @@ export async function loadSendingIdentitySecretById(
     encryptionKey: string
   },
 ): Promise<{ identityId: SendingIdentityId; credentialIdentityId: SendingIdentityId; fromEmail: string; secret: SendingIdentitySecret } | null> {
-  const rows = await db.execute<{
+  const rows = await secretQuery(db.execute<{
     identity_id: string
     credential_identity_id: string
     provider: 'gmail_oauth' | 'smtp_imap'
@@ -482,7 +483,7 @@ export async function loadSendingIdentitySecretById(
     WHERE s.tenant_id = ${args.tenantId}
       AND s.identity_id = ${args.identityId}
     LIMIT 1
-  `)
+  `))
   const row = rows[0]
   if (!row) return null
   return {

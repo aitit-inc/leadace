@@ -145,6 +145,9 @@ describe('termsChanged', () => {
   it('re-asks when the project started sending under a draft approval', () => {
     expect(termsChanged(card, { ...card, confirmLabel: 'Send up to 10 emails', warning: 'Sent email cannot be recalled.' })).toBe(true)
   })
+  it('re-asks when the email it showed was edited', () => {
+    expect(termsChanged({ ...card, body: 'Hi Dana' }, { ...card, body: 'Hi Dana, again' })).toBe(true)
+  })
   it('does not re-ask because a number moved', () => {
     expect(termsChanged(card, { ...card, facts: [{ label: 'Outreach quota', value: '86 of 100 left this month' }] })).toBe(false)
   })

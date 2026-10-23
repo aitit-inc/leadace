@@ -13,8 +13,8 @@ import { attachmentExpired } from '../../domain/chat-attachment'
 import { LlmError, streamLlmChat, type ChatCall, type ChatRequest, type ChatStreamEvent, type LlmEnv } from '../llm'
 import { takeChatRateSlot, MAIN_CHAT_TURNS_PER_TENANT_PER_DAY } from '../chat-rate-limit'
 import { listProjects } from '../projects'
-import { getCredentialsStatus } from '../google-auth'
-import { getTenantComplianceStatus } from '../tenants'
+import { listProjectAttention, listTenantAttention } from '../attention'
+import { parseEdition } from '../../domain/edition'
 import {
   appendMessage,
   claimPendingCall,
@@ -67,7 +67,7 @@ export type ChatTurnDeps = {
   signal: AbortSignal
   tenantId: TenantId
   userId: string
-  env: LlmEnv & { APP_URL: string }
+  env: LlmEnv & { APP_URL: string; LEADACE_EDITION: string }
   tools: ToolExecutor
 }
 
@@ -82,10 +82,11 @@ function toolResponse(call: Call, result: ToolResult): ToolResponse {
   return { id: call.id, name: call.name, response: result.ok ? { result: result.text } : { error: result.text } }
 }
 
-// What the person actually answered. Facts that only drift (a quota ticking
-// down) are not the promise, and re-asking on those would be noise.
+// What the person actually answered: the action, its warning and the content
+// they read (an email's text). Facts that only drift (a quota ticking down)
+// are not the promise, and re-asking on those would be noise.
 export function termsChanged(shown: ConfirmSummary, now: ConfirmSummary): boolean {
-  return shown.confirmLabel !== now.confirmLabel || shown.warning !== now.warning
+  return shown.confirmLabel !== now.confirmLabel || shown.warning !== now.warning || shown.body !== now.body
 }
 
 const DECLINED: ToolResult = { ok: false, text: 'The person declined this call.' }
@@ -177,19 +178,20 @@ export function inReadingOrder(messages: MessageView[]): MessageView[] {
 }
 
 async function buildContext(deps: ChatTurnDeps, threadProjectId: string | null, unattended: boolean): Promise<string> {
-  const [projects, gmail, compliance] = await deps.run((db) =>
+  const edition = parseEdition(deps.env.LEADACE_EDITION)
+  const [projects, attention] = await deps.run((db) =>
     Promise.all([
       listProjects(db, deps.tenantId),
-      getCredentialsStatus(db, deps.tenantId, deps.userId),
-      getTenantComplianceStatus(db, deps.tenantId),
+      threadProjectId
+        ? listProjectAttention(db, deps.tenantId, deps.userId, edition, asProjectId(threadProjectId), new Date())
+        : listTenantAttention(db, deps.tenantId, deps.userId, edition),
     ]),
   )
   return buildSystemInstruction({
     today: utcDateKey(),
     projects: projects.ok ? projects.value.projects.map((p) => ({ id: p.id, name: p.name, setUp: p.setUp })) : [],
     threadProjectId,
-    gmail: gmail.ok ? (gmail.value.connected ? `connected as ${gmail.value.email}` : 'not connected — the user connects it from the Drafts page banner or Account settings') : 'unknown',
-    compliance: compliance.ok ? (compliance.value.ready ? 'ready' : `missing ${compliance.value.missing.join(', ')} — set on /workspace-settings`) : 'unknown',
+    attention: attention.ok ? attention.value : null,
     appUrl: deps.env.APP_URL,
     unattended,
   })
@@ -348,7 +350,8 @@ export async function* runChatTurn(deps: ChatTurnDeps, threadId: string, input: 
         callId: next.callId,
         name: next.name,
         args: next.args,
-        summary: next.summary,
+        // Read as it comes up: the call just answered can change its terms.
+        summary: (await deps.tools.confirmSummary(next.name, next.args)) ?? next.summary,
         otherResponses: answered,
         remaining: rest,
       })

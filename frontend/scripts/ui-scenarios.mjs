@@ -1,20 +1,21 @@
 #!/usr/bin/env node
 // Put the local stack into the state a screen needs, then open that screen —
-// signed in as a throwaway persona — in a browser or as light/dark screenshots.
-// See e2e/README.md → UI scenarios.
+// signed in as a throwaway persona — in a browser, as light/dark screenshots,
+// or as a recording driven by a steps file. See e2e/README.md → UI scenarios.
 //
 //   npm run ui -- list
 //   npm run ui -- open approval
 //   npm run ui -- shot                 # every scenario, light + dark
 //   npm run ui -- shot plans-credits --theme dark --keep
+//   npm run ui -- record approval ./edit-a-draft.mjs
 //
 // Exit status: 0 all good, 1 setup/stack failure, 2 a page did not render the
 // state it was seeded with.
 
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createServerClient } from '@supabase/ssr';
 import { chromium } from 'playwright-core';
 
@@ -100,7 +101,7 @@ let keepPersonas = false;
 // Sign-in is Google-only and email logins are disabled, so a password grant is
 // out. An admin-minted magic link verifies into a real session over the same
 // GoTrue code path a person's sign-in takes.
-async function createPersona(label) {
+async function createPersona(label, apiUrl) {
   const email = `ui-${label}-${Date.now()}@e2e.local`;
   const user = await supabaseAdmin('POST', '/auth/v1/admin/users', {
     email,
@@ -109,12 +110,17 @@ async function createPersona(label) {
   });
   // Registered before the steps that can still fail: from here on the account
   // exists, so teardown has to know about it.
-  const persona = { email, userId: user.id };
+  const persona = { email, userId: user.id, apiUrl };
   livePersonas.add(persona);
 
   persona.tenantId = psql(`SELECT tenant_id FROM tenant_members WHERE user_id = ${q(user.id)} LIMIT 1;`);
   if (!persona.tenantId) throw new Error(`no tenant was provisioned for ${email}`);
 
+  persona.session = await mintSession(email);
+  return persona;
+}
+
+async function mintSession(email) {
   const link = await supabaseAdmin('POST', '/auth/v1/admin/generate_link', { type: 'magiclink', email });
   const hashedToken = link.hashed_token ?? link.properties?.hashed_token;
   const res = await fetch(`${SUPABASE_URL}/auth/v1/verify`, {
@@ -124,13 +130,37 @@ async function createPersona(label) {
   });
   const session = await res.json();
   if (!res.ok || !session.access_token) throw new Error(`could not mint a session: ${JSON.stringify(session)}`);
-  persona.session = session;
-  return persona;
+  return session;
 }
 
+const activeJobs = (persona) =>
+  psql(`SELECT id FROM jobs WHERE tenant_id = ${q(persona.tenantId)} AND status IN ('queued','running');`)
+    .split('\n')
+    .filter(Boolean);
+
 // Deleting the user takes its tenant with it in the same transaction
-// (drizzle/0098), so this cannot half-succeed.
+// (drizzle/0098), so this cannot half-succeed. A chat turn or job the account
+// set going would outlive its tenant and keep calling the model, so they stop
+// first; one that will not stop keeps the account. Jobs go first: a job that
+// finishes on its own wakes its thread.
 async function destroyPersona(persona) {
+  if (persona.session) {
+    // Fresh: the one from the start expires during a long `open`.
+    const { access_token } = await mintSession(persona.email);
+    const post = (path, signal) =>
+      fetch(`${persona.apiUrl}/api${path}`, { method: 'POST', headers: { Authorization: `Bearer ${access_token}` }, signal });
+    for (const id of activeJobs(persona)) await post(`/jobs/${id}/cancel`).catch(() => {});
+    for (const id of psql(`SELECT id FROM chat_threads WHERE tenant_id = ${q(persona.tenantId)};`).split('\n').filter(Boolean)) {
+      // A turn that never returns keeps Stop waiting (#964), after it has
+      // already told the turn to stop.
+      const res = await post(`/chat/threads/${id}/stop`, AbortSignal.timeout(15_000)).catch((e) => {
+        if (e.name !== 'TimeoutError') throw e;
+      });
+      if (res && !res.ok) throw new Error(`could not stop thread ${id} (HTTP ${res.status})`);
+    }
+    const left = activeJobs(persona);
+    if (left.length > 0) throw new Error(`jobs ${left.join(', ')} still run`);
+  }
   await supabaseAdmin('DELETE', `/auth/v1/admin/users/${persona.userId}`);
   livePersonas.delete(persona);
 }
@@ -700,7 +730,7 @@ const SCENARIOS = [
     stack: 'self-host',
     setup: async (ctx) => {
       const projectId = await seedProject(ctx, { name: 'Northwind outbound', settings: { outboundMode: 'draft' } });
-      const [dana] = await seedProspects(ctx, projectId, 1);
+      const [dana, miles, priya] = await seedProspects(ctx, projectId, 3);
       const DRAFT_SUBJECT = 'Fewer back-and-forths before a first call';
       const ordinary = seedThread(ctx, {
         projectId,
@@ -797,7 +827,41 @@ const SCENARIOS = [
           confirmLabel: 'Start the new frame',
         },
       });
+      const drafts = [miles, priya].map((p, i) => ({ p, subject: `A quicker first reply for ${p.org}`, body: outreachBody(p, i + 1) }));
+      const draftIds = [];
+      for (const d of drafts) {
+        const row = await apiFor(ctx)('POST', '/api/outreach', {
+          projectId,
+          prospectId: d.p.prospectId,
+          channel: 'email',
+          subject: d.subject,
+          body: d.body,
+          status: 'pending_review',
+        });
+        draftIds.push(row.id);
+      }
+      const sendDrafts = seedThread(ctx, {
+        projectId,
+        title: 'Write to the next two',
+        userText: 'Draft outreach for the next 2 reachable prospects.',
+        modelText: 'Both drafts are ready — read them on the card and send, or tell me what to change. Connect Gmail from the banner first.',
+        toolName: 'start_job',
+        args: { projectId, params: { kind: 'send', draftIds } },
+        summary: {
+          title: 'Send these drafts',
+          facts: [
+            { label: 'Project', value: 'Northwind outbound' },
+            { label: 'What happens', value: 'Every message is sent as it is written' },
+            { label: 'How many', value: '2 drafts' },
+            { label: 'New prospects', value: 'unlimited' },
+          ],
+          body: drafts.map((d) => `To: ${d.p.name} <${d.p.email}>\nSubject: ${d.subject}\n\n${d.body}`).join('\n\n— — —\n\n'),
+          warning: 'No mailbox can send for this project yet, so nothing goes out until one is connected. Sent email cannot be recalled.',
+          confirmLabel: 'Send 2 emails',
+        },
+      });
       return [
+        { name: 'send-drafts', path: `/chat?t=${sendDrafts}`, expect: ['Send 2 emails', 'Connect Gmail to send the emails you approve'] },
         { name: 'frame', path: `/chat?t=${frame}`, expect: 'Start the new frame' },
         { name: 'send-mode', path: `/chat?t=${sendMode}`, expect: 'Send without review' },
         { name: 'ordinary', path: `/chat?t=${ordinary}`, expect: 'Draft this email' },
@@ -1321,7 +1385,9 @@ async function ensureStack(kind) {
 
 async function launchBrowser(headless) {
   try {
-    return await chromium.launch({ channel: 'chrome', headless });
+    // Playwright's own handlers would close the browser and exit while
+    // shutDown is still stopping and deleting the account.
+    return await chromium.launch({ channel: 'chrome', headless, handleSIGINT: false, handleSIGTERM: false });
   } catch (e) {
     throw new Error(`could not launch Chrome (${e.message}) — install Google Chrome and retry.`);
   }
@@ -1330,7 +1396,7 @@ async function launchBrowser(headless) {
 async function prepare(scenario) {
   const stack = await ensureStack(scenario.stack);
   const tag = `${Date.now().toString(36)}`;
-  const persona = scenario.persona === false ? null : await createPersona(scenario.name);
+  const persona = scenario.persona === false ? null : await createPersona(scenario.name, stack.apiUrl);
   const ctx = { ...stack, persona, tag };
   // A failure while seeding propagates to shutDown, which takes every live
   // persona with it — unless --keep asked for the half-built one to stay.
@@ -1338,11 +1404,12 @@ async function prepare(scenario) {
   return { ctx, pages };
 }
 
-async function newContext(browser, ctx, scenario, theme) {
+async function newContext(browser, ctx, scenario, theme, options = {}) {
   const context = await browser.newContext({
     viewport: { width: 1280, height: 900 },
     deviceScaleFactor: 2,
     colorScheme: theme === 'dark' ? 'dark' : 'light',
+    ...options,
   });
   if (scenario.signedIn !== false && ctx.persona) {
     await context.addCookies(await sessionCookies(ctx.persona.session));
@@ -1454,6 +1521,237 @@ async function shoot(names, themes) {
   return 0;
 }
 
+// ─── recording ──────────────────────────────────────────────────────────────
+
+const RECORD_DIR = join(REPO_ROOT, 'e2e', 'output', 'recordings');
+
+const CAPTION_SCRIPT = `
+window.__caption = (text, fast) => {
+  let el = document.getElementById('__rec_caption');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = '__rec_caption';
+    el.style.cssText = 'position:fixed;left:50%;top:8px;transform:translateX(-50%);z-index:2147483647;max-width:880px;padding:10px 18px;border-radius:12px;font:600 16px/1.5 -apple-system,"Hiragino Sans",sans-serif;color:#fff;box-shadow:0 6px 24px rgba(0,0,0,.25);pointer-events:none;text-align:center;white-space:pre-line';
+    document.documentElement.appendChild(el);
+  }
+  const shown = fast ? ('⏩ ' + text).trim() : text;
+  el.style.background = fast ? 'rgba(30,110,104,.92)' : 'rgba(15,40,38,.88)';
+  el.style.display = shown ? 'block' : 'none';
+  el.textContent = shown;
+};
+`;
+
+// The approval card, not a job's own Cancel link.
+const CARD = 'div.card:has(p:text-is("Needs your OK"))';
+const IDENTITY_FORM = 'form:has(h3:text("Confirm your sender identity"))';
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Stretches where only a job runs are marked fast; encode() squeezes them.
+class Recorder {
+  constructor(page, ctx) {
+    this.page = page;
+    this.persona = ctx.persona;
+    this.api = apiFor(ctx);
+    this.psql = psql;
+    this.q = q;
+    this.appUrl = ctx.appUrl;
+    this.apiUrl = ctx.apiUrl;
+    this.t0 = Date.now();
+    this.timeline = [];
+    this.caption = '';
+    this.fast = false;
+  }
+
+  at() {
+    return (Date.now() - this.t0) / 1000;
+  }
+
+  log(line) {
+    console.log(`[${this.at().toFixed(1).padStart(6)}s] ${line}`);
+  }
+
+  paint() {
+    return this.page.evaluate(([t, f]) => window.__caption?.(t, f), [this.caption, this.fast]).catch(() => {});
+  }
+
+  async say(text) {
+    this.caption = text;
+    this.log(`caption: ${text.replace(/\n/g, ' / ')}`);
+    await this.paint();
+  }
+
+  async setFast(on) {
+    if (on === this.fast) return;
+    this.fast = on;
+    this.timeline.push({ t: this.at(), fast: on });
+    await this.paint();
+  }
+
+  async type(text) {
+    const box = this.page.getByLabel('Message Ace');
+    await box.click();
+    await box.pressSequentially(text, { delay: 28 });
+    await sleep(600);
+    await box.press('Enter');
+    this.log(`typed: ${text}`);
+  }
+
+  // Until Ace waits on the person (a card or the sender identity form) or the
+  // thread goes quiet.
+  async settle() {
+    const start = Date.now();
+    let quietSince = null;
+    while (Date.now() - start < 3_600_000) {
+      const running = await this.page.locator('button[aria-label="Stop"]').isVisible().catch(() => false);
+      const card = await this.page.locator(`${CARD} button:text-is("Cancel"):enabled`).last().isVisible().catch(() => false);
+      const form = await this.page.locator(IDENTITY_FORM).isVisible().catch(() => false);
+      const jobs = activeJobs(this.persona).length;
+      await this.setFast(jobs > 0 && !running && !card && !form);
+      if ((card || form) && !running) {
+        await sleep(1200);
+        return form ? 'form' : 'card';
+      }
+      if (!running && jobs === 0) {
+        quietSince ??= Date.now();
+        if (Date.now() - quietSince >= 9000) return 'idle';
+      } else quietSince = null;
+      await sleep(1000);
+    }
+    await this.setFast(false);
+    return 'timeout';
+  }
+
+  async drive(answer = () => true, { maxCards = 8 } = {}) {
+    for (let i = 0; i < maxCards; i++) {
+      const state = await this.settle();
+      if (state === 'form') {
+        await this.say('✓ Confirm your sender identity');
+        await this.fillIdentity();
+        continue;
+      }
+      if (state !== 'card') return state;
+      const title = await this.showCard();
+      const yes = answer(title);
+      await this.say(`${yes ? '✓' : '✗'} ${title}`);
+      await sleep(1500);
+      await this.answerCard(yes);
+    }
+    return 'max';
+  }
+
+  async showCard() {
+    const card = this.page.locator(CARD).last();
+    await card.scrollIntoViewIfNeeded().catch(() => {});
+    const title = (await card.locator('h3').first().textContent().catch(() => '')) ?? '';
+    // Slowly, so a long body can be read.
+    const body = card.locator('div.overflow-auto').first();
+    if (await body.isVisible().catch(() => false)) {
+      for (let i = 0; i < 6; i++) {
+        await body.evaluate((el) => el.scrollBy({ top: 140, behavior: 'smooth' })).catch(() => {});
+        await sleep(900);
+      }
+      await body.evaluate((el) => el.scrollTo({ top: 0, behavior: 'smooth' })).catch(() => {});
+    }
+    await sleep(1500);
+    return title.trim();
+  }
+
+  async answerCard(approve) {
+    const card = this.page.locator(CARD).last();
+    const button = approve
+      ? card.locator('button').filter({ hasNotText: /^Cancel$/ }).last()
+      : card.getByRole('button', { name: 'Cancel', exact: true });
+    const label = (await button.textContent())?.trim();
+    await button.hover();
+    await sleep(700);
+    await button.click();
+    this.log(`${approve ? 'approved' : 'declined'}: ${label}`);
+    // The card stays up, enabled, for a moment after the click.
+    for (let i = 0; i < 30; i++) {
+      await sleep(1000);
+      const running = await this.page.locator('button[aria-label="Stop"]').isVisible().catch(() => false);
+      if (running || !(await button.isVisible().catch(() => false))) break;
+    }
+  }
+
+  async fillIdentity() {
+    const form = this.page.locator(IDENTITY_FORM);
+    const name = form.locator('input[type=text]').first();
+    const address = form.locator('textarea').first();
+    const country = form.locator('select').first();
+    if (!(await name.inputValue())) await name.pressSequentially(COMPLIANCE.legalName, { delay: 25 });
+    if (!(await address.inputValue())) await address.pressSequentially(COMPLIANCE.physicalAddress, { delay: 20 });
+    if (['', 'null'].includes(await country.inputValue())) await country.selectOption(COMPLIANCE.defaultSenderCountry);
+    await sleep(1200);
+    await form.locator('button[type=submit]').click();
+    this.log('saved sender identity');
+    // It stays up while it saves.
+    await form.waitFor({ state: 'hidden', timeout: 30_000 }).catch(() => {});
+  }
+}
+
+// Each fast stretch plays in about five seconds, at least 4× speed.
+function encode(raw, out, begin, end, timeline) {
+  const segments = [];
+  let from = begin;
+  let fast = false;
+  for (const e of [...timeline, { t: end }]) {
+    if (e.t > from) segments.push({ a: from, b: e.t, speed: fast ? Math.max(4, (e.t - from) / 5) : 1 });
+    from = e.t;
+    fast = e.fast;
+  }
+  const parts = segments.map(
+    (s, i) => `[0:v]trim=start=${s.a.toFixed(3)}:end=${s.b.toFixed(3)},setpts=(PTS-STARTPTS)/${s.speed.toFixed(3)}[v${i}]`,
+  );
+  const filter = `${parts.join(';')};${segments.map((_, i) => `[v${i}]`).join('')}concat=n=${segments.length}:v=1:a=0,fps=25[out]`;
+  execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', raw, '-filter_complex', filter, '-map', '[out]', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '23', '-movflags', '+faststart', out], { stdio: 'inherit' });
+  const seconds = segments.reduce((sum, s) => sum + (s.b - s.a) / s.speed, 0);
+  console.log(`\n${out} — ${seconds.toFixed(0)}s (${(end - begin).toFixed(0)}s as run, ${segments.filter((s) => s.speed > 1).length} fast stretch(es))`);
+}
+
+// The steps contract: e2e/README.md → Recording a flow.
+async function record(scenarioName, stepsPath) {
+  const scenario = SCENARIOS.find((s) => s.name === scenarioName);
+  if (!scenario) throw new Error(`unknown scenario "${scenarioName}" — try \`npm run ui -- list\``);
+  if (scenario.persona === false) throw new Error(`${scenarioName} has no account to record with`);
+  const steps = await import(pathToFileURL(resolve(stepsPath)).href);
+  if (typeof steps.default !== 'function') throw new Error(`${stepsPath} has no default export to drive the recording`);
+  try {
+    execFileSync('ffmpeg', ['-version'], { stdio: 'ignore' });
+  } catch {
+    throw new Error('ffmpeg is not on PATH — install it (brew install ffmpeg)');
+  }
+
+  const { ctx, pages } = await prepare(scenario);
+  const path =
+    (await steps.start?.({ persona: ctx.persona, api: apiFor(ctx), psql, q, pages: Object.fromEntries(pages.map((p) => [p.name, p.path])) })) ??
+    pages[0].path;
+  mkdirSync(RECORD_DIR, { recursive: true });
+  const browser = await launchBrowser(!process.argv.includes('--headed'));
+  try {
+    const context = await newContext(browser, ctx, scenario, 'light', {
+      recordVideo: { dir: RECORD_DIR, size: { width: 1280, height: 900 } },
+    });
+    await context.addInitScript(CAPTION_SCRIPT);
+    const page = await context.newPage();
+    const r = new Recorder(page, ctx);
+    await page.goto(`${ctx.appUrl}${path}`, { waitUntil: 'networkidle' });
+    const begin = r.at();
+    await steps.default(r);
+    await r.say('');
+    await sleep(1500);
+    const end = r.at();
+    await context.close();
+    const raw = await page.video().path();
+    encode(raw, join(RECORD_DIR, `${basename(stepsPath).replace(/\.m?js$/, '')}.mp4`), begin, end, r.timeline);
+    rmSync(raw);
+  } finally {
+    await browser.close();
+  }
+  return 0;
+}
+
 function list() {
   console.log('Scenarios:\n');
   for (const s of SCENARIOS) {
@@ -1462,6 +1760,7 @@ function list() {
   }
   console.log('\n  npm run ui -- open <scenario>      open it in Chrome, signed in');
   console.log('  npm run ui -- shot [<scenario>…]   light + dark screenshots into e2e/output/ui');
+  console.log('  npm run ui -- record <scenario> <steps.mjs>   a captioned mp4 into e2e/output/recordings');
   return 0;
 }
 
@@ -1478,6 +1777,10 @@ async function main() {
   if (!SERVICE_KEY || !ANON_KEY) {
     throw new Error('SUPABASE_SERVICE_ROLE_KEY (backend/.dev.vars) and PUBLIC_SUPABASE_ANON_KEY (frontend/.env) are required');
   }
+  // Every mode creates and deletes accounts: never anywhere but the local stack.
+  for (const url of [SUPABASE_URL, PUBLIC_SUPABASE_URL]) {
+    if (!['localhost', '127.0.0.1'].includes(new URL(url).hostname)) throw new Error(`not the local stack: ${url}`);
+  }
   // `make dev` runs Postgres in Docker but installs no client, and the
   // scenarios seed state the app itself cannot reach.
   try {
@@ -1492,15 +1795,23 @@ async function main() {
       return open(rest[0]);
     case 'shot':
       return shoot(rest, themeArg ? [themeArg] : ['light', 'dark']);
+    case 'record':
+      if (!rest[1]) throw new Error('record needs a scenario and a steps file');
+      return record(rest[0], rest[1]);
     case 'list':
     case undefined:
       return list();
     default:
-      throw new Error(`unknown command "${mode}" — expected list, open or shot`);
+      throw new Error(`unknown command "${mode}" — expected list, open, shot or record`);
   }
 }
 
+let shuttingDown = false;
+
+// Once: an interrupt also closes the browser, which fails the run a second time.
 async function shutDown(code, message) {
+  if (shuttingDown) return;
+  shuttingDown = true;
   if (message) console.error(`\n${message}`);
   if (!keepPersonas) await destroyLivePersonas();
   stopSpawned();
@@ -1508,6 +1819,7 @@ async function shutDown(code, message) {
 }
 
 process.on('SIGINT', () => shutDown(130));
+process.on('SIGTERM', () => shutDown(143));
 
 main()
   .then((code) => shutDown(code))

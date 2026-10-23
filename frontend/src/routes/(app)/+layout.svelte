@@ -36,11 +36,9 @@
   let mailboxError = $derived(page.url.searchParams.get('mailbox_error'));
 
   let bellItems = $derived(data.attention);
-  // Revoked always shows. Not connected is how every account starts, so the
-  // chat, where setup happens, leaves it out.
   let gmailBannerItem = $derived(
     data.attention.find((i) => i.kind === 'gmail_auth_revoked') ??
-      (page.url.pathname !== '/chat' ? data.attention.find((i) => i.kind === 'gmail_disconnected') : undefined),
+      data.attention.find((i) => i.kind === 'gmail_disconnected'),
   );
 
   async function handleConnectGmail() {

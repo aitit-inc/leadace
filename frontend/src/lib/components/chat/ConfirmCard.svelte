@@ -39,7 +39,7 @@
   </dl>
 
   {#if pending.summary.body}
-    <div class="mt-4 max-h-64 overflow-auto whitespace-pre-wrap rounded-xl bg-page p-4 text-sm leading-relaxed text-text-secondary">
+    <div class="mt-4 max-h-96 overflow-auto whitespace-pre-wrap rounded-xl bg-page p-4 text-sm leading-relaxed text-text-secondary">
       {pending.summary.body}
     </div>
   {/if}

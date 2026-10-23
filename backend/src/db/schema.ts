@@ -420,6 +420,7 @@ export const sendingIdentityProviderEnum = pgEnum('sending_identity_provider', [
 export type SendingIdentityProvider = (typeof sendingIdentityProviderEnum.enumValues)[number]
 
 // `secret` is pgp_sym_encrypt'd at write; the DB only ever sees the encrypted bytea.
+// Each query that passes the key runs through secretQuery (db/errors.ts).
 // A Gmail Send-As alias is a row of its own under a connected Gmail
 // (parent_identity_id): its own From, warmup and cap, the parent's credentials,
 // scope and inbox — so it carries no secret or scope itself.

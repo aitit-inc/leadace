@@ -1,7 +1,7 @@
 import { redirect } from '@sveltejs/kit';
 import { ApiError } from '$lib/api';
 import { registerGoogleMailbox } from '$lib/api/sending-identities';
-import { GOOGLE_MAILBOX_STATE_COOKIE } from '$lib/gmail-oauth';
+import { GOOGLE_MAILBOX_CONNECTED_COOKIE, GOOGLE_MAILBOX_STATE_COOKIE } from '$lib/gmail-oauth';
 import { takeNext } from '$lib/redirect';
 import type { RequestHandler } from './$types';
 
@@ -45,6 +45,7 @@ export const GET: RequestHandler = async ({ url, cookies, fetch, locals }) => {
 
 	try {
 		const mailbox = await registerGoogleMailbox({ code }, fetch, token);
+		if (new URL(back, url.origin).pathname === '/chat') cookies.set(GOOGLE_MAILBOX_CONNECTED_COOKIE, '1', { path: '/chat', maxAge: 60 });
 		finish('mailbox_connected', mailbox.fromEmail);
 	} catch (e) {
 		if (e instanceof ApiError) fail(e.message);

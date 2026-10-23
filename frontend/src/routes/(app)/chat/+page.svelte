@@ -114,6 +114,17 @@
     untrack(() => void send(ask));
   });
 
+  // Gmail is connected in the browser, out of the conversation's sight, so the
+  // chat tells it for the person, as it does a saved sender identity. Once: a
+  // load that skips this page's (an auth refresh) hands `data` over with the
+  // flag still set.
+  let mailboxTold = false;
+  $effect(() => {
+    if (!data.mailboxConnected || mailboxTold) return;
+    mailboxTold = true;
+    untrack(() => void send('Gmail connected.'));
+  });
+
   $effect(() => {
     const id = threadId;
     if (!id) return;
