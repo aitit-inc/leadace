@@ -211,6 +211,15 @@ RLS_OUT="$(psql_local "BEGIN; SET LOCAL ROLE app_rls; SELECT set_config('app.ten
 assert_eq "app_rls(A) INSERT tenant_id=B → row-level security violation" \
   "$(echo "$RLS_OUT" | grep -qi 'row-level security' && echo violated || echo "NOT-violated: $RLS_OUT")" "violated"
 
+step "Data API: the public anon key reaches no table, now or on one created later"
+assert_eq "no privilege on a public table or sequence for anon / authenticated" \
+  "$(psql_local "SELECT count(*)::int FROM pg_class c, aclexplode(c.relacl) e WHERE c.relnamespace='public'::regnamespace AND e.grantee IN ('anon'::regrole,'authenticated'::regrole);")" "0"
+assert_eq "the migration role's default privileges grant them nothing" \
+  "$(psql_local "SELECT count(*)::int FROM pg_default_acl a, aclexplode(a.defaclacl) e WHERE a.defaclrole='postgres'::regrole AND a.defaclnamespace='public'::regnamespace AND a.defaclobjtype IN ('r','S') AND e.grantee IN ('anon'::regrole,'authenticated'::regrole);")" "0"
+ANON="$(dotenv SUPABASE_ANON_KEY)"
+assert_eq "anon key over REST: master_documents (no RLS) → 401" \
+  "$(curl -s -o /dev/null -w '%{http_code}' "$SUPA_URL/rest/v1/master_documents?select=slug" -H "apikey: $ANON" -H "Authorization: Bearer $ANON")" "401"
+
 step "account-deletion blast radius (self-host edition): deleting B leaves A intact"
 # Deletion requires the mandatory survey body (else 400).
 assert_eq "DELETE /api/me/account as B → 200" \

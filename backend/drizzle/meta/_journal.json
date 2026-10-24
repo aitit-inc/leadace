@@ -855,6 +855,13 @@
       "when": 1792478289721,
       "tag": "0121_eager_shen",
       "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "7",
+      "when": 1792852025232,
+      "tag": "0122_revoke_data_api_grants",
+      "breakpoints": true
     }
   ]
 }
