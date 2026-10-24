@@ -2,6 +2,7 @@ import * as Sentry from '@sentry/cloudflare'
 import { sentryOptions } from '../sentry'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
+import { readRequestBody, requestBodyTooLargeMessage } from '@modelcontextprotocol/sdk/server/requestBody.js'
 import { verifyJwt, verifySupabaseJwt } from '../auth/verify-jwt'
 import { SERVER_VERSION } from './version'
 import { buildToolRegistry, type ToolCtx, type ToolDef } from '../tools/registry'
@@ -97,9 +98,18 @@ function withCors(response: Response): Response {
 // don't pay the build cost on a cold isolate.
 let toolRegistry: ToolDef[] | null = null
 
+// Per-call caps so one request cannot exhaust the 128 MB isolate
+// (GHSA-46jr-4wx8-v453), set above the largest legitimate call: a full
+// add_prospects batch is ~7,000 elements; 128K output tokens stay under 1 MiB.
+const MAX_TOOL_INPUT_ELEMENTS = 10_000
+const MAX_REQUEST_BODY_BYTES = 1024 * 1024
+
 function createMcpServer(ctx: ToolCtx): McpServer {
   toolRegistry ??= buildToolRegistry()
-  const server = new McpServer({ name: 'lead-ace', version: SERVER_VERSION })
+  const server = new McpServer(
+    { name: 'lead-ace', version: SERVER_VERSION },
+    { maxToolInputElements: MAX_TOOL_INPUT_ELEMENTS },
+  )
   for (const tool of toolRegistry) {
     if (tool.surface === 'chat') continue
     server.tool(tool.name, tool.description, tool.schema, async (args) => {
@@ -242,6 +252,22 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     ))
   }
 
+  const read = await readRequestBody(request, MAX_REQUEST_BODY_BYTES)
+  if (read.tooLarge) {
+    return withCors(jsonRpcError(413, -32000, requestBodyTooLargeMessage(MAX_REQUEST_BODY_BYTES)))
+  }
+  let message: unknown
+  try {
+    message = JSON.parse(read.text)
+  } catch {
+    return withCors(jsonRpcError(400, -32700, 'Parse error: Invalid JSON'))
+  }
+  // MCP dropped JSON-RPC batching in 2025-06-18, and a batch multiplies the
+  // per-call validation cost past what one isolate can hold.
+  if (Array.isArray(message)) {
+    return withCors(jsonRpcError(400, -32600, 'Invalid Request: JSON-RPC batches are not supported'))
+  }
+
   const authHeader = request.headers.get('Authorization') ?? ''
   const server = createMcpServer({
     callApi: (method, path, body) => callApi(method, path, body, env.WEB_API_URL, authHeader),
@@ -252,5 +278,9 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   })
 
   await server.connect(transport)
-  return withCors(await transport.handleRequest(request))
+  return withCors(await transport.handleRequest(request, { parsedBody: message }))
+}
+
+function jsonRpcError(status: number, code: number, message: string): Response {
+  return Response.json({ jsonrpc: '2.0', error: { code, message }, id: null }, { status })
 }

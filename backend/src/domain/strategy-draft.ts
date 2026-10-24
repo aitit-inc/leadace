@@ -23,6 +23,6 @@ export const applyStrategyDraftSchema = z.object({
     .length(4),
   inquiryChatBrief: z.string().min(1).max(4000),
   inquiryOneLiner: z.string().min(1).max(140),
-  outboundChannels: z.array(z.enum(OUTBOUND_CHANNELS)).min(1),
+  outboundChannels: z.array(z.enum(OUTBOUND_CHANNELS)).min(1).max(OUTBOUND_CHANNELS.length),
 })
 export type ApplyStrategyDraftInput = z.infer<typeof applyStrategyDraftSchema>

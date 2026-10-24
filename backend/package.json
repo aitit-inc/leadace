@@ -17,14 +17,14 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@sentry/cloudflare": "^10.70.0",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.13.2",
     "jose": "^6.2.3",
     "openai": "^7.19.0",
     "postgres": "^3.4.9",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260815.1",

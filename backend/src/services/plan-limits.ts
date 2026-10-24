@@ -28,6 +28,7 @@ import {
   type MailboxSendRefusal,
 } from '../domain/warmup'
 import type { InboxTestResult } from '../domain/inbox-test'
+import { isoDateTimeSchema } from '../domain/time'
 
 // 'unlimited' is internal-only (no Stripe price), set manually in the DB for
 // staff / complimentary accounts. The Stripe webhook must never overwrite it.
@@ -598,7 +599,7 @@ const MAX_DAILY_CAP_OVERRIDE = 100_000
 export const updateMailboxWarmupSchema = z
   .object({
     dailyCapOverride: z.number().int().min(0).max(MAX_DAILY_CAP_OVERRIDE).nullable().optional(),
-    pausedUntil: z.iso.datetime().nullable().optional(),
+    pausedUntil: isoDateTimeSchema.nullable().optional(),
     resolveRefusal: z.literal(true).optional(),
     resumeInboxTest: z.literal(true).optional(),
   })

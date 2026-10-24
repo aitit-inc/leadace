@@ -24,6 +24,7 @@ import { applyStrategyDraftSchema, competitorsInputSchema, readPagesSchema } fro
 import { changeReasonSchema, reachDiff, reachLine, type ReachSettings } from '../domain/loop/change'
 import { frameBodySchema, frameReach, proposalWhat, PROPOSAL_STATUSES, type ProposedChange } from '../domain/loop/proposal'
 import { sectionEditSchema } from '../domain/document-sections'
+import { isoDateTimeSchema } from '../domain/time'
 
 // MIN_PLUGIN_VERSION is the gate: any plugin older than this MUST be told to
 // run `/plugin update leadace@leadace` because backend behavior assumes the
@@ -438,9 +439,9 @@ export function buildToolRegistry(): ToolDef[] {
         hypothesis: z.object({
           targetDepartment: z.string().optional().describe('Likely buyer department.'),
           targetRolePattern: z.string().optional().describe('Likely buyer role/title pattern.'),
-          hypothesizedPain: z.array(z.string()).optional().describe('Short pain hypotheses.'),
-          valueMapping: z.array(z.string()).optional().describe('How the offering addresses each pain, in the same order as hypothesizedPain.'),
-          timingSignals: z.array(z.string()).optional().describe('Concrete reasons now is a good moment to reach out. Send the array (even empty) only when the site was read for them — its presence stamps the prospect\'s site-read time; omit it otherwise.'),
+          hypothesizedPain: z.array(z.string()).max(10).optional().describe('Short pain hypotheses.'),
+          valueMapping: z.array(z.string()).max(10).optional().describe('How the offering addresses each pain, in the same order as hypothesizedPain.'),
+          timingSignals: z.array(z.string()).max(10).optional().describe('Concrete reasons now is a good moment to reach out. Send the array (even empty) only when the site was read for them — its presence stamps the prospect\'s site-read time; omit it otherwise.'),
           bestChannel: z.string().optional().describe('Suggested first channel (e.g. personal_email, form, linkedin_dm).'),
           bestKeyperson: z.string().optional().describe('Specific keyperson if obvious (name + role).'),
         }).optional().describe('Per-prospect targeting hypothesis.'),
@@ -451,7 +452,7 @@ export function buildToolRegistry(): ToolDef[] {
         country: z.string().regex(/^[A-Z]{2}$/).optional().describe('Prospect country (ISO 3166-1 alpha-2). When the organization is first created it also bootstraps the org country (an existing org keeps its value, so it acts as a per-prospect override). Codes outside the send-allowed set register fine but are blocked at outreach time.'),
         countrySource: z.enum(['manual', 'ai_inferred']).optional().describe('Provenance of the country value; only meaningful when country is set.'),
         employeeBand: z.enum(EMPLOYEE_BANDS).optional().describe('Coarse company-size band of the organization. Applied on the org\'s first registration only — a dedup-matched existing org keeps its value (change via update_organization). Omit = unknown.'),
-      })).describe('Max 100 per call.'),
+      })).max(100).describe('Max 100 per call.'),
     },
     async ({ projectId, prospects }, ctx) => {
       const { ok, data } = await ctx.callApi('POST', '/prospects/batch', { projectId, prospects })
@@ -480,7 +481,7 @@ export function buildToolRegistry(): ToolDef[] {
         email: z.email().optional(),
         contactFormUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
         platformUrl: z.url().refine(isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG).optional(),
-      })).describe('Max 100 per call.'),
+      })).max(100).describe('Max 100 per call.'),
     },
     async ({ projectId, candidates }, ctx) => {
       const { ok, data } = await ctx.callApi('POST', '/prospects/check-dedup', { projectId, candidates })
@@ -717,7 +718,7 @@ export function buildToolRegistry(): ToolDef[] {
       resolveRefusal: z.literal(true).optional().describe('The person says the provider refusal is resolved, e.g. the account was unblocked.'),
       resumeInboxTest: z.literal(true).optional().describe('The person chooses to send again despite the latest inbox test landing in spam; the next inbox test judges again.'),
       dailyCap: z.number().int().min(0).nullable().optional().describe('Fixed daily email cap; null returns to the warmup ramp.'),
-      pausedUntil: z.iso.datetime().nullable().optional().describe('Pause sending until this time (ISO 8601); null resumes a pause.'),
+      pausedUntil: isoDateTimeSchema.nullable().optional().describe('Pause sending until this time (ISO 8601); null resumes a pause.'),
     },
     async ({ mailbox, resolveRefusal, resumeInboxTest, dailyCap, pausedUntil }, ctx) => {
       const found = await findMailbox(ctx, mailbox)
@@ -1735,9 +1736,9 @@ export function buildToolRegistry(): ToolDef[] {
         hypothesis: z.object({
           targetDepartment: z.string().optional(),
           targetRolePattern: z.string().optional(),
-          hypothesizedPain: z.array(z.string()).optional(),
-          valueMapping: z.array(z.string()).optional(),
-          timingSignals: z.array(z.string()).optional().describe('Present (even empty) = the site was read for them; stamps the site-read time.'),
+          hypothesizedPain: z.array(z.string()).max(10).optional(),
+          valueMapping: z.array(z.string()).max(10).optional(),
+          timingSignals: z.array(z.string()).max(10).optional().describe('Present (even empty) = the site was read for them; stamps the site-read time.'),
           bestChannel: z.string().optional(),
           bestKeyperson: z.string().optional(),
         }).nullable().optional(),
@@ -1846,7 +1847,7 @@ export function buildToolRegistry(): ToolDef[] {
       content: z.string().describe('Response content'),
       sentiment: z.enum(['positive', 'neutral', 'negative']),
       responseType: z.enum(['reply', 'auto_reply', 'bounce', 'meeting_request', 'rejection']),
-      receivedAt: z.string().datetime().optional(),
+      receivedAt: isoDateTimeSchema.optional(),
       markDoNotContact: z.boolean().default(false).describe('Manual do_not_contact flag; bounces and rejectionFeedback opt-outs force it regardless.'),
       rejectionFeedback: z.object({
         version: z.literal(1),
@@ -1864,7 +1865,7 @@ export function buildToolRegistry(): ToolDef[] {
           ccpa_opt_out: z.boolean().optional(),
           marketing_opt_out: z.boolean().optional(),
         }).optional(),
-        submitted_at: z.string().datetime(),
+        submitted_at: isoDateTimeSchema,
         tenant_signature: z.string().optional(),
       }).optional().describe('Only valid when responseType="rejection".'),
     },
@@ -2011,7 +2012,7 @@ export function buildToolRegistry(): ToolDef[] {
       projectId: z.string().min(1).describe('Project name or ID'),
       slug: z.string().describe('Document slug: "business", "sales_strategy", "search_notes", "public_journal", or "playbook_<strategy-slug>"'),
       content: z.string().optional().describe('The whole markdown document'),
-      sections: z.array(sectionEditSchema).optional().describe('In place of content: each section that changes, written whole; every other section of the latest version stays as it is'),
+      sections: z.array(sectionEditSchema).max(50).optional().describe('In place of content: each section that changes, written whole; every other section of the latest version stays as it is'),
       reason: changeReason.describe('Why, in one line; kept in the change log for business and sales_strategy.'),
     },
     async ({ projectId, slug, content, sections, reason }, ctx) => {
@@ -2282,9 +2283,9 @@ export function buildToolRegistry(): ToolDef[] {
         gapDays: z.array(z.coerce.number().int().min(1).max(90)).min(1).max(5).optional(),
       }).optional()
         .describe('Follow-up sequence for unanswered prospects. gapDays = relative waits in DAYS before each next touch (default [3]). Whole-object replace: omitting `enabled` sets it false, disabling follow-ups AND clearing in-progress sequences — pass enabled:true explicitly to keep them on while changing cadence. Turning it on also resumes prospects whose last send is within the sequence length.'),
-      outboundChannels: z.array(z.enum(OUTBOUND_CHANNELS)).optional()
+      outboundChannels: z.array(z.enum(OUTBOUND_CHANNELS)).max(OUTBOUND_CHANNELS.length).optional()
         .describe('Channels the project is allowed to use for outbound. Default: email only — the browser-driven channels must be enabled explicitly. Empty array pauses automated outbound (manual per-draft send still works).'),
-      targetCountries: z.array(z.enum(ALLOWED_SEND_COUNTRIES)).optional()
+      targetCountries: z.array(z.enum(ALLOWED_SEND_COUNTRIES)).max(ALLOWED_SEND_COUNTRIES.length).optional()
         .describe('Country codes that further narrow the compliance-level send allowlist. Empty array (default) = no project-level restriction; non-empty = explicit allowlist.'),
       targetLanguage: localeSchema.optional()
         .describe('Language of this project\'s outbound messages (default "en"): sets the compliance-footer / identity localization and the language outbound subjects and bodies are written in. Independent of targetCountries; recipient-facing web pages (inquiry landing, unsubscribe) follow the visitor\'s browser language instead.'),

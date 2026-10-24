@@ -37,6 +37,7 @@ import {
 import { addMonthsUtc, nextStatusFromResponse } from '../domain/prospect-status'
 import { UNDELIVERABLE } from '../domain/email-deliverability'
 import { projectProspectInsertValues } from '../domain/project-prospect'
+import { isoDateTimeSchema } from '../domain/time'
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { loadProjectReapproachSettings } from './project-settings'
@@ -48,7 +49,7 @@ const rejectionFeedbackSchema = rejectionFeedbackCommonSchema.extend({
     email: z.email().max(320).optional(),
     role: z.string().max(200).optional(),
   }).optional(),
-  submitted_at: z.iso.datetime(),
+  submitted_at: isoDateTimeSchema,
   tenant_signature: z.string().optional(),
 })
 
@@ -60,8 +61,7 @@ export const recordResponseSchema = z.object({
   responseType: z.enum(responseTypeEnum.enumValues),
   // Clamped to [now-7d, now] so /check-responses can pass Gmail's internalDate
   // for polling lag, but callers can't backdate to shift nextOutreachAfter.
-  receivedAt: z.iso
-    .datetime()
+  receivedAt: isoDateTimeSchema
     .refine((s) => {
       const t = new Date(s).getTime()
       const now = Date.now()
