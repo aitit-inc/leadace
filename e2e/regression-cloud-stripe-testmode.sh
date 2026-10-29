@@ -162,6 +162,7 @@ assert_eq "  the first session is expired" "$(st GET "/checkout/sessions/$(echo 
 st POST "/customers/$CUS" "address[line1]=1 Market St" "address[city]=San Francisco" "address[state]=CA" "address[postal_code]=94105" "address[country]=US" > /dev/null
 VISA="$(st POST /payment_methods/pm_card_visa/attach "customer=$CUS" | jq -r .id)"
 DECLINE="$(st POST /payment_methods/pm_card_chargeCustomerFail/attach "customer=$CUS" | jq -r .id)"
+THREEDS="$(st POST /payment_methods/pm_card_authenticationRequired/attach "customer=$CUS" | jq -r .id)"
 set_card "$VISA"
 LIVE="$(new_sub "$STARTER")"
 assert_eq "a live subscription on the customer → Checkout 409" "$(checkout "$STARTER")" "409"
@@ -234,6 +235,7 @@ BEFORE_START="$(item_of "$H" current_period_start)"
 sleep 2
 T0="$(date +%s)"
 assert_eq "upgrade Starter → Pro → 200" "$(change "$PRO" starter)" "200"
+assert_eq "  done, nothing for the page to confirm" "$(api_body | jq -r .status)" "done"
 NEW_START="$(item_of "$H" current_period_start)"
 assert_eq "  Stripe: Pro, a period that starts now" \
   "$(item_of "$H" price.id)|$([[ "$NEW_START" -ge $((T0 - 5)) && "$NEW_START" != "$BEFORE_START" ]] && echo now || echo "no ($BEFORE_START → $NEW_START)")" "$PRO|now"
@@ -243,10 +245,28 @@ assert_eq "  after the event: Pro with the new period start" \
 set_card "$DECLINE"
 PAID="$(paid_invoices "$H")"; END_BEFORE="$(item_of "$H" current_period_end)"
 assert_eq "upgrade Pro → Scale with a card that declines → 502" "$(change "$SCALE" pro)" "502"
+assert_eq "  says the card was declined and where to change it" "$(api_body | jq -r .detail)" "Your card was declined. Update the card under Manage subscription, then try again."
 assert_eq "  Stripe unchanged: Pro, same period" "$(item_of "$H" price.id)|$(item_of "$H" current_period_end)" "$PRO|$END_BEFORE"
 assert_eq "  no new paid invoice" "$(paid_invoices "$H")" "$PAID"
+pending_of() { st GET "/subscriptions/$H" | jq -r 'if .pending_update == null then "none" else "pending" end'; }
+assert_eq "  nothing left waiting: no pending update, no open invoice" \
+  "$(pending_of)|$(st GET /invoices "subscription=$H" "status=open" | jq -r '.data | length')" "none|0"
+set_card "$THREEDS"
+assert_eq "upgrade Pro → Scale with a card whose bank asks for 3-D Secure → 200" "$(change "$SCALE" pro)" "200"
+assert_eq "  hands the page the payment's secret" \
+  "$(api_body | jq -r '.status + "|" + (.clientSecret | test("^pi_.+_secret_") | tostring)')" "requires_action|true"
+WAITING="$(st GET "/subscriptions/$H" | jq -r .latest_invoice)"
+assert_eq "  Stripe: still Pro, the upgrade waiting on its payment" "$(item_of "$H" price.id)|$(pending_of)" "$PRO|pending"
+# A step that did not finish leaves the upgrade waiting, unpaid; the next
+# plan change drops it.
+assert_eq "upgrade again while one waits → 200" "$(change "$SCALE" pro)" "200"
+assert_eq "  the first waiting invoice is void, a new upgrade waits" \
+  "$(st GET "/invoices/$WAITING" | jq -r .status)|$(pending_of)" "void|pending"
+assert_eq "  still Pro, no new paid invoice" "$(item_of "$H" price.id)|$(paid_invoices "$H")" "$PRO|$PAID"
+WAITING="$(st GET "/subscriptions/$H" | jq -r .latest_invoice)"
 set_card "$VISA"
 assert_eq "downgrade Pro → Starter → 200" "$(change "$STARTER" pro)" "200"
+assert_eq "  the waiting upgrade was dropped first" "$(pending_of)|$(st GET "/invoices/$WAITING" | jq -r .status)" "none|void"
 SCHED="$(st GET "/subscriptions/$H" "expand[]=schedule")"
 assert_eq "  a schedule whose last phase is Starter from the period end" \
   "$(echo "$SCHED" | jq -r '[.schedule.phases[-1].items[0].price, .schedule.phases[-1].start_date == .items.data[0].current_period_end] | map(tostring) | join("|")')" "$STARTER|true"
@@ -264,6 +284,17 @@ assert_eq "  the half-made schedule was released and the upgrade applied" \
 assert_eq "a stale fromPlan → 409" "$(change "$PRO" pro)" "409"
 assert_eq "a stale periodEnd → 409" "$(change "$PRO" scale "2020-01-01T00:00:00.000Z")" "409"
 assert_eq "the same plan → 409" "$(change "$SCALE" scale)" "409"
+# The Customer Portal cancels a flexible-billing subscription with cancel_at
+# alone (cancel_at_period_end stays false).
+END="$(item_of "$H" current_period_end)"
+st POST "/subscriptions/$H" "cancel_at=$END" > /dev/null
+assert_eq "  (fixture) cancel_at set, cancel_at_period_end false" \
+  "$(st GET "/subscriptions/$H" | jq -r '[.cancel_at, .cancel_at_period_end] | map(tostring) | join("|")')" "$END|false"
+assert_eq "a subscription set to end: /me/subscription says when" \
+  "$(api GET /api/me/subscription | jq -r '.endsAt | sub("\\.000Z$"; "Z")')" "$(jq -nr --argjson t "$END" '$t | todate')"
+assert_eq "  a plan change → 409" "$(change "$PRO" scale)" "409"
+st POST "/subscriptions/$H" "cancel_at=" > /dev/null
+assert_eq "reactivated: endsAt null" "$(api GET /api/me/subscription | jq -r 'if has("endsAt") then (.endsAt | tostring) else "missing" end')" "null"
 send "$(sub_event updated "$H")" > /dev/null
 assert_eq "  (fixture) Scale mirrored" "$(row)" "scale|$H"
 

@@ -1,5 +1,5 @@
 import { request, type RequestFetch } from '../api';
-import type { AutoTopUp, PaidPlanTier, PlanInfo, SubscriptionInfo } from '$lib/types/plan';
+import type { AutoTopUp, PaidPlanTier, PlanChangeResult, PlanInfo, SubscriptionInfo } from '$lib/types/plan';
 
 export function getPlan(
   fetchFn: RequestFetch = fetch,
@@ -109,8 +109,8 @@ export function changePlan(
   body: { priceId: string; fromPlan: PaidPlanTier; periodEnd: string },
   fetchFn: RequestFetch = fetch,
   token?: string,
-): Promise<SubscriptionInfo> {
-  return request<SubscriptionInfo>(fetchFn, {
+): Promise<PlanChangeResult> {
+  return request<PlanChangeResult>(fetchFn, {
     method: 'POST',
     path: '/me/plan-change',
     body,

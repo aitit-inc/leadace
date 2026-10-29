@@ -13,7 +13,7 @@ const mcpOrigin = originOf(publicEnv.PUBLIC_MCP_URL);
 const supabaseOrigin = originOf(publicEnv.PUBLIC_SUPABASE_URL);
 const connectSrc =
 	apiOrigin && mcpOrigin && supabaseOrigin
-		? ['self', apiOrigin, apiOrigin.replace(/^http/, 'ws'), mcpOrigin, supabaseOrigin]
+		? ['self', apiOrigin, apiOrigin.replace(/^http/, 'ws'), mcpOrigin, supabaseOrigin, 'https://api.stripe.com', 'https://link.com', 'https://*.link.com']
 		: ['self', 'https:', 'wss:'];
 
 /** @type {import('@sveltejs/kit').Config} */
@@ -27,13 +27,19 @@ const config = {
 			mode: 'nonce',
 			directives: {
 				'default-src': ['self'],
-				'script-src': ['self'],
+				// Stripe.js (3-D Secure on an upgrade): https://docs.stripe.com/security/guide#content-security-policy
+				'script-src': ['self', 'https://js.stripe.com', 'https://*.js.stripe.com'],
 				'style-src': ['self', 'unsafe-inline', 'https://fonts.googleapis.com'],
 				'font-src': ['self', 'https://fonts.gstatic.com'],
 				'img-src': ['self', 'data:', 'https:'],
 				// The wildcards also cover Vite's HMR socket.
 				'connect-src': dev ? [...connectSrc, 'http://localhost:*', 'ws://localhost:*'] : connectSrc,
 				'frame-src': [
+					'https://js.stripe.com',
+					'https://*.js.stripe.com',
+					'https://hooks.stripe.com',
+					'https://link.com',
+					'https://*.link.com',
 					'https://www.youtube.com',
 					'https://www.youtube-nocookie.com',
 					'https://player.vimeo.com'

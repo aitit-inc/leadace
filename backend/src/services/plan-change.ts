@@ -5,6 +5,7 @@ import type { TenantId } from '../domain/ids'
 import type { CloudEdition } from '../domain/edition'
 import { ok, err, type ServiceError, type ServiceResult } from './result'
 import { stripeApiRequest } from './stripe-api'
+import { isCardDecline } from '../domain/credits'
 import { planOfPrice, requireStripeSubscription } from './billing'
 import { PAID_PLAN_TIERS, planFromMetadata, type PaidPlanTier } from './plan-limits'
 import { periodFromSubscription } from './stripe-webhook'
@@ -21,10 +22,17 @@ export type PlanChangeBody = z.infer<typeof planChangeBodySchema>
 
 export type SubscriptionInfo = {
   periodEnd: string
-  cancelAtPeriodEnd: boolean
+  // When Stripe ends the subscription; null = it renews.
+  endsAt: string | null
   // The plan a schedule switches to at the period end; null = none pending.
   scheduledPlan: PaidPlanTier | null
 }
+
+// An upgrade the person's bank wants to authenticate waits, applied by Stripe
+// only once its invoice is paid; the page completes it with the secret.
+export type PlanChangeResult =
+  | { status: 'done'; subscription: SubscriptionInfo }
+  | { status: 'requires_action'; clientSecret: string }
 
 type StripePrice = { id: string; metadata: Record<string, string> }
 
@@ -46,7 +54,13 @@ type CreatedStripeSchedule = { id: string; phases: StripeSchedulePhase<string>[]
 type StripeSubscription = {
   id: string
   status: string
-  cancel_at_period_end: boolean
+  // Set by every scheduled cancellation. A flexible-billing subscription
+  // cancelled in the Customer Portal leaves cancel_at_period_end false.
+  cancel_at: number | null
+  // An upgrade waiting on its payment (payment_behavior=pending_if_incomplete);
+  // latest_invoice is that payment's invoice while it is set.
+  pending_update: unknown
+  latest_invoice: string | null
   trial_end: number | null
   discounts: unknown[]
   items: { data: Array<{ id: string; price: StripePrice; quantity: number; discounts: unknown[]; current_period_start?: number; current_period_end?: number }> }
@@ -118,7 +132,7 @@ async function readSubscriptionInfo(subscriptionId: string, ctx: StripeCtx): Pro
   if (!current.ok) return current
   return ok({
     periodEnd: periodEndIso(current.value.periodEnd),
-    cancelAtPeriodEnd: sub.value.cancel_at_period_end,
+    endsAt: sub.value.cancel_at === null ? null : new Date(sub.value.cancel_at * 1000).toISOString(),
     scheduledPlan: scheduledPlanFromSchedule(sub.value.schedule, current.value.plan),
   })
 }
@@ -141,25 +155,66 @@ async function releaseSchedule(scheduleId: string, ctx: StripeCtx): Promise<Serv
   return ok(undefined)
 }
 
+type StripePaymentIntent = {
+  status: string
+  client_secret: string | null
+  last_payment_error: { type?: string } | null
+}
+
+type Authenticate = { kind: 'authenticate'; clientSecret: string }
+
+// An upgrade Stripe holds pending: a payment waiting on the bank is handed to
+// the person; anything else is refused, and the caller drops the upgrade.
+export function pendingUpgradeOutcome(intent: StripePaymentIntent | null): Authenticate | { kind: 'refused'; declined: boolean } {
+  if (intent?.status === 'requires_action' && intent.client_secret) {
+    return { kind: 'authenticate', clientSecret: intent.client_secret }
+  }
+  return { kind: 'refused', declined: intent?.last_payment_error?.type === 'card_error' }
+}
+
+// One message for every decline: the bank's reason is not the person's to act
+// on, and a reason such as a stolen card is not shown at all.
+const CARD_DECLINED = err('BAD_GATEWAY', 'Your card was declined', 'Your card was declined. Update the card under Manage subscription, then try again.')
+
 // An upgrade starts a new monthly period now (`billing_cycle_anchor=now`), so
 // the allowance counts afresh from today and is never bought for the last
 // days of a period; `always_invoice` charges the new month today, less the
-// unused part of the old plan. `error_if_incomplete` leaves the subscription
-// untouched when that charge is declined; `off_session` avoids a 3-D Secure
-// step this call cannot complete.
-async function upgradeNow(sub: StripeSubscription, current: CurrentPlan, priceId: string, ctx: StripeCtx): Promise<ServiceResult<undefined>> {
+// unused part of the old plan. The person is here, so it is charged on
+// session: `pending_if_incomplete` applies it only once that charge is paid,
+// which lets the bank ask for 3-D Secure.
+async function upgradeNow(sub: StripeSubscription, current: CurrentPlan, priceId: string, ctx: StripeCtx): Promise<ServiceResult<{ kind: 'applied' } | Authenticate>> {
   const res = await stripeApiRequest('POST', `/subscriptions/${sub.id}`, {
     'items[0][id]': current.itemId,
     'items[0][price]': priceId,
     'billing_cycle_anchor': 'now',
     'proration_behavior': 'always_invoice',
-    'payment_behavior': 'error_if_incomplete',
-    'off_session': 'true',
+    'payment_behavior': 'pending_if_incomplete',
+    'expand[0]': 'latest_invoice.payments',
   }, ctx.secretKey)
-  if (res.ok) return ok(undefined)
   // The webhook mirrors whatever Stripe did with an answer that never came.
-  if (res.unknown) return err('BAD_GATEWAY', 'The plan change could not be confirmed', 'Reload the plans page to see your plan.')
-  return stripeFailure('The plan change was not applied', res.data)
+  if (!res.ok && res.unknown) return err('BAD_GATEWAY', 'The plan change could not be confirmed', 'Reload the plans page to see your plan.')
+  if (!res.ok) return isCardDecline(res.data) ? CARD_DECLINED : stripeFailure('The plan change was not applied', res.data)
+  const updated = res.data as {
+    pending_update: unknown
+    latest_invoice: { id: string; payments?: { data: Array<{ payment: { payment_intent?: string } }> } } | null
+  }
+  if (updated.pending_update === null) return ok({ kind: 'applied' })
+  const intentId = updated.latest_invoice?.payments?.data[0]?.payment.payment_intent
+  const intent = intentId ? await stripeApiRequest('GET', `/payment_intents/${intentId}`, null, ctx.secretKey) : null
+  const outcome = pendingUpgradeOutcome(intent?.ok ? (intent.data as StripePaymentIntent) : null)
+  if (outcome.kind === 'authenticate') return ok(outcome)
+  const dropped = await dropPendingUpgrade(updated.latest_invoice?.id ?? null, ctx)
+  if (!dropped.ok) return dropped
+  return outcome.declined ? CARD_DECLINED : err('BAD_GATEWAY', 'The plan change was not applied')
+}
+
+// Voiding the invoice of a pending update drops the update with it (Stripe
+// drops one itself after 23 hours). Nothing was paid, so nothing is lost.
+async function dropPendingUpgrade(invoiceId: string | null, ctx: StripeCtx): Promise<ServiceResult<undefined>> {
+  if (!invoiceId) return err('INTERNAL_ERROR', 'A pending upgrade has no invoice')
+  const res = await stripeApiRequest('POST', `/invoices/${invoiceId}/void`, null, ctx.secretKey)
+  if (!res.ok) return stripeFailure('Failed to drop the unfinished upgrade', res.data)
+  return ok(undefined)
 }
 
 // A subscription a schedule manages is changed through the schedule, which
@@ -269,7 +324,7 @@ export async function changePlan(
   tenantId: TenantId,
   ctx: StripeCtx,
   body: PlanChangeBody,
-): Promise<ServiceResult<SubscriptionInfo>> {
+): Promise<ServiceResult<PlanChangeResult>> {
   const subscriptionId = await requireStripeSubscription(db, tenantId)
   if (!subscriptionId.ok) return subscriptionId
   await lockTenant(db, tenantId)
@@ -286,7 +341,7 @@ export async function changePlan(
   if (sub.status !== 'active' && sub.status !== 'trialing') {
     return err('CONFLICT', 'Subscription is not active', `Its status is ${sub.status}.`)
   }
-  if (sub.cancel_at_period_end) {
+  if (sub.cancel_at !== null) {
     return err('CONFLICT', 'Subscription is set to cancel', 'Reactivate it in the billing portal before changing the plan.')
   }
   if (current.value.plan !== body.fromPlan || periodEndIso(current.value.periodEnd) !== body.periodEnd) {
@@ -295,16 +350,27 @@ export async function changePlan(
   const direction = planChangeDirection(current.value.plan, target.value)
   if (direction === 'same') return err('CONFLICT', 'Already on this plan')
 
+  // An upgrade left waiting on its bank (the page closed mid-authentication)
+  // gives way to the change asked for now.
+  if (sub.pending_update !== null) {
+    const dropped = await dropPendingUpgrade(sub.latest_invoice, ctx)
+    if (!dropped.ok) return dropped
+  }
+
   if (direction === 'upgrade' && sub.schedule) {
     const cleared = await clearScheduleForUpgrade(sub.schedule, current.value.plan, ctx)
     if (!cleared.ok) return cleared
   }
-  const applied = direction === 'upgrade'
-    ? await upgradeNow(sub, current.value, body.priceId, ctx)
-    : await downgradeAtPeriodEnd(sub, current.value, body.priceId, ctx)
-  if (!applied.ok) return applied
-
-  return readSubscriptionInfo(sub.id, ctx)
+  if (direction === 'upgrade') {
+    const upgraded = await upgradeNow(sub, current.value, body.priceId, ctx)
+    if (!upgraded.ok) return upgraded
+    if (upgraded.value.kind === 'authenticate') return ok({ status: 'requires_action', clientSecret: upgraded.value.clientSecret })
+  } else {
+    const scheduled = await downgradeAtPeriodEnd(sub, current.value, body.priceId, ctx)
+    if (!scheduled.ok) return scheduled
+  }
+  const info = await readSubscriptionInfo(sub.id, ctx)
+  return info.ok ? ok({ status: 'done', subscription: info.value }) : info
 }
 
 // Serializes plan changes per tenant, so a request classified as an upgrade

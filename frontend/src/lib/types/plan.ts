@@ -73,7 +73,13 @@ export interface PlanInfo {
 // Mirrors backend/src/services/plan-change.ts `SubscriptionInfo`.
 export interface SubscriptionInfo {
   periodEnd: string;
-  cancelAtPeriodEnd: boolean;
+  // When Stripe ends the subscription; null = it renews.
+  endsAt: string | null;
   // The plan a scheduled change switches to at the period end; null = none pending.
   scheduledPlan: PaidPlanTier | null;
 }
+
+// Mirrors backend/src/services/plan-change.ts `PlanChangeResult`.
+export type PlanChangeResult =
+  | { status: 'done'; subscription: SubscriptionInfo }
+  | { status: 'requires_action'; clientSecret: string };

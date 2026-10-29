@@ -54,10 +54,13 @@ export function planMovementOfEvent(event: StripeSubscriptionEvent): PlanMovemen
       )
       const moved = switched(heldBefore, held)
       if (moved) return moved
-      if (previous['cancel_at_period_end'] === false && subscription['cancel_at_period_end'] === true) {
+      // cancel_at is set by every scheduled cancellation; a flexible-billing
+      // one leaves cancel_at_period_end false.
+      if (!('cancel_at' in previous)) return null
+      if (previous['cancel_at'] === null && subscription['cancel_at'] !== null) {
         return { kind: 'cancelScheduled', plan }
       }
-      if (previous['cancel_at_period_end'] === true && subscription['cancel_at_period_end'] === false) {
+      if (previous['cancel_at'] !== null && subscription['cancel_at'] === null) {
         return { kind: 'cancelReverted', plan }
       }
       return null

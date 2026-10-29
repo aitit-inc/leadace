@@ -53,12 +53,12 @@ describe('planMovementOfEvent', () => {
     expect(moved).toEqual({ kind: 'switch', from: 'pro', to: 'free' })
   })
 
-  it('reads cancel_at_period_end turning on as a scheduled cancellation', () => {
+  it('reads cancel_at being set as a scheduled cancellation', () => {
     const moved = planMovementOfEvent(
       event(
         'customer.subscription.updated',
-        { items: items('starter'), status: 'active', cancel_at_period_end: true },
-        { cancel_at_period_end: false },
+        { items: items('starter'), status: 'active', cancel_at: 1795966091, cancel_at_period_end: false },
+        { cancel_at: null },
       ),
     )
     expect(moved).toEqual({ kind: 'cancelScheduled', plan: 'starter' })
@@ -68,8 +68,8 @@ describe('planMovementOfEvent', () => {
     const moved = planMovementOfEvent(
       event(
         'customer.subscription.updated',
-        { items: items('starter'), status: 'active', cancel_at_period_end: false },
-        { cancel_at_period_end: true },
+        { items: items('starter'), status: 'active', cancel_at: null },
+        { cancel_at: 1795966091 },
       ),
     )
     expect(moved).toEqual({ kind: 'cancelReverted', plan: 'starter' })
