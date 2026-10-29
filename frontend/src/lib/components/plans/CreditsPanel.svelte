@@ -128,8 +128,9 @@
     </div>
   </div>
   <p class="mb-4 text-sm text-text-secondary">
-    Past your allowance, a new prospect costs {formatCents(USAGE_PRICE_CENTS.contacted)} and a
-    prospect LeadAce finds costs {formatCents(USAGE_PRICE_CENTS.found)}. Credits never expire.
+    Past your allowance, a new prospect costs {formatCents(USAGE_PRICE_CENTS.contacted)}, a
+    prospect LeadAce finds costs {formatCents(USAGE_PRICE_CENTS.found)} and a chat message costs
+    {formatCents(USAGE_PRICE_CENTS.chat)}. Credits never expire.
     {creditsCoverOverage(credits, USAGE_PRICE_CENTS.contacted)
       ? 'Sending continues past the allowance while the balance lasts.'
       : 'Sending and discovery stop at the allowance until you add credits.'}

@@ -11,6 +11,10 @@
 # turn and recorded as the schedule's failure, and approving that card still
 # runs the call without spending a message.
 #
+# Then on Starter (150 per billing period) with 150 spent: prepaid credits pay
+# for message 151 ($0.20, one ledger row named by its count), and a balance
+# below the unit price refuses message 152 with the credits sentence.
+#
 # The scheduled run, the accepted message and the approval each take a short
 # model turn (the backend's LLM key from backend/.dev.vars).
 #
@@ -164,6 +168,31 @@ done
 assert_eq "the approved call ran (outbound_mode)" "$MODE" "send"
 assert_eq "card answered" "$(psql_local "SELECT pending_call IS NULL FROM chat_threads WHERE id = '$CARD';")" "t"
 assert_eq "approval spent nothing" "$(chat_used)" "capped lifetime 60/60 left=0"
+
+step "past a paid plan's allowance, credits pay for a message"
+cloud_seed_plan "$T" starter
+# Stripe periods start on a whole second; NOW() carries microseconds a JS Date drops.
+psql_local "UPDATE tenant_plans SET current_period_start = date_trunc('second', current_period_start) WHERE tenant_id = '$T';" > /dev/null
+psql_local "INSERT INTO chat_rate_windows (tenant_id, scope, key, window_start, used)
+  SELECT '$T', 'main_chat_allowance', '$T', current_period_start, 150 FROM tenant_plans WHERE tenant_id = '$T';" > /dev/null
+psql_local "INSERT INTO credit_ledger (tenant_id, kind, amount_cents, reference) VALUES ('$T', 'purchase', 30, 'cs_e2e_$TS');" > /dev/null
+balance() { psql_local "SELECT COALESCE(SUM(amount_cents), 0)::int FROM credit_ledger WHERE tenant_id = '$T';"; }
+assert_eq "starter: 150 of 150 spent" "$(chat_used)" "capped monthly 150/150 left=0"
+assert_eq "message 151 → 201" "$(post_msg "$TALK" "And after that?")" "201"
+assert_eq "debited \$0.20" "$(balance)" "10"
+assert_eq "one chat debit, named by its count" \
+  "$(psql_local "SELECT count(*) || ' ' || bool_and(reference LIKE 'chat:%:151')::text FROM credit_ledger WHERE tenant_id = '$T' AND kind = 'usage_chat';")" "1 true"
+assert_eq "151 counted" "$(chat_used)" "capped monthly 151/150 left=0"
+
+step "a balance below \$0.20 refuses the next message"
+assert_eq "message 152 → 403" "$(post_msg "$TALK" "One more")" "403"
+DETAIL="$(api_body | jq -r '.detail // ""')"
+say "refusal: $DETAIL"
+[[ "$DETAIL" == *"150 chat messages per billing period"* && "$DETAIL" == *"buy credits"* ]] \
+  && assert_eq "refusal names the limit and credits" "yes" "yes" \
+  || assert_eq "refusal names the limit and credits" "$DETAIL" "…150 chat messages per billing period…buy credits…"
+assert_eq "nothing debited" "$(balance)" "10"
+assert_eq "still 151 counted" "$(chat_used)" "capped monthly 151/150 left=0"
 
 # Teardown deletes the tenant; a turn still writing to it would fail on the FK.
 for thread in "$TALK" "$CARD" ${SCHED_THREAD:+"$SCHED_THREAD"}; do

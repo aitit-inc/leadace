@@ -21,6 +21,7 @@ import {
   uploadAttachment,
   uploadAttachmentQuerySchema,
 } from '../../services/chat/attachments'
+import { scheduleAutoTopUp } from '../auto-top-up'
 import { respondWithError } from '../respond'
 import { err } from '../../services/result'
 import { withTenantConnection, type TenantRun } from '../../db/rls'
@@ -118,6 +119,7 @@ chatRunnerRouter.post(
     if (!files.ok) return respondWithError(c, files)
     const message = await withTenantConnection(c.env.DATABASE_URL, tenantId, (db) => postMessage(db, tenantId, c.get('edition'), id, text, files.value))
     if (!message.ok) return respondWithError(c, message)
+    scheduleAutoTopUp(c)
     await c.env.THREADS.getByName(id).wake({ tenantId, threadId: id })
     return c.json(message.value, 201)
   },

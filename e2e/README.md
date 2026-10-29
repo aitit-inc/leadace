@@ -451,8 +451,10 @@ tenant. Shared helpers live in `e2e/lib-cloud.sh`.
   (60 person messages, counted in `chat_rate_windows`): message 60 → 201,
   message 61 → 403 with the limit sentence and nothing written (the thread's
   waiting approval card stays), approving that card still runs the call and
-  spends nothing, and `/me/plan` reports the count. The accepted message and
-  the approval each take a short real model turn.
+  spends nothing, and `/me/plan` reports the count. On Starter past 150,
+  prepaid credits pay $0.20 for a message and a balance below that refuses
+  it. The accepted messages and the approval each take a short real model
+  turn.
 
 The `:8789` worker's `STRIPE_WEBHOOK_SECRET` must match what
 `regression-cloud-stripe-webhook.sh` signs with (both default to

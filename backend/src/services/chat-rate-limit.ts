@@ -1,8 +1,10 @@
 import { and, eq, sql } from 'drizzle-orm'
 import { chatRateWindows, type ChatRateScope } from '../db/schema'
 import type { Db } from '../db/connection'
+import { creditsCoverOverage, USAGE_PRICE_CENTS } from '../domain/credits'
 import type { Edition } from '../domain/edition'
 import type { TenantId } from '../domain/ids'
+import { debitChatMessage } from './credits'
 import { ok, err, type ServiceResult } from './result'
 import {
   buildMainChatQuota,
@@ -10,6 +12,7 @@ import {
   getTenantPlan,
   mainChatWindow,
   startOfTodayUtc,
+  sumCreditBalance,
   type MainChatQuota,
   type TenantPlan,
 } from './plan-limits'
@@ -71,12 +74,36 @@ async function takeSlot(
 }
 
 // Counted here, not from chat_messages, which a deleted thread takes with it.
+// Past the allowance a paid plan pays from its credits; the tenant lock makes
+// the balance read and the debit one step, so the balance never goes negative.
+// The window keeps counting, and the count names the ledger row.
 export async function takeMainChatMessage(db: Db, tenantId: TenantId, edition: Edition): Promise<ServiceResult<undefined>> {
   const tp = await getTenantPlan(db, tenantId, edition)
   const w = mainChatWindow(tp)
   if (!w) return ok(undefined)
   if (await takeSlot(db, tenantId, 'main_chat_allowance', tenantId, w.start, w.messages)) return ok(undefined)
-  return err('FORBIDDEN', 'Chat message limit reached', formatMainChatLimitError(tp.plan, w))
+  const refused = err('FORBIDDEN', 'Chat message limit reached', formatMainChatLimitError(tp.plan, w))
+  if (!tp.autoTopUp) return refused
+  await db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${tenantId}))`)
+  const balanceCents = await sumCreditBalance(db, tenantId)
+  if (!creditsCoverOverage({ balanceCents, autoTopUp: tp.autoTopUp }, USAGE_PRICE_CENTS.chat)) return refused
+  const [row] = await db
+    .update(chatRateWindows)
+    .set({ used: sql`${chatRateWindows.used} + 1` })
+    .where(mainChatWindowRow(tenantId, w.start))
+    .returning({ used: chatRateWindows.used })
+  if (!row) throw new Error('main chat window row missing past its allowance')
+  await debitChatMessage(db, tenantId, w.start, row.used)
+  return ok(undefined)
+}
+
+function mainChatWindowRow(tenantId: TenantId, start: Date) {
+  return and(
+    eq(chatRateWindows.tenantId, tenantId),
+    eq(chatRateWindows.scope, 'main_chat_allowance'),
+    eq(chatRateWindows.key, tenantId),
+    eq(chatRateWindows.windowStart, start),
+  )
 }
 
 export async function getMainChatQuota(db: Db, tenantId: TenantId, tp: TenantPlan): Promise<MainChatQuota> {
@@ -85,11 +112,6 @@ export async function getMainChatQuota(db: Db, tenantId: TenantId, tp: TenantPla
   const [row] = await db
     .select({ used: chatRateWindows.used })
     .from(chatRateWindows)
-    .where(and(
-      eq(chatRateWindows.tenantId, tenantId),
-      eq(chatRateWindows.scope, 'main_chat_allowance'),
-      eq(chatRateWindows.key, tenantId),
-      eq(chatRateWindows.windowStart, w.start),
-    ))
+    .where(mainChatWindowRow(tenantId, w.start))
   return buildMainChatQuota(w, row?.used ?? 0)
 }

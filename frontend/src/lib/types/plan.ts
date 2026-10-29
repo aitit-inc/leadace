@@ -47,7 +47,7 @@ export interface AutoTopUp {
 export type CreditState = { balanceCents: number; autoTopUp: AutoTopUp } | null;
 
 // Mirrors backend/src/domain/credits.ts.
-export const USAGE_PRICE_CENTS = { contacted: 40, found: 60 } as const;
+export const USAGE_PRICE_CENTS = { contacted: 40, found: 60, chat: 20 } as const;
 // Any whole-dollar amount in this range buys credits; the packs are quick picks.
 export const CREDIT_AMOUNT_CENTS = { min: 1000, max: 50_000 } as const;
 export const CREDIT_PACK_CENTS = [1000, 2500, 5000] as const;

@@ -232,6 +232,7 @@
             </div>
           {/if}
           {#if plan.chat.kind === 'capped'}
+            {@const chatOnCredits = creditsCoverOverage(plan.quota.kind === 'capped' ? plan.quota.credits : null, USAGE_PRICE_CENTS.chat)}
             <div>
               <p class="mb-1 text-xs font-semibold text-text-muted">
                 Chat messages ({QUOTA_WINDOW_LABEL[plan.chat.window]})
@@ -241,13 +242,15 @@
               </p>
               <div class="mt-1.5 h-1 w-full rounded-full bg-surface-2">
                 <div
-                  class="h-1 rounded-full {plan.chat.remaining === 0 ? 'bg-warning' : 'bg-text-muted'}"
+                  class="h-1 rounded-full {plan.chat.remaining === 0 && !chatOnCredits ? 'bg-warning' : 'bg-text-muted'}"
                   style="width: {Math.min(100, (plan.chat.used / plan.chat.limit) * 100)}%"
                 ></div>
               </div>
             </div>
             <p class="text-xs text-text-muted">
-              {plan.chat.remaining.toLocaleString()} left. Each scheduled run uses one; approvals don't.
+              {plan.chat.remaining.toLocaleString()} left. Each scheduled run uses one; approvals don't.{chatOnCredits
+                ? ' Messages past the allowance come out of your credits.'
+                : ''}
             </p>
           {/if}
         </div>

@@ -51,7 +51,8 @@ scenarios (e2e/README.md → UI scenarios).
   allowance at registration (`prospects.origin`); Free's window is the
   tenant lifetime, a paid plan's is the Stripe period from
   `current_period_start`; past an allowance a paid plan debits prepaid credits
-  ($0.40 per contacted prospect, $0.60 per found one, `credit_ledger`) instead
+  ($0.40 per contacted prospect, $0.60 per found one, $0.20 per chat message,
+  `credit_ledger`) instead
   of refusing, while the balance pays for the unit in full — it never goes
   negative; auto top-up refills it right after the debit that crosses the
   threshold. Enforcement: `backend/src/services/plan-limits.ts`, debits and

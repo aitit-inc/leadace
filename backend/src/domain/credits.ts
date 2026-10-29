@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 // Prepaid credits cover usage past a paid plan's allowances, at the LP's prices.
-export const USAGE_PRICE_CENTS = { contacted: 40, found: 60 } as const
+export const USAGE_PRICE_CENTS = { contacted: 40, found: 60, chat: 20 } as const
 
 // Any whole-dollar amount in this range buys credits; the packs are quick picks.
 export const CREDIT_AMOUNT_CENTS = { min: 1000, max: 50_000 } as const

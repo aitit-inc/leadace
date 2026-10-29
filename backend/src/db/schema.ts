@@ -499,7 +499,7 @@ export const tenantPlans = pgTable('tenant_plans', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 })
 
-export const CREDIT_ENTRY_KINDS = ['purchase', 'auto_top_up', 'usage_contacted', 'usage_found'] as const
+export const CREDIT_ENTRY_KINDS = ['purchase', 'auto_top_up', 'usage_contacted', 'usage_found', 'usage_chat'] as const
 export type CreditEntryKind = (typeof CREDIT_ENTRY_KINDS)[number]
 export const creditEntryKindEnum = pgEnum('credit_entry_kind', CREDIT_ENTRY_KINDS)
 

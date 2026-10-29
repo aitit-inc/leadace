@@ -14,7 +14,7 @@ import {
 import type { createDb } from '../db/connection'
 import { ok, err, type ServiceError, type ServiceResult } from '../services/result'
 import type { Edition } from '../domain/edition'
-import { creditsCoverOverage, USAGE_PRICE_CENTS, type AutoTopUp, type CreditState } from '../domain/credits'
+import { creditsCoverOverage, formatCents, USAGE_PRICE_CENTS, type AutoTopUp, type CreditState } from '../domain/credits'
 import { type SendingIdentityId, type TenantId } from '../domain/ids'
 import {
   BOUNCE_RATE_WINDOW_DAYS,
@@ -695,7 +695,7 @@ export function buildMainChatQuota(w: MainChatWindow, used: number): MainChatQuo
 export function formatMainChatLimitError(plan: PlanTier, w: MainChatWindow): string {
   const resume = w.window === 'lifetime'
     ? 'Open the plans page to keep chatting.'
-    : 'They reset when your next billing period starts, or upgrade on the plans page for more.'
+    : `They reset when your next billing period starts; buy credits on the plans page to keep chatting now (${formatCents(USAGE_PRICE_CENTS.chat)} a message).`
   return `Your ${plan} plan includes ${w.messages} chat messages ${WINDOW_PHRASE[w.window]}, and all ${w.messages} are used. ${resume} Approvals keep working.`
 }
 

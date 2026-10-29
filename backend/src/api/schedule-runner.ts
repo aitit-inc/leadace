@@ -12,11 +12,13 @@ import { withTenantConnection, type TenantRun } from '../db/rls'
 import { parseEdition } from '../domain/edition'
 import { runKey } from '../domain/schedules'
 import { takeMainChatMessage } from '../services/chat-rate-limit'
+import { kickAutoTopUp } from '../services/credits'
 import { runChatTurn } from '../services/chat/agent'
 import { withPaidCallScope } from '../services/paid-calls'
 import { unattendedTools } from '../services/chat/unattended'
 import { createThread, postInstruction, titleFromMessage } from '../services/chat/threads'
 import { notify, notifyCtxOf } from '../services/notifications'
+import { ok } from '../services/result'
 import {
   attachScheduleThread,
   claimScheduleRun,
@@ -35,25 +37,29 @@ type ScheduleRunSummary = { due: number; ran: number; failed: number; skipped: n
 
 async function runOne(env: Env, ctx: ExecutionContext, dispatch: InternalDispatch, schedule: DueSchedule): Promise<string | null> {
   const run = <T>(fn: (db: Db) => Promise<T>) => withTenantConnection(env.DATABASE_URL, schedule.tenantId, fn)
-  // A run spends one of the plan's chat messages, before any write, as a
-  // person's message does.
-  const allowance = await run((db) => takeMainChatMessage(db, schedule.tenantId, parseEdition(env.LEADACE_EDITION)))
-  if (!allowance.ok) return `${allowance.error}${typeof allowance.detail === 'string' ? ` — ${allowance.detail}` : ''}`
+  // A run spends one of the plan's chat messages, as a person's message does,
+  // in the transaction that posts it: a run that fails to post pays nothing.
   // One thread per schedule: the person reads every run of it in one place,
   // and the job notices come back there.
-  const threadId =
-    schedule.threadId ??
-    (await run(async (db) => {
+  const posted = await run(async (db) => {
+    const allowance = await takeMainChatMessage(db, schedule.tenantId, parseEdition(env.LEADACE_EDITION))
+    if (!allowance.ok) return allowance
+    let threadId = schedule.threadId
+    if (!threadId) {
       const created = await createThread(db, schedule.tenantId, {
         projectId: schedule.projectId,
         title: `Scheduled: ${titleFromMessage(schedule.prompt)}`,
       })
       if (!created.ok) throw new Error(`thread create failed: ${created.error}`)
       await attachScheduleThread(db, schedule.tenantId, schedule.id, created.value.id)
-      return created.value.id
-    }))
-
-  const instruction = await run((db) => postInstruction(db, schedule.tenantId, threadId, schedule.prompt))
+      threadId = created.value.id
+    }
+    const instruction = await postInstruction(db, schedule.tenantId, threadId, schedule.prompt)
+    return ok({ threadId, instruction })
+  })
+  if (!posted.ok) return `${posted.error}${typeof posted.detail === 'string' ? ` — ${posted.detail}` : ''}`
+  const { threadId, instruction } = posted.value
+  ctx.waitUntil(kickAutoTopUp(env, schedule.tenantId))
   const deps = {
     run,
     signal: new AbortController().signal,

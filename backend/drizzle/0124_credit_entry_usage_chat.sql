@@ -1,0 +1,1 @@
+ALTER TYPE "public"."credit_entry_kind" ADD VALUE 'usage_chat';

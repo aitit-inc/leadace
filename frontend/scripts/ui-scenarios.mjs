@@ -1006,7 +1006,7 @@ const SCENARIOS = [
   },
   {
     name: 'plans-credits',
-    summary: 'Plans on a paid tier with prepaid credits and auto top-up',
+    summary: 'Plans on a paid tier with prepaid credits, auto top-up and the month’s chat messages used up',
     stack: 'cloud',
     setup: async (ctx) => {
       // A tenant is created with a free plan row (drizzle/0097), so a paid
@@ -1018,7 +1018,7 @@ const SCENARIOS = [
       psql(
         `UPDATE tenant_plans SET
            plan = 'starter',
-           current_period_start = NOW() - INTERVAL '9 days',
+           current_period_start = date_trunc('second', NOW() - INTERVAL '9 days'),
            current_period_end = NOW() + INTERVAL '21 days',
            auto_top_up_enabled = true,
            auto_top_up_amount_cents = 2500,
@@ -1034,10 +1034,16 @@ const SCENARIOS = [
         `INSERT INTO credit_ledger (tenant_id, kind, amount_cents, reference)
          VALUES (${q(ctx.persona.tenantId)}, 'purchase', 2500, ${q(`cs_ui_${ctx.tag}`)});`,
       );
+      // The month's chat messages are all used: the next one comes out of the credits.
+      psql(
+        `INSERT INTO chat_rate_windows (tenant_id, scope, key, window_start, used)
+         SELECT tenant_id, 'main_chat_allowance', tenant_id, current_period_start, 150
+         FROM tenant_plans WHERE tenant_id = ${q(ctx.persona.tenantId)};`,
+      );
       const projectId = await seedProject(ctx, { name: 'Northwind outbound', settings: { outboundMode: 'send' } });
       const prospects = await seedProspects(ctx, projectId, 8);
       await recordSent(ctx, projectId, prospects);
-      return [{ name: 'page', path: '/plans', expect: ['Prepaid credits', '$25.00', '8 / 100'] }];
+      return [{ name: 'page', path: '/plans', expect: ['Prepaid credits', '$25.00', '8 / 100', '150 / 150'] }];
     },
   },
   {

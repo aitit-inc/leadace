@@ -78,6 +78,10 @@ export function debitFound(db: Db, tenantId: TenantId, prospectId: number): Prom
   return creditLedgerEntry(db, tenantId, 'usage_found', -USAGE_PRICE_CENTS.found, `prospect:${prospectId}`)
 }
 
+export function debitChatMessage(db: Db, tenantId: TenantId, windowStart: Date, nth: number): Promise<void> {
+  return creditLedgerEntry(db, tenantId, 'usage_chat', -USAGE_PRICE_CENTS.chat, `chat:${windowStart.toISOString()}:${nth}`)
+}
+
 const NO_PAID_PLAN = err(
   'FORBIDDEN',
   'Credits require a paid plan',
