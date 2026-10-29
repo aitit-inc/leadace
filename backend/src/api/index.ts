@@ -1,5 +1,7 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
+import { bodyLimit } from 'hono/body-limit'
+import { except } from 'hono/combine'
 import * as Sentry from '@sentry/cloudflare'
 import { sentryOptions } from '../sentry'
 import { authMiddleware } from './middleware/auth'
@@ -56,6 +58,20 @@ const app = new Hono<{ Bindings: Env; Variables: Variables }>()
 // part of any auth decision — gating it would just block legitimate
 // CLI/local-dev/self-host traffic without raising the security bar.
 app.use('*', cors())
+// A parsed body costs several times its size of the isolate's 128 MB. 1 MiB
+// matches the MCP worker, whose tool calls are the largest bodies; attachments
+// are read under MAX_ATTACHMENT_BYTES.
+const MAX_REQUEST_BODY_BYTES = 1024 * 1024
+app.use(
+  '*',
+  except(
+    '/api/chat/threads/:id/attachments',
+    bodyLimit({
+      maxSize: MAX_REQUEST_BODY_BYTES,
+      onError: (c) => c.json({ error: `Request body exceeds ${MAX_REQUEST_BODY_BYTES} bytes` }, 413),
+    }),
+  ),
+)
 // Must run before any route that gates on edition (Stripe webhook, billing, /me/plan, …).
 app.use('*', editionMiddleware)
 

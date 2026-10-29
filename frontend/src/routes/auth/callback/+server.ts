@@ -1,18 +1,24 @@
 import { redirect } from '@sveltejs/kit';
 import { getOnboardingStatus } from '$lib/api/onboarding';
 import { takeNext } from '$lib/redirect';
+import { PERSONA_WINDOW_MS, takeSignupPersona, type SignupPersona } from '$lib/signup-persona';
 import type { RequestHandler } from './$types';
 
 const SIGNUP_COOKIE = 'lp-signup';
 const DEFAULT_DEST = '/dashboard';
 const ONBOARDING_DEST = '/chat';
 
-// `signup=1` and `next` ride along so a retry after a failed attempt keeps the
-// landing attribution and the destination (the login page re-sets both cookies).
-function loginRedirector(fromSignupCta: boolean, next: string | null): (reason: string) => never {
+// `signup=1`, `src` and `next` ride along so a retry after a failed attempt keeps
+// the landing attribution and the destination (the login page re-sets the cookies).
+function loginRedirector(
+	fromSignupCta: boolean,
+	persona: SignupPersona | null,
+	next: string | null,
+): (reason: string) => never {
 	const signup = fromSignupCta ? '&signup=1' : '';
+	const src = persona ? `&src=${persona}` : '';
 	const back = next ? `&next=${encodeURIComponent(next)}` : '';
-	return (reason) => redirect(303, `/login?error=${encodeURIComponent(reason)}${signup}${back}`);
+	return (reason) => redirect(303, `/login?error=${encodeURIComponent(reason)}${signup}${src}${back}`);
 }
 
 // exchangeCodeForSession sets auth cookies via the request's cookie jar
@@ -20,8 +26,9 @@ function loginRedirector(fromSignupCta: boolean, next: string | null): (reason: 
 export const GET: RequestHandler = async ({ url, cookies, fetch, locals }) => {
 	const fromSignupCta = cookies.get(SIGNUP_COOKIE) === '1';
 	if (fromSignupCta) cookies.delete(SIGNUP_COOKIE, { path: '/' });
+	const persona = takeSignupPersona(cookies);
 	const next = takeNext(cookies);
-	const loginRedirect: (reason: string) => never = loginRedirector(fromSignupCta, next);
+	const loginRedirect: (reason: string) => never = loginRedirector(fromSignupCta, persona, next);
 
 	const oauthError = url.searchParams.get('error');
 	if (oauthError) {
@@ -34,6 +41,16 @@ export const GET: RequestHandler = async ({ url, cookies, fetch, locals }) => {
 	const { data, error } = await locals.supabase.auth.exchangeCodeForSession(code);
 	if (error || !data.session) {
 		loginRedirect(error?.message ?? 'oauth_failed');
+	}
+
+	// The landing persona a new account came from, kept once on the auth user.
+	// Attribution never blocks or holds up sign-in.
+	const isNew = Date.now() - Date.parse(data.user.created_at) < PERSONA_WINDOW_MS;
+	if (persona && isNew && data.user.user_metadata?.signup_persona === undefined) {
+		const giveUp = new Promise((resolve) => setTimeout(resolve, 2000));
+		await Promise.race([locals.supabase.auth.updateUser({ data: { signup_persona: persona } }), giveUp]).catch(
+			() => undefined,
+		);
 	}
 
 	// redirect() throws, so pick dest inside the try but redirect outside it —

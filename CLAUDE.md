@@ -41,7 +41,8 @@ scenarios (e2e/README.md → UI scenarios).
   project configuration (documents in the DB). Improve skills by increasing
   user control, not by enforcing behavior.
 - Plans differentiate on throughput only (identities, outreach volume,
-  projects); insights computed from a tenant's own data are never plan-gated.
+  projects, chat messages); insights computed from a tenant's own data are
+  never plan-gated.
   Quota semantics that are easy to get wrong: the unit is a prospect, not a
   send — a prospect counts once, when its first outbound is `sent` (a
   `pre_send` reservation counts: email until resolved, form/SNS while fresh;
@@ -55,8 +56,12 @@ scenarios (e2e/README.md → UI scenarios).
   negative; auto top-up refills it right after the debit that crosses the
   threshold. Enforcement: `backend/src/services/plan-limits.ts`, debits and
   top-ups in `backend/src/services/credits.ts`.
-- Self-host: code is open source; the same plan-limits code runs and defaults
-  to Free ([docs/self-host.md](docs/self-host.md)).
+- Billing has one main path: Stripe is the source of truth for subscriptions
+  and the DB mirrors it, re-read on every event. Fix billing at that path,
+  never with a special case for a symptom — a bug here costs money and the
+  person's trust at once.
+- Self-host: code is open source; a self-hosted install resolves every tenant
+  to the unlimited tier and runs no Stripe ([docs/self-host.md](docs/self-host.md)).
 - Multi-tenancy: every tenant-scoped table carries `tenant_id`, every query
   filters on it, and RLS enforces it at the DB level.
 - Compliance: `gmail.readonly` is a Google Restricted scope — the CASA AL1

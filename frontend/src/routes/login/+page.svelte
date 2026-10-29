@@ -5,6 +5,7 @@
   import Logo from '$lib/components/Logo.svelte';
   import { EDITION } from '$lib/config';
   import { typedWebsite } from '$lib/website';
+  import { PERSONA_COOKIE, signupPersona } from '$lib/signup-persona';
   import type { PageProps } from './$types';
 
   let { data }: PageProps = $props();
@@ -28,6 +29,7 @@
   // website box adds ?site=, which lands in the chat's input box.
   const fromSignupCta = page.url.searchParams.get('signup') === '1';
   const site = typedWebsite(page.url.searchParams.get('site'));
+  const persona = signupPersona(page.url.searchParams.get('src'));
   let loading = $state(false);
 
   async function handleGoogle() {
@@ -51,6 +53,9 @@
     document.cookie = fromSignupCta
       ? `lp-signup=1; ${cookieAttrs}`
       : `lp-signup=; ${expiredAttrs}`;
+    document.cookie = persona
+      ? `${PERSONA_COOKIE}=${persona}; ${cookieAttrs}`
+      : `${PERSONA_COOKIE}=; ${expiredAttrs}`;
     // The account alone: Gmail is connected when the user first sends.
     const { error: err } = await supabase.auth.signInWithOAuth({
       provider: 'google',

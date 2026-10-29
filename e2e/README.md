@@ -51,9 +51,10 @@ browser already expects it.
   is the building block; the scripts that drive those flows haven't
   landed yet)
 - Headless browser side effects (`claude-in-chrome`)
-- The `checkout.session.completed` + cancel/refund Stripe paths — these
-  issue an unconditional fetch to the real `api.stripe.com`, so they need
-  Stripe test mode (out of harness scope, like the real-Gmail send leg)
+- What the billing code writes once Stripe answers (subscription events,
+  Checkout, plan changes, auto top-up) without a Stripe test-mode key:
+  `regression-cloud-stripe-testmode.sh` covers it and skips when
+  `STRIPE_SECRET_KEY` is not a test key, like the real-Gmail send leg
 
 Plan-tier quota enforcement and the data-driven half of Stripe webhook
 handling **are** covered now — by the cloud-edition cluster, which runs
@@ -367,13 +368,23 @@ API Worker booted with `LEADACE_EDITION=cloud`:
 ./e2e/cloud-edition-up.sh            # API Worker on :8789, edition=cloud + Stripe test secrets
 
 # Terminal 2:
-./e2e/regression-cloud-all.sh        # runs the four cloud suites
+./e2e/regression-cloud-all.sh        # runs the cloud suites
 SKIP_CLEANUP=1 ./e2e/regression-cloud-all.sh
 ```
 
+For `regression-cloud-stripe-testmode.sh`, export a Stripe **test-mode** key
+in both terminals before starting the worker and the suites (it is never
+printed; any other key is refused):
+
+```bash
+export STRIPE_SECRET_KEY="$(grep '^STRIPE_SECRET_KEY=' backend/.dev.vars | cut -d= -f2- | tr -d '"')"
+```
+
 `cloud-edition-up.sh` reuses the same local Postgres/Supabase from
-`backend/.dev.vars`; only the edition flag and dummy Stripe **test** secrets are
-injected (via `wrangler dev --var`). It does not disturb the `:8787` dev worker.
+`backend/.dev.vars`; only the edition flag and Stripe **test** secrets are
+injected (via `wrangler dev --var`): a dummy key unless `STRIPE_SECRET_KEY` is
+set. It does not disturb the `:8787` dev worker. The quota suite's "Stripe
+cannot be read → 502" check needs the dummy key and is skipped otherwise.
 
 Each suite provisions its **own throwaway tenant** (a fresh GoTrue user via the
 Admin API → a fresh tenant with every counter at 0), seeds its plan and counters
@@ -383,10 +394,12 @@ suites are deterministic, don't interfere, and leave no residue in your real
 tenant. Shared helpers live in `e2e/lib-cloud.sh`.
 
 - `regression-cloud-quota.sh` — prospect quota binding end-to-end: the free
-  lifetime allowance (30 prospects: a first touch → 403 with the lifetime
+  lifetime allowance (50 prospects: a first touch → 403 with the lifetime
   message and NO `pre_send` row allocated, `POST /api/outreach` (status=sent)
   → 403, a follow-up to a contacted prospect → 200, `reachable` narrows to
-  contacted prospects with the message), a follow-up never counting, an
+  contacted prospects with the message), the project's attention naming the
+  spent allowance (the found one only once no first touch is left), a
+  follow-up never counting, an
   in-flight `pre_send` row counting as a first touch, the starter period
   allowance (100) anchored at `current_period_start`, and prepaid credits
   (`credit_ledger`) lifting the refusal: each first touch past the allowance
@@ -398,23 +411,48 @@ tenant. Shared helpers live in `e2e/lib-cloud.sh`.
   truncation to remaining budget with `plan_limit` skips; full 403 at budget 0;
   count is over the `prospects` table, so a no-`projectId` batch still counts).
 - `regression-cloud-stripe-webhook.sh` — signature verification (missing → 400,
-  bad → 401, stale ts → 401, valid-but-unknown-sub → 200 no-op) and the
-  data-driven `tenant_plans` mutations: `customer.subscription.updated` grants
-  the tier / mirrors the period / finds the plan price when it is not the first
-  item / is idempotent / no-ops on missing metadata;
-  `customer.subscription.deleted` downgrades to free and switches auto top-up
-  off; the `unlimited`-tier protection refuses both; a credit-pack Checkout
-  (`checkout.session.completed` mode=payment / `async_payment_succeeded`)
-  credits `credit_ledger` once per session; and an auto top-up invoice
-  (`invoice.paid` / `invoice.payment_failed` with LeadAce metadata) credits
-  the ledger / switches auto top-up off only for the invoice in flight, and a
-  lapsed subscription switches it off. Events are HMAC-signed locally by
-  `sign-stripe-event.sh`. The subscription `checkout.session.completed` +
-  refund paths and the top-up's invoice creation are out of scope (they call
-  the real `api.stripe.com`).
+  bad → 401, stale ts → 401, valid-but-unknown-customer → 200 no-op);
+  `customer.subscription.updated` / `.deleted` re-read the subscription from
+  Stripe, so with the harness's dummy key they answer 500 (Stripe redelivers)
+  and leave the row untouched; the `unlimited`-tier protection refuses both; a
+  credit-pack Checkout (`checkout.session.completed` mode=payment /
+  `async_payment_succeeded`) credits `credit_ledger` once per session; and an
+  auto top-up invoice (`invoice.paid` / `invoice.payment_failed` with LeadAce
+  metadata) credits the ledger / switches auto top-up off only for the invoice
+  in flight. Events are HMAC-signed locally by `sign-stripe-event.sh`. What the
+  subscription events and the subscription `checkout.session.completed` write,
+  and the top-up's invoice creation, need a real Stripe answer: the next suite.
+- `regression-cloud-stripe-testmode.sh` — Stripe test mode. It makes real
+  test-mode objects through the Stripe API, then posts a signed event that only
+  names the customer (the webhook reads Stripe back, so no `stripe listen`).
+  Checkout: unknown and non-plan prices → 400, the first Checkout stores the
+  customer and uses it, a second one expires the first, a live or incomplete
+  subscription → 409, a stored customer Stripe lacks → 502. The mirror: an
+  active subscription's plan, id and period; an incomplete one → free with the
+  id held (`subscription_unpaid`, portal offered, auto top-up untouched); a
+  cancel → free, id cleared, auto top-up off; two live ones (the newer active,
+  an active over a newer incomplete); a stale event for a canceled one; a
+  subscription `checkout.session.completed` linking a tenant with no customer;
+  a price without plan metadata → 500, row untouched; the tenant's lock held
+  elsewhere → 500 after `lock_timeout`, then the redelivery writes. Plan
+  changes: an upgrade starts a new period now; a declined card changes nothing;
+  a downgrade schedules the switch at the period end; an upgrade while it is
+  scheduled → 409 until it is dropped; a half-made schedule is released by the
+  upgrade; a stale confirmation or the same plan → 409. Auto top-up: a debit
+  past the threshold pays and credits an invoice; a declined card switches it
+  off; a wanted fresh draft is left, an unwanted one deleted; an unwanted open
+  invoice voided; a missing invoice id cleared; a paid one credited once; an
+  ended subscription voids an open top-up invoice. It deletes the customer it
+  made and archives its throwaway price. About two minutes.
 - `regression-cloud-inquiry-quota.sh` — the free-tier inquiry-chat lifetime cap
   (25 turns) returning 403 before the OpenAI call (so no LLM round-trip / cost),
   plus the per-session hard-cap (5) precedence and the revoked-token 404 gate.
+- `regression-cloud-chat-quota.sh` — the hosted chat's free lifetime allowance
+  (60 person messages, counted in `chat_rate_windows`): message 60 → 201,
+  message 61 → 403 with the limit sentence and nothing written (the thread's
+  waiting approval card stays), approving that card still runs the call and
+  spends nothing, and `/me/plan` reports the count. The accepted message and
+  the approval each take a short real model turn.
 
 The `:8789` worker's `STRIPE_WEBHOOK_SECRET` must match what
 `regression-cloud-stripe-webhook.sh` signs with (both default to
@@ -523,7 +561,7 @@ Postgres in Docker without installing a client), and Google Chrome —
 Playwright drives the installed browser, so there is no separate download.
 `inquiry` also needs `E2E_RECIPIENT_OVERRIDE` set in `backend/.dev.vars`:
 an inquiry link is an opt-out link, and the send path refuses to build one
-from a host that is not public https, which `localhost` never is. The two
+from a host that is not public https, which `localhost` never is. The
 `plans-*` scenarios boot their own cloud-edition API worker (`:8789`) and
 frontend (`:5274`), because billing UI only exists in the cloud edition,
 and stop them again on exit. That second dev server shares the project's
@@ -536,8 +574,8 @@ and `/q` pins its own light/dark from project settings, so both of its
 shots are meant to look the same.
 
 Not covered: Stripe Checkout, the customer portal and the plan-change
-cards. All three need a live Stripe test-mode subscription, the same
-boundary the cloud-edition regression cluster stops at. That is also the
+cards. All three need a live Stripe test-mode subscription (their API side
+is `regression-cloud-stripe-testmode.sh`). That is also the
 one way `plans-credits` differs from a real Starter workspace: its fixture
 carries no subscription id, so `/me/subscription` answers 404 and the
 plan-change cards are absent from the screenshot rather than merely

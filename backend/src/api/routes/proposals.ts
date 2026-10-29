@@ -11,7 +11,7 @@ import {
 } from '../../services/loop/proposals'
 import { projectRefParamSchema } from '../../services/projects'
 import { proposalIdParamSchema } from '../../domain/ids'
-import { frameBodySchema } from '../../domain/loop/proposal'
+import { frameRequestSchema } from '../../domain/loop/proposal'
 import { respondWithError } from '../respond'
 import type { Env, Variables } from '../types'
 
@@ -62,7 +62,7 @@ proposalsRouter.post(
 proposalsRouter.post(
   '/projects/:id/frame',
   zValidator('param', projectRefParamSchema),
-  zValidator('json', frameBodySchema),
+  zValidator('json', frameRequestSchema),
   async (c) => {
     const result = await applyFrameNow(c.get('db'), c.get('tenantId'), c.get('origin'), c.req.valid('param').id, c.req.valid('json'))
     if (!result.ok) return respondWithError(c, result)

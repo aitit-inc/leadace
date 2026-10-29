@@ -32,7 +32,7 @@ echo "Starting cloud-edition API Worker on :$CLOUD_PORT (LEADACE_EDITION=cloud)"
 echo "  point the suites at it with: API_URL=http://localhost:$CLOUD_PORT" >&2
 
 cd "$REPO_ROOT/backend"
-exec npx wrangler dev --config wrangler.api.jsonc \
+exec npx wrangler dev --config wrangler.api.jsonc --test-scheduled \
   --port "$CLOUD_PORT" --inspector-port "$CLOUD_INSPECTOR_PORT" \
   --var "LEADACE_EDITION:cloud" \
   --var "STRIPE_SECRET_KEY:$STRIPE_SECRET_KEY" \

@@ -67,6 +67,7 @@ outreachRouter.post(
       c.req.valid('json'),
     )
     if (!result.ok) return respondWithError(c, result)
+    scheduleAutoTopUp(c)
     return c.json(result.value, 201)
   },
 )

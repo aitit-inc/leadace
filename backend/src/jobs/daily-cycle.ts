@@ -13,7 +13,7 @@ import { sendCycleDigest } from '../services/digest'
 import { runLeverTick } from '../services/loop/learn'
 import { notifyCtxOf } from '../services/notifications'
 import { getActiveStrategySlugs } from '../services/discovery-strategies'
-import { discoveryPausedReason, getRemainingProspectQuota } from '../services/plan-limits'
+import { discoveryPausedReason, formatContactQuotaError, getRemainingProspectQuota, isContactQuotaExhausted } from '../services/plan-limits'
 import { assertTenantComplianceReady } from '../services/tenants'
 import { editionOf } from '../services/pipeline/context'
 import { CYCLE_MIN_CANDIDATES_PER_SEARCH } from '../services/pipeline/discover'
@@ -117,7 +117,8 @@ async function act(ctx: StageCtx, params: JobParamsOf<'daily_cycle'>, { stage, d
     const target = params.outboundCount !== undefined
       ? { count: params.outboundCount, source: 'this run' }
       : resolveDailyTarget(await loadDailyNewProspects(db, projectId), pace)
-    return { target: target.count, source: target.source, pace }
+    const quota = await getRemainingProspectQuota(db, tenantId, editionOf(ctx.env))
+    return { target: target.count, source: target.source, pace, spent: isContactQuotaExhausted(quota) ? formatContactQuotaError(quota) : null }
   }))
   await decide(`new prospects today: ${daily.target} (${daily.source})`)
 
@@ -179,7 +180,7 @@ async function act(ctx: StageCtx, params: JobParamsOf<'daily_cycle'>, { stage, d
     }
     const short = shortfallReason({ target: daily.target, runnable, reached, stop })
     const detail = drafts.length > 0 ? drafts.join(' ') : lastSnap.needsHands > 0 ? `${lastSnap.needsHands} need a browser.` : ''
-    await stage('draft', `New prospects ${reached} of ${daily.target}${short ? ` (short: ${short})` : ''}. ${detail}`.trim())
+    await stage('draft', `New prospects ${reached} of ${daily.target}${short ? ` (short: ${short})` : ''}. ${daily.spent ?? detail}`.trim())
   }
 
   const mailboxLeft = before.mailboxRemaining - followUpsOut - reached

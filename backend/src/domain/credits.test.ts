@@ -8,6 +8,8 @@ import {
   invoicePaidAt,
   isCardDecline,
   isStaleTopUpClaim,
+  isStaleTopUpDraft,
+  topUpResumeAction,
   nextFoundRegistration,
   type AutoTopUp,
   type CreditState,
@@ -89,6 +91,49 @@ describe('isStaleTopUpClaim', () => {
     expect(isStaleTopUpClaim('claim:2026-09-14T11:50:00.000Z', now)).toBe(true)
     expect(isStaleTopUpClaim('claim:garbage', now)).toBe(true)
     expect(isStaleTopUpClaim('in_123', now)).toBe(false)
+  })
+})
+
+describe('isStaleTopUpDraft', () => {
+  const now = new Date('2026-09-14T12:00:00Z')
+  const sec = (iso: string) => Date.parse(iso) / 1000
+  it('leaves a draft to its run until the claim TTL, then expires it', () => {
+    expect(isStaleTopUpDraft(sec('2026-09-14T11:55:00Z'), now)).toBe(false)
+    expect(isStaleTopUpDraft(sec('2026-09-14T11:50:00Z'), now)).toBe(true)
+    expect(isStaleTopUpDraft(Number.NaN, now)).toBe(true)
+  })
+})
+
+describe('topUpResumeAction', () => {
+  const now = new Date('2026-09-14T12:00:00Z')
+  const young = Date.parse('2026-09-14T11:55:00Z') / 1000
+  const stale = Date.parse('2026-09-14T11:50:00Z') / 1000
+  const act = (status: unknown, stampedCents: number | null, stillWanted: boolean, createdAtSec = young) =>
+    topUpResumeAction({ status, stampedCents, createdAtSec }, stillWanted, now)
+
+  it('pays an open invoice at its stamped amount only while wanted, else voids it', () => {
+    expect(act('open', 2500, true)).toEqual({ kind: 'pay', amountCents: 2500 })
+    expect(act('open', 2500, false)).toEqual({ kind: 'void' })
+    expect(act('open', null, true)).toEqual({ kind: 'void' })
+    expect(act('open', null, false)).toEqual({ kind: 'void' })
+  })
+  it('leaves a wanted draft to its run until it is stale, and deletes an unwanted one at any age', () => {
+    expect(act('draft', 2500, true, young)).toEqual({ kind: 'leave' })
+    expect(act('draft', null, true, young)).toEqual({ kind: 'leave' })
+    expect(act('draft', 2500, true, stale)).toEqual({ kind: 'delete' })
+    expect(act('draft', 2500, false, young)).toEqual({ kind: 'delete' })
+    expect(act('draft', 2500, false, stale)).toEqual({ kind: 'delete' })
+    expect(act('draft', 2500, true, Number.NaN)).toEqual({ kind: 'delete' })
+  })
+  it('credits a paid invoice by its stamp whether or not still wanted', () => {
+    expect(act('paid', 2500, true)).toEqual({ kind: 'credit', amountCents: 2500 })
+    expect(act('paid', 2500, false)).toEqual({ kind: 'credit', amountCents: 2500 })
+    expect(act('paid', null, true)).toEqual({ kind: 'clear' })
+  })
+  it('only frees the slot for any other status', () => {
+    expect(act('void', 2500, true)).toEqual({ kind: 'clear' })
+    expect(act('uncollectible', 2500, true)).toEqual({ kind: 'clear' })
+    expect(act(undefined, 2500, true)).toEqual({ kind: 'clear' })
   })
 })
 

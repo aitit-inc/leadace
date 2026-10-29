@@ -9,7 +9,9 @@ import {
   formatContactQuotaError,
   formatFoundQuotaError,
   isChatQuotaExhausted,
-  formatChatQuotaError,
+  mainChatWindow,
+  buildMainChatQuota,
+  planFromMetadata,
   type ProspectQuota,
   type InquiryChatQuota,
 } from './plan-limits'
@@ -28,7 +30,7 @@ describe('getPlanLimits', () => {
   it('meters free over the tenant lifetime and keeps its storage cap', () => {
     expect(getPlanLimits('free')).toEqual({
       maxProjects: 1,
-      prospectCaps: { window: 'lifetime', contacted: 30, found: 30 },
+      prospectCaps: { window: 'lifetime', contacted: 50, found: 50 },
       maxProspects: 500,
       maxSendingIdentities: 1,
     })
@@ -68,6 +70,21 @@ describe('canRegisterMailbox', () => {
 
   it('never caps the internal unlimited tier (self-host)', () => {
     expect(canRegisterMailbox('unlimited', 99, true)).toBeNull()
+  })
+})
+
+describe('planFromMetadata', () => {
+  it('maps a known paid plan from price metadata', () => {
+    expect(planFromMetadata({ plan: 'pro' })).toBe('pro')
+    expect(planFromMetadata({ plan: 'starter' })).toBe('starter')
+    expect(planFromMetadata({ plan: 'scale' })).toBe('scale')
+  })
+
+  it('returns null for missing or unknown plan metadata', () => {
+    expect(planFromMetadata(undefined)).toBeNull()
+    expect(planFromMetadata({})).toBeNull()
+    expect(planFromMetadata({ plan: 'enterprise' })).toBeNull()
+    expect(planFromMetadata({ plan: 'free' })).toBeNull()
   })
 })
 
@@ -120,8 +137,8 @@ describe('discoveryPausedReason', () => {
 
 describe('quota messages', () => {
   it('phrase the window and keep follow-ups explicitly free', () => {
-    const lifetime = capped({ plan: 'free', window: 'lifetime', contacted: { used: 30, limit: 30, remaining: 0 } })
-    expect(formatContactQuotaError(lifetime)).toContain('30 prospects in total')
+    const lifetime = capped({ plan: 'free', window: 'lifetime', contacted: { used: 50, limit: 50, remaining: 0 } })
+    expect(formatContactQuotaError(lifetime)).toContain('50 prospects in total')
     expect(formatContactQuotaError(lifetime)).toContain('Follow-ups still go out')
     expect(formatContactQuotaError(capped({}))).toContain('per billing period')
     expect(formatFoundQuotaError(capped({}))).toContain('find 100 prospects per billing period')
@@ -133,10 +150,31 @@ describe('inquiry chat quota helpers', () => {
     plan: 'free', kind: 'capped', used: 0, limit: 25, remaining: 25, bindingConstraint: 'lifetime', ...over,
   })
 
-  it('detects exhaustion and phrases per binding constraint', () => {
+  it('detects exhaustion', () => {
     expect(isChatQuotaExhausted(cappedChat({ remaining: 0 }))).toBe(true)
     expect(isChatQuotaExhausted(cappedChat({ remaining: 1 }))).toBe(false)
-    expect(formatChatQuotaError(cappedChat({ bindingConstraint: 'lifetime' }))).toContain('lifetime')
-    expect(formatChatQuotaError(cappedChat({ bindingConstraint: 'monthly' }))).toContain('per month')
+  })
+})
+
+describe('main chat allowance', () => {
+  const periodStart = new Date('2026-10-05T10:00:00Z')
+
+  it('counts free over the tenant lifetime and paid plans from the period start', () => {
+    expect(mainChatWindow({ plan: 'free', currentPeriodStart: null })).toEqual({ window: 'lifetime', messages: 60, start: new Date(0) })
+    expect(mainChatWindow({ plan: 'starter', currentPeriodStart: periodStart })).toEqual({ window: 'monthly', messages: 150, start: periodStart })
+    expect(mainChatWindow({ plan: 'pro', currentPeriodStart: periodStart })?.messages).toBe(300)
+    expect(mainChatWindow({ plan: 'scale', currentPeriodStart: periodStart })?.messages).toBe(600)
+  })
+
+  it('has nothing to count against on the unlimited tier or a paid row without a period', () => {
+    expect(mainChatWindow({ plan: 'unlimited', currentPeriodStart: periodStart })).toBeNull()
+    expect(mainChatWindow({ plan: 'starter', currentPeriodStart: null })).toBeNull()
+  })
+
+  it('counts down to 0 and never below', () => {
+    const free = { window: 'lifetime', messages: 60, start: new Date(0) } as const
+    expect(buildMainChatQuota(free, 59)).toEqual({ kind: 'capped', window: 'lifetime', used: 59, limit: 60, remaining: 1 })
+    expect(buildMainChatQuota(free, 60)).toMatchObject({ remaining: 0 })
+    expect(buildMainChatQuota(free, 75)).toMatchObject({ used: 75, remaining: 0 })
   })
 })

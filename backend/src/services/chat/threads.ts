@@ -8,9 +8,11 @@ import { chatMessages, chatThreads } from '../../db/schema'
 import type { ChatContent, ChatRole, ChatUserPart, PendingCall } from '../../domain/chat'
 import { attachmentIdsSchema, type FileRef } from '../../domain/chat-attachment'
 import { asProjectId, projectRefSchema, type ProjectId, type TenantId } from '../../domain/ids'
+import type { Edition } from '../../domain/edition'
 import { randomFromAlphabet } from '../../auth/random-id'
 import { ok, err, type ServiceResult } from '../result'
 import { resolveProject } from '../projects'
+import { takeMainChatMessage } from '../chat-rate-limit'
 
 export const createThreadBodySchema = z
   .object({
@@ -200,12 +202,16 @@ async function insertMessage(
 export async function postMessage(
   db: Db,
   tenantId: TenantId,
+  edition: Edition,
   threadId: string,
   text: string,
   files: FileRef[],
 ): Promise<ServiceResult<MessageView>> {
   const thread = await getThread(db, tenantId, threadId)
   if (!thread.ok) return thread
+  // Before any write, so a refused message leaves the thread and its waiting card untouched.
+  const allowance = await takeMainChatMessage(db, tenantId, edition)
+  if (!allowance.ok) return allowance
   const title = thread.value.title === DEFAULT_THREAD_TITLE ? titleFromMessage(text || (files[0]?.name ?? '')) : ''
   if (title) await renameThread(db, tenantId, threadId, title)
   await supersedePendingCall(db, tenantId, threadId, 'The person did not approve this call and continued the conversation.')

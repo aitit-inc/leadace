@@ -51,7 +51,7 @@ LeadAce is an autonomous outbound sales agent for small B2B teams: it finds pros
 ## Features & Strengths
 Every claim in an email is grounded in the prospect's own site; runs unattended on a schedule; built-in compliance (unsubscribe, do-not-contact, no-solicitation detection).
 ## Pricing
-Free (30 prospects, lifetime), Starter $49/month for 100 prospects, Pro $99/month for 300.`,
+Free (50 prospects, lifetime), Starter $49/month for 100 prospects, Pro $99/month for 300.`,
   salesStrategy: `# Sales Strategy
 ## Target
 Small B2B companies (10–50 people) that sell to other businesses and rely on outbound to grow: SaaS startups after a seed or Series A round, boutique agencies and consultancies, IT service firms. Decision maker: founder / CEO / head of sales.

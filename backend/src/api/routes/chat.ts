@@ -116,7 +116,7 @@ chatRunnerRouter.post(
     const { text, attachmentIds } = c.req.valid('json')
     const files = await resolveAttachments(c.env, tenantId, id, attachmentIds)
     if (!files.ok) return respondWithError(c, files)
-    const message = await withTenantConnection(c.env.DATABASE_URL, tenantId, (db) => postMessage(db, tenantId, id, text, files.value))
+    const message = await withTenantConnection(c.env.DATABASE_URL, tenantId, (db) => postMessage(db, tenantId, c.get('edition'), id, text, files.value))
     if (!message.ok) return respondWithError(c, message)
     await c.env.THREADS.getByName(id).wake({ tenantId, threadId: id })
     return c.json(message.value, 201)

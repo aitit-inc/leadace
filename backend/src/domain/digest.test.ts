@@ -73,7 +73,8 @@ describe('buildDigest', () => {
       { date: '2026-09-18', kind: 'document', target: 'sales_strategy', actor: 'ace', reason: 'Not a fit: agencies', evidence: { signals: ['declines', 'person'] } },
     ]
     const digest = buildDigest(input({ today: '2026-09-19', summary: { journal } }))
-    expect(digest?.subject).toBe('Acme: 3 changes from what we learned')
+    // The person's own restore is reported but is not something Ace learned.
+    expect(digest?.subject).toBe('Acme: 2 changes from what we learned')
     const body = digest?.body ?? ''
     expect(body).toContain('Search strategy retired: yc-hn (another strategy won)')
     expect(body).toContain('Search strategy back: yc-hn (by you) — still the best source')
@@ -90,9 +91,37 @@ describe('buildDigest', () => {
         },
       }),
     )
-    expect(digest?.subject).toBe('Acme: no change since 2026-09-14')
+    expect(digest?.subject).toBe('Acme: no change from what we learned since 2026-09-14')
     expect(digest?.body).toContain('Contacted 40 prospects · positive 2.5% (was 3.3%) · with interest 7.5% (was 6.7%) · engaged 0 · won 0')
     expect(digest?.body).toContain('Nothing — the system kept running on what it already learned.')
+  })
+
+  it('reports the setup without counting it as learned', () => {
+    const journal: DashboardSummary['journal'] = [
+      { date: '2026-09-17', kind: 'option', target: 'variant', optionId: 'v1', label: 'Cost saving', op: 'add', actor: 'ace', reason: null, evidence: null },
+      { date: '2026-09-17', kind: 'document', target: 'sales_strategy', actor: 'ace', reason: null, evidence: null },
+    ]
+    const digest = buildDigest(input({ today: '2026-09-18', summary: { journal } }))
+    expect(digest?.subject).toBe('Acme: no change from what we learned since 2026-09-14')
+    expect(digest?.body).toContain('New angle: Cost saving')
+  })
+
+  it('lists what needs the person, the spent allowance included', () => {
+    const digest = buildDigest(
+      input({
+        today: '2026-09-21',
+        summary: {
+          kpis: { ...emptySummary.kpis, approached: { current: 50, previous: 0, deltaPct: null } },
+          attention: [
+            { kind: 'hot_leads', count: 1 },
+            { kind: 'quota_exhausted', allowance: 'contacted', constraint: 'lifetime' },
+          ],
+        },
+      }),
+    )
+    expect(digest?.body).toContain(
+      'Needs you\n1 meeting request waiting — book the call.\nEvery prospect in your plan has been contacted. Follow-ups still go out; open the plans page to reach new ones.',
+    )
   })
 
   it('counts what Ace changed by what it rested on, and this frame against the one before', () => {
@@ -117,6 +146,12 @@ describe('buildDigest', () => {
 
   it('stays silent on the heartbeat for a project that sent nothing and learned nothing', () => {
     expect(buildDigest(input({ today: '2026-09-30' }))).toBeNull()
+  })
+
+  it('still goes out on the heartbeat while something needs the person', () => {
+    const attention: DashboardSummary['attention'] = [{ kind: 'quota_exhausted', allowance: 'contacted', constraint: 'lifetime' }]
+    expect(buildDigest(input({ today: '2026-09-20', summary: { attention } }))).toBeNull()
+    expect(buildDigest(input({ today: '2026-09-30', summary: { attention } }))?.body).toContain('Every prospect in your plan has been contacted.')
   })
 
   it('reports segments and rejection reasons in the dashboard’s own words', () => {

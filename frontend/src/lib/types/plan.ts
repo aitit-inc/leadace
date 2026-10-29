@@ -53,6 +53,9 @@ export const CREDIT_AMOUNT_CENTS = { min: 1000, max: 50_000 } as const;
 export const CREDIT_PACK_CENTS = [1000, 2500, 5000] as const;
 export const TOP_UP_THRESHOLD_CENTS = { min: 100, max: 10_000 } as const;
 
+// Mirrors backend/src/services/plan-limits.ts `MainChatQuota`.
+export type MainChatQuota = { kind: 'unlimited' } | ({ kind: 'capped'; window: QuotaWindowKind } & AllowanceUsage);
+
 export interface PlanInfo {
   plan: PlanTier;
   limits: {
@@ -62,6 +65,9 @@ export interface PlanInfo {
   quota: ProspectQuota;
   // Stored prospects against the storage cap; absent when uncapped.
   prospects?: QuotaUsage;
+  chat: MainChatQuota;
+  // A Stripe customer exists, so the billing portal opens — also on free.
+  billingPortal: boolean;
 }
 
 // Mirrors backend/src/services/plan-change.ts `SubscriptionInfo`.

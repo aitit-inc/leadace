@@ -1,8 +1,18 @@
-import { sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { chatRateWindows, type ChatRateScope } from '../db/schema'
 import type { Db } from '../db/connection'
+import type { Edition } from '../domain/edition'
 import type { TenantId } from '../domain/ids'
-import { startOfTodayUtc } from './plan-limits'
+import { ok, err, type ServiceResult } from './result'
+import {
+  buildMainChatQuota,
+  formatMainChatLimitError,
+  getTenantPlan,
+  mainChatWindow,
+  startOfTodayUtc,
+  type MainChatQuota,
+  type TenantPlan,
+} from './plan-limits'
 
 export const INQUIRY_CHAT_TURNS_PER_LINK_PER_DAY = 15
 export const PREVIEW_CHAT_TURNS_PER_TENANT_PER_DAY = 100
@@ -17,7 +27,9 @@ export const ATTACHMENT_UPLOADS_PER_TENANT_PER_DAY = 100
 // The chat agent is bounded by its turns; this bounds the routes called directly.
 export const SETUP_READS_PER_TENANT_PER_DAY = 60
 
-const LIMITS: Record<ChatRateScope, number> = {
+type DailyScope = Exclude<ChatRateScope, 'main_chat_allowance'>
+
+const LIMITS: Record<DailyScope, number> = {
   inquiry_link: INQUIRY_CHAT_TURNS_PER_LINK_PER_DAY,
   preview: PREVIEW_CHAT_TURNS_PER_TENANT_PER_DAY,
   notification: NOTIFICATIONS_PER_TENANT_PER_DAY,
@@ -29,15 +41,21 @@ const LIMITS: Record<ChatRateScope, number> = {
 // Reserve-first: call immediately before the LLM spend, so a concurrent burst
 // can never exceed the window's limit in OpenAI calls. Slots are deliberately
 // not refunded on downstream failure (abuse ceiling, not billing).
-export async function takeChatRateSlot(
+export function takeChatRateSlot(db: Db, tenantId: TenantId, scope: DailyScope, key: string): Promise<boolean> {
+  return takeSlot(db, tenantId, scope, key, startOfTodayUtc(), LIMITS[scope])
+}
+
+async function takeSlot(
   db: Db,
   tenantId: TenantId,
   scope: ChatRateScope,
   key: string,
+  windowStart: Date,
+  limit: number,
 ): Promise<boolean> {
   const [row] = await db
     .insert(chatRateWindows)
-    .values({ tenantId, scope, key, windowStart: startOfTodayUtc(), used: 1 })
+    .values({ tenantId, scope, key, windowStart, used: 1 })
     .onConflictDoUpdate({
       target: [
         chatRateWindows.tenantId,
@@ -46,8 +64,32 @@ export async function takeChatRateSlot(
         chatRateWindows.windowStart,
       ],
       set: { used: sql`${chatRateWindows.used} + 1` },
-      setWhere: sql`${chatRateWindows.used} < ${LIMITS[scope]}`,
+      setWhere: sql`${chatRateWindows.used} < ${limit}`,
     })
     .returning({ used: chatRateWindows.used })
   return row !== undefined
+}
+
+// Counted here, not from chat_messages, which a deleted thread takes with it.
+export async function takeMainChatMessage(db: Db, tenantId: TenantId, edition: Edition): Promise<ServiceResult<undefined>> {
+  const tp = await getTenantPlan(db, tenantId, edition)
+  const w = mainChatWindow(tp)
+  if (!w) return ok(undefined)
+  if (await takeSlot(db, tenantId, 'main_chat_allowance', tenantId, w.start, w.messages)) return ok(undefined)
+  return err('FORBIDDEN', 'Chat message limit reached', formatMainChatLimitError(tp.plan, w))
+}
+
+export async function getMainChatQuota(db: Db, tenantId: TenantId, tp: TenantPlan): Promise<MainChatQuota> {
+  const w = mainChatWindow(tp)
+  if (!w) return { kind: 'unlimited' }
+  const [row] = await db
+    .select({ used: chatRateWindows.used })
+    .from(chatRateWindows)
+    .where(and(
+      eq(chatRateWindows.tenantId, tenantId),
+      eq(chatRateWindows.scope, 'main_chat_allowance'),
+      eq(chatRateWindows.key, tenantId),
+      eq(chatRateWindows.windowStart, w.start),
+    ))
+  return buildMainChatQuota(w, row?.used ?? 0)
 }

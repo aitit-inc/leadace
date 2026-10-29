@@ -152,6 +152,16 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     return new Response(null, { headers: corsHeaders })
   }
 
+  // /mcp reads its own body below to answer in JSON-RPC. A GET or HEAD body is
+  // ignored as before: re-wrapping one throws.
+  if (path !== '/mcp' && request.body && request.method !== 'GET' && request.method !== 'HEAD') {
+    const read = await readRequestBody(request, MAX_REQUEST_BODY_BYTES)
+    if (read.tooLarge) {
+      return withCors(Response.json({ error: requestBodyTooLargeMessage(MAX_REQUEST_BODY_BYTES) }, { status: 413 }))
+    }
+    request = new Request(request, { body: read.text })
+  }
+
   if (path === '/.well-known/oauth-authorization-server') {
     return withCors(handleMetadata(baseUrl))
   }

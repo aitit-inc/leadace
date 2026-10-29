@@ -676,8 +676,7 @@ function seedDashboardFixture(ctx, projectId, { pending = 'loosen' } = {}) {
              'https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly',
              decode('00', 'hex'), true, NOW(), NOW());`,
   );
-  // On the free plan this many contacted prospects trip the quota item and
-  // flip the header to "Paused".
+  // On the free plan this many contacted prospects trip the quota item.
   psql(
     `INSERT INTO tenant_plans (tenant_id, plan) VALUES (${q(tenant)}, 'unlimited')
      ON CONFLICT (tenant_id) DO UPDATE SET plan = 'unlimited';`,
@@ -976,8 +975,33 @@ const SCENARIOS = [
       const prospects = await seedProspects(ctx, projectId, 6);
       await recordSent(ctx, projectId, prospects.slice(0, 4));
       // The tier names are static, so the usage figure is what proves the
-      // seeding landed.
-      return [{ name: 'page', path: '/plans', expect: ['Starter', '4 / 30'] }];
+      // seeding landed. Back from Checkout no webhook ever lands here, so the
+      // page waits for one.
+      return [
+        { name: 'page', path: '/plans', expect: ['Starter', '4 / 50'] },
+        { name: 'checkout-return', path: '/plans?checkout=success', expect: 'Payment received' },
+      ];
+    },
+  },
+  {
+    name: 'plans-lapsed',
+    summary: 'A failed renewal (past_due) drops the plan to free: the pages point to the card, not to an upgrade',
+    stack: 'cloud',
+    setup: async (ctx) => {
+      await seedProject(ctx, { name: 'Northwind outbound', settings: { outboundMode: 'send' } });
+      // The webhook mirrors a lapsed subscription as free and keeps holding it
+      // (with its customer) until it ends.
+      psql(
+        `UPDATE tenant_plans SET
+           stripe_customer_id = ${q(`cus_ui_${ctx.tag}`)},
+           stripe_subscription_id = ${q(`sub_ui_${ctx.tag}`)},
+           updated_at = NOW()
+         WHERE tenant_id = ${q(ctx.persona.tenantId)};`,
+      );
+      return [
+        { name: 'page', path: '/plans', expect: ['Manage subscription', "Your subscription isn't paid"] },
+        { name: 'dashboard', path: '/dashboard', expect: "Your subscription isn't paid" },
+      ];
     },
   },
   {

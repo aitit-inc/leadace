@@ -59,7 +59,7 @@ export interface PlanLimits {
 }
 
 const PLAN_LIMITS: Record<PlanTier, PlanLimits> = {
-  free:      { maxProjects: 1,    prospectCaps: { window: 'lifetime', contacted: 30,  found: 30 },  maxProspects: 500,  maxSendingIdentities: 1 },
+  free:      { maxProjects: 1,    prospectCaps: { window: 'lifetime', contacted: 50,  found: 50 },  maxProspects: 500,  maxSendingIdentities: 1 },
   starter:   { maxProjects: 1,    prospectCaps: { window: 'monthly',  contacted: 100, found: 100 }, maxProspects: null, maxSendingIdentities: 1 },
   pro:       { maxProjects: 5,    prospectCaps: { window: 'monthly',  contacted: 300, found: 300 }, maxProspects: null, maxSendingIdentities: 3 },
   scale:     { maxProjects: null, prospectCaps: { window: 'monthly',  contacted: 800, found: 800 }, maxProspects: null, maxSendingIdentities: 10 },
@@ -157,6 +157,17 @@ export type PaidPlanTier = (typeof PAID_PLAN_TIERS)[number]
 // cover.
 export function holdsCredits(plan: PlanTier): plan is PaidPlanTier {
   return PAID_PLAN_TIERS.some((tier) => tier === plan)
+}
+
+// The Stripe statuses a subscription leaves only by ending; any other one
+// (active, past_due, unpaid, incomplete, …) is still the tenant's.
+export function subscriptionEnded(status: unknown): boolean {
+  return status === 'canceled' || status === 'incomplete_expired'
+}
+
+export function planFromMetadata(metadata: Record<string, string> | undefined): PaidPlanTier | null {
+  const plan = metadata?.['plan']
+  return PAID_PLAN_TIERS.find((tier) => tier === plan) ?? null
 }
 
 export async function sumCreditBalance(db: Db, tenantId: TenantId): Promise<number> {
@@ -320,7 +331,7 @@ export function formatContactQuotaError(quota: ProspectQuota): string {
   if (quota.kind === 'unlimited') return 'Prospect limit reached.'
   const { limit } = quota.contacted
   const resume = quota.window === 'lifetime'
-    ? 'Upgrade to reach new prospects.'
+    ? 'Open the plans page to reach new prospects.'
     : 'New prospects resume next period; buy credits or upgrade on the plans page to continue now.'
   return `Your ${quota.plan} plan includes ${limit} prospects ${WINDOW_PHRASE[quota.window]} and all ${limit} have been contacted. Follow-ups still go out. ${resume}`
 }
@@ -329,7 +340,7 @@ export function formatFoundQuotaError(quota: ProspectQuota): string {
   if (quota.kind === 'unlimited') return 'Prospect discovery limit reached.'
   const { limit } = quota.found
   const resume = quota.window === 'lifetime'
-    ? 'Bring your own list, or upgrade.'
+    ? 'Bring your own list, or open the plans page.'
     : 'Bring your own list, or buy credits or upgrade on the plans page.'
   return `Your ${quota.plan} plan lets LeadAce find ${limit} prospects ${WINDOW_PHRASE[quota.window]}, and that allowance is used. ${resume}`
 }
@@ -646,6 +657,48 @@ export async function updateMailboxWarmup(
   return ok(await getMailboxHealth(db, tenantId, identityId, now))
 }
 
+// Messages a person sends the hosted chat agent, and scheduled runs; job
+// notices and approvals are not counted, so they keep working past it.
+export interface MainChatCaps {
+  window: QuotaWindowKind
+  messages: number
+}
+
+const MAIN_CHAT_LIMITS: Record<PlanTier, MainChatCaps | null> = {
+  free:      { window: 'lifetime', messages: 60 },
+  starter:   { window: 'monthly',  messages: 150 },
+  pro:       { window: 'monthly',  messages: 300 },
+  scale:     { window: 'monthly',  messages: 600 },
+  unlimited: null,
+}
+
+export type MainChatWindow = MainChatCaps & { start: Date }
+
+const LIFETIME_START = new Date(0)
+
+export function mainChatWindow(tp: Pick<TenantPlan, 'plan' | 'currentPeriodStart'>): MainChatWindow | null {
+  const caps = MAIN_CHAT_LIMITS[tp.plan]
+  if (!caps) return null
+  if (caps.window === 'lifetime') return { ...caps, start: LIFETIME_START }
+  // A paid row without a period (manual setup) has no window to count in.
+  return tp.currentPeriodStart ? { ...caps, start: tp.currentPeriodStart } : null
+}
+
+export type MainChatQuota =
+  | { kind: 'unlimited' }
+  | ({ kind: 'capped'; window: QuotaWindowKind } & QuotaUsage)
+
+export function buildMainChatQuota(w: MainChatWindow, used: number): MainChatQuota {
+  return { kind: 'capped', window: w.window, used, limit: w.messages, remaining: Math.max(0, w.messages - used) }
+}
+
+export function formatMainChatLimitError(plan: PlanTier, w: MainChatWindow): string {
+  const resume = w.window === 'lifetime'
+    ? 'Open the plans page to keep chatting.'
+    : 'They reset when your next billing period starts, or upgrade on the plans page for more.'
+  return `Your ${plan} plan includes ${w.messages} chat messages ${WINDOW_PHRASE[w.window]}, and all ${w.messages} are used. ${resume} Approvals keep working.`
+}
+
 // 1 turn = 1 user message + 1 AI reply (counted on the AI reply via
 // inquiry_sessions.chat_turns_used).
 export type InquiryChatWindowKind = 'lifetime' | 'monthly'
@@ -723,14 +776,4 @@ export async function getRemainingChatQuota(
 
 export function isChatQuotaExhausted(quota: InquiryChatQuota): boolean {
   return quota.kind === 'capped' && quota.remaining <= 0
-}
-
-export function formatChatQuotaError(quota: InquiryChatQuota): string {
-  if (quota.kind === 'unlimited') return 'Chat limit reached.'
-  switch (quota.bindingConstraint) {
-    case 'lifetime':
-      return `Your ${quota.plan} plan inquiry-chat lifetime limit (${quota.limit} turns) is reached. Upgrade to enable more chat conversations.`
-    case 'monthly':
-      return `Your ${quota.plan} plan allows ${quota.limit} inquiry-chat turns per month. Upgrade your plan to continue.`
-  }
 }

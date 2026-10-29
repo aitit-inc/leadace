@@ -5,9 +5,9 @@ import type { TenantId } from '../domain/ids'
 import type { CloudEdition } from '../domain/edition'
 import { ok, err, type ServiceError, type ServiceResult } from './result'
 import { stripeApiRequest } from './stripe-api'
-import { requireStripeSubscription } from './billing'
-import { PAID_PLAN_TIERS, type PaidPlanTier } from './plan-limits'
-import { planFromMetadata, periodFromSubscription } from './stripe-webhook'
+import { planOfPrice, requireStripeSubscription } from './billing'
+import { PAID_PLAN_TIERS, planFromMetadata, type PaidPlanTier } from './plan-limits'
+import { periodFromSubscription } from './stripe-webhook'
 
 // `fromPlan` and `periodEnd` are what the user confirmed against; a change is
 // refused when the subscription has moved on since, so a confirmed period-end
@@ -72,6 +72,13 @@ export function scheduledPlanFromSchedule(
   return plan !== null && plan !== currentPlan ? plan : null
 }
 
+// The last phase on the running plan: the switch already ran, or the schedule
+// is fresh from the subscription. A price without plan metadata is not this.
+export function nothingLeftToSwitch(schedule: StripeSchedule, currentPlan: PaidPlanTier): boolean {
+  const price = schedule.phases.at(-1)?.items[0]?.price
+  return price !== undefined && planFromMetadata(price.metadata) === currentPlan
+}
+
 export function planChangeDirection(current: PaidPlanTier, target: PaidPlanTier): 'upgrade' | 'downgrade' | 'same' {
   const delta = PAID_PLAN_TIERS.indexOf(target) - PAID_PLAN_TIERS.indexOf(current)
   return delta > 0 ? 'upgrade' : delta < 0 ? 'downgrade' : 'same'
@@ -134,19 +141,49 @@ async function releaseSchedule(scheduleId: string, ctx: StripeCtx): Promise<Serv
   return ok(undefined)
 }
 
-// `always_invoice` charges the difference for the rest of the period now;
-// `error_if_incomplete` leaves the subscription untouched when that charge is
-// declined; `off_session` avoids a 3-D Secure step this call cannot complete.
+// An upgrade starts a new monthly period now (`billing_cycle_anchor=now`), so
+// the allowance counts afresh from today and is never bought for the last
+// days of a period; `always_invoice` charges the new month today, less the
+// unused part of the old plan. `error_if_incomplete` leaves the subscription
+// untouched when that charge is declined; `off_session` avoids a 3-D Secure
+// step this call cannot complete.
 async function upgradeNow(sub: StripeSubscription, current: CurrentPlan, priceId: string, ctx: StripeCtx): Promise<ServiceResult<undefined>> {
   const res = await stripeApiRequest('POST', `/subscriptions/${sub.id}`, {
     'items[0][id]': current.itemId,
     'items[0][price]': priceId,
+    'billing_cycle_anchor': 'now',
     'proration_behavior': 'always_invoice',
     'payment_behavior': 'error_if_incomplete',
     'off_session': 'true',
   }, ctx.secretKey)
-  if (!res.ok) return stripeFailure('The plan change was not applied', res.data)
-  return ok(undefined)
+  if (res.ok) return ok(undefined)
+  // The webhook mirrors whatever Stripe did with an answer that never came.
+  if (res.unknown) return err('BAD_GATEWAY', 'The plan change could not be confirmed', 'Reload the plans page to see your plan.')
+  return stripeFailure('The plan change was not applied', res.data)
+}
+
+// A subscription a schedule manages is changed through the schedule, which
+// cannot refuse a declined charge, so an upgrade never runs with one attached.
+// A pending switch is the person's to drop first (as the Customer Portal
+// requires); a schedule with nothing left to switch (its switch ran, or it
+// was left half made) is released, as a downgrade does, which loses nothing.
+async function clearScheduleForUpgrade(schedule: StripeSchedule, currentPlan: PaidPlanTier, ctx: StripeCtx): Promise<ServiceResult<undefined>> {
+  if (nothingLeftToSwitch(schedule, currentPlan)) return releaseSchedule(schedule.id, ctx)
+  const pending = scheduledPlanFromSchedule(schedule, currentPlan)
+  const switchAt = schedule.phases.at(-1)?.start_date
+  if (!pending || switchAt === undefined) {
+    console.error('CRITICAL plan change: a schedule switches to a price without plan metadata; upgrade refused (fix the price metadata)', { scheduleId: schedule.id })
+    return err('CONFLICT', 'A plan switch is scheduled', 'The scheduled switch could not be read. Contact support to change the plan.')
+  }
+  return err(
+    'CONFLICT',
+    'A plan switch is scheduled',
+    `Your switch to ${tierName(pending)} on ${new Date(switchAt * 1000).toISOString().slice(0, 10)} is scheduled. To upgrade, keep ${tierName(currentPlan)} on the plans page first.`,
+  )
+}
+
+function tierName(plan: PaidPlanTier): string {
+  return plan.charAt(0).toUpperCase() + plan.slice(1)
 }
 
 // The Customer Portal can only switch prices within one product, so a
@@ -184,7 +221,13 @@ async function downgradeAtPeriodEnd(sub: StripeSubscription, plan: CurrentPlan, 
     'phases[1][automatic_tax][enabled]': taxEnabled,
   }, ctx.secretKey)
   if (!updated.ok) {
-    if (!reusable) await releaseSchedule(id, ctx)
+    // A failed answer can hide an applied switch (one that could not be read),
+    // so the schedule as Stripe now has it decides; a fresh one Stripe shows
+    // without the switch is released, one it cannot show is left as it is.
+    const now = await stripeApiRequest('GET', `/subscription_schedules/${id}`, null, ctx.secretKey)
+    const phases = now.data['phases'] as Array<{ items: Array<{ price: string }> }> | undefined
+    if (now.ok && phases?.at(-1)?.items[0]?.price === priceId) return ok(undefined)
+    if (now.ok && !reusable) await releaseSchedule(id, ctx)
     return stripeFailure('Failed to schedule the plan change', updated.data)
   }
   return ok(undefined)
@@ -231,11 +274,8 @@ export async function changePlan(
   if (!subscriptionId.ok) return subscriptionId
   await lockTenant(db, tenantId)
 
-  const price = await stripeApiRequest('GET', `/prices/${body.priceId}`, null, ctx.secretKey)
-  const target = price.ok && price.data['active'] === true
-    ? planFromMetadata(price.data['metadata'] as Record<string, string> | undefined)
-    : null
-  if (!target) return err('INVALID_INPUT', 'Unknown plan price')
+  const target = await planOfPrice(body.priceId, ctx.secretKey)
+  if (!target.ok) return target
 
   const fetched = await fetchSubscription(subscriptionId.value, ctx)
   if (!fetched.ok) return fetched
@@ -252,21 +292,17 @@ export async function changePlan(
   if (current.value.plan !== body.fromPlan || periodEndIso(current.value.periodEnd) !== body.periodEnd) {
     return err('CONFLICT', 'Plan changed since the page loaded', 'Reload the page and try again.')
   }
-  const direction = planChangeDirection(current.value.plan, target)
+  const direction = planChangeDirection(current.value.plan, target.value)
   if (direction === 'same') return err('CONFLICT', 'Already on this plan')
 
-  // A pending switch stays attached while the change is made — Stripe keeps
-  // the schedule in step with a direct update — so a failure leaves it as it was.
+  if (direction === 'upgrade' && sub.schedule) {
+    const cleared = await clearScheduleForUpgrade(sub.schedule, current.value.plan, ctx)
+    if (!cleared.ok) return cleared
+  }
   const applied = direction === 'upgrade'
     ? await upgradeNow(sub, current.value, body.priceId, ctx)
     : await downgradeAtPeriodEnd(sub, current.value, body.priceId, ctx)
   if (!applied.ok) return applied
-  // The upgrade is charged and in force by now; a schedule that could not be
-  // released stays visible as a pending switch the user can keep or drop.
-  if (direction === 'upgrade' && sub.schedule) {
-    const released = await releaseSchedule(sub.schedule.id, ctx)
-    if (!released.ok) console.error('plan-change: upgraded but failed to release the schedule', { subscriptionId: sub.id, scheduleId: sub.schedule.id, error: released.detail })
-  }
 
   return readSubscriptionInfo(sub.id, ctx)
 }

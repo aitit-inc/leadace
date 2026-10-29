@@ -51,6 +51,9 @@
   let pending = $state<PendingCall | null>(null);
   let jobs = $state<Record<string, Job | JobDetail>>({});
   let error = $state('');
+  // A 403 on a send is the plan's chat allowance; its message gets a way to the plans page.
+  let refusedByPlan = $state('');
+  let linksPlans = $derived(error === refusedByPlan);
   // Prefilled, never sent: no link may start a turn.
   const prefill = typedWebsite(page.url.searchParams.get('site'));
   let input = $state(prefill ?? '');
@@ -406,10 +409,11 @@
   async function send(text: string) {
     const trimmed = text.trim();
     if ((!trimmed && attachments.length === 0) || sending || stopping || uploading.length + attaching > 0) return;
-    const attachmentIds = attachments.map((a) => a.id);
+    const sent = attachments;
+    const attachmentIds = sent.map((a) => a.id);
     outgoing = {
       role: 'user',
-      parts: [...attachments.map((file) => ({ file })), ...(trimmed ? [{ text: trimmed }] : [])],
+      parts: [...sent.map((file) => ({ file })), ...(trimmed ? [{ text: trimmed }] : [])],
     };
     input = '';
     attachments = [];
@@ -428,7 +432,11 @@
     } catch (e) {
       if (id !== threadId) return;
       pending = data.thread?.pendingCall ?? null;
+      // A send that fails loses nothing: the draft goes back where it was written.
+      input = input ? `${text}\n${input}` : text;
+      attachments = [...sent, ...attachments];
       error = e instanceof ApiError ? e.message : 'Something went wrong. Please try again.';
+      refusedByPlan = e instanceof ApiError && e.status === 403 ? e.message : '';
     } finally {
       sending = false;
       outgoing = null;
@@ -488,6 +496,12 @@
   ondragover={(e) => draggingFiles(e) && e.preventDefault()}
   ondrop={(e) => draggingFiles(e) && e.preventDefault()}
 />
+
+{#snippet plansLink()}
+  {#if linksPlans}
+    <a href="/plans" class="ml-1 font-semibold text-accent-strong hover:underline">View plans</a>
+  {/if}
+{/snippet}
 
 {#snippet quickActionRow(centered: boolean)}
   <div class="flex flex-wrap gap-2 {centered ? 'justify-center' : ''}">
@@ -690,7 +704,7 @@
             {/key}
           {/if}
           {#if error}
-            <p class="text-sm text-danger">{error}</p>
+            <p class="text-sm text-danger">{error}{@render plansLink()}</p>
           {/if}
           <div bind:this={bottom}></div>
         </div>
@@ -724,7 +738,7 @@
         {/if}
       </div>
       {#if error}
-        <p class="mt-4 text-sm text-danger">{error}</p>
+        <p class="mt-4 text-sm text-danger">{error}{@render plansLink()}</p>
       {/if}
     {/if}
   </section>

@@ -9,11 +9,15 @@
 # cloud worker on :8789 (override API_URL); start it with ./e2e/cloud-edition-up.sh.
 #
 # Provisions a throwaway tenant, seeds 'sent' outreach_logs via psql, then
-# asserts: the free lifetime allowance (30) refuses a first touch but not a
-# follow-up, a follow-up never counts, the starter period allowance (100)
-# anchors at current_period_start, an in-flight pre_send reservation counts,
-# and prepaid credits (credit_ledger) lift the refusal: each first touch past
-# the allowance debits $0.40 while the balance pays for it; it never goes negative.
+# asserts: the free lifetime allowance (50) refuses a first touch but not a
+# follow-up, the project's attention names the spent allowance (a spent found
+# allowance only once no first touch is left), a follow-up never counts, the
+# starter period allowance (100) anchors at current_period_start, an in-flight
+# pre_send reservation counts, and prepaid credits (credit_ledger) lift the
+# refusal: each first touch past the allowance debits $0.40 while the balance
+# pays for it; it never goes negative.
+# /me/plan offers the billing portal whenever a Stripe customer exists, and
+# Checkout fails as Stripe's failure (502) when it cannot read the price.
 #
 # Usage:
 #   ./e2e/regression-cloud-quota.sh
@@ -39,23 +43,23 @@ T="$THROW_TENANT_ID"
 # services/outreach.ts: compliance → DNC → quota → country → pre_send INSERT).
 api PUT /api/tenant-settings '{"legalName":"E2E Quota Co","physicalAddress":"1 E2E St, Test City","defaultSenderCountry":"US"}' > /dev/null
 
-step "seed project + 31 reachable US prospects"
+step "seed project + 51 reachable US prospects"
 PROJ="$(api POST /api/projects "$(jq -nc '{name:"cloud-quota proj"}')" | jq -r '.id // ""')"
 [[ -n "$PROJ" ]] || { echo "project create failed" >&2; exit 1; }
 # New projects default to draft; quota binds on the send path.
 api PUT "/api/projects/$PROJ/settings" '{"outboundMode":"send"}' > /dev/null
 SEED="$(api POST /api/prospects/batch "$(jq -nc --arg pid "$PROJ" --arg ts "$TS" \
-  '{projectId:$pid, prospects: [range(0;31) | {
+  '{projectId:$pid, prospects: [range(0;51) | {
       organizationDomain: ("e2e-q-\($ts)-\(.).example"), organizationName: "Q Org",
       organizationWebsiteUrl: ("https://e2e-q-\($ts)-\(.).example"),
       country: "US", countrySource: "manual",
       name: ("Q-\(.)"), overview: "seed", websiteUrl: ("https://e2e-q-\($ts)-\(.).example/a"),
       email: ("q-\(.)@e2e-q-\($ts).example"), matchReason: "seed"
   }]}')")"
-assert_eq "31 reachable prospects registered" "$(echo "$SEED" | jq -r '.inserted // 0')" "31"
+assert_eq "51 reachable prospects registered" "$(echo "$SEED" | jq -r '.inserted // 0')" "51"
 P_FIRST="$(echo "$SEED" | jq -r '.insertedIds[0]')"
-P_LAST="$(echo "$SEED" | jq -r '.insertedIds[29]')"
-P_NEW="$(echo "$SEED" | jq -r '.insertedIds[30]')"
+P_LAST="$(echo "$SEED" | jq -r '.insertedIds[49]')"
+P_NEW="$(echo "$SEED" | jq -r '.insertedIds[50]')"
 assert_eq "API-registered prospects are brought_in (found allowance untouched)" \
   "$(psql_local "SELECT count(*)::int FROM prospects WHERE tenant_id='$T' AND origin='found';")" "0"
 
@@ -72,13 +76,13 @@ send_body() { jq -nc --arg pid "$PROJ" --argjson prid "$1" \
 rec_body()  { jq -nc --arg pid "$PROJ" --argjson prid "$1" \
   '{projectId:$pid, prospectId:$prid, channel:"email", subject:"quota probe", body:"body", status:"sent"}'; }
 
-LIFETIME_MSG="Your free plan includes 30 prospects in total and all 30 have been contacted. Follow-ups still go out. Upgrade to reach new prospects."
+LIFETIME_MSG="Your free plan includes 50 prospects in total and all 50 have been contacted. Follow-ups still go out. Open the plans page to reach new prospects."
 MONTHLY_MSG="Your starter plan includes 100 prospects per billing period and all 100 have been contacted. Follow-ups still go out. New prospects resume next period; buy credits or upgrade on the plans page to continue now."
 
-step "1. free lifetime allowance (30) refuses a first touch, not a follow-up"
+step "1. free lifetime allowance (50) refuses a first touch, not a follow-up"
 cloud_seed_plan "$T" free
 reset_outreach
-seed_first_touches 30 "NOW()"
+seed_first_touches 50 "NOW()"
 
 CODE="$(api_status POST /api/outreach/send-and-record "$(send_body "$P_NEW")")"; BODY="$(api_body)"
 assert_eq "send-and-record first touch at the allowance → 403" "$CODE" "403"
@@ -103,16 +107,28 @@ assert_eq "  reachable lists only contacted prospects (never the new one)" \
 assert_eq "  reachable.message = lifetime message" "$(echo "$REACH" | jq -r '.message // ""')" "$LIFETIME_MSG"
 
 PLAN="$(api GET /api/me/plan)"
-assert_eq "/me/plan counts 30 contacted (the follow-up row did not add one)" "$(echo "$PLAN" | jq -r '.quota.contacted.used')" "30"
+assert_eq "/me/plan counts 50 contacted (the follow-up row did not add one)" "$(echo "$PLAN" | jq -r '.quota.contacted.used')" "50"
 assert_eq "  /me/plan found.used = 0" "$(echo "$PLAN" | jq -r '.quota.found.used')" "0"
+assert_eq "  /me/plan billingPortal = false (no Stripe customer)" "$(echo "$PLAN" | jq -r '.billingPortal')" "false"
+quota_item() { api GET "/api/projects/$PROJ/dashboard" | jq -c '[.attention[] | select(.kind == "quota_exhausted")]'; }
+assert_eq "  the project's attention names the contacted allowance" "$(quota_item)" '[{"kind":"quota_exhausted","allowance":"contacted","constraint":"lifetime"}]'
 
-step "2. a follow-up never counts: 29 prospects + 5 extra rows on one = 29 used"
+step "1b. a spent found allowance needs the person only once the list has no first touch left"
 reset_outreach
-seed_first_touches 29 "NOW()"
+seed_first_touches 10 "NOW()"
+psql_local "INSERT INTO discovery_charges (tenant_id, prospect_id) SELECT '$T', g FROM generate_series(1, 50) g;" > /dev/null
+assert_eq "found spent, first touches still reachable → no quota item" "$(quota_item)" '[]'
+psql_local "UPDATE prospects SET do_not_contact = true WHERE tenant_id='$T';" > /dev/null
+assert_eq "found spent, nothing left to reach → the found allowance item" "$(quota_item)" '[{"kind":"quota_exhausted","allowance":"found","constraint":"lifetime"}]'
+psql_local "UPDATE prospects SET do_not_contact = false WHERE tenant_id='$T'; DELETE FROM discovery_charges WHERE tenant_id='$T';" > /dev/null
+
+step "2. a follow-up never counts: 49 prospects + 5 extra rows on one = 49 used"
+reset_outreach
+seed_first_touches 49 "NOW()"
 psql_local "INSERT INTO outreach_logs (tenant_id, project_id, prospect_id, channel, body, status, sent_at)
   SELECT '$T', '$PROJ', $P_FIRST, 'email', 'e2e follow-up', 'sent', NOW() FROM generate_series(1, 5);" > /dev/null
 REACH="$(api GET "/api/projects/$PROJ/prospects/reachable?limit=10")"
-assert_eq "reachable.quota.contacted.used = 29" "$(echo "$REACH" | jq -r '.quota.contacted.used')" "29"
+assert_eq "reachable.quota.contacted.used = 49" "$(echo "$REACH" | jq -r '.quota.contacted.used')" "49"
 assert_eq "the draw is not sized by the allowance (follow-ups fill it)" "$(echo "$REACH" | jq -r '.prospects | length')" "10"
 assert_eq "  at most 1 never-contacted prospect among the drawn" \
   "$(echo "$REACH" | jq -r --argjson a "$P_LAST" --argjson b "$P_NEW" '[.prospects[] | select(.prospectId == $a or .prospectId == $b)] | length <= 1')" "true"
@@ -122,17 +138,17 @@ psql_local "INSERT INTO outreach_logs (tenant_id, project_id, prospect_id, chann
   SELECT '$T', '$PROJ', id, 'email', 'e2e inflight', 'pre_send', NOW()
   FROM prospects WHERE tenant_id='$T' AND id <> $P_NEW ORDER BY id DESC LIMIT 1;" > /dev/null
 REACH="$(api GET "/api/projects/$PROJ/prospects/reachable?limit=10")"
-assert_eq "fresh pre_send row on a 30th prospect drops remaining to 0" "$(echo "$REACH" | jq -r '.quota.contacted.remaining')" "0"
+assert_eq "fresh pre_send row on a 50th prospect drops remaining to 0" "$(echo "$REACH" | jq -r '.quota.contacted.remaining')" "0"
 CODE="$(api_status POST /api/outreach/send-and-record "$(send_body "$P_NEW")")"
 assert_eq "send-and-record first touch → 403 while the reservation is in flight" "$CODE" "403"
 
 step "4. starter period allowance (100) anchors at current_period_start"
 cloud_seed_plan "$T" starter "sub_e2e_$TS"      # Stripe-linked, as a real paid tenant is
 reset_outreach
-# 31 prospects seeded; the remaining 70 first touches come from tenant-only
+# 51 prospects seeded; the remaining 50 first touches come from tenant-only
 # prospects (no project link) — the allowance is tenant-wide.
 api POST /api/prospects/batch "$(jq -nc --arg ts "$TS" \
-  '{prospects: [range(0;70) | {
+  '{prospects: [range(0;50) | {
       organizationDomain: ("e2e-qt-\($ts)-\(.).example"), organizationName: "QT Org",
       organizationWebsiteUrl: ("https://e2e-qt-\($ts)-\(.).example"),
       name: ("QT-\(.)"), overview: "seed", websiteUrl: ("https://e2e-qt-\($ts)-\(.).example/a"),
@@ -169,7 +185,7 @@ P_Z="$(echo "$EXTRA" | jq -r '.insertedIds[2]')"
 assert_eq "starter with no credits: /me/plan reports a zero balance" \
   "$(api GET /api/me/plan | jq -r '.quota.credits.balanceCents')" "0"
 psql_local "INSERT INTO credit_ledger (tenant_id, kind, amount_cents, reference) VALUES ('$T', 'purchase', 100, 'cs_e2e_$TS');" > /dev/null
-REACH="$(api GET "/api/projects/$PROJ/prospects/reachable?limit=50")"
+REACH="$(api GET "/api/projects/$PROJ/prospects/reachable?limit=100")"
 assert_eq "reachable.quota.credits.balanceCents = 100" "$(echo "$REACH" | jq -r '.quota.credits.balanceCents')" "100"
 assert_eq "  remaining still reports 0" "$(echo "$REACH" | jq -r '.quota.contacted.remaining')" "0"
 assert_eq "  first touches are not capped while credits cover them" \
@@ -227,6 +243,21 @@ assert_eq "PUT enabled=false with a pending invoice → 200" "$(api_status PUT /
 
 cloud_seed_plan "$T" free
 assert_eq "free: /me/plan reports no credits" "$(api GET /api/me/plan | jq -r '.quota.credits')" "null"
+assert_eq "free with a Stripe customer (lapsed or cancelled): billingPortal = true" "$(api GET /api/me/plan | jq -r '.billingPortal')" "true"
+# Needs the worker on the dummy key (cloud-edition-up.sh's default); with a
+# real test key Stripe answers, and regression-cloud-stripe-testmode covers it.
+if [[ "${STRIPE_SECRET_KEY:-sk_test_e2e_dummy}" == "sk_test_e2e_dummy" ]]; then
+  assert_eq "POST /me/checkout when Stripe cannot be read (the dummy key) → 502, not 400" \
+    "$(api_status POST /api/me/checkout '{"priceId":"price_e2e_unknown"}')" "502"
+else
+  say "skipped: POST /me/checkout with Stripe unreadable needs the dummy-key worker"
+fi
+# The row still holds its subscription: a renewal Stripe could not charge.
+assert_eq "free with a subscription still held (past_due): attention points to the card, not an upgrade" \
+  "$(api GET /api/me/attention | jq -c '[.items[].kind | select(. == "subscription_unpaid" or . == "quota_exhausted")]')" '["subscription_unpaid"]'
+psql_local "UPDATE tenant_plans SET stripe_subscription_id = NULL WHERE tenant_id='$T';" > /dev/null
+assert_eq "  once the subscription has ended (none held): no subscription_unpaid" \
+  "$(api GET /api/me/attention | jq -c '[.items[].kind | select(. == "subscription_unpaid")]')" '[]'
 assert_eq "free: PUT /me/credits/auto-top-up → 403" "$(api_status PUT /api/me/credits/auto-top-up '{"enabled":true}')" "403"
 assert_eq "free: POST /me/credits/checkout → 403 (before any Stripe call)" \
   "$(api_status POST /api/me/credits/checkout '{"packCents":2500}')" "403"

@@ -2,6 +2,7 @@ import type { SendingIdentityProvider } from '../db/schema'
 import { hasReplyReadScope } from './sending-identity'
 
 export type QuotaConstraint = 'lifetime' | 'monthly'
+export type QuotaAllowance = 'contacted' | 'found'
 
 // The single "does anything need the user?" feed — every surface (bell,
 // banners, dashboard) renders a view of this list, none judges on its own.
@@ -14,7 +15,11 @@ export type AttentionItem =
   | { kind: 'mailbox_send_refused'; fromEmail: string; sentThatDay: number }
   | { kind: 'mailbox_inbox_test_spam'; fromEmail: string; spam: number; delivered: number }
   | { kind: 'no_outbound_channels' }
-  | { kind: 'quota_exhausted'; constraint: QuotaConstraint }
+  | { kind: 'quota_exhausted'; allowance: QuotaAllowance; constraint: QuotaConstraint }
+  // The subscription is still there but unpaid (a failed renewal, a first
+  // payment not through), so the plan is free until Stripe collects it in
+  // the billing portal; buying another plan is not the way back.
+  | { kind: 'subscription_unpaid' }
   // The off-session credit charge was declined; auto top-up is off until
   // the tenant fixes the card and switches it back on.
   | { kind: 'credit_top_up_failed'; since: string }
@@ -110,7 +115,10 @@ export type AttentionInput = {
   identities: IdentityHealthInput[]
   refusedMailboxes: Array<{ fromEmail: string; sentThatDay: number }>
   spamHeldMailboxes: Array<{ fromEmail: string; spam: number; delivered: number }>
-  quota: { exhausted: boolean; constraint: QuotaConstraint | null }
+  quota: { exhausted: QuotaAllowance | null; constraint: QuotaConstraint | null }
+  // The tier the tenant is on, and whether it still holds a Stripe
+  // subscription (one that has not ended).
+  billing: { plan: string; holdsSubscription: boolean }
   creditTopUpFailedAt: Date | null
   futileProjects: Array<{ projectId: string; projectName: string; sends: number; engaged: number }>
   now: Date
@@ -148,8 +156,10 @@ export function deriveAttentionItems(input: AttentionInput): AttentionItem[] {
   if (input.project && !input.project.outboundChannelsConfigured) {
     items.push({ kind: 'no_outbound_channels' })
   }
-  if (input.quota.exhausted && input.quota.constraint) {
-    items.push({ kind: 'quota_exhausted', constraint: input.quota.constraint })
+  if (input.billing.plan === 'free' && input.billing.holdsSubscription) {
+    items.push({ kind: 'subscription_unpaid' })
+  } else if (input.quota.exhausted && input.quota.constraint) {
+    items.push({ kind: 'quota_exhausted', allowance: input.quota.exhausted, constraint: input.quota.constraint })
   }
   if (input.creditTopUpFailedAt) {
     items.push({ kind: 'credit_top_up_failed', since: input.creditTopUpFailedAt.toISOString() })

@@ -862,6 +862,13 @@
       "when": 1792852025232,
       "tag": "0122_revoke_data_api_grants",
       "breakpoints": true
+    },
+    {
+      "idx": 123,
+      "version": "7",
+      "when": 1792886907788,
+      "tag": "0123_clear_ended_subscription_ids",
+      "breakpoints": true
     }
   ]
 }

@@ -4,7 +4,7 @@ Autonomous lead generation plugin for Claude Cowork and Claude Code. Builds pros
 outbound outreach, and iterates on strategy — all hands-free.
 
 > **The plugin is optional.** Email runs entirely in the web app at
-> [app.leadace.ai](https://app.leadace.ai) (Free tier — 30 prospects, paid
+> [app.leadace.ai](https://app.leadace.ai) (Free tier — 50 prospects, paid
 > plans from $49/mo): sign in with Google and paste your website. The plugin
 > runs the same work from a Claude session and adds a browser, so it sends the
 > contact-form messages and SNS DMs that the web app leaves for you to send by
@@ -111,11 +111,11 @@ https://app.leadace.ai.
 Modified Apache 2.0 (no multi-tenant SaaS, frontend logo preserved), by
 SurpassOne Inc. See [LICENSE](../LICENSE).
 
-- **Hosted (cloud) free tier:** 30 prospects (lifetime), 1 project,
-  1 mailbox, 500 stored prospects.
-- **Paid plans** start at $49/month for 100 prospects a month. A prospect
-  counts once, when the first message to it goes out; follow-ups are free. Manage
-  your subscription from the web app.
+- **Hosted (cloud) free tier:** 50 prospects (lifetime), 60 chat messages
+  (lifetime), 1 project, 1 mailbox, 500 stored prospects.
+- **Paid plans** start at $49/month for 100 prospects and 150 chat messages
+  a month. A prospect counts once, when the first message to it goes out;
+  follow-ups are free. Manage your subscription from the web app.
 - **Self-host:** unlimited tier by default. See
   [docs/self-host.md](../docs/self-host.md).
 

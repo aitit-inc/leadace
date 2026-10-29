@@ -41,7 +41,7 @@ export type DocumentHistoryQuery = z.infer<typeof documentHistoryQuerySchema>
 // reason is kept in the change log for business / sales_strategy.
 export const saveDocumentSchema = z.union([
   z.strictObject({ content: z.string().min(1), reason: changeReasonSchema.optional() }),
-  z.strictObject({ sections: z.array(sectionEditSchema).min(1), reason: changeReasonSchema.optional() }),
+  z.strictObject({ sections: z.array(sectionEditSchema).min(1).max(50), reason: changeReasonSchema.optional() }),
 ])
 export type SaveDocumentInput = z.infer<typeof saveDocumentSchema>
 

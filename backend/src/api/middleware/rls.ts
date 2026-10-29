@@ -11,12 +11,15 @@ import type { Env, Variables } from '../types'
  *   SET LOCAL ROLE app_rls    — switches to a role that has RLS enforced
  *   SET LOCAL app.tenant_id   — tells RLS policies which tenant to allow
  *
- * Auth middleware and stripe webhook run as the postgres superuser (no RLS).
+ * Auth middleware runs as the postgres superuser (no RLS); the Stripe webhook
+ * finds its tenant that way and writes through runWithRls.
  */
 export const rlsMiddleware = createMiddleware<{ Bindings: Env; Variables: Variables }>(
   async (c, next) => {
     const tenantId = c.get('tenantId')
     const db = c.get('db')
+    const afterCommit: Array<() => Promise<void>> = []
+    c.set('afterCommit', afterCommit)
 
     try {
       await withPaidCallScope({ databaseUrl: c.env.DATABASE_URL, tenantId }, () => runWithRls(db, tenantId, async (tx) => {
@@ -29,6 +32,8 @@ export const rlsMiddleware = createMiddleware<{ Bindings: Env; Variables: Variab
       }))
     } catch (e) {
       if (!(e instanceof TransactionRollbackError)) throw e
+      return
     }
+    for (const task of afterCommit) c.executionCtx.waitUntil(task())
   },
 )

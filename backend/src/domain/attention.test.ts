@@ -117,7 +117,8 @@ describe('deriveAttentionItems', () => {
     refusedMailboxes: [],
     spamHeldMailboxes: [],
     futileProjects: [],
-    quota: { exhausted: false, constraint: null },
+    quota: { exhausted: null, constraint: null },
+    billing: { plan: 'starter', holdsSubscription: true },
     creditTopUpFailedAt: null,
     now: NOW,
     project: { outboundChannelsConfigured: true, pendingDrafts: 0, hotLeadsRecent: 0 },
@@ -157,7 +158,7 @@ describe('deriveAttentionItems', () => {
       refusedMailboxes: [
         { fromEmail: 'z@example.com', sentThatDay: 25 },
       ],
-      quota: { exhausted: true, constraint: 'monthly' },
+      quota: { exhausted: 'contacted', constraint: 'monthly' },
       futileProjects: [{ projectId: 'p-acme', projectName: 'Acme', sends: 400, engaged: 0 }],
       project: { outboundChannelsConfigured: false, pendingDrafts: 3, hotLeadsRecent: 1 },
     })
@@ -201,27 +202,35 @@ describe('deriveAttentionItems', () => {
     const items = deriveAttentionItems({
       ...clean,
       identities: [gmail({ authRevokedAt: new Date('2026-07-29T09:00:00.000Z') })],
-      quota: { exhausted: true, constraint: 'lifetime' },
+      quota: { exhausted: 'contacted', constraint: 'lifetime' },
     })
     expect(items.map((i) => i.kind)).toEqual(['gmail_auth_revoked', 'quota_exhausted'])
   })
 
+  it('points an unpaid subscription at the card, not at an upgrade', () => {
+    const exhausted = { exhausted: 'contacted', constraint: 'lifetime' } as const
+    const unpaid = deriveAttentionItems({ ...clean, billing: { plan: 'free', holdsSubscription: true }, quota: exhausted })
+    expect(unpaid.map((i) => i.kind)).toEqual(['subscription_unpaid'])
+    const none = deriveAttentionItems({ ...clean, billing: { plan: 'free', holdsSubscription: false }, quota: exhausted })
+    expect(none.map((i) => i.kind)).toEqual(['quota_exhausted'])
+  })
+
   it('omits quota_exhausted when there is no binding constraint', () => {
-    const items = deriveAttentionItems({ ...clean, quota: { exhausted: true, constraint: null } })
+    const items = deriveAttentionItems({ ...clean, quota: { exhausted: 'contacted', constraint: null } })
     expect(items).toEqual([])
   })
 
-  it('carries the compliance missing fields and quota constraint through', () => {
+  it('carries the compliance missing fields and the spent allowance through', () => {
     const items = deriveAttentionItems({
       ...clean,
       compliance: { ready: false, missing: ['physicalAddress', 'defaultSenderCountry'] },
-      quota: { exhausted: true, constraint: 'lifetime' },
+      quota: { exhausted: 'found', constraint: 'lifetime' },
     })
     expect(items).toContainEqual({
       kind: 'compliance_incomplete',
       missing: ['physicalAddress', 'defaultSenderCountry'],
     })
-    expect(items).toContainEqual({ kind: 'quota_exhausted', constraint: 'lifetime' })
+    expect(items).toContainEqual({ kind: 'quota_exhausted', allowance: 'found', constraint: 'lifetime' })
   })
 
   it('emits no project items for the tenant-wide feed (project: null)', () => {

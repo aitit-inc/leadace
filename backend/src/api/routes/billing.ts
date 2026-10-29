@@ -40,6 +40,8 @@ billingRouter.post('/me/checkout', zValidator('json', checkoutBodySchema), async
   if (!stripe.ok) return respondWithError(c, stripe)
   const result = await createCheckoutSession(
     cloud.value,
+    c.get('db'),
+    c.get('tenantId'),
     {
       secretKey: stripe.value.secretKey,
       userId: c.get('userId'),

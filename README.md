@@ -8,7 +8,7 @@ strategy from every reply and rejection.
 
 Website: https://leadace.ai
 
-> **Two ways to run it.** Use the hosted service at [app.leadace.ai](https://app.leadace.ai) (Free tier — 30 prospects, paid plans from $49/mo), or [self-host](docs/self-host.md) the backend on your own Cloudflare + Supabase. The web app and the optional Claude plugin work the same on either.
+> **Two ways to run it.** Use the hosted service at [app.leadace.ai](https://app.leadace.ai) (Free tier — 50 prospects, paid plans from $49/mo), or [self-host](docs/self-host.md) the backend on your own Cloudflare + Supabase. The web app and the optional Claude plugin work the same on either.
 
 ## For Users
 
@@ -139,8 +139,8 @@ modified Apache 2.0 with two additional conditions:
 
 ### Hosted service (cloud)
 
-- **Free tier:** 30 prospects (lifetime), 1 project, 1 mailbox, 500 stored prospects.
-- **Paid plans** start at $49/month for 100 prospects a month. A prospect
+- **Free tier:** 50 prospects (lifetime), 60 chat messages (lifetime), 1 project, 1 mailbox, 500 stored prospects.
+- **Paid plans** start at $49/month for 100 prospects and 150 chat messages a month. A prospect
   counts once, when the first message to it goes out; follow-ups are free. Manage
   your subscription from the web app.
 

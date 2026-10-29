@@ -13,7 +13,7 @@ import {
 	Zap,
 } from '@lucide/svelte';
 import type { Component } from 'svelte';
-import type { AttentionItem } from '$lib/types/attention';
+import type { AttentionItem, QuotaAllowance, QuotaConstraint } from '$lib/types/attention';
 
 // Shared by bell and dashboard so one item never gets two descriptions.
 export type AttentionMeta = {
@@ -30,6 +30,17 @@ export function humanize(s: string): string {
 	const t = s.replace(/_/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2');
 	return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase();
 }
+
+const QUOTA_DESC: Record<QuotaAllowance, Record<QuotaConstraint, string>> = {
+	contacted: {
+		monthly: 'New prospects resume next period — follow-ups still go out; buy credits or upgrade to continue now',
+		lifetime: 'Every prospect in your plan has been contacted — follow-ups still go out; open the plans page to reach new ones',
+	},
+	found: {
+		monthly: "No one is left to contact and this period's discovery is used up — bring your own list, or buy credits or upgrade",
+		lifetime: "No one is left to contact and your plan's discovery is used up — bring your own list, or open the plans page to find more",
+	},
+};
 
 export function attentionMeta(item: AttentionItem): AttentionMeta {
 	switch (item.kind) {
@@ -151,12 +162,18 @@ export function attentionMeta(item: AttentionItem): AttentionMeta {
 			return {
 				icon: Zap,
 				tone: 'warning',
-				title: 'Prospect allowance used',
-				desc:
-					item.constraint === 'monthly'
-						? 'New prospects resume next period — follow-ups still go out; buy credits or upgrade to continue now'
-						: 'Every prospect in your plan has been contacted — follow-ups still go out; upgrade to reach new ones',
-				ctaLabel: item.constraint === 'monthly' ? 'View plan' : 'Upgrade',
+				title: item.allowance === 'found' ? 'Discovery allowance used' : 'Prospect allowance used',
+				desc: QUOTA_DESC[item.allowance][item.constraint],
+				ctaLabel: 'View plan',
+				href: '/plans',
+			};
+		case 'subscription_unpaid':
+			return {
+				icon: CreditCard,
+				tone: 'danger',
+				title: "Your subscription isn't paid",
+				desc: 'Your plan is on Free until Stripe collects the payment — check the card under Manage subscription to get your plan back',
+				ctaLabel: 'Fix billing',
 				href: '/plans',
 			};
 		case 'credit_top_up_failed':

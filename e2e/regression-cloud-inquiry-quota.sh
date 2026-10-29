@@ -88,8 +88,8 @@ assert_eq "tenant lifetime chat turns summed to the cap (25)" "$SUM" "25"
 CODE="$(post_msg "$SHORT" "hello, is this product a fit for us?")"; BODY="$(api_body)"
 assert_eq "POST inquiry message at the chat cap → 403" "$CODE" "403"
 assert_eq "  error = Chat limit reached" "$(echo "$BODY" | jq -r '.error // ""')" "Chat limit reached"
-assert_eq "  detail = free lifetime chat message" "$(echo "$BODY" | jq -r '.detail // ""')" \
-  "Your free plan inquiry-chat lifetime limit (25 turns) is reached. Upgrade to enable more chat conversations."
+assert_eq "  detail = a recipient-facing line, no plan" "$(echo "$BODY" | jq -r '.detail // ""')" \
+  'Chat is unavailable right now. Use the "Request a meeting" button to continue.'
 
 step "per-session hard cap (5) takes precedence over the plan quota (both pre-OpenAI)"
 # Bumping the TARGET session to the per-session cap makes the 5-turn gate fire

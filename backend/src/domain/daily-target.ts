@@ -1,6 +1,6 @@
 import { MAX_DISCOVERY_PASSES, type CycleStop } from './cycle-plan'
 
-// The Free allowance is 30 for the account's lifetime: 5 a day shows replies
+// The Free allowance is 50 for the account's lifetime: 5 a day shows replies
 // within days without spending it all on day one.
 export const FREE_DAILY_PACE = 5
 // Only for a plan that sets no pace (unlimited, self-host).

@@ -10,8 +10,8 @@ import { respondWithError } from '../respond'
 import type { Env, Variables } from '../types'
 
 // Public, unauthenticated webhook (auth is the Stripe signature). Bypasses
-// the RLS middleware: the dispatcher writes to tenant_plans for arbitrary
-// tenants on Stripe's behalf, so it must run as the unscoped postgres role.
+// the RLS middleware: no one is signed in, so the handlers find the tenant on
+// the unscoped connection and write through runWithRls for that tenant.
 export const stripeWebhookRouter = new Hono<{ Bindings: Env; Variables: Variables }>()
 
 stripeWebhookRouter.post('/stripe/webhook', async (c) => {
@@ -42,8 +42,6 @@ stripeWebhookRouter.post('/stripe/webhook', async (c) => {
 
   await handleStripeEvent(db, stripe.value.secretKey, event)
 
-  // 200 unless the handler throws: Stripe retries non-2xx for up to 3 days,
-  // which the handler relies on only for the schedule release after a
-  // scheduled plan switch; every other failure is logged and absorbed.
+  // 200 unless a handler throws; see StripeEvent for when one does.
   return c.json({ received: true })
 })

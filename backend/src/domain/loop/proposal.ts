@@ -44,6 +44,17 @@ export const frameBodySchema = z.object({
 })
 export type FrameBody = z.infer<typeof frameBodySchema>
 
+// Bounds kept off frameBodySchema: the model's frame answer shares it
+// (services/loop/propose.ts), and they would change what it is asked for.
+const { shape: frameShape } = frameBodySchema
+export const frameRequestSchema = frameBodySchema.extend({
+  salesStrategyEdits: frameShape.salesStrategyEdits.max(50),
+  outboundChannels: frameShape.outboundChannels.max(OUTBOUND_CHANNELS.length),
+  targetCountries: frameShape.targetCountries.max(ALLOWED_SEND_COUNTRIES.length),
+  variants: frameShape.variants.max(20),
+  strategies: frameShape.strategies.max(20),
+})
+
 export type ProposedChange =
   | ({ kind: 'loosen'; applyOn: string; reason: string } & ReachLoosening)
   // Written against sales_strategy version `salesStrategyFrom` and the reach

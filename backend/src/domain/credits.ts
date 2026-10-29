@@ -94,3 +94,30 @@ export function isStaleTopUpClaim(invoiceId: string, now: Date): boolean {
   const claimedAt = Date.parse(invoiceId.slice(TOP_UP_CLAIM_PREFIX.length))
   return Number.isNaN(claimedAt) || now.getTime() - claimedAt >= TOP_UP_CLAIM_TTL_MS
 }
+
+// The invoice id takes the slot before its item lands, so a draft is still
+// being filled by the run that created it until it is as old as a stale claim.
+export function isStaleTopUpDraft(createdAtSec: number, now: Date): boolean {
+  const age = now.getTime() - createdAtSec * 1000
+  return Number.isNaN(age) || age >= TOP_UP_CLAIM_TTL_MS
+}
+
+// What to do with an invoice an earlier top-up left in the slot, by what
+// Stripe says of it now: an open one is paid at the amount stamped on it while
+// still wanted, else voided; a draft is left to the run still filling it,
+// else deleted; a paid one is credited; anything else just frees the slot.
+export type TopUpResumeAction =
+  | { kind: 'pay' | 'credit'; amountCents: number }
+  | { kind: 'leave' | 'void' | 'delete' | 'clear' }
+
+export function topUpResumeAction(
+  invoice: { status: unknown; stampedCents: number | null; createdAtSec: number },
+  stillWanted: boolean,
+  now: Date,
+): TopUpResumeAction {
+  const { status, stampedCents } = invoice
+  if (status === 'open') return stillWanted && stampedCents !== null ? { kind: 'pay', amountCents: stampedCents } : { kind: 'void' }
+  if (status === 'draft') return stillWanted && !isStaleTopUpDraft(invoice.createdAtSec, now) ? { kind: 'leave' } : { kind: 'delete' }
+  if (status === 'paid' && stampedCents !== null) return { kind: 'credit', amountCents: stampedCents }
+  return { kind: 'clear' }
+}

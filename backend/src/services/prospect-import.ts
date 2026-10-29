@@ -64,9 +64,9 @@ const snsAccountsSchema = z.object({
 const hypothesisSchema = z.object({
   targetDepartment: z.string().optional(),
   targetRolePattern: z.string().optional(),
-  hypothesizedPain: z.array(z.string()).optional(),
-  valueMapping: z.array(z.string()).optional(),
-  timingSignals: z.array(z.string()).optional(),
+  hypothesizedPain: z.array(z.string()).max(10).optional(),
+  valueMapping: z.array(z.string()).max(10).optional(),
+  timingSignals: z.array(z.string()).max(10).optional(),
   bestChannel: z.string().optional(),
   bestKeyperson: z.string().optional(),
 })
@@ -710,24 +710,18 @@ export async function importCsv(
   if (resolved && !resolved.ok) return resolved
   const projectId = resolved?.value
 
-  let rows: string[][]
+  let rows: string[][] | null
   try {
-    rows = parseCsv(csvText)
+    rows = parseCsv(csvText, MAX_IMPORT_ROWS + 1)
   } catch (e) {
     return err('INVALID_INPUT', 'CSV parse error', e instanceof Error ? e.message : String(e))
   }
-
-  while (rows.length > 0) {
-    const last = rows[rows.length - 1]
-    if (!last || last.length === 0 || (last.length === 1 && last[0] === '')) rows.pop()
-    else break
+  if (!rows) {
+    return err('INVALID_INPUT', `CSV too large (max ${MAX_IMPORT_ROWS} data rows)`)
   }
 
   if (rows.length < 2) {
     return err('INVALID_INPUT', 'CSV must contain a header row and at least one data row')
-  }
-  if (rows.length - 1 > MAX_IMPORT_ROWS) {
-    return err('INVALID_INPUT', `CSV too large (max ${MAX_IMPORT_ROWS} data rows)`)
   }
 
   const header = (rows[0] ?? []).map((h) => h.trim())

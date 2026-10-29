@@ -1,5 +1,6 @@
 // Mirrors backend/src/domain/attention.ts `AttentionItem`.
 export type QuotaConstraint = 'lifetime' | 'monthly';
+export type QuotaAllowance = 'contacted' | 'found';
 
 export type AttentionItem =
 	| { kind: 'hot_leads'; count: number }
@@ -10,7 +11,8 @@ export type AttentionItem =
 	| { kind: 'mailbox_send_refused'; fromEmail: string; sentThatDay: number }
 	| { kind: 'mailbox_inbox_test_spam'; fromEmail: string; spam: number; delivered: number }
 	| { kind: 'no_outbound_channels' }
-	| { kind: 'quota_exhausted'; constraint: QuotaConstraint }
+	| { kind: 'quota_exhausted'; allowance: QuotaAllowance; constraint: QuotaConstraint }
+	| { kind: 'subscription_unpaid' }
 	| { kind: 'credit_top_up_failed'; since: string }
 	| { kind: 'reply_collection_scope_missing'; fromEmail: string }
 	| { kind: 'reply_collection_failing'; fromEmail: string; since: string; detail: string | null }

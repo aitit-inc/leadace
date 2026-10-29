@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import {
-  planFromMetadata,
+  assertPlanPrice,
   planFromSubscriptionItems,
   periodFromSubscription,
   effectivePlanFromStatus,
   isInFinalPhase,
-  paymentIntentOfInvoice,
+  rankLiveSubscriptions,
   verifyStripeSignature,
   type StripeSubscriptionItems,
 } from './stripe-webhook'
@@ -78,21 +78,6 @@ describe('verifyStripeSignature', () => {
   })
 })
 
-describe('planFromMetadata', () => {
-  it('maps a known paid plan from price metadata', () => {
-    expect(planFromMetadata({ plan: 'pro' })).toBe('pro')
-    expect(planFromMetadata({ plan: 'starter' })).toBe('starter')
-    expect(planFromMetadata({ plan: 'scale' })).toBe('scale')
-  })
-
-  it('returns null for missing or unknown plan metadata', () => {
-    expect(planFromMetadata(undefined)).toBeNull()
-    expect(planFromMetadata({})).toBeNull()
-    expect(planFromMetadata({ plan: 'enterprise' })).toBeNull()
-    expect(planFromMetadata({ plan: 'free' })).toBeNull()
-  })
-})
-
 describe('planFromSubscriptionItems', () => {
   it('finds the plan price when it is not the first item', () => {
     const items: StripeSubscriptionItems = {
@@ -157,13 +142,48 @@ describe('isInFinalPhase', () => {
   })
 })
 
-describe('paymentIntentOfInvoice', () => {
-  it('reads the payment intent of the first invoice payment', () => {
-    expect(paymentIntentOfInvoice({ payments: { data: [{ payment: { type: 'payment_intent', payment_intent: 'pi_1' } }] } })).toBe('pi_1')
+describe('rankLiveSubscriptions', () => {
+  const ids = (subs: Array<Record<string, unknown>>) => rankLiveSubscriptions(subs).map((sub) => sub['id'])
+  it('drops ended subscriptions and keeps unpaid ones', () => {
+    expect(ids([
+      { id: 'canceled', status: 'canceled', created: 3 },
+      { id: 'expired', status: 'incomplete_expired', created: 2 },
+      { id: 'past_due', status: 'past_due', created: 1 },
+    ])).toEqual(['past_due'])
+    expect(ids([{ id: 'canceled', status: 'canceled', created: 1 }])).toEqual([])
   })
-  it('is null for an unpaid invoice or a non-intent payment', () => {
-    expect(paymentIntentOfInvoice({ payments: { data: [] } })).toBeNull()
-    expect(paymentIntentOfInvoice({})).toBeNull()
-    expect(paymentIntentOfInvoice({ payments: { data: [{ payment: { type: 'charge', payment_intent: null } }] } })).toBeNull()
+  it('puts a paying subscription before an unpaid newer one', () => {
+    expect(ids([
+      { id: 'unpaid', status: 'unpaid', created: 5 },
+      { id: 'active', status: 'active', created: 1 },
+    ])).toEqual(['active', 'unpaid'])
+  })
+  it('keeps paused and trialing as live, trialing as paying', () => {
+    expect(ids([
+      { id: 'paused', status: 'paused', created: 3 },
+      { id: 'trialing', status: 'trialing', created: 1 },
+    ])).toEqual(['trialing', 'paused'])
+  })
+  it('puts the newest first among equals', () => {
+    expect(ids([
+      { id: 'old', status: 'active', created: 1 },
+      { id: 'new', status: 'trialing', created: 2 },
+    ])).toEqual(['new', 'old'])
+  })
+})
+
+describe('assertPlanPrice', () => {
+  const context = { tenantId: 't', subscriptionId: 'sub', items: undefined }
+  it('throws for a paying subscription on a price without plan metadata', () => {
+    expect(() => assertPlanPrice('active', null, context)).toThrow()
+    expect(() => assertPlanPrice('trialing', null, context)).toThrow()
+  })
+  it('lets an unpaid subscription without a plan through (it mirrors as free)', () => {
+    expect(() => assertPlanPrice('past_due', null, context)).not.toThrow()
+    expect(() => assertPlanPrice('incomplete', null, context)).not.toThrow()
+    expect(() => assertPlanPrice('unpaid', null, context)).not.toThrow()
+  })
+  it('lets a subscription with a plan through', () => {
+    expect(() => assertPlanPrice('active', 'pro', context)).not.toThrow()
   })
 })

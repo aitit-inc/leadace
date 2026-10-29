@@ -75,4 +75,7 @@ export type Variables = {
   // Set by editionMiddleware on every request (incl. unauthenticated public
   // routes); the single source of truth for the install kind in plan / billing.
   edition: Edition
+  // Set by rlsMiddleware: background work started once the request's
+  // transaction commits, and dropped if it rolls back.
+  afterCommit?: Array<() => Promise<void>>
 }

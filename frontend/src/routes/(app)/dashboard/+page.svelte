@@ -198,13 +198,13 @@
   let rejectionMax = $derived(Math.max(1, ...(summary?.rejections.topReasons ?? []).map((r) => r.percentage)));
 
   // Opportunity/queue/degradation kinds don't stop sending — autopilot stays "on".
+  // Neither does a spent allowance or an unpaid subscription: follow-ups and replies keep running.
   const SENDING_BLOCKERS: AttentionItem['kind'][] = [
     'no_project',
     'compliance_incomplete',
     'gmail_disconnected',
     'gmail_auth_revoked',
     'no_outbound_channels',
-    'quota_exhausted',
   ];
   let paused = $derived(summary?.attention.some((a) => SENDING_BLOCKERS.includes(a.kind)) ?? false);
 

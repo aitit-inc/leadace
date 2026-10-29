@@ -177,9 +177,9 @@ const snsAccountsSchema = z.object({
 const hypothesisSchema = z.object({
   targetDepartment: z.string().optional(),
   targetRolePattern: z.string().optional(),
-  hypothesizedPain: z.array(z.string()).optional(),
-  valueMapping: z.array(z.string()).optional(),
-  timingSignals: z.array(z.string()).optional(),
+  hypothesizedPain: z.array(z.string()).max(10).optional(),
+  valueMapping: z.array(z.string()).max(10).optional(),
+  timingSignals: z.array(z.string()).max(10).optional(),
   bestChannel: z.string().optional(),
   bestKeyperson: z.string().optional(),
 })

@@ -1,9 +1,10 @@
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import type { Db } from '../db/connection'
+import { runWithRls } from '../db/rls'
 import { tenantPlans, tenantMembers } from '../db/schema'
 import { timingSafeEqual } from '../domain/timing-safe'
 import { stripeApiRequest } from './stripe-api'
-import { PAID_PLAN_TIERS, type PaidPlanTier, type PlanTier } from './plan-limits'
+import { planFromMetadata, subscriptionEnded, type PaidPlanTier, type PlanTier } from './plan-limits'
 import { abandonPendingTopUp, settleCreditPurchase, settleTopUpFailedEvent, settleTopUpPaidEvent } from './credits'
 
 // Lives in the service tier (not domain) because crypto.subtle and the wall
@@ -52,11 +53,6 @@ export async function verifyStripeSignature(
   return parts.signatures.some((sig) => timingSafeEqual(sig, expected))
 }
 
-export function planFromMetadata(metadata: Record<string, string> | undefined): PaidPlanTier | null {
-  const plan = metadata?.['plan']
-  return PAID_PLAN_TIERS.find((tier) => tier === plan) ?? null
-}
-
 export type StripeSubscriptionItems = {
   data: Array<{
     price: { metadata: Record<string, string> }
@@ -97,62 +93,25 @@ export function effectivePlanFromStatus(
   return (status === 'active' || status === 'trialing') && plan ? plan : 'free'
 }
 
-// Used when we detect a critical configuration error after a successful
-// Checkout — the user paid but we cannot deliver, so we undo the charge.
-// Best-effort: logs CRITICAL but never throws (webhook must always return 200
-// to stop Stripe retries).
-async function cancelAndRefund(
-  subscriptionId: string,
-  sub: Record<string, unknown> | null,
-  secretKey: string,
-  context: string,
-): Promise<void> {
-  const cancel = await stripeApiRequest('DELETE', `/subscriptions/${subscriptionId}`, null, secretKey)
-  if (!cancel.ok) {
-    console.error(`CRITICAL ${context}: failed to cancel subscription`, { subscriptionId, error: cancel.data })
-  } else {
-    console.error(`CRITICAL ${context}: subscription canceled`, { subscriptionId })
-  }
-
-  let invoiceId = (sub?.['latest_invoice'] as string | null | undefined) ?? null
-  if (!invoiceId) {
-    const fetched = await stripeApiRequest('GET', `/subscriptions/${subscriptionId}`, null, secretKey)
-    if (fetched.ok) invoiceId = (fetched.data['latest_invoice'] as string | null) ?? null
-  }
-  if (!invoiceId) {
-    console.error(`CRITICAL ${context}: no invoice on subscription, nothing to refund`, { subscriptionId })
-    return
-  }
-
-  const inv = await stripeApiRequest('GET', `/invoices/${invoiceId}?expand[]=payments`, null, secretKey)
-  if (!inv.ok) {
-    console.error(`CRITICAL ${context}: failed to fetch invoice`, { invoiceId, error: inv.data })
-    return
-  }
-  const paymentIntentId = paymentIntentOfInvoice(inv.data)
-  if (!paymentIntentId) {
-    console.error(`CRITICAL ${context}: no payment on invoice (likely $0 trial); skipping refund`, { invoiceId })
-    return
-  }
-
-  const refund = await stripeApiRequest('POST', '/refunds', { payment_intent: paymentIntentId }, secretKey)
-  if (!refund.ok) {
-    console.error(`CRITICAL ${context}: refund failed`, { paymentIntentId, error: refund.data })
-  } else {
-    console.error(`CRITICAL ${context}: refund issued`, { paymentIntentId, refundId: refund.data['id'] })
+// A live subscription on a price without plan metadata means our Stripe
+// config drifted (a Dashboard edit, a wrong price). Nothing is written and
+// nothing is undone: the event fails, so it stays visible and is redelivered
+// once the price is fixed.
+export function assertPlanPrice(
+  status: string | undefined,
+  plan: PaidPlanTier | null,
+  context: { tenantId: string; subscriptionId: string; items: StripeSubscriptionItems },
+): void {
+  if ((status === 'active' || status === 'trialing') && !plan) {
+    console.error('CRITICAL subscription on a price without plan metadata; nothing written (fix the price metadata)', context)
+    throw new Error(`subscription ${context.subscriptionId} is on a price without plan metadata`)
   }
 }
 
-// API 2025-03-31 (Basil) replaced the invoice's `charge` with the `payments`
-// list, which the read must expand; the plan invoice is paid in one.
-export function paymentIntentOfInvoice(invoice: Record<string, unknown>): string | null {
-  const payments = invoice['payments'] as { data?: Array<{ payment?: { type?: string; payment_intent?: string | null } }> } | undefined
-  const payment = payments?.data?.[0]?.payment
-  return payment?.type === 'payment_intent' && typeof payment.payment_intent === 'string' ? payment.payment_intent : null
-}
-
-// Webhook always responds 200 (Stripe retries non-2xx for up to 3 days);
-// anything we can't handle is logged and ignored so the queue drains.
+// A handler throws only where a redelivery can succeed (a Stripe call
+// failed, a price awaits its plan metadata); the webhook then answers non-2xx
+// and Stripe retries for up to 3 days. Anything else we can't handle is logged
+// and ignored so the queue drains.
 export type StripeEvent = {
   type: string
   data: { object: Record<string, unknown> }
@@ -175,10 +134,8 @@ export async function handleStripeEvent(
       if (event.data.object['mode'] === 'payment') await settleCreditPurchase(db, event.data.object)
       return
     case 'customer.subscription.updated':
-      await handleSubscriptionUpdated(db, secretKey, event.data.object)
-      return
     case 'customer.subscription.deleted':
-      await handleSubscriptionDeleted(db, secretKey, event.data.object)
+      await handleSubscriptionEvent(db, secretKey, event.data.object)
       return
     // A credit top-up invoice (LeadAce metadata) settles the ledger. Renewal
     // invoices are observation-only: plan state is mirrored from
@@ -196,6 +153,10 @@ export async function handleStripeEvent(
   }
 }
 
+// The event that ties a Stripe customer to our user. Checkout is opened on the
+// tenant's customer, but a session from before customers were made up front
+// brought its own: it is kept only when the tenant has none, so a late event
+// never repoints a tenant at another customer.
 async function handleCheckoutSessionCompleted(
   db: Db,
   secretKey: string,
@@ -203,10 +164,9 @@ async function handleCheckoutSessionCompleted(
 ): Promise<void> {
   const userId = session['client_reference_id'] as string | null
   const customerId = session['customer'] as string | null
-  const subscriptionId = session['subscription'] as string | null
 
-  if (!userId || !customerId || !subscriptionId) {
-    console.error('checkout.session.completed: missing required fields', { userId, customerId, subscriptionId })
+  if (!userId || !customerId) {
+    console.error('checkout.session.completed: missing required fields', { userId, customerId })
     return
   }
 
@@ -221,154 +181,138 @@ async function handleCheckoutSessionCompleted(
     return
   }
 
-  const tenantId = member.tenantId
-
-  // Unlimited tenants aren't expected to go through Checkout (UI hides
-  // Upgrade); defensively abort so their special status is never overwritten.
-  const [existingPlan] = await db
-    .select({ plan: tenantPlans.plan })
-    .from(tenantPlans)
-    .where(eq(tenantPlans.tenantId, tenantId))
-    .limit(1)
-
-  if (existingPlan?.plan === 'unlimited') {
-    console.error(
-      'CRITICAL checkout.session.completed: tenant is on unlimited plan, refusing to overwrite',
-      { tenantId, userId, subscriptionId },
-    )
-    return
-  }
-
-  const subRes = await fetch(`https://api.stripe.com/v1/subscriptions/${subscriptionId}`, {
-    headers: { Authorization: `Bearer ${secretKey}` },
-  })
-  const sub = (await subRes.json()) as Record<string, unknown>
-  const items = sub['items'] as StripeSubscriptionItems
-  const plan = planFromSubscriptionItems(items)
-
-  // Checkout completed against a Price with no valid plan metadata means our
-  // Stripe configuration is broken (Dashboard edit, or wrong Price ID). User
-  // paid but we can't map them to a tier — cancel and refund rather than guess.
-  if (!plan) {
-    console.error(
-      'CRITICAL checkout.session.completed: missing or invalid plan metadata on price; cancelling subscription and refunding charge',
-      { tenantId, userId, subscriptionId, items },
-    )
-    await cancelAndRefund(subscriptionId, sub, secretKey, 'checkout.session.completed')
-    return
-  }
-
-  // checkout.session.completed can fire before the subscription is active —
-  // async payment methods (ACH etc.) leave it in 'processing'/'incomplete', and
-  // even card-only flows are not contractually guaranteed to be 'active' at
-  // this point. Persist customer/subscription IDs (needed for the portal) but
-  // only grant the paid tier when status is active/trialing; otherwise leave
-  // plan as 'free' and let customer.subscription.updated promote it later.
-  const status = sub['status'] as string | undefined
-  const activePlan = effectivePlanFromStatus(status, plan)
-  if (activePlan === 'free') {
-    console.warn(
-      'checkout.session.completed: subscription not yet active; persisting IDs only, plan will be promoted by subscription.updated',
-      { tenantId, userId, subscriptionId, status },
-    )
-  }
-
-  const { start: periodStart, end: periodEnd } = periodFromSubscription(sub, items)
-
-  const now = new Date()
-  await db
+  const [linked] = await db
     .insert(tenantPlans)
-    .values({
-      tenantId,
-      plan: activePlan,
-      stripeCustomerId: customerId,
-      stripeSubscriptionId: subscriptionId,
-      currentPeriodStart: periodStart ? new Date(periodStart * 1000) : now,
-      currentPeriodEnd: periodEnd ? new Date(periodEnd * 1000) : now,
-      createdAt: now,
-      updatedAt: now,
-    })
+    .values({ tenantId: member.tenantId, stripeCustomerId: customerId })
     .onConflictDoUpdate({
       target: tenantPlans.tenantId,
-      set: {
-        plan: activePlan,
-        stripeCustomerId: customerId,
-        stripeSubscriptionId: subscriptionId,
-        currentPeriodStart: periodStart ? new Date(periodStart * 1000) : now,
-        currentPeriodEnd: periodEnd ? new Date(periodEnd * 1000) : now,
-        updatedAt: now,
-      },
+      set: { stripeCustomerId: sql`COALESCE(${tenantPlans.stripeCustomerId}, excluded.stripe_customer_id)`, updatedAt: new Date() },
     })
-
-  console.log(
-    `Tenant ${tenantId} (user ${userId}) checkout completed: requested=${plan}, effective=${activePlan}, status=${status}`,
-  )
+    .returning({ customerId: tenantPlans.stripeCustomerId })
+  if (!linked?.customerId) throw new Error(`failed to link customer ${customerId} to tenant ${member.tenantId}`)
+  if (linked.customerId !== customerId) {
+    console.error('CRITICAL checkout.session.completed: the session is on another customer than the tenant\'s; mirroring the tenant\'s', {
+      tenantId: member.tenantId, sessionCustomer: customerId, tenantCustomer: linked.customerId,
+    })
+  }
+  await mirrorCustomer(db, secretKey, member.tenantId, linked.customerId)
 }
 
-async function handleSubscriptionUpdated(
+async function handleSubscriptionEvent(
   db: Db,
   secretKey: string,
-  sub: Record<string, unknown>,
+  fromEvent: Record<string, unknown>,
 ): Promise<void> {
-  const subscriptionId = sub['id'] as string
+  const customerId = fromEvent['customer']
+  const [row] = typeof customerId === 'string'
+    ? await db
+        .select({ tenantId: tenantPlans.tenantId, customerId: tenantPlans.stripeCustomerId })
+        .from(tenantPlans)
+        .where(eq(tenantPlans.stripeCustomerId, customerId))
+        .limit(1)
+    : []
 
-  const [row] = await db
-    .select({ tenantId: tenantPlans.tenantId, plan: tenantPlans.plan })
-    .from(tenantPlans)
-    .where(eq(tenantPlans.stripeSubscriptionId, subscriptionId))
-    .limit(1)
-
-  if (!row) {
-    console.error('subscription.updated: no tenant found for subscription', subscriptionId)
+  if (!row?.customerId) {
+    console.error('subscription event: no tenant found for customer', { customerId, subscriptionId: fromEvent['id'] })
     return
   }
+  await mirrorCustomer(db, secretKey, row.tenantId, row.customerId)
+}
 
-  // Never demote 'unlimited' — defensive, a tenant on this tier shouldn't
-  // have a Stripe subscription, but refuse to overwrite if one is attached.
-  if (row.plan === 'unlimited') {
-    console.error(
-      'CRITICAL subscription.updated: tenant on unlimited plan has Stripe subscription; refusing to update',
-      { tenantId: row.tenantId, subscriptionId },
-    )
-    return
-  }
+// Two events for one tenant can run at once (a lapse and its recovery seconds
+// apart): each reads Stripe and writes under this lock, so the later read is
+// the one that lands last. A holder waits on Stripe for one call (its timeout
+// and retries); a waiter that gives up first fails its event, and Stripe
+// redelivers it.
+function underSubscriptionLock<T>(db: Db, tenantId: string, fn: (tx: Db) => Promise<T>): Promise<T> {
+  return runWithRls(db, tenantId, async (tx) => {
+    await tx.execute(sql`SET LOCAL lock_timeout = '15s'`)
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`${tenantId}:subscription`}))`)
+    return fn(tx)
+  })
+}
 
-  const items = sub['items'] as StripeSubscriptionItems
-  const plan = planFromSubscriptionItems(items)
-  const status = sub['status'] as string
-  const { start: periodStart, end: periodEnd } = periodFromSubscription(sub, items)
+type ListedSubscription = Record<string, unknown>
 
-  // Active subscription with missing plan metadata means our Stripe config
-  // drifted (Dashboard edit). Don't auto-cancel a running subscription
-  // mid-period — leave the DB row intact and alert via logs.
-  if ((status === 'active' || status === 'trialing') && !plan) {
-    console.error(
-      'CRITICAL subscription.updated: active subscription with missing plan metadata; not modifying DB (operator must fix Price metadata)',
-      { tenantId: row.tenantId, subscriptionId, status, items },
-    )
-    return
-  }
+// The customer's subscriptions that have not ended (past_due and unpaid have
+// not), the one the tenant holds first. Checkout refuses a second, so more
+// than one is an incident; the paying one, then the newest, is held.
+export function rankLiveSubscriptions(subs: ListedSubscription[]): ListedSubscription[] {
+  const paying = (sub: ListedSubscription) => sub['status'] === 'active' || sub['status'] === 'trialing'
+  return subs
+    .filter((sub) => !subscriptionEnded(sub['status']))
+    .sort((a, b) => Number(paying(b)) - Number(paying(a)) || Number(b['created']) - Number(a['created']))
+}
 
-  const activePlan = effectivePlanFromStatus(status, plan)
+async function liveSubscriptions(customerId: string, secretKey: string): Promise<ListedSubscription[]> {
+  const res = await stripeApiRequest('GET', `/subscriptions?customer=${encodeURIComponent(customerId)}&limit=100`, null, secretKey)
+  const list = res.data['data']
+  if (!res.ok || !Array.isArray(list)) throw new Error(`failed to list subscriptions of ${customerId}: ${JSON.stringify(res.data)}`)
+  return rankLiveSubscriptions(list as ListedSubscription[])
+}
 
-  // A lapsed subscription (past_due, unpaid, …) has nothing to charge a
-  // top-up to, so auto top-up goes off and any invoice in flight is voided.
-  await db
-    .update(tenantPlans)
-    .set({
-      plan: activePlan,
-      currentPeriodStart: periodStart ? new Date(periodStart * 1000) : undefined,
-      currentPeriodEnd: periodEnd ? new Date(periodEnd * 1000) : undefined,
-      ...(activePlan === 'free' ? { autoTopUpEnabled: false, autoTopUpFailedAt: null } : {}),
-      updatedAt: new Date(),
-    })
-    .where(eq(tenantPlans.tenantId, row.tenantId))
-  if (activePlan === 'free') await abandonPendingTopUp(db, row.tenantId, secretKey)
+// Whatever the event, the tenant's row is written from its customer's
+// subscriptions as Stripe has them now: Stripe does not order its events and
+// redelivers a failed one for days, and a failed read throws so the event
+// comes back. The row holds a subscription until it ends, so free with one
+// held is a subscription Stripe has not been paid for (domain/attention). With
+// none left the auto top-up consent goes too: a later subscription starts with
+// it off rather than charging a new card on an old yes.
+async function mirrorCustomer(db: Db, secretKey: string, tenantId: string, customerId: string): Promise<void> {
+  const mirrored = await underSubscriptionLock(db, tenantId, async (tx) => {
+    const [row] = await tx
+      .select({ plan: tenantPlans.plan })
+      .from(tenantPlans)
+      .where(eq(tenantPlans.tenantId, tenantId))
+      .limit(1)
+    // Never demote 'unlimited' — a tenant on this tier shouldn't have a
+    // Stripe subscription, but refuse to overwrite if one is attached.
+    if (row?.plan === 'unlimited') {
+      console.error('CRITICAL subscription event: tenant on unlimited plan has a Stripe customer; refusing to update', { tenantId, customerId })
+      return null
+    }
 
-  const scheduleId = sub['schedule']
-  if (typeof scheduleId === 'string') await releaseScheduleAfterSwitch(scheduleId, secretKey)
+    const live = await liveSubscriptions(customerId, secretKey)
+    if (live.length > 1) {
+      console.error('CRITICAL subscription event: customer has more than one live subscription', { tenantId, customerId, subscriptionIds: live.map((sub) => sub['id']) })
+    }
+    const sub = live[0]
+    if (!sub) {
+      await tx
+        .update(tenantPlans)
+        .set({ plan: 'free', stripeSubscriptionId: null, autoTopUpEnabled: false, autoTopUpFailedAt: null, updatedAt: new Date() })
+        .where(eq(tenantPlans.tenantId, tenantId))
+      return { activePlan: 'free' as const, scheduleId: null }
+    }
 
-  console.log(`Tenant ${row.tenantId} plan updated to ${activePlan}`)
+    const subscriptionId = sub['id'] as string
+    const items = sub['items'] as StripeSubscriptionItems
+    const plan = planFromSubscriptionItems(items)
+    const status = sub['status'] as string
+    assertPlanPrice(status, plan, { tenantId, subscriptionId, items })
+
+    const activePlan = effectivePlanFromStatus(status, plan)
+    const { start: periodStart, end: periodEnd } = periodFromSubscription(sub, items)
+    await tx
+      .update(tenantPlans)
+      .set({
+        plan: activePlan,
+        stripeSubscriptionId: subscriptionId,
+        currentPeriodStart: periodStart ? new Date(periodStart * 1000) : undefined,
+        currentPeriodEnd: periodEnd ? new Date(periodEnd * 1000) : undefined,
+        updatedAt: new Date(),
+      })
+      .where(eq(tenantPlans.tenantId, tenantId))
+    return { activePlan, scheduleId: sub['schedule'] }
+  })
+  if (!mirrored) return
+  // A lapsed or ended subscription has nothing to charge a top-up to, so an
+  // invoice in flight is voided. Free holds no credits, so no new top-up
+  // starts; after a lapse the setting stays for when the plan returns.
+  if (mirrored.activePlan === 'free') await abandonPendingTopUp(db, tenantId, secretKey)
+  if (typeof mirrored.scheduleId === 'string') await releaseScheduleAfterSwitch(mirrored.scheduleId, secretKey)
+
+  console.log(`Tenant ${tenantId} plan updated to ${mirrored.activePlan}`)
 }
 
 export type StripeSchedulePhases = {
@@ -410,41 +354,4 @@ function logInvoicePaymentFailed(invoice: Record<string, unknown>): void {
   const attemptCount = (invoice['attempt_count'] as number | null) ?? null
   const nextPaymentAttempt = (invoice['next_payment_attempt'] as number | null) ?? null
   console.error('invoice.payment_failed', { subscriptionId, attemptCount, nextPaymentAttempt })
-}
-
-async function handleSubscriptionDeleted(
-  db: Db,
-  secretKey: string,
-  sub: Record<string, unknown>,
-): Promise<void> {
-  const subscriptionId = sub['id'] as string
-
-  const [row] = await db
-    .select({ tenantId: tenantPlans.tenantId, plan: tenantPlans.plan })
-    .from(tenantPlans)
-    .where(eq(tenantPlans.stripeSubscriptionId, subscriptionId))
-    .limit(1)
-
-  if (!row) {
-    console.error('subscription.deleted: no tenant found for subscription', subscriptionId)
-    return
-  }
-
-  if (row.plan === 'unlimited') {
-    console.error(
-      'CRITICAL subscription.deleted: tenant on unlimited plan has Stripe subscription; refusing to downgrade to free',
-      { tenantId: row.tenantId, subscriptionId },
-    )
-    return
-  }
-
-  // Auto top-up charged this subscription's payment method; the next one
-  // starts with it off. The credit balance itself stays (credits never expire).
-  await db
-    .update(tenantPlans)
-    .set({ plan: 'free', autoTopUpEnabled: false, autoTopUpFailedAt: null, updatedAt: new Date() })
-    .where(eq(tenantPlans.tenantId, row.tenantId))
-  await abandonPendingTopUp(db, row.tenantId, secretKey)
-
-  console.log(`Subscription ${subscriptionId} deleted, tenant ${row.tenantId} downgraded to free`)
 }

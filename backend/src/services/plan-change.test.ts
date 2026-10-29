@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { planChangeDirection, scheduledPlanFromSchedule, type StripeSchedule } from './plan-change'
+import { nothingLeftToSwitch, planChangeDirection, scheduledPlanFromSchedule, type StripeSchedule } from './plan-change'
 
 const phase = (plan: string) => ({
   start_date: 0,
@@ -28,5 +28,17 @@ describe('scheduledPlanFromSchedule', () => {
   it('ignores a last phase whose price carries no plan', () => {
     const schedule: StripeSchedule = { id: 's', current_phase: { start_date: 0 }, phases: [phase('pro'), { ...phase('x'), items: [{ price: { id: 'p', metadata: {} }, quantity: 1 }] }] }
     expect(scheduledPlanFromSchedule(schedule, 'pro')).toBeNull()
+  })
+})
+
+describe('nothingLeftToSwitch', () => {
+  const schedule = (...phases: StripeSchedule['phases']): StripeSchedule => ({ id: 's', current_phase: { start_date: 0 }, phases })
+  it('is true when the last phase is the running plan', () => {
+    expect(nothingLeftToSwitch(schedule(phase('pro')), 'pro')).toBe(true)
+    expect(nothingLeftToSwitch(schedule(phase('pro'), phase('starter')), 'starter')).toBe(true)
+  })
+  it('is false for a pending switch and for a last phase whose price carries no plan', () => {
+    expect(nothingLeftToSwitch(schedule(phase('pro'), phase('starter')), 'pro')).toBe(false)
+    expect(nothingLeftToSwitch(schedule(phase('pro'), { ...phase('x'), items: [{ price: { id: 'p', metadata: {} }, quantity: 1 }] }), 'pro')).toBe(false)
   })
 })

@@ -7,10 +7,11 @@ export interface PaidTier {
   monthlyPrice: number;
   projects: string;
   outreach: string;
+  chat: string;
   priceId: string | undefined;
 }
 
-// Ordered lowest to highest; mirrors PLAN_LIMITS in backend/src/services/plan-limits.ts.
+// Ordered lowest to highest; mirrors PLAN_LIMITS and MAIN_CHAT_LIMITS in backend/src/services/plan-limits.ts.
 export const PAID_TIERS: PaidTier[] = [
   {
     tier: 'starter',
@@ -18,6 +19,7 @@ export const PAID_TIERS: PaidTier[] = [
     monthlyPrice: 49,
     projects: '1 project · 1 mailbox',
     outreach: '100 prospects / month',
+    chat: '150 chat messages / month',
     priceId: STRIPE_PRICES.starter,
   },
   {
@@ -26,6 +28,7 @@ export const PAID_TIERS: PaidTier[] = [
     monthlyPrice: 99,
     projects: '5 projects · 3 mailboxes',
     outreach: '300 prospects / month',
+    chat: '300 chat messages / month',
     priceId: STRIPE_PRICES.pro,
   },
   {
@@ -34,6 +37,7 @@ export const PAID_TIERS: PaidTier[] = [
     monthlyPrice: 199,
     projects: 'Unlimited projects · 10 mailboxes',
     outreach: '800 prospects / month',
+    chat: '600 chat messages / month',
     priceId: STRIPE_PRICES.scale,
   },
 ];

@@ -8,6 +8,8 @@
 #
 # Start the cloud worker first, in its own terminal:
 #   ./e2e/cloud-edition-up.sh
+# regression-cloud-stripe-testmode skips unless STRIPE_SECRET_KEY holds a Stripe
+# test-mode key, here and for the worker (see its header).
 # then:
 #   ./e2e/regression-cloud-all.sh
 #   SKIP_CLEANUP=1 ./e2e/regression-cloud-all.sh   # forwarded to each child suite
@@ -39,6 +41,8 @@ SUITES=(
   regression-cloud-stripe-webhook
   regression-cloud-inquiry-quota
   regression-cloud-inquiry-rate-limit
+  regression-cloud-chat-quota
+  regression-cloud-stripe-testmode
 )
 
 fail=0

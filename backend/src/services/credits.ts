@@ -9,6 +9,7 @@ import {
   invoicePaidAt,
   isCardDecline,
   isStaleTopUpClaim,
+  topUpResumeAction,
   TOP_UP_CLAIM_PREFIX,
   USAGE_PRICE_CENTS,
   type AutoTopUp,
@@ -17,9 +18,9 @@ import {
 import { parseEdition, type CloudEdition, type Edition } from '../domain/edition'
 import type { TenantId } from '../domain/ids'
 import { requireStripeCustomer } from './billing'
-import { getTenantPlan, holdsCredits, livePreSend, sumCreditBalance } from './plan-limits'
+import { getTenantPlan, holdsCredits, livePreSend, sumCreditBalance, type PlanTier } from './plan-limits'
 import { ok, err, type ServiceResult } from './result'
-import { stripeApiRequest } from './stripe-api'
+import { stripeApiRequest, stripeErrorCode } from './stripe-api'
 
 export const creditCheckoutBodySchema = z.object({
   packCents: creditAmountSchema,
@@ -187,9 +188,10 @@ async function markTopUpFailed(db: Db, tenantId: string, invoiceId: string, deta
     .where(and(eq(tenantPlans.tenantId, tenantId), eq(tenantPlans.autoTopUpInvoiceId, invoiceId)))
 }
 
-// Card declined = the customer's problem, so auto top-up switches off; any
-// other error is ours or transient and the open invoice is retried by the
-// next debit's kick.
+// Only a paid invoice credits. Card declined = the customer's problem, so
+// auto top-up switches off; anything else (an error of ours, a bank debit
+// still processing) keeps the invoice in the slot for invoice.paid or the
+// next debit's kick to settle.
 async function payTopUpInvoice(
   db: Db,
   tenantId: string,
@@ -198,7 +200,7 @@ async function payTopUpInvoice(
   secretKey: string,
 ): Promise<void> {
   const paid = await stripeApiRequest('POST', `/invoices/${invoiceId}/pay`, { off_session: 'true' }, secretKey)
-  if (paid.ok) {
+  if (paid.ok && paid.data['status'] === 'paid') {
     await creditLedgerEntry(db, tenantId, 'auto_top_up', amountCents, invoiceId)
     await clearPendingTopUp(db, tenantId, invoiceId)
     await clearDeclineStamp(db, tenantId, invoicePaidAt(paid.data, new Date()))
@@ -210,10 +212,10 @@ async function payTopUpInvoice(
     await markTopUpFailed(db, tenantId, invoiceId, paid.data)
     return
   }
-  console.error('auto top-up: pay failed, will retry on the next debit', { tenantId, invoiceId, error: paid.data })
+  console.error('auto top-up: not paid yet, will retry on the next debit', { tenantId, invoiceId, result: paid.data })
 }
 
-// One invoice per top-up, built before any item lands on it so a stray
+// One invoice per top-up, created before any item lands on it so a stray
 // pending invoice item of the customer is never swept in.
 async function createTopUpInvoice(
   tenantId: string,
@@ -221,7 +223,7 @@ async function createTopUpInvoice(
   subscriptionId: string | null,
   amountCents: number,
   secretKey: string,
-): Promise<string | null> {
+): Promise<{ ok: true; id: string } | { ok: false; unknown: boolean }> {
   let paymentMethod: string | null = null
   if (subscriptionId) {
     const sub = await stripeApiRequest('GET', `/subscriptions/${subscriptionId}`, null, secretKey)
@@ -240,9 +242,21 @@ async function createTopUpInvoice(
   }, secretKey)
   if (!invoice.ok) {
     console.error('auto top-up: invoice create failed', { tenantId, error: invoice.data })
-    return null
+    return { ok: false, unknown: invoice.unknown }
   }
-  const invoiceId = invoice.data['id'] as string
+  return { ok: true, id: invoice.data['id'] as string }
+}
+
+// The invoice already holds the slot, so a step that fails (or whose answer
+// cannot be read) leaves it for the next kick, which reads it back from
+// Stripe and pays, voids or deletes it.
+async function finalizeTopUpInvoice(
+  tenantId: string,
+  invoiceId: string,
+  customerId: string,
+  amountCents: number,
+  secretKey: string,
+): Promise<boolean> {
   const item = await stripeApiRequest('POST', '/invoiceitems', {
     customer: customerId,
     invoice: invoiceId,
@@ -251,22 +265,21 @@ async function createTopUpInvoice(
     description: `LeadAce credits (${formatCents(amountCents)})`,
   }, secretKey)
   if (!item.ok) {
-    console.error('auto top-up: invoice item failed', { tenantId, invoiceId, error: item.data })
-    await stripeApiRequest('DELETE', `/invoices/${invoiceId}`, null, secretKey)
-    return null
+    console.error('auto top-up: invoice item failed, the next debit settles the invoice', { tenantId, invoiceId, error: item.data })
+    return false
   }
   const finalized = await stripeApiRequest('POST', `/invoices/${invoiceId}/finalize`, null, secretKey)
   if (!finalized.ok) {
-    console.error('auto top-up: finalize failed', { tenantId, invoiceId, error: finalized.data })
-    await stripeApiRequest('DELETE', `/invoices/${invoiceId}`, null, secretKey)
-    return null
+    console.error('auto top-up: finalize failed, the next debit settles the invoice', { tenantId, invoiceId, error: finalized.data })
+    return false
   }
-  return invoiceId
+  return true
 }
 
-// An invoice an earlier kick left behind, settled at the amount stamped on it
-// (the setting may have changed since) and voided when the tenant no longer
-// wants top-ups. A failed GET keeps the reference for the next kick.
+// An invoice an earlier kick left behind, settled as topUpResumeAction decides
+// (at the amount stamped on it: the setting may have changed since). The slot
+// is freed only once Stripe confirms, so any failed call keeps the reference
+// for the next kick.
 async function resumePendingTopUp(
   db: Db,
   tenantId: string,
@@ -276,19 +289,43 @@ async function resumePendingTopUp(
 ): Promise<void> {
   const inv = await stripeApiRequest('GET', `/invoices/${invoiceId}`, null, secretKey)
   if (!inv.ok) {
+    // Stripe saying the invoice does not exist (a delete whose answer was
+    // lost) is a fact, not a failed read: there is nothing left to settle.
+    if (stripeErrorCode(inv.data) === 'resource_missing') {
+      await clearPendingTopUp(db, tenantId, invoiceId)
+      return
+    }
     console.error('auto top-up: pending invoice lookup failed, will retry on the next debit', { tenantId, invoiceId, error: inv.data })
     return
   }
-  const status = inv.data['status'] as string | undefined
-  const topUp = creditMetadata(inv.data)
-  if (status === 'open' && stillWanted && topUp) {
-    await payTopUpInvoice(db, tenantId, invoiceId, topUp.amountCents, secretKey)
-    return
-  }
-  if (status === 'open') await stripeApiRequest('POST', `/invoices/${invoiceId}/void`, null, secretKey)
-  if (status === 'paid' && topUp) {
-    await creditLedgerEntry(db, tenantId, 'auto_top_up', topUp.amountCents, invoiceId)
-    await clearDeclineStamp(db, tenantId, invoicePaidAt(inv.data, new Date()))
+  const action = topUpResumeAction(
+    { status: inv.data['status'], stampedCents: creditMetadata(inv.data)?.amountCents ?? null, createdAtSec: Number(inv.data['created']) },
+    stillWanted,
+    new Date(),
+  )
+  switch (action.kind) {
+    case 'leave':
+      return
+    case 'pay':
+      await payTopUpInvoice(db, tenantId, invoiceId, action.amountCents, secretKey)
+      return
+    case 'void':
+    case 'delete': {
+      const closed = action.kind === 'void'
+        ? await stripeApiRequest('POST', `/invoices/${invoiceId}/void`, null, secretKey)
+        : await stripeApiRequest('DELETE', `/invoices/${invoiceId}`, null, secretKey)
+      if (!closed.ok) {
+        console.error('auto top-up: closing the pending invoice failed, will retry on the next debit', { tenantId, invoiceId, action: action.kind, error: closed.data })
+        return
+      }
+      break
+    }
+    case 'credit':
+      await creditLedgerEntry(db, tenantId, 'auto_top_up', action.amountCents, invoiceId)
+      await clearDeclineStamp(db, tenantId, invoicePaidAt(inv.data, new Date()))
+      break
+    case 'clear':
+      break
   }
   await clearPendingTopUp(db, tenantId, invoiceId)
 }
@@ -325,7 +362,7 @@ async function runAutoTopUpFor(db: Db, tenantId: TenantId, secretKey: string): P
     .where(eq(tenantPlans.tenantId, tenantId))
     .limit(1)
   if (!row) return
-  const wanted = row.enabled && holdsCredits(row.plan) && row.stripeCustomerId !== null
+  const wanted = topUpWanted(row)
 
   if (row.invoiceId && isStaleTopUpClaim(row.invoiceId, now)) {
     await clearPendingTopUp(db, tenantId, row.invoiceId)
@@ -340,15 +377,19 @@ async function runAutoTopUpFor(db: Db, tenantId: TenantId, secretKey: string): P
 
   const claim = await claimTopUpSlot(db, tenantId, now)
   if (!claim) return
-  const invoiceId = await createTopUpInvoice(tenantId, row.stripeCustomerId, row.stripeSubscriptionId, row.amountCents, secretKey)
-  if (!invoiceId) {
-    await clearPendingTopUp(db, tenantId, claim)
+  const created = await createTopUpInvoice(tenantId, row.stripeCustomerId, row.stripeSubscriptionId, row.amountCents, secretKey)
+  // An invoice whose creation went unanswered may exist, so the claim stays
+  // until it expires instead of letting the next debit raise another now.
+  if (!created.ok) {
+    if (!created.unknown) await clearPendingTopUp(db, tenantId, claim)
     return
   }
+  const invoiceId = created.id
   await db
     .update(tenantPlans)
     .set({ autoTopUpInvoiceId: invoiceId, updatedAt: now })
     .where(and(eq(tenantPlans.tenantId, tenantId), eq(tenantPlans.autoTopUpInvoiceId, claim)))
+  if (!(await finalizeTopUpInvoice(tenantId, invoiceId, row.stripeCustomerId, row.amountCents, secretKey))) return
   await payTopUpInvoice(db, tenantId, invoiceId, row.amountCents, secretKey)
 }
 
@@ -368,15 +409,26 @@ export async function kickAutoTopUp(env: AutoTopUpEnv, tenantId: TenantId): Prom
 }
 
 // Voids the invoice in flight for a tenant who switched auto top-up off or
-// whose subscription lapsed; a paid one is still credited.
+// whose subscription lapsed; a paid one is still credited. Whether it is
+// still wanted is read with the invoice, so a cleanup that runs late leaves
+// alone a top-up the tenant started again since.
 export async function abandonPendingTopUp(db: Db, tenantId: string, secretKey: string): Promise<void> {
   const [row] = await db
-    .select({ invoiceId: tenantPlans.autoTopUpInvoiceId })
+    .select({
+      plan: tenantPlans.plan,
+      stripeCustomerId: tenantPlans.stripeCustomerId,
+      enabled: tenantPlans.autoTopUpEnabled,
+      invoiceId: tenantPlans.autoTopUpInvoiceId,
+    })
     .from(tenantPlans)
     .where(eq(tenantPlans.tenantId, tenantId))
     .limit(1)
   if (!row?.invoiceId || row.invoiceId.startsWith(TOP_UP_CLAIM_PREFIX)) return
-  await resumePendingTopUp(db, tenantId, row.invoiceId, false, secretKey)
+  await resumePendingTopUp(db, tenantId, row.invoiceId, topUpWanted(row), secretKey)
+}
+
+function topUpWanted(row: { plan: PlanTier; stripeCustomerId: string | null; enabled: boolean }): boolean {
+  return row.enabled && holdsCredits(row.plan) && row.stripeCustomerId !== null
 }
 
 // Webhook side of a top-up: invoice.paid credits (idempotent with the

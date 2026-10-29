@@ -60,8 +60,8 @@ export const updateSettingsSchema = z
     maxReapproachCycles: z.coerce.number().int().min(1).max(10).optional(),
     unspecifiedRecontactWindowMonths: z.coerce.number().int().min(1).max(24).optional(),
     noResponseRecycleDays: z.coerce.number().int().min(7).max(365).optional(),
-    outboundChannels: z.array(z.enum(OUTBOUND_CHANNELS)).optional(),
-    targetCountries: z.array(z.enum(ALLOWED_SEND_COUNTRIES)).optional(),
+    outboundChannels: z.array(z.enum(OUTBOUND_CHANNELS)).max(OUTBOUND_CHANNELS.length).optional(),
+    targetCountries: z.array(z.enum(ALLOWED_SEND_COUNTRIES)).max(ALLOWED_SEND_COUNTRIES.length).optional(),
     targetLanguage: localeSchema.optional(),
     // Overrides only: stored as the caller sent it (a partial), merged with the
     // defaults at read time by loadLeverConfig. Whole-cell replace (not deep-merged)

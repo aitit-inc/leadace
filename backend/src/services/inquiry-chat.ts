@@ -15,11 +15,7 @@ import {
   type OpenAIEnv,
   type OpenAIInputMessage,
 } from './openai'
-import {
-  getRemainingChatQuota,
-  isChatQuotaExhausted,
-  formatChatQuotaError,
-} from './plan-limits'
+import { getRemainingChatQuota, isChatQuotaExhausted } from './plan-limits'
 import { takeChatRateSlot } from './chat-rate-limit'
 import {
   appendInquiryMessage,
@@ -130,8 +126,9 @@ async function answerInquiry(
     )
   }
 
+  // The recipient reads this, not the sender: the plan stays out of it.
   if (isChatQuotaExhausted(quota)) {
-    return err('FORBIDDEN', 'Chat limit reached', formatChatQuotaError(quota))
+    return err('FORBIDDEN', 'Chat limit reached', 'Chat is unavailable right now. Use the "Request a meeting" button to continue.')
   }
 
   // Keyed by short_id across sessions, so reopening a closed session (which

@@ -1,5 +1,6 @@
 // Assembled from what the dashboard already computed. No LLM call: the email
 // and the dashboard must never disagree about a number.
+import type { AttentionItem, QuotaAllowance, QuotaConstraint } from './attention'
 import { percentOf, type DashboardSummary, type JournalEvent, type LoopReport, type RateChange, type SegmentAxis } from './dashboard'
 import { CHANGE_SIGNALS, reachLine, type AceEvidence, type ChangeSignal } from './loop/change'
 import type { FramePeriod } from './loop/frame'
@@ -30,9 +31,9 @@ const SEGMENT_AXIS_LABELS: Record<SegmentAxis, string> = {
   discoveryStrategy: 'Where they were found',
 }
 
-// Mirrors the dashboard's humanize(): snake_case labels read as sentences.
+// Mirrors the dashboard's humanize().
 function humanize(s: string): string {
-  const t = s.replace(/_/g, ' ')
+  const t = s.replace(/_/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2')
   return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()
 }
 
@@ -95,9 +96,62 @@ function journalLine(e: JournalEvent): string {
   }
 }
 
-function digestChanges(input: DigestInput): string[] {
+function digestEvents(input: DigestInput): JournalEvent[] {
   const { sinceDay, today, summary } = input
-  return summary.journal.filter((e) => e.date >= sinceDay && e.date < today).map(journalLine)
+  return summary.journal.filter((e) => e.date >= sinceDay && e.date < today)
+}
+
+// Counts as the loop section does (changeSignals): setup, the person's own
+// edits and proposals are reported, not counted.
+function learnedFrom(e: JournalEvent): boolean {
+  return e.kind === 'rule_archive' || e.kind === 'rule_restore' || (e.kind !== 'proposed' && e.evidence !== null)
+}
+
+const QUOTA_LINE: Record<QuotaAllowance, Record<QuotaConstraint, string>> = {
+  contacted: {
+    lifetime: 'Every prospect in your plan has been contacted. Follow-ups still go out; open the plans page to reach new ones.',
+    monthly: 'This period\'s prospect allowance is used. Follow-ups still go out; new prospects resume next period, or buy credits or upgrade on the plans page to continue now.',
+  },
+  found: {
+    lifetime: 'No one is left to contact and your plan\'s discovery is used up. Follow-ups still go out; bring your own list, or open the plans page to find more.',
+    monthly: 'No one is left to contact and this period\'s discovery is used up. Follow-ups still go out; bring your own list, or buy credits or upgrade on the plans page to find more now.',
+  },
+}
+
+// Judged once in domain/attention; this only words it.
+function attentionLine(item: AttentionItem): string {
+  switch (item.kind) {
+    case 'hot_leads':
+      return `${item.count} meeting request${item.count === 1 ? '' : 's'} waiting — book the call.`
+    case 'no_project':
+      return 'Finish setting up: paste your website URL in the chat.'
+    case 'compliance_incomplete':
+      return `Sending is blocked until you add: ${item.missing.map(humanize).join(', ')}.`
+    case 'gmail_disconnected':
+      return 'Gmail is not connected — connect it to send the emails you approve.'
+    case 'gmail_auth_revoked':
+      return `Google rejected the saved access for ${item.fromEmail}: sending and reply collection are stopped until you reconnect.`
+    case 'mailbox_send_refused':
+      return `The mail provider refused to send from ${item.fromEmail}: unblock it with the provider.`
+    case 'mailbox_inbox_test_spam':
+      return `Email from ${item.fromEmail} is landing in spam (${item.spam} of ${item.delivered} test copies), so sending from it is held.`
+    case 'no_outbound_channels':
+      return 'Outbound is paused: no channel is enabled in project settings.'
+    case 'quota_exhausted':
+      return QUOTA_LINE[item.allowance][item.constraint]
+    case 'subscription_unpaid':
+      return 'Your subscription isn\'t paid: the plan is on Free until Stripe collects the payment. Check the card under Manage subscription on the plans page.'
+    case 'credit_top_up_failed':
+      return 'Credit auto top-up was declined: update the card in the Stripe portal, then switch it back on.'
+    case 'reply_collection_scope_missing':
+      return `Replies to ${item.fromEmail} are not being read: permission to read them was never granted.`
+    case 'reply_collection_failing':
+      return `Checking ${item.fromEmail} for replies has been failing since ${item.since.slice(0, 10)}.`
+    case 'outreach_futility':
+      return `Outreach in ${item.projectName} is drawing no interest (${item.engaged} of ${Math.round(item.sends)} delivered emails engaged): check deliverability and targeting.`
+    case 'outreach_drafts':
+      return `${item.count} draft${item.count === 1 ? '' : 's'} ready to review.`
+  }
 }
 
 function resultsLine(summary: DashboardSummary): string {
@@ -148,15 +202,18 @@ function section(title: string, lines: string[]): string[] {
 
 // null when there is nothing worth an email.
 export function buildDigest(input: DigestInput): Digest | null {
-  const changes = digestChanges(input)
+  const events = digestEvents(input)
+  const changes = events.map(journalLine)
+  const learned = events.filter(learnedFrom).length
   if (changes.length === 0 && daysBetween(input.sinceDay, input.today) < HEARTBEAT_DAYS) return null
   const market = marketSection(input.summary)
-  // A heartbeat with no sends and no findings would report only zeros.
-  if (changes.length === 0 && input.summary.kpis.approached.current === 0 && market.length === 0) return null
+  // A heartbeat with no sends, no findings and nothing that needs the person would report only zeros.
+  if (changes.length === 0 && input.summary.kpis.approached.current === 0 && market.length === 0 && input.summary.attention.length === 0) return null
 
   const body = [
     `${input.projectName} — last 30 days`,
     resultsLine(input.summary),
+    ...section('Needs you', input.summary.attention.map(attentionLine)),
     ...section('What the market is telling you', market),
     ...section('How Ace learned (last 30 days)', loopSection(input.summary.loop)),
     ...section(
@@ -167,9 +224,9 @@ export function buildDigest(input: DigestInput): Digest | null {
 
   return {
     subject:
-      changes.length > 0
-        ? `${input.projectName}: ${changes.length} change${changes.length === 1 ? '' : 's'} from what we learned`
-        : `${input.projectName}: no change since ${input.sinceDay}`,
+      learned > 0
+        ? `${input.projectName}: ${learned} change${learned === 1 ? '' : 's'} from what we learned`
+        : `${input.projectName}: no change from what we learned since ${input.sinceDay}`,
     body,
   }
 }

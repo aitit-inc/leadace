@@ -1,6 +1,6 @@
 import { and, eq, sql } from 'drizzle-orm'
 import type { Db } from '../db/connection'
-import { outreachLogs, projectSettings, sendingIdentities } from '../db/schema'
+import { outreachLogs, projectSettings, sendingIdentities, tenantPlans } from '../db/schema'
 import {
   deriveAttentionItems,
   type AttentionInput,
@@ -10,23 +10,25 @@ import type { VitalsAssessment } from '../domain/loop/frame'
 import type { Edition } from '../domain/edition'
 import type { ProjectId, TenantId } from '../domain/ids'
 import { inboxTestHolds } from '../domain/inbox-test'
+import { hostedChannels } from '../domain/outbound-channel'
 import { getPlanInfo } from './billing'
-import { isContactQuotaExhausted } from './plan-limits'
+import { isContactQuotaExhausted, isFoundQuotaExhausted, type ProspectQuota } from './plan-limits'
 import { getCredentialsStatus } from './google-auth'
 import { ok, type ServiceResult } from './result'
 import { getOnboardingStatus, getTenantComplianceStatus } from './tenants'
-import { loadProjectOutboundAllowlist } from './project-settings'
+import { getOutboundMode, loadProjectOutboundAllowlist } from './project-settings'
+import { listReachable } from './prospects'
 
-export type TenantAttentionInput = Omit<AttentionInput, 'project'>
+type TenantAttention = { input: Omit<AttentionInput, 'project'>; quota: ProspectQuota }
 
 // Shared by the dashboard and /me/attention so every surface gets one judgment.
-export async function loadTenantAttentionInput(
+async function loadTenantAttention(
   db: Db,
   tenantId: TenantId,
   userId: string,
   edition: Edition,
-): Promise<ServiceResult<TenantAttentionInput>> {
-  const [complianceRes, onboardingRes, gmailRes, planRes, emailDrafts, sendModeProjects, identities, vitalsRows] = await Promise.all([
+): Promise<ServiceResult<TenantAttention>> {
+  const [complianceRes, onboardingRes, gmailRes, planRes, emailDrafts, sendModeProjects, identities, vitalsRows, [subscription]] = await Promise.all([
     getTenantComplianceStatus(db, tenantId),
     getOnboardingStatus(db, tenantId),
     getCredentialsStatus(db, tenantId, userId),
@@ -64,6 +66,11 @@ export async function loadTenantAttentionInput(
       WHERE ld.tenant_id = ${tenantId}
       ORDER BY ld.project_id, ld.cycle_date DESC
     `),
+    db
+      .select({ subscriptionId: tenantPlans.stripeSubscriptionId })
+      .from(tenantPlans)
+      .where(eq(tenantPlans.tenantId, tenantId))
+      .limit(1),
   ])
   if (!complianceRes.ok) return complianceRes
   if (!onboardingRes.ok) return onboardingRes
@@ -80,7 +87,7 @@ export async function loadTenantAttentionInput(
 
   const quota = planRes.value.quota
   const autoTopUp = quota.kind === 'capped' ? quota.credits?.autoTopUp : undefined
-  return ok({
+  const input: TenantAttention['input'] = {
     hasProject: onboardingRes.value.hasProject,
     compliance: { ready: complianceRes.value.ready, missing: complianceRes.value.missing },
     gmailConnected: gmailRes.value.connected,
@@ -97,12 +104,14 @@ export async function loadTenantAttentionInput(
     ),
     futileProjects,
     quota: {
-      exhausted: isContactQuotaExhausted(quota),
+      exhausted: isContactQuotaExhausted(quota) ? 'contacted' : null,
       constraint: quota.kind === 'capped' ? quota.window : null,
     },
+    billing: { plan: planRes.value.plan, holdsSubscription: Boolean(subscription?.subscriptionId) },
     creditTopUpFailedAt: autoTopUp && !autoTopUp.enabled ? autoTopUp.failedAt : null,
     now: new Date(),
-  })
+  }
+  return ok({ input, quota })
 }
 
 export async function listTenantAttention(
@@ -111,9 +120,17 @@ export async function listTenantAttention(
   userId: string,
   edition: Edition,
 ): Promise<ServiceResult<AttentionItem[]>> {
-  const input = await loadTenantAttentionInput(db, tenantId, userId, edition)
-  if (!input.ok) return input
-  return ok(deriveAttentionItems({ ...input.value, project: null }))
+  const tenant = await loadTenantAttention(db, tenantId, userId, edition)
+  if (!tenant.ok) return tenant
+  return ok(deriveAttentionItems({ ...tenant.value.input, project: null }))
+}
+
+// A spent found allowance stops new outreach only once the project has no
+// first touch left that the hosted agent can make (the daily cycle's own test).
+async function listRanDry(db: Db, tenantId: TenantId, edition: Edition, projectId: ProjectId): Promise<boolean> {
+  const mode = await getOutboundMode(db, projectId)
+  const reachable = await listReachable(db, tenantId, edition, projectId, { limit: 1, arm: 'first', channels: hostedChannels(mode) })
+  return reachable.ok && reachable.value.withinChannels === 0
 }
 
 // No per-lead seen/handled state exists, so this is "recent" rather than a true unread count.
@@ -128,8 +145,8 @@ export async function listProjectAttention(
   now: Date,
 ): Promise<ServiceResult<AttentionItem[]>> {
   const hotSinceIso = new Date(now.getTime() - HOT_LEADS_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString()
-  const [input, allowlist, [pendingDrafts], hotLeads] = await Promise.all([
-    loadTenantAttentionInput(db, tenantId, userId, edition),
+  const [tenant, allowlist, [pendingDrafts], hotLeads] = await Promise.all([
+    loadTenantAttention(db, tenantId, userId, edition),
     loadProjectOutboundAllowlist(db, projectId),
     db
       .select({ count: sql<number>`COUNT(*)::int` })
@@ -152,12 +169,15 @@ export async function listProjectAttention(
       )
       SELECT COUNT(DISTINCT pid)::int AS count FROM ev`),
   ])
-  if (!input.ok) return input
+  if (!tenant.ok) return tenant
+  const { input, quota } = tenant.value
+  const foundStopped = input.quota.exhausted === null && isFoundQuotaExhausted(quota) && (await listRanDry(db, tenantId, edition, projectId))
   return ok(
     deriveAttentionItems({
-      ...input.value,
+      ...input,
+      quota: foundStopped ? { ...input.quota, exhausted: 'found' } : input.quota,
       // Own project only — the tenant-wide bell still names every futile project.
-      futileProjects: input.value.futileProjects.filter((p) => p.projectId === projectId),
+      futileProjects: input.futileProjects.filter((p) => p.projectId === projectId),
       project: {
         outboundChannelsConfigured: allowlist.outboundChannels.length > 0,
         pendingDrafts: Number(pendingDrafts?.count ?? 0),

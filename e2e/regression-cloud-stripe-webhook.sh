@@ -6,25 +6,26 @@
 # LEADACE_EDITION=cloud worker (self-hosted 404s the webhook). Fixtured,
 # HMAC-signed events via e2e/sign-stripe-event.sh — no real Stripe account.
 #
-# COVERED (no network — these handlers read the event payload only and match
-# the tenant by stripe_subscription_id):
+# COVERED (no Stripe call succeeds — the worker's secret key is a dummy):
 #   - signature verification: missing header → 400, bad sig → 401, stale ts → 401,
-#     valid sig for an unknown subscription → 200 (logged, no-op)
-#   - customer.subscription.updated: active+plan metadata grants the tier;
-#     period dates mirrored; the plan price is found when it is not the first
-#     item; active+missing metadata leaves the row untouched (config-drift
-#     guard); idempotent on re-delivery
-#   - customer.subscription.deleted: downgrades to free and switches auto top-up off
-#   - unlimited-tier protection: updated/deleted both refuse to overwrite 'unlimited'
+#     valid sig for an unknown customer → 200 (logged, no-op)
+#   - customer.subscription.updated / .deleted and checkout.session.completed
+#     (mode=subscription) re-read the customer's subscriptions from Stripe and
+#     write those, never the event's copy: the dummy key's failed read answers
+#     500 (Stripe redelivers) and leaves the plan untouched
+#   - checkout.session.completed links its customer only to a tenant with none
+#   - unlimited-tier protection: no subscription event overwrites 'unlimited'
 #   - prepaid credits: checkout.session.completed (mode=payment) and
 #     checkout.session.async_payment_succeeded credit the ledger once per
 #     session; invoice.paid / invoice.payment_failed with LeadAce metadata
 #     settle an auto top-up (credit + clear the pending invoice / switch off)
 #
 # OUT OF SCOPE (require the real Stripe API, like the real-Gmail leg of
-# regression-outbound.sh): checkout.session.completed and the cancel+refund
-# path BOTH issue an unconditional fetch to https://api.stripe.com (not
-# env-overridable). Those need Stripe test mode and are not exercised here.
+# regression-outbound.sh): what the subscription events and
+# checkout.session.completed (mode=subscription) write once the read
+# succeeds — the tier, the period, the config-drift guard, a lapse or a
+# deletion dropping to free. They need Stripe test mode;
+# the status/item/period mapping is unit-tested in stripe-webhook.test.ts.
 #
 # The cloud worker's STRIPE_WEBHOOK_SECRET must match WHSEC below (both default
 # to whsec_e2e_test_secret — see e2e/cloud-edition-up.sh).
@@ -69,19 +70,18 @@ post_event() {
     -H "stripe-signature: $sig" --data "$body"
 }
 
-sub_updated()        { jq -nc --arg id "$SUB" --arg plan "$1" --arg st "$2" --argjson ps "$NOW" --argjson pe "$PEND" \
-  '{type:"customer.subscription.updated", data:{object:{id:$id, status:$st, current_period_start:$ps, current_period_end:$pe, items:{data:[{price:{metadata:{plan:$plan}}}]}}}}'; }
-sub_updated_nometa() { jq -nc --arg id "$SUB" --arg st "$1" --argjson ps "$NOW" --argjson pe "$PEND" \
-  '{type:"customer.subscription.updated", data:{object:{id:$id, status:$st, current_period_start:$ps, current_period_end:$pe, items:{data:[{price:{metadata:{}}}]}}}}'; }
-sub_updated_2nd_item() { jq -nc --arg id "$SUB" --arg plan "$1" --arg st "$2" --argjson ps "$NOW" --argjson pe "$PEND" \
-  '{type:"customer.subscription.updated", data:{object:{id:$id, status:$st, current_period_start:$ps, current_period_end:$pe, items:{data:[{price:{metadata:{}}},{price:{metadata:{plan:$plan}}}]}}}}'; }
-sub_deleted()        { jq -nc --arg id "$SUB" '{type:"customer.subscription.deleted", data:{object:{id:$id}}}'; }
+sub_updated()        { jq -nc --arg id "$SUB" --arg cus "cus_e2e_$TS" --arg plan "$1" --arg st "$2" --argjson ps "$NOW" --argjson pe "$PEND" \
+  '{type:"customer.subscription.updated", data:{object:{id:$id, customer:$cus, status:$st, current_period_start:$ps, current_period_end:$pe, items:{data:[{price:{metadata:{plan:$plan}}}]}}}}'; }
+sub_deleted()        { jq -nc --arg id "$SUB" --arg cus "cus_e2e_$TS" '{type:"customer.subscription.deleted", data:{object:{id:$id, customer:$cus}}}'; }
 credit_session()     { jq -nc --arg type "$1" --arg id "$2" --arg ps "$3" --arg t "$T" \
   '{type:$type, data:{object:{id:$id, mode:"payment", payment_status:$ps, metadata:{leadace_tenant_id:$t, leadace_credit_cents:"2500"}}}}'; }
 topup_invoice()      { jq -nc --arg type "$1" --arg id "$2" --arg t "$T" \
   '{type:$type, data:{object:{id:$id, metadata:{leadace_tenant_id:$t, leadace_credit_cents:"1000"}}}}'; }
 renewal_invoice()    { jq -nc --arg type "$1" --arg id "$2" \
   '{type:$type, data:{object:{id:$id, subscription:"sub_x", amount_paid:4900, currency:"usd", billing_reason:"subscription_cycle", metadata:{}}}}'; }
+sub_session()        { jq -nc --arg u "$THROW_USER_ID" --arg cus "$1" --arg sub "$SUB" \
+  '{type:"checkout.session.completed", data:{object:{mode:"subscription", client_reference_id:$u, customer:$cus, subscription:$sub}}}'; }
+customer_of() { psql_local "SELECT COALESCE(stripe_customer_id, '-') FROM tenant_plans WHERE tenant_id='$T';"; }
 balance() { psql_local "SELECT COALESCE(SUM(amount_cents), 0)::int FROM credit_ledger WHERE tenant_id='$T';"; }
 
 step "A. signature verification (no DB state required)"
@@ -94,45 +94,32 @@ assert_eq "  body = Invalid signature" "$(api_body | jq -r '.error // ""')" "Inv
 
 assert_eq "stale timestamp (outside 300s tolerance) → 401" "$(post_event "$(sub_deleted)" --stale)" "401"
 
-# Valid signature, but no tenant_plans row references this subscription yet
-# (handleSubscriptionUpdated matches by stripe_subscription_id, finds none →
+# Valid signature, but no tenant_plans row holds this customer yet
+# (handleSubscriptionEvent finds the tenant by stripe_customer_id, finds none →
 # logs "no tenant found" and returns). The tenant's provisioning-default plan
 # must be left untouched — the handler only SELECTs/UPDATEs, never INSERTs.
 PLAN_BEFORE="$(plan_of)"
-assert_eq "valid sig, unknown subscription → 200 (logged no-op)" "$(post_event "$(sub_updated pro active)")" "200"
-assert_eq "  unknown-subscription event did not change the tenant plan" "$(plan_of)" "$PLAN_BEFORE"
+assert_eq "valid sig, unknown customer → 200 (logged no-op)" "$(post_event "$(sub_updated pro active)")" "200"
+assert_eq "  unknown-customer event did not change the tenant plan" "$(plan_of)" "$PLAN_BEFORE"
 
-step "B. subscription.updated grants the tier (active + plan metadata)"
+step "A2. checkout.session.completed links the customer to a tenant with none"
+assert_eq "completed(subscription), tenant has no customer → 500 (the read after the link fails)" \
+  "$(post_event "$(sub_session "cus_e2e_$TS")")" "500"
+assert_eq "  customer linked" "$(customer_of)" "cus_e2e_$TS"
+assert_eq "  plan untouched" "$(plan_of)" "$PLAN_BEFORE"
+
+step "B. subscription events write Stripe's copy, never the event's"
 cloud_seed_plan "$T" starter "$SUB"
 assert_eq "seeded starter row with stripe_subscription_id" "$(plan_of)" "starter"
-assert_eq "updated(active, plan=pro) → 200" "$(post_event "$(sub_updated pro active)")" "200"
-assert_eq "  tenant promoted to pro" "$(plan_of)" "pro"
-assert_eq "  current_period_start mirrored from the event (recent)" \
-  "$(psql_local "SELECT (current_period_start > NOW() - INTERVAL '10 minutes') FROM tenant_plans WHERE tenant_id='$T';")" "t"
-
-step "B2. the plan price is found when it is not the first item"
-assert_eq "updated(active, [other item, plan=scale]) → 200" "$(post_event "$(sub_updated_2nd_item scale active)")" "200"
-assert_eq "  tenant promoted to scale" "$(plan_of)" "scale"
-assert_eq "back to pro → 200" "$(post_event "$(sub_updated pro active)")" "200"
-assert_eq "  tenant back on pro" "$(plan_of)" "pro"
-
-step "C. idempotent re-delivery"
-assert_eq "same updated event re-delivered → 200" "$(post_event "$(sub_updated pro active)")" "200"
-assert_eq "  plan still pro (UPDATE is idempotent)" "$(plan_of)" "pro"
-
-step "D. config-drift guard: active subscription, missing plan metadata → no change"
-cloud_seed_plan "$T" starter            # reset tier (keeps stripe_subscription_id)
-assert_eq "reset to starter" "$(plan_of)" "starter"
-assert_eq "updated(active, NO metadata) → 200" "$(post_event "$(sub_updated_nometa active)")" "200"
-assert_eq "  plan left untouched at starter (operator must fix Price metadata)" "$(plan_of)" "starter"
-
-step "E. subscription.deleted downgrades to free and switches auto top-up off"
-psql_local "UPDATE tenant_plans SET auto_top_up_enabled = true, auto_top_up_invoice_id = 'in_stale' WHERE tenant_id='$T';" > /dev/null
-assert_eq "deleted → 200" "$(post_event "$(sub_deleted)")" "200"
-assert_eq "  tenant downgraded to free" "$(plan_of)" "free"
-assert_eq "  auto top-up off; voiding the fake invoice fails at Stripe, so the reference stays" \
-  "$(psql_local "SELECT auto_top_up_enabled || ',' || COALESCE(auto_top_up_invoice_id, '-') FROM tenant_plans WHERE tenant_id='$T';")" "false,in_stale"
-psql_local "UPDATE tenant_plans SET auto_top_up_invoice_id = NULL WHERE tenant_id='$T';" > /dev/null
+assert_eq "updated(active, plan=pro) → 500 (the dummy key cannot list the subscriptions; Stripe redelivers)" \
+  "$(post_event "$(sub_updated pro active)")" "500"
+assert_eq "  plan untouched at starter (the event payload is not written)" "$(plan_of)" "starter"
+assert_eq "deleted → 500 (same re-read)" "$(post_event "$(sub_deleted)")" "500"
+assert_eq "  plan untouched at starter" "$(plan_of)" "starter"
+assert_eq "completed(subscription) on another customer → 500 (same re-read)" \
+  "$(post_event "$(sub_session "cus_e2e_other_$TS")")" "500"
+assert_eq "  the tenant keeps its customer" "$(customer_of)" "cus_e2e_$TS"
+assert_eq "  plan untouched at starter" "$(plan_of)" "starter"
 
 step "F. unlimited-tier protection (webhook never overwrites a manual unlimited)"
 cloud_seed_plan "$T" unlimited "$SUB"
@@ -141,6 +128,8 @@ assert_eq "updated(active, pro) against unlimited → 200" "$(post_event "$(sub_
 assert_eq "  still unlimited (update refused)" "$(plan_of)" "unlimited"
 assert_eq "deleted against unlimited → 200" "$(post_event "$(sub_deleted)")" "200"
 assert_eq "  still unlimited (downgrade refused)" "$(plan_of)" "unlimited"
+assert_eq "completed(subscription) against unlimited → 200" "$(post_event "$(sub_session "cus_e2e_$TS")")" "200"
+assert_eq "  still unlimited" "$(plan_of)" "unlimited"
 
 step "G. a credit pack Checkout (mode=payment) credits the ledger once per session"
 CS="cs_e2e_$TS"
@@ -174,11 +163,5 @@ assert_eq "invoice.payment_failed for the pending invoice → 200" "$(post_event
 assert_eq "  auto top-up off with failed_at stamped, pending cleared" \
   "$(psql_local "SELECT auto_top_up_enabled || ',' || (auto_top_up_failed_at IS NOT NULL) || ',' || COALESCE(auto_top_up_invoice_id, '-') FROM tenant_plans WHERE tenant_id='$T';")" "false,true,-"
 assert_eq "  balance unchanged" "$(balance)" "6000"
-
-step "I. a lapsed subscription (updated → past_due) switches auto top-up off"
-psql_local "UPDATE tenant_plans SET auto_top_up_enabled = true, auto_top_up_failed_at = NULL WHERE tenant_id='$T';" > /dev/null
-assert_eq "updated(past_due, pro) → 200" "$(post_event "$(sub_updated pro past_due)")" "200"
-assert_eq "  tenant on free with auto top-up off" \
-  "$(psql_local "SELECT plan || ',' || auto_top_up_enabled FROM tenant_plans WHERE tenant_id='$T';")" "free,false"
 
 cloud_summary
