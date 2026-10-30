@@ -166,9 +166,12 @@ describe('main chat allowance', () => {
     expect(mainChatWindow({ plan: 'scale', currentPeriodStart: periodStart })?.messages).toBe(600)
   })
 
-  it('has nothing to count against on the unlimited tier or a paid row without a period', () => {
+  it('has nothing to count against on the unlimited tier', () => {
     expect(mainChatWindow({ plan: 'unlimited', currentPeriodStart: periodStart })).toBeNull()
-    expect(mainChatWindow({ plan: 'starter', currentPeriodStart: null })).toBeNull()
+  })
+
+  it('counts a paid row without a period from the start of time, never without a cap', () => {
+    expect(mainChatWindow({ plan: 'starter', currentPeriodStart: null })).toEqual({ window: 'monthly', messages: 150, start: new Date(0) })
   })
 
   it('counts down to 0 and never below', () => {

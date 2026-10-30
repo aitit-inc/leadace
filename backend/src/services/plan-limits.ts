@@ -110,6 +110,10 @@ export interface TenantPlan {
 
 const NO_SUBSCRIPTION = { currentPeriodStart: null, currentPeriodEnd: null, autoTopUp: null } as const
 
+// A paid row without a period (set up by hand) counts from here too: a missing
+// period never lifts the cap.
+const LIFETIME_START = new Date(0)
+
 // Edition gate at this single chokepoint means every downstream cap check inherits the self-host override.
 export async function getTenantPlan(
   db: Db,
@@ -277,9 +281,7 @@ export async function getRemainingProspectQuotaForPlan(
   // Dates passed as ISO strings + ::timestamptz cast: postgres.js with
   // prepare:false (required for Supabase pooler) can't serialize Date instances
   // through raw sql`` interpolation — it expects string/Buffer/ArrayBuffer.
-  const sinceIso = caps.window === 'monthly' ? tp.currentPeriodStart?.toISOString() ?? null : null
-  // A paid row without a period (manual setup) has no window to count in.
-  if (caps.window === 'monthly' && sinceIso === null) return { plan: tp.plan, kind: 'unlimited' }
+  const sinceIso = caps.window === 'monthly' ? (tp.currentPeriodStart ?? LIFETIME_START).toISOString() : null
 
   const firstTouches = db
     .select({
@@ -674,14 +676,11 @@ const MAIN_CHAT_LIMITS: Record<PlanTier, MainChatCaps | null> = {
 
 export type MainChatWindow = MainChatCaps & { start: Date }
 
-const LIFETIME_START = new Date(0)
-
 export function mainChatWindow(tp: Pick<TenantPlan, 'plan' | 'currentPeriodStart'>): MainChatWindow | null {
   const caps = MAIN_CHAT_LIMITS[tp.plan]
   if (!caps) return null
   if (caps.window === 'lifetime') return { ...caps, start: LIFETIME_START }
-  // A paid row without a period (manual setup) has no window to count in.
-  return tp.currentPeriodStart ? { ...caps, start: tp.currentPeriodStart } : null
+  return { ...caps, start: tp.currentPeriodStart ?? LIFETIME_START }
 }
 
 export type MainChatQuota =
@@ -741,7 +740,7 @@ export async function getRemainingChatQuota(
 
   const lifetimeLimit = limits.maxChatTurnsLifetime
   const monthlyLimit = limits.maxChatTurnsPerMonth
-  const monthlySince = monthlyLimit !== null && tp.currentPeriodStart ? tp.currentPeriodStart : null
+  const monthlySince = monthlyLimit !== null ? tp.currentPeriodStart ?? LIFETIME_START : null
 
   if (lifetimeLimit === null && monthlySince === null) {
     return { plan: tp.plan, kind: 'unlimited', used: 0 }

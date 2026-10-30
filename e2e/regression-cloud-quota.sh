@@ -12,10 +12,11 @@
 # asserts: the free lifetime allowance (50) refuses a first touch but not a
 # follow-up, the project's attention names the spent allowance (a spent found
 # allowance only once no first touch is left), a follow-up never counts, the
-# starter period allowance (100) anchors at current_period_start, an in-flight
-# pre_send reservation counts, and prepaid credits (credit_ledger) lift the
-# refusal: each first touch past the allowance debits $0.40 while the balance
-# pays for it; it never goes negative.
+# starter period allowance (100) anchors at current_period_start (a paid row
+# without one counts every first touch), an in-flight pre_send reservation
+# counts, and prepaid credits (credit_ledger) lift the refusal: each first
+# touch past the allowance debits $0.40 while the balance pays for it; it never
+# goes negative.
 # /me/plan offers the billing portal whenever a Stripe customer exists, and
 # Checkout fails as Stripe's failure (502) when it cannot read the price.
 #
@@ -164,6 +165,16 @@ assert_eq "  reachable.quota.window = monthly" "$(echo "$REACH" | jq -r '.quota.
 psql_local "UPDATE outreach_logs SET sent_at = NOW() - INTERVAL '40 days' WHERE tenant_id='$T';" > /dev/null
 REACH="$(api GET "/api/projects/$PROJ/prospects/reachable?limit=10")"
 assert_eq "first touches before the period start do not count" "$(echo "$REACH" | jq -r '.quota.contacted.used')" "0"
+
+step "4b. a paid row without a period counts from the start of time, never without a cap"
+PERIOD_START="$(psql_local "SELECT current_period_start FROM tenant_plans WHERE tenant_id='$T';")"
+psql_local "UPDATE tenant_plans SET current_period_start = NULL WHERE tenant_id='$T';" > /dev/null
+REACH="$(api GET "/api/projects/$PROJ/prospects/reachable?limit=10")"
+assert_eq "  reachable.quota.kind = capped" "$(echo "$REACH" | jq -r '.quota.kind')" "capped"
+assert_eq "  every first touch counts: 100 used" "$(echo "$REACH" | jq -r '.quota.contacted.used')" "100"
+CODE="$(api_status POST /api/outreach "$(rec_body "$P_NEW")")"
+assert_eq "  record_outreach(sent) first touch → 403" "$CODE" "403"
+psql_local "UPDATE tenant_plans SET current_period_start = '$PERIOD_START' WHERE tenant_id='$T';" > /dev/null
 
 step "5. credits lift the refusal on a paid plan; each first touch past the allowance debits \$0.40"
 psql_local "UPDATE outreach_logs SET sent_at = NOW() WHERE tenant_id='$T';" > /dev/null
