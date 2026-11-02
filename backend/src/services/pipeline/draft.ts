@@ -88,6 +88,26 @@ type CompositionContext = {
   settings: ProjectSettingsRow
 }
 
+type CompositionPromptContext = Omit<CompositionContext, 'settings'> & {
+  settings: Pick<
+    ProjectSettingsRow,
+    | 'inquiryLandingEnabled'
+    | 'inquiryCtaType'
+    | 'inquiryCtaUrl'
+    | 'inquiryChatBrief'
+    | 'inquiryOneLiner'
+    | 'senderDisplayName'
+    | 'senderJobTitle'
+    | 'senderCompanyName'
+    | 'targetLanguage'
+  >
+}
+
+type CompositionRecipient = Pick<
+  ReachableProspect,
+  'name' | 'contactName' | 'industry' | 'websiteUrl' | 'overview' | 'matchReason' | 'notes' | 'country' | 'cycle'
+> & { hypothesis: unknown }
+
 async function loadCompositionContext(
   db: Db,
   tenantId: TenantId,
@@ -106,7 +126,7 @@ async function loadCompositionContext(
 
 // Flat on purpose: a root-level union does not survive the model's response
 // schema; the pair of nullable fields per decision does.
-const compositionSchema = z.object({
+export const compositionSchema = z.object({
   decision: z.enum(['send', 'skip']),
   subject: z.string().max(200).nullable(),
   body: z.string().max(4000).nullable(),
@@ -117,7 +137,7 @@ type Composition =
   | { decision: 'send'; subject: string; body: string }
   | { decision: 'skip'; reason: 'bad_timing' | 'no_fresh_material'; note: string }
 
-function toComposition(raw: z.infer<typeof compositionSchema>): Composition | null {
+export function toComposition(raw: z.infer<typeof compositionSchema>): Composition | null {
   if (raw.decision === 'send') {
     return raw.subject && raw.body ? { decision: 'send', subject: raw.subject, body: raw.body } : null
   }
@@ -144,11 +164,11 @@ export function pickChannel(
   return order.find((c) => available.includes(c) && enabledSet.has(c)) ?? null
 }
 
-function compositionPrompt(args: {
-  p: ReachableProspect
+export function compositionPrompt(args: {
+  p: CompositionRecipient
   channel: Exclude<Channel, 'platform'>
   variant: PickedVariant | null
-  ctx: CompositionContext
+  ctx: CompositionPromptContext
   today: string
 }): string {
   const { p, ctx, variant } = args

@@ -6,11 +6,11 @@ Every outbound email is written for one named recipient, in the project's `targe
 
 Pick by whether you have a genuine finding about *this* recipient — real, specific, checkable, source nameable in plain words. Never inflate a generic industry claim into one.
 
-**Value-first** (a finding exists) — hand over finished work instead of asking for time. The detail travels in the reply, never behind a link.
+**Value-first** (a finding exists) — offer useful work instead of asking for time. The detail travels in the reply, never behind a link.
 
 > Hi {first name},
 > While looking at {their public artifact}, I noticed {one concrete, checkable finding}. In {their context} that usually means {consequence in their terms}.
-> We {one-sentence offer}. I put together a short breakdown of this for {company} — want it? Just reply and I'll send it over.
+> We {one-sentence offer}. I can put together a short breakdown of this for {company} — want it? Just reply.
 
 **Peer note** (no finding) — a specific real observation, one plain sentence on the offer, a reply-only CTA.
 

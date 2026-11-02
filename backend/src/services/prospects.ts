@@ -520,7 +520,7 @@ export async function listReachable(
         ELSE ${PRIORITY_MULTIPLIERS[5]}::float8 END))`
 
   // At equal fit a first touch (a new sample) outranks a silent prospect's
-  // re-approach (a retry): docs/send_decision_design.local.md §4.
+  // re-approach (a retry).
   const recycleArmExpr = sql<number>`(CASE WHEN ${projectProspects.status} = 'contacted' AND ${projectProspects.nextFollowupAfter} IS NULL THEN 1 ELSE 0 END)`
 
   const exploreCount = Math.floor(limit * leverConfig.explorationShare)

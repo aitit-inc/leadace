@@ -18,7 +18,7 @@ Generate the `SALES_STRATEGY.md` document with the following structure:
 ### Prerequisites
 (What must already be true for them to use and buy this, and where a page states it)
 ### Not a fit
-(Who looks like a target but cannot use it or has no reason to buy)
+(Who looks like a target but cannot use it, has no reason to buy, or is so large that a published address reaches no one who decides)
 
 ## Value Proposition
 (Why customers should choose you)

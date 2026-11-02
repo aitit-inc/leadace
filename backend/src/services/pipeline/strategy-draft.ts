@@ -109,7 +109,7 @@ Write it from everything the person shared in this chat: the pages you read, the
 - targetLanguage: "ja" when the company's own material is mainly Japanese, else "en". Every document, brief and subject is written in that language.
 - business: a full markdown BUSINESS.md following this template exactly (write "Not available" where nothing says; its Competition section lists only the competitors the person named or confirmed, else "To be confirmed"; ~80 lines max):
 ${tplBusiness}
-- salesStrategy: a full markdown SALES_STRATEGY.md following this template exactly (~180 lines max; Target with Prerequisites and Not a fit inferred from the product's nature; Track Record "Add 1 trust foundation later" when absent; Pricing "TBD" when absent; ≥ 10 search keywords; a one-line "Outbound mode: managed in Project Settings" under Sales Channels; no Discovery Strategies section):
+- salesStrategy: a full markdown SALES_STRATEGY.md following this template exactly (~180 lines max; Target with Prerequisites and Not a fit inferred from the product's nature and price: Target states, as an inference, the size of organization where an email to a published address can reach someone who decides to buy, and Not a fit names those larger than that, unless the material shows it sells to them through such an address; Track Record "Add 1 trust foundation later" when absent; Pricing "TBD" when absent; ≥ 10 search keywords; a one-line "Outbound mode: managed in Project Settings" under Sales Channels; no Discovery Strategies section):
 ${tplStrategy}
 Use this guide for persona, USP, KPI reverse calculation and keyword design:
 ${targetingGuide}

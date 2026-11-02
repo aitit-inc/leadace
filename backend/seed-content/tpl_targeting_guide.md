@@ -15,7 +15,7 @@ Targets should be defined at the following level of specificity — not vague de
 6. **Trigger for meeting**: What would spark interest (e.g., regulatory changes, labor shortage, DX push)
 7. **Search keywords**: 5 or more search queries to find them online
 8. **Prerequisites**: what must already be true to use the product (stack, tooling, jurisdiction) and where that is publicly observable (repositories, registries, job posts, filings)
-9. **Not a fit**: who resembles the target but cannot use it or has no reason to buy
+9. **Not a fit**: who resembles the target but cannot use it, has no reason to buy, or is so large that a published address reaches no one who decides
 
 ### How to Split Primary / Secondary
 - **Primary**: Segment with the highest response rate and easiest to close

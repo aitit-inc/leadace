@@ -15,7 +15,8 @@ docs/                            # Project-wide design docs, runbooks, task trac
 Area standards live in `.claude/rules/` and auto-load when you touch matching
 files: `backend-architecture.md` (backend/), `frontend-architecture.md`
 (frontend/), `design-system.md` (frontend/, landing/), `plugin-development.md`
-(plugin/, backend/seed-content/), `release.md` (plugin.json). Starting work in an area before touching its
+(plugin/, backend/seed-content/), `release.md` (plugin.json), `send-gate.md`
+(what decides who gets an email and its words). Starting work in an area before touching its
 files? Read its rule first.
 
 ## Commands
