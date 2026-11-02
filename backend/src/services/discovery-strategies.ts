@@ -7,6 +7,7 @@ import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { loadLeverConfig } from './project-settings'
 import { applyStrategyChange, strategyCols } from './loop/change'
+import type { JobOrigin } from '../domain/jobs'
 import { authorOf, changeReasonSchema, type ChangeSignal } from '../domain/loop/change'
 
 export const upsertDiscoveryStrategyBodySchema = z
@@ -63,7 +64,7 @@ export async function getActiveStrategySlugs(db: Db, projectId: ProjectId): Prom
 export async function upsertDiscoveryStrategy(
   db: Db,
   tenantId: TenantId,
-  caller: 'browser' | 'agent',
+  origin: JobOrigin,
   projectRef: ProjectRef,
   body: UpsertDiscoveryStrategyBody,
   signals: ChangeSignal[] | null = null,
@@ -94,7 +95,7 @@ export async function upsertDiscoveryStrategy(
   }
 
   const { reason, ...write } = body
-  const row = await applyStrategyChange(db, tenantId, projectId, write, authorOf(caller, reason ?? null, signals))
+  const row = await applyStrategyChange(db, tenantId, projectId, write, authorOf(origin, reason ?? null, signals))
   if (!row) return err('INTERNAL_ERROR', 'Failed to upsert discovery strategy')
   return ok(row)
 }

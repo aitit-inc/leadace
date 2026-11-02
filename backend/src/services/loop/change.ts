@@ -369,6 +369,10 @@ export async function applySalesStrategyEdit(
   return true
 }
 
+export async function logSendingChange(db: Db, tenantId: TenantId, projectId: ProjectId, diff: ReachDiff, by: ChangeAuthor): Promise<void> {
+  if (Object.keys(diff).length > 0) await log(db, tenantId, projectId, [{ target: 'settings', op: 'update', ...by, reachDiff: diff }])
+}
+
 // `when` is checked under the lock against the settings as they now stand: a
 // change written for an earlier state is refused (null), never applied over a
 // newer one.

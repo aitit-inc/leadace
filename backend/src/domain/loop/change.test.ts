@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { optionOps, reachDiff } from './change'
+import { authorOf, optionOps, reachDiff, reachLine, sendingDiff } from './change'
 
 const state = (archived: boolean, subject: string | null = 's', label: string | null = null) => ({
   archived,
@@ -40,5 +40,32 @@ describe('reachDiff', () => {
   it('is empty when nothing changed', () => {
     expect(reachDiff(before, { outboundChannels: ['email'] })).toEqual({})
     expect(reachDiff(before, {})).toEqual({})
+  })
+})
+
+describe('authorOf', () => {
+  it('credits the person for what they did or asked for, and keeps MCP and unattended runs as Ace', () => {
+    expect(authorOf('ui', 'r')).toEqual({ actor: 'user', reason: 'r' })
+    expect(authorOf('chat', 'r', ['replies'])).toEqual({ actor: 'user', reason: 'r' })
+    expect(authorOf('mcp', 'r')).toEqual({ actor: 'ace', reason: 'r', evidence: null })
+    expect(authorOf('cron', 'r', ['replies', 'replies'])).toEqual({ actor: 'ace', reason: 'r', evidence: { signals: ['replies'] } })
+  })
+})
+
+describe('sendingDiff', () => {
+  const before = { outboundMode: 'draft', dailyNewProspects: null, followUps: false } as const
+
+  it('holds only what really changed', () => {
+    expect(sendingDiff(before, { outboundMode: 'draft', dailyNewProspects: null, followUps: false })).toEqual({})
+    expect(sendingDiff(before, { outboundMode: 'send', dailyNewProspects: 10 })).toEqual({
+      outboundMode: { from: 'draft', to: 'send' },
+      dailyNewProspects: { from: null, to: 10 },
+    })
+  })
+})
+
+describe('reachLine', () => {
+  it('says what decides how much goes out', () => {
+    expect(reachLine({ followUps: { from: false, to: true }, dailyNewProspects: { from: 20, to: null } })).toBe('New prospects a day: 20 → default; Follow-ups: off → on')
   })
 })

@@ -516,6 +516,21 @@ function seedDashboardFixture(ctx, projectId, { pending = 'loosen' } = {}) {
      SELECT ${q(tenant)}, ${q(projectId)}, p.id, 'Runs its own career-support desk.', 'contacted'
      FROM prospects p WHERE p.tenant_id = ${q(tenant)};`,
   );
+  const judgedOut = [
+    ['Ledgerline Accounting', 'ledgerline.example', 'A 2,000-person accounting group with its own recruiting office, not the small career office the Target names.'],
+    ['Harbor Software Institute', 'harbor-institute.example', 'Sells software training to companies and has no students to place.'],
+    ['Pinecrest Staffing', 'pinecrest-staffing.example', 'A staffing agency: it places workers for clients and runs no career support of its own.'],
+  ];
+  const judgedOutRows = judgedOut.map(([name, domain, reason]) => `(${q(name)}, ${q(domain)}, ${q(reason)})`).join(',');
+  psql(
+    `WITH v(name, domain, reason) AS (VALUES ${judgedOutRows}),
+     o AS (INSERT INTO organizations (tenant_id, domain, name, website_url)
+       SELECT ${q(tenant)}, domain, name, 'https://' || domain FROM v RETURNING id, domain),
+     p AS (INSERT INTO prospects (tenant_id, name, organization_id, overview, website_url, origin)
+       SELECT ${q(tenant)}, v.name, o.id, v.name, 'https://' || v.domain, 'found' FROM v JOIN o ON o.domain = v.domain RETURNING id, name)
+     INSERT INTO project_prospects (tenant_id, project_id, prospect_id, match_reason, qualified)
+     SELECT ${q(tenant)}, ${q(projectId)}, p.id, v.reason, false FROM v JOIN p ON p.name = v.name;`,
+  );
   for (const part of chunk(sends, 40)) {
     psql(
       `INSERT INTO outreach_logs (tenant_id, project_id, prospect_id, channel, subject, body, status, sent_at, variant_id) ` +
@@ -1128,6 +1143,12 @@ const SCENARIOS = [
           scrollTo: 'h3:has-text("What the market is telling you")',
           expect: ['Company size', 'Where they were found', 'Unsubscribe request'],
         },
+        {
+          name: 'research',
+          path: '/dashboard',
+          scrollTo: 'h3:has-text("What the market is telling you")',
+          expect: ['Ace looked at', 'Who responded', 'Why companies didn', 'Pinecrest Staffing'],
+        },
         { name: 'proposal', path: '/dashboard', scrollTo: 'text=Proposed change', expect: ['Turn on form outreach', 'Apply now', 'Something else'] },
         { name: 'proposal-means', path: '/dashboard', scrollTo: 'text=Proposed means', expect: ['Needs your setup', 'Set it up with Ace'] },
         {
@@ -1565,17 +1586,42 @@ async function shoot(names, themes) {
 
 const RECORD_DIR = join(REPO_ROOT, 'e2e', 'output', 'recordings');
 
-const CAPTION_SCRIPT = `
-window.__caption = (text, fast) => {
+const OVERLAY_SCRIPT = `
+// A modal dialog paints in the top layer, over any z-index: the overlay goes
+// there too, and back on top each time a dialog opens.
+const POPOVER = 'inset:auto;margin:0;border:0;overflow:visible;z-index:2147483647;pointer-events:none;';
+const raise = (el) => { if (el.isConnected) { el.hidePopover(); el.showPopover(); } };
+const addToTopLayer = (el) => { el.popover = 'manual'; document.documentElement.appendChild(el); el.showPopover(); };
+// Only the top page: a frame's own pointer would stay behind when the mouse leaves it.
+if (window === top) addEventListener('DOMContentLoaded', () => {
+  // A recording shows no real pointer.
+  const cursor = document.createElement('div');
+  cursor.id = '__rec_pointer';
+  cursor.style.cssText = POPOVER + 'position:fixed;left:-99px;top:-99px;width:26px;height:26px;margin:-13px 0 0 -13px;padding:0;border:2.5px solid #ef4444;border-radius:50%;background:rgba(239,68,68,.22);box-shadow:0 0 0 2px rgba(255,255,255,.7);transition:left .3s,top .3s';
+  addToTopLayer(cursor);
+  addEventListener('mousemove', (e) => { cursor.style.left = e.clientX + 'px'; cursor.style.top = e.clientY + 'px'; }, true);
+  addEventListener('mousedown', () => {
+    const ripple = cursor.cloneNode();
+    ripple.removeAttribute('id');
+    addToTopLayer(ripple);
+    ripple.animate([{ transform: 'scale(.4)', opacity: 1 }, { transform: 'scale(2.6)', opacity: 0 }], 600).onfinish = () => ripple.remove();
+  }, true);
+  new MutationObserver(() => {
+    raise(cursor);
+    const caption = document.getElementById('__rec_caption');
+    if (caption) raise(caption);
+  }).observe(document, { subtree: true, attributes: true, attributeFilter: ['open'] });
+});
+window.__caption = (text, fast, tone) => {
   let el = document.getElementById('__rec_caption');
   if (!el) {
     el = document.createElement('div');
     el.id = '__rec_caption';
-    el.style.cssText = 'position:fixed;left:50%;top:8px;transform:translateX(-50%);z-index:2147483647;max-width:880px;padding:10px 18px;border-radius:12px;font:600 16px/1.5 -apple-system,"Hiragino Sans",sans-serif;color:#fff;box-shadow:0 6px 24px rgba(0,0,0,.25);pointer-events:none;text-align:center;white-space:pre-line';
-    document.documentElement.appendChild(el);
+    el.style.cssText = POPOVER + 'position:fixed;left:50%;top:8px;transform:translateX(-50%);max-width:880px;padding:10px 18px;border-radius:12px;font:600 16px/1.5 -apple-system,"Hiragino Sans",sans-serif;color:#fff;box-shadow:0 6px 24px rgba(0,0,0,.25);text-align:center;white-space:pre-line';
+    addToTopLayer(el);
   }
   const shown = fast ? ('⏩ ' + text).trim() : text;
-  el.style.background = fast ? 'rgba(30,110,104,.92)' : 'rgba(15,40,38,.88)';
+  el.style.background = tone === 'ok' ? 'rgba(22,130,70,.95)' : tone === 'bad' ? 'rgba(190,40,40,.95)' : fast ? 'rgba(30,110,104,.92)' : 'rgba(15,40,38,.88)';
   el.style.display = shown ? 'block' : 'none';
   el.textContent = shown;
 };
@@ -1600,6 +1646,7 @@ class Recorder {
     this.t0 = Date.now();
     this.timeline = [];
     this.caption = '';
+    this.tone = null;
     this.fast = false;
   }
 
@@ -1612,13 +1659,27 @@ class Recorder {
   }
 
   paint() {
-    return this.page.evaluate(([t, f]) => window.__caption?.(t, f), [this.caption, this.fast]).catch(() => {});
+    return this.page.evaluate(([t, f, tone]) => window.__caption?.(t, f, tone), [this.caption, this.fast, this.tone]).catch(() => {});
   }
 
-  async say(text) {
+  async say(text, tone = null) {
     this.caption = text;
+    this.tone = tone;
     this.log(`caption: ${text.replace(/\n/g, ' / ')}`);
     await this.paint();
+  }
+
+  async verdict(text, ok) {
+    await this.say(text, ok ? 'ok' : 'bad');
+    await sleep(2500);
+  }
+
+  // Pointer first, so the eye reaches the target before it reacts.
+  async click(locator) {
+    await locator.hover();
+    await sleep(600);
+    await locator.click();
+    await sleep(400);
   }
 
   async setFast(on) {
@@ -1630,7 +1691,7 @@ class Recorder {
 
   async type(text) {
     const box = this.page.getByLabel('Message Ace');
-    await box.click();
+    await this.click(box);
     await box.pressSequentially(text, { delay: 28 });
     await sleep(600);
     await box.press('Enter');
@@ -1703,9 +1764,7 @@ class Recorder {
       ? card.locator('button').filter({ hasNotText: /^Cancel$/ }).last()
       : card.getByRole('button', { name: 'Cancel', exact: true });
     const label = (await button.textContent())?.trim();
-    await button.hover();
-    await sleep(700);
-    await button.click();
+    await this.click(button);
     this.log(`${approve ? 'approved' : 'declined'}: ${label}`);
     // The card stays up, enabled, for a moment after the click.
     for (let i = 0; i < 30; i++) {
@@ -1773,7 +1832,7 @@ async function record(scenarioName, stepsPath) {
     const context = await newContext(browser, ctx, scenario, 'light', {
       recordVideo: { dir: RECORD_DIR, size: { width: 1280, height: 900 } },
     });
-    await context.addInitScript(CAPTION_SCRIPT);
+    await context.addInitScript(OVERLAY_SCRIPT);
     const page = await context.newPage();
     const r = new Recorder(page, ctx);
     await page.goto(`${ctx.appUrl}${path}`, { waitUntil: 'networkidle' });

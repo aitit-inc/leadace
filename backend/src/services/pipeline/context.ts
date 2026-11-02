@@ -29,6 +29,9 @@ export type HostedEnv = LlmEnv &
 // Every write a stage makes is an agent write: playbooks it reads must be
 // approved, and documents it saves wait for a person where the slug requires.
 export const STAGE_CALLER = 'agent' as const
+// Ace's own work, however it was started: the setup draft too, which the person
+// only approves.
+export const STAGE_ORIGIN = 'cron' as const
 
 export function editionOf(env: HostedEnv): Edition {
   return parseEdition(env.LEADACE_EDITION)

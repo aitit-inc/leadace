@@ -5,6 +5,7 @@ import type { Db } from '../db/connection'
 import { variantIdSchema, type ProjectId, type ProjectRef, type TenantId } from '../domain/ids'
 import { weightedDraw } from '../domain/loop/bandit'
 import { prepareDrawDistribution } from '../domain/loop/allocation'
+import type { JobOrigin } from '../domain/jobs'
 import { authorOf, changeReasonSchema, type ChangeSignal } from '../domain/loop/change'
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
@@ -62,7 +63,7 @@ export async function listMessageVariantsById(
 export async function upsertMessageVariant(
   db: Db,
   tenantId: TenantId,
-  caller: 'browser' | 'agent',
+  origin: JobOrigin,
   projectRef: ProjectRef,
   body: UpsertVariantBody,
   signals: ChangeSignal[] | null = null,
@@ -93,7 +94,7 @@ export async function upsertMessageVariant(
   }
 
   const { reason, ...write } = body
-  const row = await applyVariantChange(db, tenantId, projectId, write, authorOf(caller, reason ?? null, signals))
+  const row = await applyVariantChange(db, tenantId, projectId, write, authorOf(origin, reason ?? null, signals))
   if (!row) return err('INTERNAL_ERROR', 'Failed to upsert message variant')
   return ok(row)
 }
@@ -106,7 +107,7 @@ export async function upsertMessageVariant(
 export async function replaceMessageVariant(
   db: Db,
   tenantId: TenantId,
-  caller: 'browser' | 'agent',
+  origin: JobOrigin,
   projectId: ProjectId,
   outId: string,
   body: UpsertVariantBody,
@@ -118,14 +119,14 @@ export async function replaceMessageVariant(
     .where(and(eq(messageVariants.projectId, projectId), eq(messageVariants.variantId, outId), isNull(messageVariants.archivedAt)))
     .for('update')
   if (!out) return err('CONFLICT', `Variant ${outId} is no longer active`)
-  const archived = await upsertMessageVariant(db, tenantId, caller, projectId, {
+  const archived = await upsertMessageVariant(db, tenantId, origin, projectId, {
     variantId: outId,
     subjectPattern: out.subjectPattern,
     archived: true,
     reason: `Replaced by ${body.variantId}${body.reason ? `: ${body.reason}` : ''}`.slice(0, 300),
   })
   if (!archived.ok) return archived
-  const added = await upsertMessageVariant(db, tenantId, caller, projectId, body, signals)
+  const added = await upsertMessageVariant(db, tenantId, origin, projectId, body, signals)
   if (!added.ok) throw new Error(`Invariant: ${body.variantId} could not take ${outId}'s slot: ${added.error}`)
   return added
 }

@@ -292,7 +292,7 @@ Answer rules:
 
 type Judgment =
   | { kind: 'fit'; claim: string; signals: DatedEvent[]; retrieved: string[] }
-  | { kind: 'miss' }
+  | { kind: 'miss'; reason: string }
   | { kind: 'site_unreadable' }
   | { kind: 'read_failed' }
 
@@ -312,7 +312,8 @@ async function judgeFit(env: LlmEnv, candidate: DiscoverCandidate, salesStrategy
     const urls = [...new Set([candidate.websiteUrl, ...own, ...cited])]
     const read = await callLlmPagesJson(env, 'enrich.judge', { urls, prompt: judgePrompt(candidate, salesStrategy, urls), schema: judgeSchema })
     const { verdict, evidenceUrl, claim, reason } = read.value
-    if (verdict !== 'fit' || evidenceUrl === null || !inRetrieved(evidenceUrl, read.retrievedUrls)) return { kind: 'miss' }
+    // A fit whose evidence did not check out has a reason that argues for the fit, so the listing's stands.
+    if (verdict !== 'fit' || evidenceUrl === null || !inRetrieved(evidenceUrl, read.retrievedUrls)) return { kind: 'miss', reason: (verdict !== 'fit' && reason) || candidate.matchReason }
     return { kind: 'fit', claim: claim ?? reason, signals: read.value.signals, retrieved: read.retrievedUrls }
   } catch (e) {
     if (e instanceof LlmError) return { kind: 'read_failed' }
@@ -401,8 +402,8 @@ export async function enrichCandidate(
   }
   const judged = await judgeFit(env, candidate, ctx.salesStrategy)
   if (judged.kind === 'read_failed') return { ...empty, skip: 'read_failed' }
-  if (judged.kind === 'site_unreadable') return { ...empty, skip: 'site_unreadable' }
-  if (judged.kind === 'miss') return { ...empty, skip: 'prereq_unverified' }
+  if (judged.kind === 'site_unreadable') return { ...empty, candidate: { ...candidate, matchReason: 'Its site could not be read.' }, skip: 'site_unreadable' }
+  if (judged.kind === 'miss') return { ...empty, candidate: { ...candidate, matchReason: judged.reason.slice(0, 1000) }, skip: 'prereq_unverified' }
   // Registered with the judge's claim, not the listing's.
   const fit = { ...candidate, matchReason: judged.claim.slice(0, 1000) }
   const reached = { ...empty, candidate: fit, qualified: true }

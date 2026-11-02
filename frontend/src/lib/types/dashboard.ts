@@ -111,6 +111,9 @@ export type ReachDiff = {
   outboundChannels?: { from: string[]; to: string[] };
   targetCountries?: { from: string[]; to: string[] };
   targetLanguage?: { from: string; to: string };
+  outboundMode?: { from: string; to: string };
+  dailyNewProspects?: { from: number | null; to: number | null };
+  followUps?: { from: boolean; to: boolean };
 };
 
 export type RejectionRecontactWindow = 'never' | '3_months' | '6_months' | '12_months' | 'unspecified';
@@ -183,6 +186,20 @@ export interface RateChange {
   current: number;
 }
 
+export interface DashboardResearch {
+  researched: number;
+  notFit: number;
+  notFitPercent: number;
+  noContact: number;
+  notFitExamples: Array<{ organizationName: string; reason: string }>;
+}
+
+export interface DashboardResponder {
+  prospectName: string;
+  organizationName: string;
+  level: 'positive' | 'interest';
+}
+
 export interface DashboardSummary {
   period: DashboardPeriod;
   kpis: {
@@ -201,6 +218,8 @@ export interface DashboardSummary {
   lastCycleDate: string | null;
   rejections: DashboardRejections;
   segments: DashboardSegment[];
+  research: DashboardResearch;
+  responders: DashboardResponder[];
   recentActivity: DashboardActivityEvent[];
   attention: AttentionItem[];
 }

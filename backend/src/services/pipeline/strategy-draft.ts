@@ -18,7 +18,7 @@ import { saveDocument } from '../documents'
 import { upsertDiscoveryStrategy } from '../discovery-strategies'
 import { upsertMessageVariant } from '../message-variants'
 import { loadLeverConfig, updateProjectSettings } from '../project-settings'
-import { apexDomainOf, loadMasterDoc, STAGE_CALLER, type HostedEnv } from './context'
+import { apexDomainOf, loadMasterDoc, STAGE_ORIGIN, type HostedEnv } from './context'
 import { utcDateKey } from '../../domain/time'
 import { fetchPage, pageProse } from '../fetch-page'
 
@@ -164,17 +164,17 @@ export async function applyStrategyDraft(
   if (!caps.ok) return caps
   const saved: string[] = []
   for (const [slug, content] of [['business', input.business], ['sales_strategy', input.salesStrategy]] as const) {
-    const r = await saveDocument(db, tenantId, STAGE_CALLER, env, { id: projectId, slug }, { content })
+    const r = await saveDocument(db, tenantId, STAGE_ORIGIN, env, { id: projectId, slug }, { content })
     if (!r.ok) return r
     saved.push(slug)
   }
   for (const s of input.discoveryStrategies) {
-    const r = await upsertDiscoveryStrategy(db, tenantId, STAGE_CALLER, projectId, s)
+    const r = await upsertDiscoveryStrategy(db, tenantId, STAGE_ORIGIN, projectId, s)
     if (!r.ok) return r
     saved.push(`strategy ${s.slug}`)
   }
   for (const v of input.messageVariants) {
-    const r = await upsertMessageVariant(db, tenantId, STAGE_CALLER, projectId, v)
+    const r = await upsertMessageVariant(db, tenantId, STAGE_ORIGIN, projectId, v)
     if (!r.ok) return r
     saved.push(`variant ${v.variantId}`)
   }

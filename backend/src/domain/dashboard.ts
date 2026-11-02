@@ -218,6 +218,19 @@ export type DashboardActivityEvent = {
 }
 
 
+// The companies discovery registered in the window. `notFit` failed the fit
+// check or could not be confirmed; `noContact` fit but publish no channel.
+export type DashboardResearch = {
+  researched: number
+  notFit: number
+  notFitPercent: number
+  noContact: number
+  notFitExamples: Array<{ organizationName: string; reason: string }>
+}
+
+type RespondedLevel = Exclude<ReactionLevel, 'none'>
+export type DashboardResponder = { prospectName: string; organizationName: string; level: RespondedLevel }
+
 export type DashboardSummary = {
   period: DashboardPeriod
   kpis: {
@@ -240,6 +253,8 @@ export type DashboardSummary = {
   lastCycleDate: string | null
   rejections: DashboardRejections
   segments: DashboardSegment[]
+  research: DashboardResearch
+  responders: DashboardResponder[]
   recentActivity: DashboardActivityEvent[]
   attention: AttentionItem[]
 }
@@ -311,6 +326,20 @@ export function prospectLevels(rows: readonly ProspectReaction[]): Map<number, R
   const byProspect = new Map<number, Reaction[]>()
   for (const { prospectId, reaction } of rows) byProspect.set(prospectId, [...(byProspect.get(prospectId) ?? []), reaction])
   return new Map(Array.from(byProspect, ([prospectId, reactions]) => [prospectId, sendReaction(reactions).level]))
+}
+
+// Strongest reaction first, then the latest.
+export function latestResponders(
+  rows: ReadonlyArray<ProspectReaction & { at: Date }>,
+  limit: number,
+): Array<{ prospectId: number; level: RespondedLevel }> {
+  const latest = new Map<number, number>()
+  for (const { prospectId, at } of rows) latest.set(prospectId, Math.max(latest.get(prospectId) ?? 0, at.getTime()))
+  return [...prospectLevels(rows)]
+    .flatMap(([prospectId, level]) => (level === 'none' ? [] : [{ prospectId, level, at: latest.get(prospectId) ?? 0 }]))
+    .sort((a, b) => (a.level === b.level ? b.at - a.at : a.level === 'positive' ? -1 : 1))
+    .slice(0, limit)
+    .map(({ prospectId, level }) => ({ prospectId, level }))
 }
 
 // `interested` counts the positive ones too.

@@ -367,7 +367,7 @@ async function probeCandidates(
           AND ol.sent_at > si.inbox_test_sent_at) AS first_touches,
       (SELECT max(pc.created_at) FROM policy_changes pc
         WHERE pc.tenant_id = si.tenant_id AND pc.project_id = latest.project_id
-          AND pc.target IN (${sql.join(CONTENT_CHANGES.map((t) => sql`${t}`), sql`, `)})
+          AND (pc.target IN (${sql.join(CONTENT_CHANGES.map((t) => sql`${t}`), sql`, `)}) OR pc.reach_diff -> 'targetLanguage' IS NOT NULL)
           AND pc.created_at < latest.sent_at) AS content_changed_at,
       si.warmup_started_at, si.daily_cap_override, si.paused_until, si.send_refusal::text AS send_refusal
     FROM sending_identities si

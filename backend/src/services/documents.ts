@@ -16,6 +16,7 @@ import { PUBLIC_JOURNAL_SLUG } from './public-scoreboard'
 import { redactPublicJournal } from './public-journal'
 import type { OpenAIEnv } from './openai'
 import { applyDocumentChange, latestDocument, lockTarget } from './loop/change'
+import type { JobOrigin } from '../domain/jobs'
 import { authorOf, changeReasonSchema, isDocumentTarget } from '../domain/loop/change'
 import { applySectionEdits, sectionEditSchema, type SectionEditResult } from '../domain/document-sections'
 
@@ -183,7 +184,7 @@ async function contentOf(db: Db, projectId: ProjectId, slug: string, input: Save
 export async function saveDocument(
   db: Db,
   tenantId: TenantId,
-  caller: 'browser' | 'agent',
+  origin: JobOrigin,
   env: OpenAIEnv,
   param: DocumentParam,
   input: SaveDocumentInput,
@@ -206,9 +207,9 @@ export async function saveDocument(
     slug === PUBLIC_JOURNAL_SLUG ? await redactPublicJournal(env, written.content) : ok(written.content)
   if (!content.ok) return content
 
-  const approvedAt = caller === 'browser' ? new Date() : null
+  const approvedAt = origin === 'ui' ? new Date() : null
   const doc = isDocumentTarget(slug)
-    ? await applyDocumentChange(db, tenantId, projectId, slug, content.value, authorOf(caller, input.reason ?? null))
+    ? await applyDocumentChange(db, tenantId, projectId, slug, content.value, authorOf(origin, input.reason ?? null))
     : (await db
         .insert(projectDocuments)
         .values({ tenantId, projectId, slug, content: content.value, approvedAt })

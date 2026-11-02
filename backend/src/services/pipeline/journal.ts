@@ -13,7 +13,7 @@ import { callLlmJson, LlmError } from '../llm'
 import { getRejectionFeedbackSummaryById } from '../responses'
 import { getProjectSettings } from '../project-settings'
 import { saveDocument } from '../documents'
-import { noProgress, STAGE_CALLER, type HostedEnv, type ProgressFn } from './context'
+import { noProgress, STAGE_ORIGIN, type HostedEnv, type ProgressFn } from './context'
 import { languageNameOf } from '../../domain/locale'
 import { utcDateKey } from '../../domain/time'
 import { runWithRls } from '../../db/rls'
@@ -103,11 +103,11 @@ Rules: numbers exactly as given; anonymize every third party (companies → indu
     if (e instanceof LlmError) return ok({ kind: 'journal', summary: `Journal not written: ${e.message}`, saved: false })
     throw e
   }
-  let saved = await runWithRls(db, tenantId, (tx) => saveDocument(tx, tenantId, STAGE_CALLER, env, { id: projectId, slug: 'public_journal' }, { content: entry }))
+  let saved = await runWithRls(db, tenantId, (tx) => saveDocument(tx, tenantId, STAGE_ORIGIN, env, { id: projectId, slug: 'public_journal' }, { content: entry }))
   if (!saved.ok && saved.code === 'UNPROCESSABLE') {
     try {
       entry = (await compose(typeof saved.detail === 'string' ? saved.detail : saved.error)).entry
-      saved = await runWithRls(db, tenantId, (tx) => saveDocument(tx, tenantId, STAGE_CALLER, env, { id: projectId, slug: 'public_journal' }, { content: entry }))
+      saved = await runWithRls(db, tenantId, (tx) => saveDocument(tx, tenantId, STAGE_ORIGIN, env, { id: projectId, slug: 'public_journal' }, { content: entry }))
     } catch (e) {
       if (!(e instanceof LlmError)) throw e
     }

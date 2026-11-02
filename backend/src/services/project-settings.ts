@@ -23,8 +23,8 @@ import { composeFooterBlock, replyUnsubscribeFooterLine } from '../domain/inquir
 import { localeSchema, type Locale } from '../domain/locale'
 import { loadTenantSettings, localizeComplianceIdentity } from './tenants'
 import { leverConfigSchema, leverConfigPatchSchema, leverConfigInvariantViolation, type LeverConfig } from '../domain/loop/config'
-import { authorOf } from '../domain/loop/change'
-import { applyReachChange } from './loop/change'
+import { authorOf, sendingDiff, type SendingSettings } from '../domain/loop/change'
+import { applyReachChange, logSendingChange } from './loop/change'
 import {
   followUpSequenceSchema,
   followUpSequencePatchSchema,
@@ -298,14 +298,15 @@ async function resumeFollowUps(
 
 // Holds the settings row until the request commits, so two saves cannot both
 // read the state before the other's write and miss the off-to-on transition.
-async function lockFollowUpConfig(db: Db, projectId: ProjectId): Promise<FollowUpSequence> {
+async function lockSending(db: Db, projectId: ProjectId): Promise<SendingSettings> {
   const [row] = await db
-    .select({ followUpSequence: projectSettings.followUpSequence })
+    .select({ outboundMode: projectSettings.outboundMode, dailyNewProspects: projectSettings.dailyNewProspects, followUpSequence: projectSettings.followUpSequence })
     .from(projectSettings)
     .where(eq(projectSettings.projectId, projectId))
     .limit(1)
     .for('update')
-  return followUpSequenceSchema.parse(assertSettingsRow(row, projectId).followUpSequence)
+  const { outboundMode, dailyNewProspects, followUpSequence } = assertSettingsRow(row, projectId)
+  return { outboundMode, dailyNewProspects, followUps: followUpSequenceSchema.parse(followUpSequence).enabled }
 }
 
 export async function loadProjectFollowUpConfig(
@@ -489,17 +490,26 @@ export async function updateProjectSettings(
 
   const { outboundChannels, targetCountries, targetLanguage } = patch
   if (outboundChannels !== undefined || targetCountries !== undefined || targetLanguage !== undefined) {
-    await applyReachChange(db, tenantId, projectId, { outboundChannels, targetCountries, targetLanguage }, authorOf(origin === 'ui' ? 'browser' : 'agent', null))
+    await applyReachChange(db, tenantId, projectId, { outboundChannels, targetCountries, targetLanguage }, authorOf(origin, null))
   }
 
-  const followUpWasEnabled =
-    patch.followUpSequence !== undefined && (await lockFollowUpConfig(db, projectId)).enabled
+  const sendingBefore = patch.outboundMode !== undefined || patch.dailyNewProspects !== undefined || patch.followUpSequence !== undefined
+    ? await lockSending(db, projectId)
+    : null
 
   const [row] = await db
     .update(projectSettings)
     .set(updateSet)
     .where(eq(projectSettings.projectId, projectId))
     .returning(settingsCols)
+
+  if (sendingBefore) {
+    await logSendingChange(db, tenantId, projectId, sendingDiff(sendingBefore, {
+      outboundMode: patch.outboundMode,
+      dailyNewProspects: patch.dailyNewProspects,
+      followUps: patch.followUpSequence && followUpSequenceSchema.parse(patch.followUpSequence).enabled,
+    }), authorOf(origin, null))
+  }
 
   // followUpSequence is whole-cell replace, so the parsed patch IS the effective
   // config — a cadence-only patch omitting `enabled` reads back disabled.
@@ -514,7 +524,7 @@ export async function updateProjectSettings(
           eq(projectProspects.projectId, projectId),
           isNotNull(projectProspects.nextFollowupAfter),
         ))
-    } else if (!followUpWasEnabled) {
+    } else if (!sendingBefore?.followUps) {
       await resumeFollowUps(db, projectId, followUp.gapDays, now)
     }
   }

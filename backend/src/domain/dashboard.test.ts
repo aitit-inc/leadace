@@ -9,6 +9,7 @@ import {
   levelCounts,
   percentOf,
   periodToWindow,
+  latestResponders,
   prospectLevels,
   trendWindowStartIso,
   type SegmentAxis,
@@ -102,6 +103,28 @@ describe('percentOf', () => {
   })
   it('is 0 when nothing was approached', () => {
     expect(percentOf(0, 0)).toBe(0)
+  })
+})
+
+describe('latestResponders', () => {
+  const positive = { kind: 'reply', responseType: 'reply', sentiment: 'positive', reason: null } as const
+  const neutral = { kind: 'reply', responseType: 'reply', sentiment: 'neutral', reason: null } as const
+  const rejected = { kind: 'reply', responseType: 'rejection', sentiment: 'negative', reason: null } as const
+  const at = (day: number) => new Date(Date.UTC(2026, 9, day))
+
+  it('puts the strongest reaction first, then the latest, and leaves out a no', () => {
+    const rows = [
+      { prospectId: 1, reaction: neutral, at: at(5) },
+      { prospectId: 2, reaction: positive, at: at(1) },
+      { prospectId: 3, reaction: rejected, at: at(6) },
+      { prospectId: 4, reaction: positive, at: at(2) },
+    ]
+    expect(latestResponders(rows, 5)).toEqual([
+      { prospectId: 4, level: 'positive' },
+      { prospectId: 2, level: 'positive' },
+      { prospectId: 1, level: 'interest' },
+    ])
+    expect(latestResponders(rows, 1)).toEqual([{ prospectId: 4, level: 'positive' }])
   })
 })
 

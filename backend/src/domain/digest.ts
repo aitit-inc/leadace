@@ -1,7 +1,7 @@
 // Assembled from what the dashboard already computed. No LLM call: the email
 // and the dashboard must never disagree about a number.
 import type { AttentionItem, QuotaAllowance, QuotaConstraint } from './attention'
-import { percentOf, type DashboardSummary, type JournalEvent, type LoopReport, type RateChange, type SegmentAxis } from './dashboard'
+import { percentOf, type DashboardResearch, type DashboardResponder, type DashboardSummary, type JournalEvent, type LoopReport, type RateChange, type SegmentAxis } from './dashboard'
 import { CHANGE_SIGNALS, reachLine, type AceEvidence, type ChangeSignal } from './loop/change'
 import type { FramePeriod } from './loop/frame'
 import type { ProposedChange } from './loop/proposal'
@@ -12,9 +12,10 @@ import type { ProposedChange } from './loop/proposal'
 // reported. Today's changes go out in the next digest.
 export type DigestInput = {
   projectName: string
-  // 'YYYY-MM-DD' UTC days: the day the last digest covered up to, and today.
+  // 'YYYY-MM-DD' UTC days: the day the last digest covered up to, today, and the project's first send.
   sinceDay: string
   today: string
+  firstSendDay: string | null
   summary: DashboardSummary
 }
 
@@ -161,6 +162,28 @@ function resultsLine(summary: DashboardSummary): string {
   return `Contacted ${approached.current} prospect${approached.current === 1 ? '' : 's'} · positive ${rate(positive)} · with interest ${rate(interested)} · engaged ${engaged.current} · won ${won.current}`
 }
 
+function researchLine({ researched, notFit, notFitPercent, noContact }: DashboardResearch): string[] {
+  if (researched === 0) return []
+  const parts = [
+    ...(notFit > 0 ? [`${notFit} (${notFitPercent}%) didn't fit your target or couldn't be confirmed`] : []),
+    ...(noContact > 0 ? [`${noContact} fit but publish no way to reach them`] : []),
+  ]
+  return [`Ace looked at ${researched} ${researched === 1 ? 'company' : 'companies'}${parts.length > 0 ? `: ${parts.join(', ')}` : ''}.`]
+}
+
+function notFitSection({ notFitExamples }: DashboardResearch): string[] {
+  return notFitExamples.map((e) => `${e.organizationName}: ${e.reason.replace(/\s+/g, ' ').trim()}`)
+}
+
+const responderLine = (r: DashboardResponder): string =>
+  `${r.level === 'positive' ? 'Positive' : 'With interest'}: ${r.prospectName === r.organizationName ? r.organizationName : `${r.prospectName}, ${r.organizationName}`}`
+
+function respondersSection(summary: DashboardSummary): string[] {
+  if (summary.responders.length > 0) return summary.responders.map(responderLine)
+  if (summary.kpis.engaged.current > 0) return ['No one has shown interest yet.']
+  return summary.kpis.approached.current > 0 ? ['No one yet. Replies often take a few days.'] : []
+}
+
 function marketSection(summary: DashboardSummary): string[] {
   const segments = summary.segments.map((s) => {
     const rows = s.rows
@@ -189,9 +212,10 @@ const frameRate = ({ trials, positive }: FramePeriod): string =>
   `${positive} positive of ${Math.round(trials)} counted (${percentOf(positive, trials)}%)`
 
 function loopSection({ changes, bySignal, frame, previousFrame }: LoopReport): string[] {
-  const signals = CHANGE_SIGNALS.map((sig) => `${SIGNAL_WORDS[sig]} ${bySignal[sig]}`).join(' · ')
+  if (changes === 0 && previousFrame === null && frame.positive === 0) return []
+  const signals = CHANGE_SIGNALS.filter((sig) => bySignal[sig] > 0).map((sig) => `${SIGNAL_WORDS[sig]} ${bySignal[sig]}`).join(' · ')
   return [
-    `${changes} change${changes === 1 ? '' : 's'} by Ace, resting on: ${signals}`,
+    `${changes} change${changes === 1 ? '' : 's'} by Ace${signals ? `, resting on: ${signals}` : ''}`,
     `This frame (since ${frame.start?.day ?? 'the first send'}): ${frameRate(frame)}${previousFrame ? ` · the frame before: ${frameRate(previousFrame)}` : ''}`,
   ]
 }
@@ -205,15 +229,22 @@ export function buildDigest(input: DigestInput): Digest | null {
   const events = digestEvents(input)
   const changes = events.map(journalLine)
   const learned = events.filter(learnedFrom).length
-  if (changes.length === 0 && daysBetween(input.sinceDay, input.today) < HEARTBEAT_DAYS) return null
+  const { firstSendDay } = input
+  // The first report must not wait for a change: nothing has been learned yet,
+  // and what the research found is already worth reading.
+  const firstReport = firstSendDay !== null && firstSendDay >= input.sinceDay && firstSendDay < input.today
+  if (changes.length === 0 && !firstReport && daysBetween(input.sinceDay, input.today) < HEARTBEAT_DAYS) return null
   const market = marketSection(input.summary)
   // A heartbeat with no sends, no findings and nothing that needs the person would report only zeros.
   if (changes.length === 0 && input.summary.kpis.approached.current === 0 && market.length === 0 && input.summary.attention.length === 0) return null
 
   const body = [
     `${input.projectName} — last 30 days`,
+    ...researchLine(input.summary.research),
     resultsLine(input.summary),
     ...section('Needs you', input.summary.attention.map(attentionLine)),
+    ...section('Who responded', respondersSection(input.summary)),
+    ...section("Why companies didn't fit (latest)", notFitSection(input.summary.research)),
     ...section('What the market is telling you', market),
     ...section('How Ace learned (last 30 days)', loopSection(input.summary.loop)),
     ...section(
@@ -222,11 +253,15 @@ export function buildDigest(input: DigestInput): Digest | null {
     ),
   ].join('\n')
 
-  return {
-    subject:
-      learned > 0
-        ? `${input.projectName}: ${learned} change${learned === 1 ? '' : 's'} from what we learned`
-        : `${input.projectName}: no change from what we learned since ${input.sinceDay}`,
-    body,
-  }
+  const { researched } = input.summary.research
+  const contacted = `${input.summary.kpis.approached.current} contacted`
+  const subjectEnd = firstReport
+    ? `first report: ${researched > 0 ? `${researched} looked at, ` : ''}${contacted}`
+    : learned > 0
+      ? `${learned} change${learned === 1 ? '' : 's'} from what we learned`
+      : changes.length > 0
+        ? `${changes.length} update${changes.length === 1 ? '' : 's'} since ${input.sinceDay}`
+        : `no change from what we learned since ${input.sinceDay}`
+
+  return { subject: `${input.projectName}: ${subjectEnd}`, body }
 }

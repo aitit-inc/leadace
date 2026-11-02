@@ -1,11 +1,13 @@
 import { z } from 'zod'
 import type { OutboundChannel } from '../outbound-channel'
+import type { JobOrigin } from '../jobs'
 import type { Locale } from '../locale'
+import type { OutboundMode } from '../../db/schema'
 
 // One policy_changes row per change to an option, a policy document or the
-// project's reach (channels, countries, language), and a 'frame' row where a
-// new frame starts: the loop measures from the latest one. The tick's daily
-// reweighting is not in it; that is lever_decisions.
+// settings that decide whom the project reaches and how much goes out, and a
+// 'frame' row where a new frame starts: the loop measures from the latest one.
+// The tick's daily reweighting is not in it; that is lever_decisions.
 export const POLICY_TARGETS = ['variant', 'strategy', 'business', 'sales_strategy', 'settings', 'frame'] as const
 export type PolicyTarget = (typeof POLICY_TARGETS)[number]
 export type OptionTarget = Extract<PolicyTarget, 'variant' | 'strategy'>
@@ -33,17 +35,16 @@ export const changeSignalsSchema = z.array(z.enum(CHANGE_SIGNALS)).min(1)
 export type AceEvidence = { signals: ChangeSignal[] }
 export type ChangeEvidence = RuleEvidence | AceEvidence
 
-// `evidence` is null on a change Ace made outside the loop (the chat, MCP).
+// `evidence` is null on a change Ace made outside the loop (MCP).
 export type ChangeAuthor =
   | { actor: 'user'; reason: string | null }
   | { actor: 'ace'; reason: string | null; evidence: AceEvidence | null }
 
 export const changeReasonSchema = z.string().min(1).max(300)
 
-// A person in the Web UI is the user; everything else acting through the API
-// (chat, MCP, a schedule, the hosted stages) is Ace.
-export function authorOf(caller: 'browser' | 'agent', reason: string | null, signals: ChangeSignal[] | null = null): ChangeAuthor {
-  return caller === 'browser' ? { actor: 'user', reason } : { actor: 'ace', reason, evidence: signals && { signals: [...new Set(signals)] } }
+// The chat is the person's word; MCP cannot tell a person from an unattended run, so it stays Ace.
+export function authorOf(origin: JobOrigin, reason: string | null, signals: ChangeSignal[] | null = null): ChangeAuthor {
+  return origin === 'ui' || origin === 'chat' ? { actor: 'user', reason } : { actor: 'ace', reason, evidence: signals && { signals: [...new Set(signals)] } }
 }
 
 export function isDocumentTarget(slug: string): slug is DocumentTarget {
@@ -57,17 +58,36 @@ export type ReachSettings = {
   targetCountries: string[]
   targetLanguage: Locale
 }
-export type ReachDiff = { [K in keyof ReachSettings]?: { from: ReachSettings[K]; to: ReachSettings[K] } }
+// How much goes out. Frames do not set these, so they stay out of ReachSettings.
+export type SendingSettings = { outboundMode: OutboundMode; dailyNewProspects: number | null; followUps: boolean }
+type Diff<T> = { [K in keyof T]?: { from: T[K]; to: T[K] } }
+export type ReachDiff = Diff<ReachSettings> & Diff<SendingSettings>
+
+export function sendingDiff(before: SendingSettings, patch: Partial<SendingSettings>): ReachDiff {
+  const diff: ReachDiff = {}
+  if (patch.outboundMode !== undefined && patch.outboundMode !== before.outboundMode) diff.outboundMode = { from: before.outboundMode, to: patch.outboundMode }
+  if (patch.dailyNewProspects !== undefined && patch.dailyNewProspects !== before.dailyNewProspects) {
+    diff.dailyNewProspects = { from: before.dailyNewProspects, to: patch.dailyNewProspects }
+  }
+  if (patch.followUps !== undefined && patch.followUps !== before.followUps) diff.followUps = { from: before.followUps, to: patch.followUps }
+  return diff
+}
 
 // No channel is a pause; no country limit is any country.
 export const channelList = (values: readonly string[]): string => (values.length === 0 ? 'none' : values.join(', '))
 export const countryList = (values: readonly string[]): string => (values.length === 0 ? 'any' : values.join(', '))
+
+const onOff = (on: boolean): string => (on ? 'on' : 'off')
+const orDefault = (n: number | null): string => (n === null ? 'default' : String(n))
 
 export function reachLine(diff: ReachDiff): string {
   return [
     diff.outboundChannels && `Channels: ${channelList(diff.outboundChannels.from)} → ${channelList(diff.outboundChannels.to)}`,
     diff.targetCountries && `Countries: ${countryList(diff.targetCountries.from)} → ${countryList(diff.targetCountries.to)}`,
     diff.targetLanguage && `Language: ${diff.targetLanguage.from} → ${diff.targetLanguage.to}`,
+    diff.outboundMode && `Sending: ${diff.outboundMode.from} → ${diff.outboundMode.to}`,
+    diff.dailyNewProspects && `New prospects a day: ${orDefault(diff.dailyNewProspects.from)} → ${orDefault(diff.dailyNewProspects.to)}`,
+    diff.followUps && `Follow-ups: ${onOff(diff.followUps.from)} → ${onOff(diff.followUps.to)}`,
   ].filter(Boolean).join('; ')
 }
 

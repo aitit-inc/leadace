@@ -10,8 +10,8 @@ import type { PolicyTarget } from './loop/change'
 // each test costs one email per seed.
 const INBOX_TEST_EVERY = 100
 
-// The changes that alter what a project's cold emails say; settings carry the language.
-export const CONTENT_CHANGES = ['variant', 'business', 'sales_strategy', 'settings'] as const satisfies readonly PolicyTarget[]
+// The changes that alter what a project's cold emails say. Of the settings, only the language does.
+export const CONTENT_CHANGES = ['variant', 'business', 'sales_strategy'] as const satisfies readonly PolicyTarget[]
 
 // INBOX_TEST_SEEDS: a JSON array of the seed mailboxes, read over IMAP with an
 // app password; the IMAP username is the address.

@@ -16,6 +16,7 @@
   import type { FunnelStageFilter } from '$lib/types/outreach';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import ProposalSection from '$lib/components/dashboard/ProposalSection.svelte';
+  import ResearchSection from '$lib/components/dashboard/ResearchSection.svelte';
   import {
     Send,
     MailCheck,
@@ -158,7 +159,7 @@
         };
       case 'settings':
         return {
-          text: e.actor === 'user' ? 'You changed who Ace can reach' : 'Changed who Ace can reach',
+          text: e.actor === 'user' ? 'You changed how Ace reaches out' : 'Changed how Ace reaches out',
           detail: joined(reachRows(e.diff).map((r) => `${r.label}: ${r.from} → ${r.to}`).join(' · '), onSignals(e.evidence)),
           why: e.reason,
         };
@@ -582,6 +583,7 @@
             <MessageSquareX size={18} class="text-inbound" />
             <h3 class="font-display text-lg font-semibold text-text">What the market is telling you</h3>
           </div>
+          <ResearchSection research={summary.research} responders={summary.responders} contacted={approached} {engaged} />
           {#if summary.segments.length > 0}
             <p class="mb-3 text-sm text-text-muted">
               Positive / with interest, among the prospects contacted in this period. The AI already

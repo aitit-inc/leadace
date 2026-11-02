@@ -67,7 +67,7 @@ documentsRouter.put(
     const result = await saveDocument(
       c.get('db'),
       c.get('tenantId'),
-      c.get('caller'),
+      c.get('origin'),
       { OPENAI_API_KEY: c.env.OPENAI_API_KEY },
       c.req.valid('param'),
       c.req.valid('json'),

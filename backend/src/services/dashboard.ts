@@ -1,9 +1,10 @@
 import { z } from 'zod'
-import { and, eq, gte, inArray, notInArray, sql } from 'drizzle-orm'
+import { and, count, desc, eq, gte, inArray, notInArray, sql } from 'drizzle-orm'
 import {
   inquirySessions,
   organizations,
   outreachLogs,
+  projectProspects,
   projectSettings,
   proposals,
   prospects,
@@ -20,6 +21,7 @@ import {
   buildSegments,
   buildTrend,
   countLoopChanges,
+  latestResponders,
   levelCounts,
   percentOf,
   periodToWindow,
@@ -48,6 +50,7 @@ import { listChanges } from './loop/change'
 import { frameHistory } from './loop/observe'
 import { listMessageVariantsById, type MessageVariantRow } from './message-variants'
 import { getRejectionFeedbackSummaryById } from './responses'
+import { projectTargetExpr } from './prospects'
 import { listRecentOutreachById } from './outreach'
 import { listProjectAttention } from './attention'
 
@@ -59,6 +62,8 @@ export type DashboardQuery = z.infer<typeof dashboardQuerySchema>
 const DAY_MS = 24 * 60 * 60 * 1000
 
 const RECENT_ACTIVITY_LIMIT = 8
+const NOT_FIT_EXAMPLES = 3
+const RESPONDERS_SHOWN = 5
 // listRecentOutreach orders by sent_at, but the feed sorts by event time (reply/visit/sent);
 // over-fetch so a fresh reply/visit on an older send still surfaces, then slice after re-sort.
 const RECENT_ACTIVITY_CANDIDATES = 50
@@ -88,6 +93,8 @@ export async function getDashboardSummary(
   const trendSinceIso = trendWindowStartIso(now)
   const windowDays = query.period === '7d' ? 7 : query.period === '30d' ? 30 : undefined
 
+  const foundInWindow = and(eq(projectProspects.projectId, projectId), eq(prospects.origin, 'found'), gte(projectProspects.createdAt, curStart))
+
   const raw = async <T extends Record<string, unknown>>(q: ReturnType<typeof sql>): Promise<T[]> =>
     Array.from(await db.execute<T>(q)) as T[]
 
@@ -112,6 +119,8 @@ export async function getDashboardSummary(
     recentRes,
     attentionRes,
     frames,
+    researchRows,
+    notFitExamples,
   ] = await Promise.all([
     // The four KPI stage queries below define the funnel-stage events. They MUST stay
     // in lockstep with funnelStageCondition in services/outreach.ts — the KPI drill-down
@@ -258,6 +267,23 @@ export async function getDashboardSummary(
     listRecentOutreachById(db, tenantId, projectId, { limit: RECENT_ACTIVITY_CANDIDATES, offset: 0, period: 'all' }),
     listProjectAttention(db, tenantId, userId, edition, projectId, now),
     loadLeverConfig(db, projectId).then((config) => frameHistory(db, projectId, config, now)),
+    db
+      .select({
+        researched: count(),
+        notFit: count(sql`CASE WHEN NOT ${projectProspects.qualified} THEN 1 END`),
+        noContact: count(sql`CASE WHEN ${projectProspects.qualified} AND NOT (${projectTargetExpr}) THEN 1 END`),
+      })
+      .from(projectProspects)
+      .innerJoin(prospects, eq(prospects.id, projectProspects.prospectId))
+      .where(foundInWindow),
+    db
+      .select({ organizationName: organizations.name, reason: projectProspects.matchReason })
+      .from(projectProspects)
+      .innerJoin(prospects, eq(prospects.id, projectProspects.prospectId))
+      .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
+      .where(and(foundInWindow, eq(projectProspects.qualified, false)))
+      .orderBy(desc(projectProspects.createdAt))
+      .limit(NOT_FIT_EXAMPLES),
   ])
 
   // One-by-one (not a loop) so each result narrows to its ok branch for the build below.
@@ -326,6 +352,19 @@ export async function getDashboardSummary(
     }),
     leverRes.value.minSamplePerArm,
   )
+  const named = latestResponders(reactions.filter((r) => r.at >= curStart), RESPONDERS_SHOWN)
+  const names = named.length === 0
+    ? []
+    : await db
+        .select({ prospectId: prospects.id, prospectName: prospects.name, organizationName: organizations.name })
+        .from(prospects)
+        .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
+        .where(inArray(prospects.id, named.map((n) => n.prospectId)))
+  const nameOf = new Map(names.map((n) => [n.prospectId, n]))
+  const responders = named.flatMap(({ prospectId, level }) => {
+    const name = nameOf.get(prospectId)
+    return name ? [{ prospectName: name.prospectName, organizationName: name.organizationName, level }] : []
+  })
   const recentActivity = recentRes.value.logs
     .map(toActivityEvent)
     .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
@@ -346,6 +385,14 @@ export async function getDashboardSummary(
     lastCycleDate: lastCycleRows[0]?.last ?? null,
     rejections,
     segments,
+    research: {
+      researched: researchRows[0]?.researched ?? 0,
+      notFit: researchRows[0]?.notFit ?? 0,
+      notFitPercent: percentOf(researchRows[0]?.notFit ?? 0, researchRows[0]?.researched ?? 0),
+      noContact: researchRows[0]?.noContact ?? 0,
+      notFitExamples,
+    },
+    responders,
     recentActivity,
     attention: attentionRes.value,
   })

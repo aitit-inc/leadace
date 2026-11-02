@@ -1,5 +1,5 @@
-import { and, eq } from 'drizzle-orm'
-import { projectSettings, projects } from '../db/schema'
+import { and, eq, min } from 'drizzle-orm'
+import { outreachLogs, projectSettings, projects } from '../db/schema'
 import type { TenantRun } from '../db/rls'
 import type { Edition } from '../domain/edition'
 import type { ProjectId, TenantId } from '../domain/ids'
@@ -37,11 +37,21 @@ export async function sendCycleDigest(
       .where(eq(projectSettings.projectId, projectId))
       .limit(1)
     if (!settings) return err('NOT_FOUND', 'Project settings not found')
+    const [first] = await db
+      .select({ at: min(outreachLogs.sentAt) })
+      .from(outreachLogs)
+      .where(and(eq(outreachLogs.tenantId, tenantId), eq(outreachLogs.projectId, projectId), eq(outreachLogs.status, 'sent')))
 
     // The window the dashboard opens on, so the email and the screen agree.
     const summary = await getDashboardSummary(db, tenantId, owner, ctx.edition, projectId, { period: '30d' })
     if (!summary.ok) return summary
-    return ok(buildDigest({ projectName: project.name, sinceDay: dayOf(settings.since), today, summary: summary.value }))
+    return ok(buildDigest({
+      projectName: project.name,
+      sinceDay: dayOf(settings.since),
+      today,
+      firstSendDay: first?.at ? dayOf(first.at) : null,
+      summary: summary.value,
+    }))
   })
   if (!prepared.ok) return prepared
   const digest = prepared.value

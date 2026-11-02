@@ -1,19 +1,23 @@
 ---
 name: record-flows
-description: "Screen-record a flow in the LeadAce web app on the local stack as a captioned mp4: a throwaway signed-in account, the real UI, model and jobs, job waits fast-forwarded. What to record comes from the person each time. Triggers: '画面収録', 'デモ動画', 'record the flow', 'screen recording'."
+description: "Screen-record a flow in the LeadAce web app on the local stack as a captioned mp4: a throwaway signed-in account, the real UI, model and jobs, job waits fast-forwarded. For a demo, or to show a behaviour working on a PR. What to record comes from the person or the change. Triggers: '画面収録', 'デモ動画', '録画して', '操作動画', 'record the flow', 'screen recording'."
 ---
 
 # Record a flow
 
-The person says what to show. Pick the `npm run ui` scenario closest to where
-the flow starts (`cd frontend && npm run ui -- list`), write a steps file for
-this one recording in the scratchpad, and run
+The person, or the change on a PR, says what to show. Pick the `npm run ui`
+scenario closest to where the flow starts (`cd frontend && npm run ui -- list`),
+write a steps file for this one recording in the scratchpad, and run
 `npm run ui -- record <scenario> <absolute path of the steps file>`. The steps
 contract: [e2e/README.md → Recording a flow](../../../e2e/README.md). Needs the
 local stack (`make dev`).
 
 ## Rules
 
+- A caption saying it worked proves nothing: what the screen cannot show (a DB
+  row) goes in `r.verdict`, from a value read during the recording.
+- One video, one thing, 30 to 60 seconds. Rehearse the steps once: a failed
+  attempt must not be the video.
 - Captions say what the person does, never what Ace will answer: the model can
   take another route. A wrong caption means recording again. Write them in the
   language the person asked in.
@@ -21,7 +25,7 @@ local stack (`make dev`).
   a caption.
 - Before handing a video over, pull a few frames
   (`ffmpeg -ss <t> -i <mp4> -frames:v 1 x.png`) and look at them. Then send it
-  with SendUserFile.
+  with SendUserFile, or attach it to the PR.
 - A video that shows a real company (discovery registers real ones, with
   their published addresses) stays internal.
 

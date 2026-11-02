@@ -10,7 +10,7 @@ import { discoveryStrategySchema, type ProjectId, type ProjectRef, type TenantId
 import type { AllowedSendCountry } from '../../domain/country'
 import { hostedChannels, type OutboundChannel } from '../../domain/outbound-channel'
 import type { JobOrigin } from '../../domain/jobs'
-import type { ChangeAuthor, ReachSettings } from '../../domain/loop/change'
+import { authorOf, type ChangeAuthor, type ReachSettings } from '../../domain/loop/change'
 import type { LeverConfig } from '../../domain/loop/config'
 import {
   applyOnFor,
@@ -205,7 +205,7 @@ export async function applyFrameNow(
   const stale = await db.select({ id: proposals.id }).from(proposals)
     .where(and(eq(proposals.projectId, resolved.value), eq(proposals.status, 'pending'), appliesOnItsDay))
     .for('update')
-  const applied = await applyFrameChange(db, tenantId, resolved.value, built.frame, { actor: 'user', reason },
+  const applied = await applyFrameChange(db, tenantId, resolved.value, built.frame, authorOf(origin, reason),
     (current) => sameReach(current.reach, reach) && current.salesStrategyId === (strategy?.id ?? null))
   if (!applied) return err('CONFLICT', 'The settings, the sales strategy or the frame\'s names changed meanwhile; nothing changed')
   if (stale.length > 0) await db.update(proposals).set({ status: 'outdated' }).where(inArray(proposals.id, stale.map((p) => p.id)))

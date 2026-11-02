@@ -607,8 +607,15 @@ export default async function (r) {
   // Waits for Ace; approves each card (unless the function says no) and saves
   // the sender identity form, until the thread goes quiet.
   await r.drive((title) => !/without review/i.test(title));
-  // Also: r.settle() (the next card, form or quiet), r.page (Playwright),
-  // r.persona, r.api, r.psql, r.q, r.appUrl, r.apiUrl.
+  // A click the viewer can follow: the pointer goes there first, and a ripple
+  // marks the click. Anything Playwright does with its mouse is drawn too.
+  await r.click(r.page.getByRole('button', { name: 'Save' }));
+  // What the screen cannot show: green or red, from a value read just now.
+  const rows = r.psql(`SELECT count(*) FROM ...`);
+  await r.verdict(`Rows: ${rows}`, rows === '1');
+  // Also: r.setFast(on) (play a wait fast), r.settle() (the next card, form or
+  // quiet), r.page (Playwright), r.persona, r.api, r.psql, r.q, r.appUrl,
+  // r.apiUrl.
 }
 ```
 

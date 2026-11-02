@@ -29,7 +29,7 @@ import { getLeverStateById, type LeverStateView } from './policy'
 import { listMessageVariantsById, replaceMessageVariant, upsertMessageVariant } from '../message-variants'
 import { upsertDiscoveryStrategy } from '../discovery-strategies'
 import { notify, notifyCtxOf } from '../notifications'
-import { loadMasterDoc, noProgress, requireStrategyDocs, STAGE_CALLER, type HostedEnv, type ProgressFn } from '../pipeline/context'
+import { loadMasterDoc, noProgress, requireStrategyDocs, STAGE_ORIGIN, type HostedEnv, type ProgressFn } from '../pipeline/context'
 import { utcDateKey } from '../../domain/time'
 import { runWithRls } from '../../db/rls'
 import { draftReviewSection } from '../../domain/draft-review'
@@ -309,7 +309,7 @@ ${measuredSections(judged.value)}
       if (!edited.ok) console.warn(`[evaluate] sales strategy edit for ${projectId} not applied: ${edited.why}`)
       else if (edited.content !== docs.salesStrategy) {
         const written = await runWithRls(db, tenantId, (tx) =>
-          applySalesStrategyEdit(tx, tenantId, projectId, edited.content, authorOf(STAGE_CALLER, why, signals), docs.salesStrategyId))
+          applySalesStrategyEdit(tx, tenantId, projectId, edited.content, authorOf(STAGE_ORIGIN, why, signals), docs.salesStrategyId))
         if (written) wrote.push('sales_strategy')
       }
     }
@@ -319,8 +319,8 @@ ${measuredSections(judged.value)}
       const body = { ...variant, reason: why }
       const r = await runWithRls(db, tenantId, (tx) =>
         outgoing
-          ? replaceMessageVariant(tx, tenantId, STAGE_CALLER, projectId, outgoing, body, signals)
-          : upsertMessageVariant(tx, tenantId, STAGE_CALLER, projectId, body, signals))
+          ? replaceMessageVariant(tx, tenantId, STAGE_ORIGIN, projectId, outgoing, body, signals)
+          : upsertMessageVariant(tx, tenantId, STAGE_ORIGIN, projectId, body, signals))
       if (r.ok) wrote.push(outgoing ? `variant ${variant.variantId} in place of ${outgoing}` : `variant ${variant.variantId}`)
     }
   }
@@ -347,7 +347,7 @@ ${measuredSections(judged.value)}
   const additions = upserts.filter((u) => !u.archived && !known.has(u.slug)).slice(0, Math.max(freeSlots, 0))
   for (const u of [...archives, ...additions]) {
     const { why, signals, ...strategy } = u
-    const r = await runWithRls(db, tenantId, (tx) => upsertDiscoveryStrategy(tx, tenantId, STAGE_CALLER, projectId, { ...strategy, reason: why }, signals))
+    const r = await runWithRls(db, tenantId, (tx) => upsertDiscoveryStrategy(tx, tenantId, STAGE_ORIGIN, projectId, { ...strategy, reason: why }, signals))
     if (r.ok) wrote.push(`${u.archived ? 'archived' : 'registered'} strategy ${u.slug}`)
   }
 

@@ -33,6 +33,8 @@ const emptySummary: DashboardSummary = {
     recontactSoon: null,
   },
   segments: [],
+  research: { researched: 0, notFit: 0, notFitPercent: 0, noContact: 0, notFitExamples: [] },
+  responders: [],
   recentActivity: [],
   attention: [],
 }
@@ -41,11 +43,71 @@ const input = (over: Omit<Partial<DigestInput>, 'summary'> & { summary?: Partial
   projectName: 'Acme',
   sinceDay: '2026-09-14',
   today: '2026-09-18',
+  firstSendDay: null,
   ...over,
   summary: { ...emptySummary, ...over.summary },
 })
 
 describe('buildDigest', () => {
+  describe('first report', () => {
+    const research = {
+      researched: 60,
+      notFit: 24,
+      notFitPercent: 40,
+      noContact: 8,
+      notFitExamples: [{ organizationName: 'Big Corp', reason: 'Runs its own\n in-house exam.' }],
+    }
+    const kpis = { ...emptySummary.kpis, approached: { current: 25, previous: 0, deltaPct: null } }
+
+    it('goes out the day after the first send with no change to report', () => {
+      const digest = buildDigest(input({ sinceDay: '2026-09-16', today: '2026-09-18', firstSendDay: '2026-09-17', summary: { kpis, research } }))
+      expect(digest?.subject).toBe('Acme: first report: 60 looked at, 25 contacted')
+      expect(digest?.body).toContain("Ace looked at 60 companies: 24 (40%) didn't fit your target or couldn't be confirmed, 8 fit but publish no way to reach them.")
+      expect(digest?.body).toContain("Why companies didn't fit (latest)\nBig Corp: Runs its own in-house exam.")
+      expect(digest?.body).toContain('Who responded\nNo one yet.')
+    })
+
+    it('waits while the first send is still in the day in progress, and goes once only', () => {
+      const summary = { kpis, research }
+      expect(buildDigest(input({ sinceDay: '2026-09-16', today: '2026-09-17', firstSendDay: '2026-09-17', summary }))).toBeNull()
+      expect(buildDigest(input({ sinceDay: '2026-09-18', today: '2026-09-19', firstSendDay: '2026-09-17', summary }))).toBeNull()
+    })
+  })
+
+  it('does not call a no silence', () => {
+    const digest = buildDigest(
+      input({
+        today: '2026-09-21',
+        summary: {
+          kpis: {
+            ...emptySummary.kpis,
+            approached: { current: 25, previous: 0, deltaPct: null },
+            engaged: { current: 1, previous: 0, deltaPct: null },
+          },
+        },
+      }),
+    )
+    expect(digest?.body).toContain('Who responded\nNo one has shown interest yet.')
+  })
+
+  it('names who responded and leaves out research that did not happen', () => {
+    const digest = buildDigest(
+      input({
+        today: '2026-09-21',
+        summary: {
+          kpis: { ...emptySummary.kpis, approached: { current: 25, previous: 0, deltaPct: null } },
+          responders: [
+            { prospectName: 'Jane Doe', organizationName: 'Acme Exams', level: 'positive' },
+            { prospectName: 'Foo Inc', organizationName: 'Foo Inc', level: 'interest' },
+          ],
+        },
+      }),
+    )
+    expect(digest?.body).toContain('Who responded\nPositive: Jane Doe, Acme Exams\nWith interest: Foo Inc')
+    expect(digest?.body).not.toContain('Ace looked at')
+    expect(digest?.body).not.toContain("didn't fit (latest)")
+  })
+
   it('says nothing while no change is in and the heartbeat is not due', () => {
     expect(
       buildDigest(
@@ -102,7 +164,7 @@ describe('buildDigest', () => {
       { date: '2026-09-17', kind: 'document', target: 'sales_strategy', actor: 'ace', reason: null, evidence: null },
     ]
     const digest = buildDigest(input({ today: '2026-09-18', summary: { journal } }))
-    expect(digest?.subject).toBe('Acme: no change from what we learned since 2026-09-14')
+    expect(digest?.subject).toBe('Acme: 2 updates since 2026-09-14')
     expect(digest?.body).toContain('New angle: Cost saving')
   })
 
@@ -140,7 +202,7 @@ describe('buildDigest', () => {
       }),
     )
     expect(digest?.body).toContain(
-      'How Ace learned (last 30 days)\n3 changes by Ace, resting on: reply rates 1 · the noes 0 · bounces 1 · what discovery found 2 · your corrections 0\nThis frame (since 2026-10-19): 1 positive of 42 counted (2.4%) · the frame before: 2 positive of 1240 counted (0.2%)',
+      'How Ace learned (last 30 days)\n3 changes by Ace, resting on: reply rates 1 · bounces 1 · what discovery found 2\nThis frame (since 2026-10-19): 1 positive of 42 counted (2.4%) · the frame before: 2 positive of 1240 counted (0.2%)',
     )
   })
 

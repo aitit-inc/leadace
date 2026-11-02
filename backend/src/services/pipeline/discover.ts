@@ -36,7 +36,7 @@ import {
   noProgress,
   parseIndustryVocabulary,
   requireStrategyDocs,
-  STAGE_CALLER,
+  STAGE_ORIGIN,
   type Checkpoint,
   type HostedEnv,
   type ProgressFn,
@@ -377,7 +377,7 @@ export async function runDiscover(
     }
     const notes = carried?.notes
     if (notes && notes !== (await loadDoc(db, tenantId, projectId, 'search_notes'))) {
-      const saved = await runWithRls(db, tenantId, (tx) => saveDocument(tx, tenantId, STAGE_CALLER, env, { id: projectId, slug: 'search_notes' }, { content: notes }))
+      const saved = await runWithRls(db, tenantId, (tx) => saveDocument(tx, tenantId, STAGE_ORIGIN, env, { id: projectId, slug: 'search_notes' }, { content: notes }))
       if (!saved.ok) console.error('[discover] search_notes save failed', saved.error)
     }
     return ok(kept)
