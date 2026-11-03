@@ -371,10 +371,10 @@ BEFORE="$(count_rows)"
 api PUT "/api/projects/$PROJECT_ID/documents/search_notes" "$(jq -nc '{content:"notes"}')" > /dev/null
 assert_eq "search_notes is not policy: no row" "$(count_rows)" "$BEFORE"
 DASH="$(api GET "/api/projects/$PROJECT_ID/dashboard")"
-assert_eq "dashboard journal leads with today's sales_strategy edit" \
-  "$(echo "$DASH" | jq -rc '.journal[0] | [.kind, .target, .actor, .reason]')" '["document","sales_strategy","user","e2e: first draft"]'
-assert_eq "dashboard journal carries the tick's archive of v3" \
-  "$(echo "$DASH" | jq -r '[.journal[] | select(.kind == "rule_archive" and .optionId == "v3")] | length')" "1"
+assert_eq "dashboard history leads with today's sales_strategy edit" \
+  "$(echo "$DASH" | jq -rc '.history[0] | [.text, .who, .notes]')" '["Edited the sales strategy","You",["e2e: first draft"]]'
+assert_eq "dashboard history carries the tick's archive of v3" \
+  "$(echo "$DASH" | jq -r '[.history[] | select(.who == "Rule" and (.text | test("^(Retired|Swapped out)")))] | length')" "1"
 assert_eq "an empty sales strategy is refused" \
   "$(api PUT "/api/projects/$PROJECT_ID/documents/sales_strategy" "$(jq -nc '{content:""}')" | jq -r '.error')" "Invalid input"
 assert_eq "lever-decisions carries every change of the day, the sales_strategy edit with its reason" \
@@ -663,8 +663,8 @@ assert_eq "restore tick2 weighs r3 again" "$(echo "$TR2" | jq -r '.weights | has
 assert_eq "r3 is active again" "$(api GET "/api/projects/$PROJECT_ID6/lever-state" | jq -r '.variants | length')" "3"
 assert_eq "restore logged as the rule's, with its evidence and no archive reason" \
   "$(psql_local "SELECT op || ':' || actor || ':' || COALESCE(rule_reason::text, '-') || ':' || (evidence->>'n') FROM policy_changes WHERE project_id='$PROJECT_ID6' AND option_id='r3' ORDER BY id DESC LIMIT 1;")" "restore:rule:-:40"
-assert_eq "dashboard journal carries the rule's restore" \
-  "$(api GET "/api/projects/$PROJECT_ID6/dashboard" | jq -r '[.journal[] | select(.kind == "rule_restore" and .optionId == "r3")] | length')" "1"
+assert_eq "dashboard history carries the rule's restore" \
+  "$(api GET "/api/projects/$PROJECT_ID6/dashboard" | jq -r '[.history[] | select(.who == "Rule" and (.text | startswith("Brought back")) and (.text | contains("r3")))] | length')" "1"
 
 step "grace: r3's record turns bad again, but it has no send since it re-entered"
 psql_local "DELETE FROM responses WHERE outreach_log_id IN (SELECT id FROM outreach_logs WHERE project_id='$PROJECT_ID6' AND variant_id='r3');" > /dev/null

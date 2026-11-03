@@ -1,11 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import {
   buildFunnel,
-  buildJournal,
   buildSegments,
   buildTrend,
   computeDeltaPct,
-  countLoopChanges,
   levelCounts,
   percentOf,
   periodToWindow,
@@ -15,7 +13,6 @@ import {
   type SegmentAxis,
   type SegmentCount,
 } from './dashboard'
-import type { ProposedChange } from './loop/proposal'
 
 describe('computeDeltaPct', () => {
   it('returns the rounded percentage change', () => {
@@ -167,55 +164,6 @@ describe('periodToWindow', () => {
     const w = periodToWindow('all', now)
     expect(w.curStart.getTime()).toBe(0)
     expect(w.prevStart.getTime()).toBe(0)
-  })
-})
-
-describe('buildJournal', () => {
-  const variants = [{ variantId: 'roi-focus', label: 'ROI focus' }]
-
-  it('reports every logged change with who and why, labelling variants only', () => {
-    const events = buildJournal(
-      [
-        { day: '2026-07-14', actor: 'rule', target: 'variant', optionId: 'roi-focus', op: 'archive', reason: 'rotated', evidence: { pBest: 0.05, n: 42 } },
-        { day: '2026-07-14', actor: 'ace', target: 'sales_strategy', reason: 'Not a fit: agencies', evidence: { signals: ['declines'] } },
-        { day: '2026-07-13', actor: 'user', target: 'strategy', optionId: 'yc-hn', op: 'restore', reason: null, evidence: null },
-      ],
-      variants,
-      [],
-      '2026-07-01',
-    )
-    expect(events).toEqual([
-      { date: '2026-07-14', kind: 'rule_archive', target: 'variant', optionId: 'roi-focus', label: 'ROI focus', reason: 'rotated', evidence: { pBest: 0.05, n: 42 } },
-      { date: '2026-07-14', kind: 'document', target: 'sales_strategy', actor: 'ace', reason: 'Not a fit: agencies', evidence: { signals: ['declines'] } },
-      { date: '2026-07-13', kind: 'option', target: 'strategy', optionId: 'yc-hn', label: null, op: 'restore', actor: 'user', reason: null, evidence: null },
-    ])
-  })
-
-  const loosen = (applyOn: string): ProposedChange =>
-    ({ kind: 'loosen', applyOn, reason: 'form-only prospects', outboundChannels: { from: ['email'], to: ['email', 'form'] } })
-
-  it('windows proposals and puts them after the day\'s changes', () => {
-    const events = buildJournal(
-      [{ day: '2026-07-12', actor: 'ace', target: 'settings', diff: { outboundChannels: { from: ['email'], to: ['email', 'form'] } }, reason: 'form-only prospects', evidence: { signals: ['discovery'] } }],
-      variants,
-      [
-        { title: 'Turn on form outreach', status: 'applied', change: loosen('2026-07-12'), createdAt: '2026-07-11T00:30:00Z' },
-        { title: 'Stale proposal', status: 'stopped', change: loosen('2026-06-02'), createdAt: '2026-06-01T00:30:00Z' },
-      ],
-      '2026-06-16',
-    )
-    expect(events.map((e) => e.kind)).toEqual(['settings', 'proposed'])
-  })
-})
-
-describe('countLoopChanges', () => {
-  it('counts the rule and Ace\'s loop changes under every signal each rests on', () => {
-    expect(countLoopChanges([
-      { day: '2026-10-19', actor: 'rule', target: 'variant', optionId: 'roi-focus', op: 'archive', reason: 'lost', evidence: { pBeatsLeader: 0.02, n: 61 } },
-      { day: '2026-10-19', actor: 'ace', target: 'strategy', optionId: 'yc-hn', op: 'archive', reason: '5 of 40 bounced', evidence: { signals: ['bounces', 'discovery'] } },
-      { day: '2026-10-19', actor: 'ace', target: 'strategy', optionId: 'g2-reviews', op: 'add', reason: 'chat', evidence: null },
-      { day: '2026-10-18', actor: 'user', target: 'sales_strategy', reason: null, evidence: null },
-    ])).toEqual({ changes: 2, bySignal: { replies: 1, declines: 0, bounces: 1, discovery: 1, person: 0 } })
   })
 })
 

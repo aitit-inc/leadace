@@ -22,6 +22,7 @@ import { JOB_KINDS, JOB_STATUSES, jobParamsSchema, type JobKind, type JobLogLine
 import { DAYS_OF_WEEK, daysSchema, hourSchema, promptSchema, timezoneSchema } from '../domain/schedules'
 import { applyStrategyDraftSchema, competitorsInputSchema, readPagesSchema } from '../domain/strategy-draft'
 import { changeReasonSchema, reachDiff, reachLine, type ReachSettings } from '../domain/loop/change'
+import { historyLine, type HistoryRow } from '../domain/history'
 import { frameBodySchema, frameReach, proposalWhat, PROPOSAL_STATUSES, type ProposedChange } from '../domain/loop/proposal'
 import { sectionEditSchema } from '../domain/document-sections'
 import { isoDateTimeSchema } from '../domain/time'
@@ -1920,6 +1921,25 @@ export function buildToolRegistry(): ToolDef[] {
       return {
         content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
       }
+    },
+    { readOnly: true },
+  )
+
+  defineTool(
+    'get_history',
+    'The project\'s sales record, one line per row, newest first: each decision with who made it (You, Ace, Rule), why and what came of it; each day\'s work and what arrived. A row\'s numbers count all that followed.',
+    {
+      projectId: z.string().min(1).describe('Project name or ID'),
+      days: z.number().int().min(1).max(3650).optional().describe('How far back; the whole record when omitted'),
+    },
+    async ({ projectId, days }, ctx) => {
+      const { ok, data } = await ctx.callApi('GET', `/projects/${encodeURIComponent(projectId)}/history${days === undefined ? '' : `?days=${days}`}`, null)
+      if (!ok) {
+        const err = data as { error: string }
+        return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
+      }
+      const { rows } = data as { rows: HistoryRow[] }
+      return { content: [{ type: 'text' as const, text: rows.length > 0 ? rows.map(historyLine).join('\n') : 'Nothing on record yet.' }] }
     },
     { readOnly: true },
   )

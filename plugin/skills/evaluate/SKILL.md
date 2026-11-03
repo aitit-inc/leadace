@@ -166,7 +166,7 @@ The loop's own escape hatch is the angle rotation above — use it, don't sugges
 
 ### 5. Results Report
 
-Report the following directly to the user (no file output needed -- live metrics are in the Web UI `/evaluations`; this report is the narration):
+Report the following directly to the user (no file output needed -- live metrics are in the Web UI `/history`; this report is the narration):
 - Key KPIs (response rate, positive rate, etc.)
 - **Inquiry landing conversions** (from step 1's `inquiryOutcomeCounts`): show whenever any of `lead` / `signup_clicked` / `inquired` / `unsubscribed` is non-zero. Report `lead` (meeting-request conversions) and `signup_clicked` (self-serve signup conversions) separately — they reflect different CTA modes and inform whether the project's chosen CTA is converting. Skip the section when all five outcomes are 0
 - Changes since the last cycle (what step 4 applied, plus notable lever shifts from `get_lever_decisions`)

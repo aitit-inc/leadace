@@ -30,8 +30,6 @@ export function reachDiff(from: ReachSettings, to: ReachSettings): ReachDiff {
 export function reachRows(diff: ReachDiff): { label: string; from: string; to: string }[] {
   const channels = (v: string[]) => (v.length === 0 ? 'none' : v.map((c) => c.replace(/_/g, ' ')).join(', '));
   const countries = (v: string[]) => (v.length === 0 ? 'any' : v.join(', '));
-  const orDefault = (n: number | null) => (n === null ? 'default' : String(n));
-  const onOff = (on: boolean) => (on ? 'on' : 'off');
   return [
     diff.outboundChannels && {
       label: 'Channels',
@@ -44,8 +42,5 @@ export function reachRows(diff: ReachDiff): { label: string; from: string; to: s
       to: countries(diff.targetCountries.to),
     },
     diff.targetLanguage && { label: 'Language', from: diff.targetLanguage.from, to: diff.targetLanguage.to },
-    diff.outboundMode && { label: 'Sending', from: diff.outboundMode.from, to: diff.outboundMode.to },
-    diff.dailyNewProspects && { label: 'New prospects a day', from: orDefault(diff.dailyNewProspects.from), to: orDefault(diff.dailyNewProspects.to) },
-    diff.followUps && { label: 'Follow-ups', from: onOff(diff.followUps.from), to: onOff(diff.followUps.to) },
   ].filter((r) => !!r);
 }

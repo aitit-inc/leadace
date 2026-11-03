@@ -1,13 +1,11 @@
 // Assembled from what the dashboard already computed. No LLM call: the email
 // and the dashboard must never disagree about a number.
 import type { AttentionItem, QuotaAllowance, QuotaConstraint } from './attention'
-import { percentOf, type DashboardResearch, type DashboardResponder, type DashboardSummary, type JournalEvent, type LoopReport, type RateChange, type SegmentAxis } from './dashboard'
-import { CHANGE_SIGNALS, reachLine, type AceEvidence, type ChangeSignal } from './loop/change'
-import type { FramePeriod } from './loop/frame'
-import type { ProposedChange } from './loop/proposal'
+import type { DashboardResearch, DashboardResponder, DashboardSummary, RateChange, SegmentAxis } from './dashboard'
+import { historyLine } from './history'
 
 // A digest covers whole UTC days, [sinceDay, today): the day is all the
-// resolution a journal event carries, so reporting a day still in progress
+// resolution a history row carries, so reporting a day still in progress
 // would either lose what the rest of it records or repeat what was already
 // reported. Today's changes go out in the next digest.
 export type DigestInput = {
@@ -54,58 +52,6 @@ function daysBetween(fromDay: string, toDay: string): number {
 
 function quote(claim: string): string {
   return `"${claim.replace(/\s+/g, ' ').trim()}"`
-}
-
-const OPTION_HEAD = {
-  variant: { add: 'New angle', update: 'Angle edited', archive: 'Angle retired', restore: 'Angle back' },
-  strategy: { add: 'New search strategy', update: 'Search strategy edited', archive: 'Search strategy retired', restore: 'Search strategy back' },
-} as const
-const DOCUMENT_HEAD = { sales_strategy: 'Sales strategy adjusted', business: 'Business profile updated' } as const
-
-const SIGNAL_WORDS: Record<ChangeSignal, string> = {
-  replies: 'reply rates',
-  declines: 'the noes',
-  bounces: 'bounces',
-  discovery: 'what discovery found',
-  person: 'your corrections',
-}
-
-const PROPOSAL_OUTCOME = { applied: 'applied', stopped: 'you stopped it', outdated: 'dropped: a change came first' } as const
-const pendingNote = (change: ProposedChange): string =>
-  change.kind === 'add-means' ? 'waiting for you to set it up' : `applies ${change.applyOn} unless you stop it`
-
-function journalLine(e: JournalEvent): string {
-  const by = (actor: 'ace' | 'user', reason: string | null, evidence: AceEvidence | null): string => {
-    const who = actor === 'user' ? ' (by you)' : evidence ? ` (on ${evidence.signals.map((sig) => SIGNAL_WORDS[sig]).join(', ')})` : ''
-    return `${who}${reason ? ` — ${reason}` : ''}`
-  }
-  switch (e.kind) {
-    case 'proposed':
-      return `Proposed to you: ${e.title} (${e.status === 'pending' ? pendingNote(e.change) : PROPOSAL_OUTCOME[e.status]})`
-    case 'settings':
-      return `${reachLine(e.diff)}${by(e.actor, e.reason, e.evidence)}`
-    case 'frame':
-      return `New frame: measuring from here${by(e.actor, e.reason, e.evidence)}`
-    case 'document':
-      return `${DOCUMENT_HEAD[e.target]}${by(e.actor, e.reason, e.evidence)}`
-    case 'option':
-      return `${OPTION_HEAD[e.target][e.op]}: ${e.label ?? e.optionId}${by(e.actor, e.reason, e.evidence)}`
-    case 'rule_archive':
-      return `${OPTION_HEAD[e.target].archive}: ${e.label ?? e.optionId} (${e.reason === 'rotated' ? 'no traction' : `another ${e.target === 'variant' ? 'angle' : 'strategy'} won`})`
-    case 'rule_restore':
-      return `${OPTION_HEAD[e.target].restore}: ${e.label ?? e.optionId} (its results caught up)`
-  }
-}
-
-function digestEvents(input: DigestInput): JournalEvent[] {
-  const { sinceDay, today, summary } = input
-  return summary.journal.filter((e) => e.date >= sinceDay && e.date < today)
-}
-
-// Counts as the loop section does (changeSignals): setup, the person's own
-// edits and proposals are reported, not counted.
-function learnedFrom(e: JournalEvent): boolean {
-  return e.kind === 'rule_archive' || e.kind === 'rule_restore' || (e.kind !== 'proposed' && e.evidence !== null)
 }
 
 const QUOTA_LINE: Record<QuotaAllowance, Record<QuotaConstraint, string>> = {
@@ -208,27 +154,15 @@ function marketSection(summary: DashboardSummary): string[] {
   return lines
 }
 
-const frameRate = ({ trials, positive }: FramePeriod): string =>
-  `${positive} positive of ${Math.round(trials)} counted (${percentOf(positive, trials)}%)`
-
-function loopSection({ changes, bySignal, frame, previousFrame }: LoopReport): string[] {
-  if (changes === 0 && previousFrame === null && frame.positive === 0) return []
-  const signals = CHANGE_SIGNALS.filter((sig) => bySignal[sig] > 0).map((sig) => `${SIGNAL_WORDS[sig]} ${bySignal[sig]}`).join(' · ')
-  return [
-    `${changes} change${changes === 1 ? '' : 's'} by Ace${signals ? `, resting on: ${signals}` : ''}`,
-    `This frame (since ${frame.start?.day ?? 'the first send'}): ${frameRate(frame)}${previousFrame ? ` · the frame before: ${frameRate(previousFrame)}` : ''}`,
-  ]
-}
-
 function section(title: string, lines: string[]): string[] {
   return lines.length > 0 ? ['', title, ...lines] : []
 }
 
 // null when there is nothing worth an email.
 export function buildDigest(input: DigestInput): Digest | null {
-  const events = digestEvents(input)
-  const changes = events.map(journalLine)
-  const learned = events.filter(learnedFrom).length
+  const rows = input.summary.history.filter((row) => row.date >= input.sinceDay && row.date < input.today)
+  const changes = rows.filter((row) => row.who !== null)
+  const learned = changes.filter((row) => row.learned).length
   const { firstSendDay } = input
   // The first report must not wait for a change: nothing has been learned yet,
   // and what the research found is already worth reading.
@@ -246,11 +180,7 @@ export function buildDigest(input: DigestInput): Digest | null {
     ...section('Who responded', respondersSection(input.summary)),
     ...section("Why companies didn't fit (latest)", notFitSection(input.summary.research)),
     ...section('What the market is telling you', market),
-    ...section('How Ace learned (last 30 days)', loopSection(input.summary.loop)),
-    ...section(
-      `What changed since ${input.sinceDay}`,
-      changes.length > 0 ? changes : ['Nothing — the system kept running on what it already learned.'],
-    ),
+    ...section(`History since ${input.sinceDay}`, rows.length > 0 ? rows.map(historyLine) : ['Nothing — the system kept running on what it already learned.']),
   ].join('\n')
 
   const { researched } = input.summary.research

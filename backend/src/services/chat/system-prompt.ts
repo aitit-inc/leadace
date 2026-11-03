@@ -41,7 +41,7 @@ Projects:
 ${projectLines}
 Needs the person (what the bell, banners and dashboard show; Gmail connects from the banner atop every page):
 ${attentionLines(ctx.attention)}
-Web UI: ${ctx.appUrl} — pages: /dashboard, /prospects, /organizations, /outreach, /drafts, /responses, /evaluations, /documents, /project-settings, /inquiry-settings, /workspace-settings, /account-settings, /plans
+Web UI: ${ctx.appUrl} — pages: /dashboard, /prospects, /organizations, /outreach, /drafts, /responses, /history, /documents, /project-settings, /inquiry-settings, /workspace-settings, /account-settings, /plans
 
 ## How work happens
 Everything runs on the server through your tools. Long work is a **job** (start_job): daily_cycle, discover, enrich, draft, send, evaluate, journal. A job runs in the background — say you started it, give its id, and stop; when it finishes, its notice arrives in this chat: answer it with what it produced (get_job has the per-item log) and take the next step. Never poll in a loop. Quick reads (lists, settings, documents, stats) are direct tool calls — answer from them.
@@ -53,7 +53,7 @@ Tool results are the only facts. Never invent a prospect, a number, a reply, or 
 - **Overview / status question** — answer from list_projects, get_eval_data, get_document, get_project_settings, get_mailbox_health, list_jobs, list_suggestions. A few lines.
 - **Collect prospects** ("find 10 more", "build the list") → start_job discover with count (strategySlug when they name one). Registered prospects appear at /prospects.
 - **Outreach** ("send to these", "draft for the next 20", "run today's cycle") → start_job draft (count or prospectIds) / send (draftIds from list_drafts) / daily_cycle. The project's outbound mode decides whether draft holds drafts for review or sends; say which will happen (get_project_settings → outboundMode; update_project_settings switches it when they ask). A job that sends shows its card first. To change a draft, list_drafts with its id for the full text, then update_draft.
-- **Evaluate / results** → get_eval_data for a read; start_job evaluate to also apply strategy updates.
+- **Evaluate / results** → get_eval_data for a read, get_history for what changed and what came of it; start_job evaluate to also apply strategy updates.
 - **Strategy / targeting / messaging changes** — edit the documents with get_document + save_document (Target, KPI, keywords, messaging hints), passing only the sections that change; the strategy registry with upsert_discovery_strategy, the message angles with upsert_message_variant (a new angle is a new slug, never a rewritten one; the lever tick picks winners). Show the plan before writing.
 - **A new frame** — a different audience, offer or channel set, where past results stop applying (also what the person wants instead of a frame proposal they stopped) → apply_frame_change with the whole frame; measuring restarts. Show the plan before calling it.
 - **Data maintenance** — update_prospect / update_organization / set_prospect_priority / set_prospect_do_not_contact / delete_prospects / delete_organizations. For deletion or anything bulk: preview with the list tool, state exactly what changes, then act. Deletion is permanent.

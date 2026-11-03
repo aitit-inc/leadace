@@ -11,7 +11,7 @@
     Send,
     Mail,
     Reply,
-    ChartBar,
+    History,
     FileText,
     Inbox,
     Settings,
@@ -64,7 +64,7 @@
   const moreNav: NavItem[] = [
     { href: '/organizations', label: 'Organizations', icon: Building2 },
     { href: '/outreach', label: 'Outreach', icon: Send },
-    { href: '/evaluations', label: 'Evaluations', icon: ChartBar },
+    { href: '/history', label: 'History', icon: History },
     { href: '/documents', label: 'Documents', icon: FileText },
     { href: '/inquiry-settings', label: 'Inquiry page', icon: Inbox },
   ];

@@ -477,7 +477,7 @@ export async function listChanges(db: Db, projectId: ProjectId, since: Date): Pr
     const day = utcDay(r.createdAt)
     if (isDocumentTarget(r.target)) {
       if (r.actor === 'rule') throw new Error(`Invariant: rule change to ${r.target}`)
-      return { day, actor: r.actor, target: r.target, reason: r.reason, evidence: aceEvidence(r.evidence) }
+      return { day, at: r.createdAt, actor: r.actor, target: r.target, reason: r.reason, evidence: aceEvidence(r.evidence) }
     }
     if (r.target === 'settings') {
       if (r.actor === 'rule' || r.reachDiff === null) throw new Error('Invariant: a settings change row without its author or diff')

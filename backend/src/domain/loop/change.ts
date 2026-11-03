@@ -26,7 +26,7 @@ export type RuleArchiveReason = (typeof RULE_ARCHIVE_REASONS)[number]
 // tick made before it recorded any.
 export type RuleEvidence = { n: number } & ({ pBest: number } | { pBeatsLeader: number })
 
-export const CHANGE_SIGNALS = ['replies', 'declines', 'bounces', 'discovery', 'person'] as const
+const CHANGE_SIGNALS = ['replies', 'declines', 'bounces', 'discovery', 'person'] as const
 export type ChangeSignal = (typeof CHANGE_SIGNALS)[number]
 
 export const changeSignalsSchema = z.array(z.enum(CHANGE_SIGNALS)).min(1)
@@ -129,12 +129,8 @@ type Logged = { day: string; actor: ChangeAuthor['actor']; reason: string | null
 export type LoggedChange =
   | ({ day: string; actor: 'rule' } & RuleChange)
   | (Logged & { target: OptionTarget; optionId: string; op: OptionOp })
-  | (Logged & { target: DocumentTarget })
+  | (Logged & { target: DocumentTarget; at: Date })
   | (Logged & { target: 'settings'; diff: ReachDiff })
   | (Logged & { target: 'frame' })
 export type LoggedRuleChange = Extract<LoggedChange, { actor: 'rule' }>
 
-// The rule reads only the reply rates; null for a change outside the loop.
-export function changeSignals(c: LoggedChange): readonly ChangeSignal[] | null {
-  return c.actor === 'rule' ? ['replies'] : c.evidence?.signals ?? null
-}

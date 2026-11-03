@@ -565,7 +565,7 @@ function seedDashboardFixture(ctx, projectId, { pending = 'loosen' } = {}) {
     );
   }
 
-  // Every variant predates the 30-day journal window, so the only entries are
+  // Every variant predates the 30-day history window, so the only entries are
   // the two the retirement cycle archived — a newer created_at would add
   // "started testing a new angle" lines the screenshot does not have.
   const born = iso(now - 70 * DAY);
@@ -614,7 +614,7 @@ function seedDashboardFixture(ctx, projectId, { pending = 'loosen' } = {}) {
      (${q(tenant)}, ${q(projectId)}, ${q(ymd(now - 7 * DAY))}, ${q(JSON.stringify(cycleRetire))}::jsonb),
      (${q(tenant)}, ${q(projectId)}, ${q(ymd(now))}, ${q(JSON.stringify(cycleToday))}::jsonb);`,
   );
-  // The journal is the change log: the angles' adds predate its 30-day
+  // The history's decisions are the change log: the angles' adds predate its 30-day
   // window, so it shows the two the tick retired, the one it brought back,
   // and one target adjustment.
   psql(
@@ -1079,9 +1079,10 @@ const SCENARIOS = [
           'Industry: Software tech 4.8% / 11.9% of 42 · Hardware industrial 0% / 4.5% of 44',
           'Why 21 said no: Not relevant 43% · Budget 24% · Feature gap 19%',
           '',
-          'What changed since 2026-09-11',
-          'Sales strategy adjusted — Added agencies to Not a fit: 0 positive replies in 38 sends',
-          'New angle: Cost of doing nothing',
+          'History since 2026-09-11',
+          '2026-09-17 Ace: Edited the sales strategy — On the noes — Added agencies to Not a fit: 0 positive replies in 38 sends',
+          '2026-09-15 Ace: Started testing the angle “Cost of doing nothing”',
+          '2026-09-15 Contacted 8 · 2 follow-ups — 1 with interest',
         ].join('\n'),
       );
       // A reply to answer, as services/reply-ingest.ts assembles it.
@@ -1109,7 +1110,7 @@ const SCENARIOS = [
   },
   {
     name: 'dashboard',
-    summary: 'The dashboard and evaluations of a project with a month of outreach behind it',
+    summary: 'The dashboard and history of a project with a month of outreach behind it',
     stack: 'self-host',
     setup: async (ctx) => {
       const projectId = await seedProject(ctx, { name: 'SpeechMonster', settings: { outboundMode: 'send' } });
@@ -1120,22 +1121,9 @@ const SCENARIOS = [
           path: '/dashboard',
           expect: [
             '2 meeting requests waiting',
-            'Optimizing across 3 message angles',
-            'Proof-led',
+            'History',
             'Wantedly stories reach the schools email is bouncing at',
           ],
-        },
-        {
-          name: 'learning',
-          path: '/dashboard',
-          scrollTo: 'text=Recent decisions',
-          expect: ['positive / with interest', 'Recent decisions', 'on reply rates, the noes'],
-        },
-        {
-          name: 'loop',
-          path: '/dashboard',
-          scrollTo: 'text=What its changes rested on',
-          expect: ['changes by Ace', 'What discovery found', 'This frame'],
         },
         {
           name: 'segments',
@@ -1157,13 +1145,9 @@ const SCENARIOS = [
           click: 'button:has-text("Something else")',
           expect: ['This proposal stops', 'Send to Ace'],
         },
-        { name: 'evaluations', path: '/evaluations', expect: ['Current Metrics', 'With interest', 'By message angle'] },
-        {
-          name: 'evaluations-replies',
-          path: '/evaluations',
-          click: 'button:has-text("All replies")',
-          expect: ['Response rate', 'a No included'],
-        },
+        { name: 'history', path: '/history', expect: ['What was decided', 'Retired', 'Started testing the angle', 'Contacted', 'Edited the sales strategy'] },
+        { name: 'history-row', path: '/history', click: 'summary:has-text("Edited the sales strategy")', expect: ['On reply rates, the noes'] },
+        { name: 'old-link', path: '/evaluations', expect: ['What was decided'] },
       ];
     },
   },

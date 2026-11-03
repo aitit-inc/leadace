@@ -1,4 +1,4 @@
-import { and, asc, count, countDistinct, desc, eq, exists, gte, inArray, isNotNull, isNull, lt, max, ne, not, notInArray, sql, sum, type SQL } from 'drizzle-orm'
+import { and, asc, count, countDistinct, desc, eq, exists, gte, inArray, isNotNull, isNull, lt, max, ne, not, notInArray, sql, sum, type AnyColumn, type SQL } from 'drizzle-orm'
 import {
   discoveryStrategies,
   INQUIRY_OUTCOMES,
@@ -34,6 +34,7 @@ import type { ChannelFineStat, TargetingAxisStat, TargetingStats } from '../../d
 import type { TickEvidence } from '../../domain/loop/decide'
 import type { ArmStat } from '../../domain/loop/bandit'
 import type { FramePeriod } from '../../domain/loop/frame'
+import { buildActivityDays, type ActivityDay, type HistoryOutcomes } from '../../domain/history'
 import type { FollowUpJsonOp, GroundedTextOp, PagesJsonOp } from '../llm/routes'
 import { loadLeverConfig, loadProjectOutboundAllowlist } from '../project-settings'
 import { ok, type ServiceResult } from '../result'
@@ -280,7 +281,7 @@ export type ProjectStatsResult = {
   dailyActivity: DailyActivity[]
 }
 
-// The evaluations screen counts sends old enough for every reply to have arrived.
+// The stats count sends old enough for every reply to have arrived.
 const matured = (): SQL => lt(outreachLogs.sentAt, daysAgo(REPLY_ARRIVAL_DAYS))
 
 type VariantTally = { variantId: string; total: number; rewardSum: number; responses: number } & Pick<ReactionTotals, 'positive' | 'interested'>
@@ -824,6 +825,74 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
   }
 }
 
+// Over all time and across frames, since the record is.
+export async function historyOutcomes(db: Db, projectId: ProjectId, config: LeverConfig, now: Date): Promise<HistoryOutcomes> {
+  const [starts, sends, foundRows] = await Promise.all([
+    frameStarts(db, projectId),
+    observeSends(db, projectId, undefined),
+    db.select({
+      strategy: prospects.discoveryStrategy,
+      registered: count(),
+      unqualified: count(sql`CASE WHEN NOT ${projectProspects.qualified} THEN 1 END`),
+      noContact: count(sql`CASE WHEN ${projectProspects.qualified} AND NOT ${projectTargetExpr} THEN 1 END`),
+    })
+      .from(projectProspects).innerJoin(prospects, eq(prospects.id, projectProspects.prospectId))
+      .where(and(eq(projectProspects.projectId, projectId), isNotNull(prospects.discoveryStrategy)))
+      .groupBy(prospects.discoveryStrategy),
+  ])
+  return {
+    variants: evidenceBy(sends, optionOf('variant'), now, config.reward),
+    strategies: evidenceBy(sends, optionOf('strategy'), now, config.reward),
+    found: new Map(foundRows.flatMap(({ strategy, ...found }) => (strategy === null ? [] : [[strategy, found]]))),
+    frames: framePeriods(starts, sends, config, now),
+    sendsBetween: (from, to) => evidenceOf(
+      sends.filter((send) => send.sentAt >= from && (to === null || send.sentAt < to)),
+      now,
+      config.reward,
+    ),
+  }
+}
+
+export async function activityDays(db: Db, projectId: ProjectId, since: Date): Promise<ActivityDay[]> {
+  const utcDate = (at: AnyColumn) =>
+    sql<string>`(${at} AT TIME ZONE 'UTC')::date::text`
+  const foundDay = utcDate(projectProspects.createdAt)
+  const sentDay = utcDate(outreachLogs.sentAt)
+  const [research, sends, replies, sessions] = await Promise.all([
+    db.select({
+      day: foundDay,
+      researched: count(),
+      notFit: count(sql`CASE WHEN NOT ${projectProspects.qualified} THEN 1 END`),
+      noContact: count(sql`CASE WHEN ${projectProspects.qualified} AND NOT (${projectTargetExpr}) THEN 1 END`),
+    })
+      .from(projectProspects).innerJoin(prospects, eq(prospects.id, projectProspects.prospectId))
+      .where(and(eq(projectProspects.projectId, projectId), eq(prospects.origin, 'found'), gte(projectProspects.createdAt, since)))
+      .groupBy(foundDay),
+    db.select({
+      day: sentDay,
+      contacted: count(sql`CASE WHEN ${outreachLogs.touchNumber} = 1 THEN 1 END`),
+      followUps: count(sql`CASE WHEN ${outreachLogs.touchNumber} > 1 THEN 1 END`),
+    })
+      .from(outreachLogs)
+      .where(sentBy(projectId, gte(outreachLogs.sentAt, since)))
+      .groupBy(sentDay),
+    db.select({ day: utcDate(responses.receivedAt), outreachLogId: outreachLogs.id, responseType: responses.responseType, sentiment: responses.sentiment, reason: statedReason })
+      .from(responses).innerJoin(outreachLogs, eq(outreachLogs.id, responses.outreachLogId))
+      .where(sentBy(projectId, and(gte(responses.receivedAt, since), ne(responses.responseType, 'auto_reply')))),
+    db.select({ day: utcDate(inquirySessions.openedAt), outreachLogId: outreachLogs.id, outcome: inquirySessions.outcome })
+      .from(inquirySessions).innerJoin(outreachLogs, eq(outreachLogs.id, inquirySessions.outreachLogId))
+      .where(sentBy(projectId, and(gte(inquirySessions.openedAt, since), inArray(inquirySessions.outcome, OBSERVED_INQUIRY_OUTCOMES)))),
+  ])
+  return buildActivityDays({
+    research,
+    sends,
+    reactions: [
+      ...replies.map(({ day, outreachLogId, responseType, sentiment, reason }) => ({ day, outreachLogId, reaction: { kind: 'reply' as const, responseType, sentiment, reason: primaryReasonOf(reason) } })),
+      ...sessions.map(({ day, outreachLogId, outcome }) => ({ day, outreachLogId, reaction: { kind: 'inquiry' as const, outcome } })),
+    ],
+  })
+}
+
 export async function loadActiveVariantIds(db: Db, projectId: ProjectId): Promise<string[]> {
   const rows = await db
     .select({ variantId: messageVariants.variantId })
@@ -837,6 +906,10 @@ export async function loadActiveVariantIds(db: Db, projectId: ProjectId): Promis
 // (until the next one started).
 export async function frameHistory(db: Db, projectId: ProjectId, config: LeverConfig, now: Date = new Date()): Promise<FramePeriod[]> {
   const [starts, sends] = await Promise.all([frameStarts(db, projectId), observeSends(db, projectId, undefined)])
+  return framePeriods(starts, sends, config, now)
+}
+
+function framePeriods(starts: Awaited<ReturnType<typeof frameStarts>>, sends: readonly SendObservation[], config: LeverConfig, now: Date): FramePeriod[] {
   return [null, ...starts].map((start, i) => {
     const next = starts[i]?.at
     const { trials, positive } = evidenceOf(

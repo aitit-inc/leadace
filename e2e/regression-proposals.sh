@@ -22,7 +22,7 @@
 #      older sales strategy or reach is outdated; a frame the person approves
 #      (the chat's card, or the Web UI) applies at once, outdates a pending
 #      loosening and never lifts a pause, MCP → 403, used slugs → 400.
-#   9. The dashboard journal carries the settings changes, the frame starts and
+#   9. The dashboard history carries the settings changes, the frame starts and
 #      the proposals.
 #
 # Loosenings are inserted with psql: the model writes them in evaluate, which
@@ -295,15 +295,15 @@ STATUS="$(ui POST "/api/projects/$PROJECT_ID/frame" "$(frame_body vet)")"
 assert_eq "a frame on a paused project → 200" "$STATUS" "200"
 assert_eq "the pause stands" "$(channels)" ""
 
-step "9. the dashboard journal"
+step "9. the dashboard history"
 STATUS="$(ui GET "/api/projects/$PROJECT_ID/dashboard")"
 assert_eq "dashboard → 200" "$STATUS" "200"
-assert_eq "settings changes journaled" "$(api_body | jq -r '[.journal[] | select(.kind == "settings")] | length')" "8"
-assert_eq "frame starts journaled" "$(api_body | jq -r '[.journal[] | select(.kind == "frame") | .actor] | sort | join(",")')" "ace,user,user"
-assert_eq "the loop's changes counted by signal" "$(api_body | jq -rc '[.loop.changes, .loop.bySignal.discovery, .loop.bySignal.replies]')" "[3,2,1]"
-assert_eq "this frame and the one before" "$(api_body | jq -rc '[.loop.frame.start.day == "'"$TODAY"'", .loop.previousFrame != null]')" "[true,true]"
-assert_eq "proposals journaled with their outcome" \
-  "$(api_body | jq -r '[.journal[] | select(.kind == "proposed") | .status] | sort | join(",")')" "applied,applied,applied,applied,outdated,outdated,outdated,outdated,stopped,stopped,stopped"
+assert_eq "settings changes on the record" "$(api_body | jq -r '[.history[] | select(.text == "Changed how Ace reaches out")] | length')" "8"
+assert_eq "frame starts on the record, with who" "$(api_body | jq -r '[.history[] | select(.text == "Started a new frame") | .who] | sort | join(",")')" "Ace,You,You"
+assert_eq "the loop's changes marked as learned" "$(api_body | jq -r '[.history[] | select(.learned)] | length')" "3"
+assert_eq "a frame states the one before" "$(api_body | jq -r '[.history[] | select(.text == "Started a new frame") | .result | contains("The frame before")] | all')" "true"
+assert_eq "proposals on the record with their outcome" \
+  "$(api_body | jq -r '[.history[] | select(.text | startswith("Proposed:")) | .result] | group_by(.) | map("\(.[0]):\(length)") | join(",")')" "Applied:4,Dropped: a change came first:4,You stopped it:3"
 
 step "summary"
 echo "  PASS=$PASS  FAIL=$FAIL" >&2

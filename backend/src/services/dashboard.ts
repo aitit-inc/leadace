@@ -6,7 +6,6 @@ import {
   outreachLogs,
   projectProspects,
   projectSettings,
-  proposals,
   prospects,
   responses,
 } from '../db/schema'
@@ -15,12 +14,9 @@ import type { Edition } from '../domain/edition'
 import type { ProjectRef, TenantId } from '../domain/ids'
 import {
   DASHBOARD_PERIODS,
-  JOURNAL_WINDOW_DAYS,
   buildFunnel,
-  buildJournal,
   buildSegments,
   buildTrend,
-  countLoopChanges,
   latestResponders,
   levelCounts,
   percentOf,
@@ -29,10 +25,8 @@ import {
   toKpi,
   trendWindowStartIso,
   type DashboardActivityKind,
-  type DashboardLearning,
   type DashboardRejections,
   type DashboardSummary,
-  type LoopReport,
   type ProspectReaction,
   type SegmentCount,
   type DecisionMakerReferral,
@@ -45,10 +39,8 @@ import type { RejectionRecontactWindow } from '../db/schema'
 import { ok, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { loadLeverConfig } from './project-settings'
-import { getLeverStateById } from './loop/policy'
-import { listChanges } from './loop/change'
-import { frameHistory } from './loop/observe'
-import { listMessageVariantsById, type MessageVariantRow } from './message-variants'
+import { getHistoryById } from './loop/history'
+import { HISTORY_WINDOW_DAYS } from '../domain/history'
 import { getRejectionFeedbackSummaryById } from './responses'
 import { projectTargetExpr } from './prospects'
 import { listRecentOutreachById } from './outreach'
@@ -59,7 +51,6 @@ export const dashboardQuerySchema = z.object({
 })
 export type DashboardQuery = z.infer<typeof dashboardQuerySchema>
 
-const DAY_MS = 24 * 60 * 60 * 1000
 
 const RECENT_ACTIVITY_LIMIT = 8
 const NOT_FIT_EXAMPLES = 3
@@ -89,7 +80,6 @@ export async function getDashboardSummary(
   const { curStart, prevStart } = periodToWindow(query.period, now)
   const curIso = curStart.toISOString()
   const prevIso = prevStart.toISOString()
-  const journalStartDay = new Date(now.getTime() - JOURNAL_WINDOW_DAYS * DAY_MS).toISOString().slice(0, 10)
   const trendSinceIso = trendWindowStartIso(now)
   const windowDays = query.period === '7d' ? 7 : query.period === '30d' ? 30 : undefined
 
@@ -110,15 +100,12 @@ export async function getDashboardSummary(
     dailySentRows,
     dailyResponseRows,
     lastCycleRows,
-    proposalRows,
     contactedRows,
-    leverRes,
-    changes,
-    variantsRes,
+    historyRes,
     rejectionRes,
     recentRes,
     attentionRes,
-    frames,
+    leverConfig,
     researchRows,
     notFitExamples,
   ] = await Promise.all([
@@ -235,11 +222,6 @@ export async function getDashboardSummary(
     // ::text so a direct (non-pooler) connection can't hand back a Date.
     raw<{ last: string | null }>(sql`
       SELECT MAX(cycle_date)::text AS last FROM lever_decisions WHERE project_id = ${projectId}`),
-    // The change log's window, so the journal's first UTC day is complete.
-    db
-      .select({ title: proposals.title, status: proposals.status, change: proposals.change, createdAt: proposals.createdAt })
-      .from(proposals)
-      .where(and(eq(proposals.projectId, projectId), gte(proposals.createdAt, new Date(`${journalStartDay}T00:00:00Z`)))),
     // Segments are on the rates' unit: prospects contacted in the window, counted once.
     db
       .selectDistinct({
@@ -254,9 +236,7 @@ export async function getDashboardSummary(
       .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
       .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
       .where(and(eq(outreachLogs.projectId, projectId), eq(outreachLogs.status, 'sent'), gte(outreachLogs.sentAt, curStart))),
-    getLeverStateById(db, tenantId, projectId),
-    listChanges(db, projectId, new Date(`${journalStartDay}T00:00:00Z`)),
-    listMessageVariantsById(db, tenantId, projectId),
+    getHistoryById(db, tenantId, projectId, HISTORY_WINDOW_DAYS, now),
     getRejectionFeedbackSummaryById(db, tenantId, projectId, {
       scope: 'all',
       freeTextLimit: 5,
@@ -266,7 +246,7 @@ export async function getDashboardSummary(
     }),
     listRecentOutreachById(db, tenantId, projectId, { limit: RECENT_ACTIVITY_CANDIDATES, offset: 0, period: 'all' }),
     listProjectAttention(db, tenantId, userId, edition, projectId, now),
-    loadLeverConfig(db, projectId).then((config) => frameHistory(db, projectId, config, now)),
+    loadLeverConfig(db, projectId),
     db
       .select({
         researched: count(),
@@ -287,8 +267,7 @@ export async function getDashboardSummary(
   ])
 
   // One-by-one (not a loop) so each result narrows to its ok branch for the build below.
-  if (!leverRes.ok) return leverRes
-  if (!variantsRes.ok) return variantsRes
+  if (!historyRes.ok) return historyRes
   if (!rejectionRes.ok) return rejectionRes
   if (!recentRes.ok) return recentRes
   if (!attentionRes.ok) return attentionRes
@@ -316,9 +295,6 @@ export async function getDashboardSummary(
     dailyResponseRows.map((r) => ({ day: r.day, count: Number(r.count) })),
   )
 
-  const learning = buildLearning(leverRes.value, variantsRes.value.variants)
-  const journal = buildJournal(changes, variantsRes.value.variants, proposalRows, journalStartDay)
-  const loop: LoopReport = { ...countLoopChanges(changes), frame: frames.at(-1)!, previousFrame: frames.at(-2) ?? null }
   const rejections = buildRejections(rejectionRes.value)
 
   const reactions: Array<ProspectReaction & { at: Date }> = [
@@ -350,7 +326,7 @@ export async function getDashboardSummary(
         { axis: 'discoveryStrategy', value: p.strategy, ...counted },
       ]
     }),
-    leverRes.value.minSamplePerArm,
+    leverConfig.minSamplePerArm,
   )
   const named = latestResponders(reactions.filter((r) => r.at >= curStart), RESPONDERS_SHOWN)
   const names = named.length === 0
@@ -379,9 +355,7 @@ export async function getDashboardSummary(
       positive: rateChange(reactedNow.positive, reactedBefore.positive),
       interested: rateChange(reactedNow.interested, reactedBefore.interested),
     },
-    learning,
-    journal,
-    loop,
+    history: historyRes.value,
     lastCycleDate: lastCycleRows[0]?.last ?? null,
     rejections,
     segments,
@@ -396,44 +370,6 @@ export async function getDashboardSummary(
     recentActivity,
     attention: attentionRes.value,
   })
-}
-
-type LeverStateLike = Awaited<ReturnType<typeof getLeverStateById>> extends ServiceResult<infer T> ? T : never
-
-function buildLearning(
-  lever: LeverStateLike,
-  variants: MessageVariantRow[],
-): DashboardLearning {
-  const variantById = new Map(variants.map((v) => [v.variantId, v]))
-
-  const rates = (v: LeverStateLike['variants'][number]) => ({
-    positiveRate: percentOf(v.positive, v.trials),
-    interestedRate: percentOf(v.interested, v.trials),
-  })
-  // Rank by bandit weight when present, else positive then interest rate; skip 0-send arms (a 0-send "leader" is noise).
-  const ranked = [...lever.variants].sort((a, b) => {
-    if (lever.weights) return (b.weight ?? 0) - (a.weight ?? 0)
-    const ra = rates(a)
-    const rb = rates(b)
-    return rb.positiveRate - ra.positiveRate || rb.interestedRate - ra.interestedRate
-  })
-  const pick = ranked.find((v) => v.total > 0) ?? null
-
-  const angles = ranked.map((v) => ({
-    variantId: v.variantId,
-    label: variantById.get(v.variantId)?.label ?? null,
-    total: v.total,
-    ...rates(v),
-    mature: v.mature,
-    leader: pick !== null && v.variantId === pick.variantId,
-  }))
-
-  const matureCount = lever.variants.filter((v) => v.mature).length
-  return {
-    angles,
-    needsNewAngle: lever.needsReplenishment,
-    state: lever.weights && matureCount >= 2 ? 'optimizing' : 'learning',
-  }
 }
 
 type RejectionSummaryLike = Awaited<ReturnType<typeof getRejectionFeedbackSummaryById>> extends ServiceResult<infer T>

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { HistoryRow } from './history'
 import { buildDigest, type DigestInput } from './digest'
 import type { DashboardSummary } from './dashboard'
 
@@ -14,14 +15,7 @@ const emptySummary: DashboardSummary = {
   funnel: [],
   trend: [],
   reactionRates: { positive: { previous: 0, current: 0 }, interested: { previous: 0, current: 0 } },
-  learning: { angles: [], needsNewAngle: false, state: 'learning' },
-  journal: [],
-  loop: {
-    changes: 0,
-    bySignal: { replies: 0, declines: 0, bounces: 0, discovery: 0, person: 0 },
-    frame: { start: null, trials: 0, positive: 0 },
-    previousFrame: null,
-  },
+  history: [],
   lastCycleDate: null,
   rejections: {
     total: 0,
@@ -118,29 +112,34 @@ describe('buildDigest', () => {
     ).toBeNull()
   })
 
+  const decision = (over: Partial<HistoryRow>): HistoryRow => ({ date: '2026-09-18', who: 'Ace', text: 'Started testing the angle “Cost saving”', notes: [], result: null, learned: false, ...over })
+
   it('reports a change once the day it happened is complete, and not again after', () => {
-    const journal: DashboardSummary['journal'] = [
-      { date: '2026-09-18', kind: 'option', target: 'variant', optionId: 'v2', label: 'Cost saving', op: 'add', actor: 'ace', reason: null, evidence: null },
-    ]
+    const history = [decision({})]
     // The day it happened is still in progress: the rest of it is unreported.
-    expect(buildDigest(input({ today: '2026-09-18', summary: { journal } }))).toBeNull()
-    expect(buildDigest(input({ today: '2026-09-19', summary: { journal } }))?.body).toContain('New angle: Cost saving')
-    expect(buildDigest(input({ sinceDay: '2026-09-19', today: '2026-09-20', summary: { journal } }))).toBeNull()
+    expect(buildDigest(input({ today: '2026-09-18', summary: { history } }))).toBeNull()
+    expect(buildDigest(input({ today: '2026-09-19', summary: { history } }))?.body).toContain('2026-09-18 Ace: Started testing the angle “Cost saving”')
+    expect(buildDigest(input({ sinceDay: '2026-09-19', today: '2026-09-20', summary: { history } }))).toBeNull()
   })
 
-  it('says who changed what and why', () => {
-    const journal: DashboardSummary['journal'] = [
-      { date: '2026-09-18', kind: 'rule_archive', target: 'strategy', optionId: 'yc-hn', label: null, reason: 'lost', evidence: { pBest: 0.01, n: 74 } },
-      { date: '2026-09-18', kind: 'option', target: 'strategy', optionId: 'yc-hn', label: null, op: 'restore', actor: 'user', reason: 'still the best source', evidence: null },
-      { date: '2026-09-18', kind: 'document', target: 'sales_strategy', actor: 'ace', reason: 'Not a fit: agencies', evidence: { signals: ['declines', 'person'] } },
+  it('counts only what Ace or the rule learned in the subject, and reads the rows as the screen does', () => {
+    const history = [
+      decision({ who: 'Rule', text: 'Stopped searching via “yc-hn”: another search did better', learned: true }),
+      decision({ who: 'You', text: 'Resumed searching via “yc-hn”', notes: ['still the best source'] }),
+      decision({ who: 'Ace', text: 'Edited the sales strategy', notes: ['On the noes, your corrections', 'Not a fit: agencies'], learned: true }),
     ]
-    const digest = buildDigest(input({ today: '2026-09-19', summary: { journal } }))
-    // The person's own restore is reported but is not something Ace learned.
+    const digest = buildDigest(input({ today: '2026-09-19', summary: { history } }))
     expect(digest?.subject).toBe('Acme: 2 changes from what we learned')
     const body = digest?.body ?? ''
-    expect(body).toContain('Search strategy retired: yc-hn (another strategy won)')
-    expect(body).toContain('Search strategy back: yc-hn (by you) — still the best source')
-    expect(body).toContain('Sales strategy adjusted (on the noes, your corrections) — Not a fit: agencies')
+    expect(body).toContain('History since 2026-09-14')
+    expect(body).toContain('2026-09-18 You: Resumed searching via “yc-hn” — still the best source')
+    expect(body).toContain('2026-09-18 Ace: Edited the sales strategy — On the noes, your corrections — Not a fit: agencies')
+  })
+
+  it('reports the days of work, without them alone being a reason to write', () => {
+    const history = [decision({ who: null, text: 'Contacted 3', result: '1 positive' })]
+    expect(buildDigest(input({ today: '2026-09-19', summary: { history } }))).toBeNull()
+    expect(buildDigest(input({ today: '2026-09-21', summary: { history, kpis: { ...emptySummary.kpis, approached: { current: 3, previous: 0, deltaPct: null } } } }))?.body).toContain('2026-09-18 Contacted 3 — 1 positive')
   })
 
   it('goes out on the heartbeat with nothing to report, once there is something to show', () => {
@@ -159,13 +158,8 @@ describe('buildDigest', () => {
   })
 
   it('reports the setup without counting it as learned', () => {
-    const journal: DashboardSummary['journal'] = [
-      { date: '2026-09-17', kind: 'option', target: 'variant', optionId: 'v1', label: 'Cost saving', op: 'add', actor: 'ace', reason: null, evidence: null },
-      { date: '2026-09-17', kind: 'document', target: 'sales_strategy', actor: 'ace', reason: null, evidence: null },
-    ]
-    const digest = buildDigest(input({ today: '2026-09-18', summary: { journal } }))
-    expect(digest?.subject).toBe('Acme: 2 updates since 2026-09-14')
-    expect(digest?.body).toContain('New angle: Cost saving')
+    const history = [decision({ date: '2026-09-17' }), decision({ date: '2026-09-17', text: 'Edited the sales strategy' })]
+    expect(buildDigest(input({ today: '2026-09-18', summary: { history } }))?.subject).toBe('Acme: 2 updates since 2026-09-14')
   })
 
   it('lists what needs the person, the spent allowance included', () => {
@@ -183,26 +177,6 @@ describe('buildDigest', () => {
     )
     expect(digest?.body).toContain(
       'Needs you\n1 meeting request waiting — book the call.\nEvery prospect in your plan has been contacted. Follow-ups still go out; open the plans page to reach new ones.',
-    )
-  })
-
-  it('counts what Ace changed by what it rested on, and this frame against the one before', () => {
-    const digest = buildDigest(
-      input({
-        today: '2026-10-20',
-        summary: {
-          kpis: { ...emptySummary.kpis, approached: { current: 40, previous: 0, deltaPct: null } },
-          loop: {
-            changes: 3,
-            bySignal: { replies: 1, declines: 0, bounces: 1, discovery: 2, person: 0 },
-            frame: { start: { day: '2026-10-19', by: 'ace', reason: 'no positive in 120 trials' }, trials: 41.6, positive: 1 },
-            previousFrame: { start: null, trials: 1240.2, positive: 2 },
-          },
-        },
-      }),
-    )
-    expect(digest?.body).toContain(
-      'How Ace learned (last 30 days)\n3 changes by Ace, resting on: reply rates 1 · bounces 1 · what discovery found 2\nThis frame (since 2026-10-19): 1 positive of 42 counted (2.4%) · the frame before: 2 positive of 1240 counted (0.2%)',
     )
   })
 

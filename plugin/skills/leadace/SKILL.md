@@ -20,6 +20,7 @@ allowed-tools:
   - mcp__plugin_leadace_leadace__get_project_settings
   - mcp__plugin_leadace_leadace__update_project_settings
   - mcp__plugin_leadace_leadace__get_eval_data
+  - mcp__plugin_leadace_leadace__get_history
   - mcp__plugin_leadace_leadace__get_lever_state
   - mcp__plugin_leadace_leadace__list_suggestions
   - mcp__plugin_leadace_leadace__get_tenant_settings
@@ -136,7 +137,7 @@ Then stop.
 
 Answer the user's question using the context already gathered (`PROJECTS`, `GMAIL`). If the question requires data not in context, call the relevant MCP tool for the most likely project (or ask which project if ambiguous):
 
-- "結果は?" / "evaluation" / "改善案" / current results → `get_eval_data` (live metrics & response rates, also visualized in the `/evaluations` and `/dashboard` Web UI; what was changed and why is in `get_lever_decisions`)
+- "結果は?" / "evaluation" / "改善案" / current results → `get_eval_data` (live metrics & response rates) and `get_history` (what changed and what came of it), also in the `/history` and `/dashboard` Web UI; what was changed and why is in `get_lever_decisions`
 - Project documents (business / sales_strategy / etc.) → `get_document` / `list_documents`
 - Project / tenant settings → `get_project_settings` / `get_tenant_settings`
 - Which mailboxes a project sends from (priority order), daily send caps / warmup → `get_mailbox_health` (read-only; mailbox and cap changes are Web UI or hosted-chat only)

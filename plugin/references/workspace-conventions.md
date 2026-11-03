@@ -61,7 +61,7 @@ When calling `save_document` (or any MCP tool that persists user-visible documen
 Generated project documents (`business`, `sales_strategy`, `search_notes`) are design / reference artifacts, not activity logs. Keep them lean:
 
 - **Soft length targets** — a document materially past its target is carrying filler or data that belongs elsewhere; trim or relocate. `business` ~60 lines, `sales_strategy` ~180 lines, `search_notes` ~80 lines.
-- **Never persist runtime actuals or per-run history into a document.** Send / draft / response counts, rates, and per-cycle logs live in structured storage (`outreach_logs`, `responses`) and are surfaced in the Web UI (`/evaluations`, `/drafts`, `/outreach`). The `sales_strategy` `## KPI` section holds *target* metrics (the reverse-calc tree) only — never an actuals / KPI-history table. A document that grows an append-only metrics table is a bug. (`public_journal` is a per-cycle public entry, not a log: each version holds one cycle's day and is never appended to.)
+- **Never persist runtime actuals or per-run history into a document.** Send / draft / response counts, rates, and per-cycle logs live in structured storage (`outreach_logs`, `responses`) and are surfaced in the Web UI (`/history`, `/drafts`, `/outreach`). The `sales_strategy` `## KPI` section holds *target* metrics (the reverse-calc tree) only — never an actuals / KPI-history table. A document that grows an append-only metrics table is a bug. (`public_journal` is a per-cycle public entry, not a log: each version holds one cycle's day and is never appended to.)
 
 ## Explore wide, output narrow
 

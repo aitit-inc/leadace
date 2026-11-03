@@ -1,6 +1,5 @@
 // Mirrors backend domain/dashboard.ts DashboardSummary (the GET
 // /projects/:id/dashboard response).
-import type { ProposalStatus, ProposedChange } from './proposals';
 import type { Channel } from './outreach';
 import type { AttentionItem } from './attention';
 
@@ -34,76 +33,15 @@ export interface ReactionRates {
   interestedRate: number;
 }
 
-export interface LearningAngle extends ReactionRates {
-  variantId: string;
-  label: string | null;
-  total: number;
-  mature: boolean;
-  leader: boolean;
+// Mirrors backend domain/history.ts HistoryRow. The backend words it, so every surface reads the same.
+export interface HistoryRow {
+  date: string;
+  // null on a day's work: nobody decided it.
+  who: 'You' | 'Ace' | 'Rule' | null;
+  text: string;
+  notes: string[];
+  result: string | null;
 }
-
-export interface DashboardLearning {
-  angles: LearningAngle[];
-  needsNewAngle: boolean;
-  state: 'learning' | 'optimizing';
-}
-
-export const CHANGE_SIGNALS = ['replies', 'declines', 'bounces', 'discovery', 'person'] as const;
-export type ChangeSignal = (typeof CHANGE_SIGNALS)[number];
-// What one of Ace's loop changes rests on; null on a change outside the loop.
-type AceEvidence = { signals: ChangeSignal[] };
-
-export interface FramePeriod {
-  // null for the frame the project started with.
-  start: { day: string; by: 'ace' | 'user'; reason: string | null } | null;
-  trials: number;
-  positive: number;
-}
-
-export interface LoopReport {
-  changes: number;
-  bySignal: Record<ChangeSignal, number>;
-  frame: FramePeriod;
-  previousFrame: FramePeriod | null;
-}
-
-// P(it beats the leading option) for a lost or restored one; P(best) among the
-// active set for a rotation and for archives from before the leader test.
-type RuleEvidence = { n: number } & ({ pBest: number } | { pBeatsLeader: number });
-
-export type JournalEvent =
-  | {
-      date: string;
-      kind: 'rule_archive';
-      target: 'variant' | 'strategy';
-      optionId: string;
-      label: string | null;
-      reason: 'lost' | 'rotated';
-      evidence: RuleEvidence | null;
-    }
-  | {
-      date: string;
-      kind: 'rule_restore';
-      target: 'variant' | 'strategy';
-      optionId: string;
-      label: string | null;
-      evidence: RuleEvidence | null;
-    }
-  | {
-      date: string;
-      kind: 'option';
-      target: 'variant' | 'strategy';
-      optionId: string;
-      label: string | null;
-      op: 'add' | 'update' | 'archive' | 'restore';
-      actor: 'ace' | 'user';
-      reason: string | null;
-      evidence: AceEvidence | null;
-    }
-  | { date: string; kind: 'document'; target: 'business' | 'sales_strategy'; actor: 'ace' | 'user'; reason: string | null; evidence: AceEvidence | null }
-  | { date: string; kind: 'settings'; diff: ReachDiff; actor: 'ace' | 'user'; reason: string | null; evidence: AceEvidence | null }
-  | { date: string; kind: 'frame'; actor: 'ace' | 'user'; reason: string | null; evidence: AceEvidence | null }
-  | { date: string; kind: 'proposed'; title: string; status: ProposalStatus; change: ProposedChange };
 
 export type ReachSettings = { outboundChannels: string[]; targetCountries: string[]; targetLanguage: string };
 
@@ -111,9 +49,6 @@ export type ReachDiff = {
   outboundChannels?: { from: string[]; to: string[] };
   targetCountries?: { from: string[]; to: string[] };
   targetLanguage?: { from: string; to: string };
-  outboundMode?: { from: string; to: string };
-  dailyNewProspects?: { from: number | null; to: number | null };
-  followUps?: { from: boolean; to: boolean };
 };
 
 export type RejectionRecontactWindow = 'never' | '3_months' | '6_months' | '12_months' | 'unspecified';
@@ -212,9 +147,7 @@ export interface DashboardSummary {
   funnel: FunnelStage[];
   trend: DashboardTrendPoint[];
   reactionRates: { positive: RateChange; interested: RateChange };
-  learning: DashboardLearning;
-  journal: JournalEvent[];
-  loop: LoopReport;
+  history: HistoryRow[];
   lastCycleDate: string | null;
   rejections: DashboardRejections;
   segments: DashboardSegment[];

@@ -3,20 +3,17 @@
   import type { PageProps } from './$types';
   import type {
     AttentionItem,
-    ChangeSignal,
     DashboardActivityKind,
     DashboardPeriod,
-    FramePeriod,
     FunnelStageKey,
-    JournalEvent,
     RateChange,
     SegmentAxis,
   } from '$lib/types/dashboard';
-  import { CHANGE_SIGNALS } from '$lib/types/dashboard';
   import type { FunnelStageFilter } from '$lib/types/outreach';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import ProposalSection from '$lib/components/dashboard/ProposalSection.svelte';
   import ResearchSection from '$lib/components/dashboard/ResearchSection.svelte';
+  import HistoryList from '$lib/components/HistoryList.svelte';
   import {
     Send,
     MailCheck,
@@ -26,8 +23,7 @@
     TrendingUp,
     TrendingDown,
     Banknote,
-    Brain,
-    FlaskConical,
+    History,
     MessageSquareX,
     Lightbulb,
     UserPlus,
@@ -36,7 +32,6 @@
     Target,
   } from '@lucide/svelte';
   import { attentionMeta, humanize, type AttentionMeta } from '$lib/attention-meta';
-  import { reachRows } from '$lib/format';
 
   let { data }: PageProps = $props();
   let summary = $derived(data.summary);
@@ -93,7 +88,7 @@
     all: 'So far',
   };
 
-  const JOURNAL_SHOWN = 5;
+  const HISTORY_SHOWN = 5;
 
   const SEGMENT_AXIS_LABELS: Record<SegmentAxis, string> = {
     industry: 'Industry',
@@ -109,89 +104,6 @@
       : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
   }
 
-  const OPTION_VERBS = {
-    variant: {
-      ace: { add: 'Started testing a new angle', update: 'Rewrote the angle', archive: 'Retired the angle', restore: 'Brought back the angle' },
-      user: { add: 'You added the angle', update: 'You edited the angle', archive: 'You retired the angle', restore: 'You brought back the angle' },
-    },
-    strategy: {
-      ace: { add: 'Started searching via', update: 'Changed the search', archive: 'Stopped searching via', restore: 'Resumed searching via' },
-      user: { add: 'You added the search', update: 'You edited the search', archive: 'You stopped the search', restore: 'You resumed the search' },
-    },
-  } as const;
-  const DOCUMENT_NAMES = { sales_strategy: 'the sales strategy', business: 'the business profile' } as const;
-  const PROPOSAL_OUTCOME = { applied: 'applied', stopped: 'you stopped it', outdated: 'dropped: a change came first' } as const;
-
-  const SIGNAL_LABELS: Record<ChangeSignal, string> = {
-    replies: 'Reply rates',
-    declines: 'The noes',
-    bounces: 'Bounces',
-    discovery: 'What discovery found',
-    person: 'Your corrections',
-  };
-
-  function onSignals(evidence: { signals: ChangeSignal[] } | null): string | null {
-    return evidence ? `on ${evidence.signals.map((s) => SIGNAL_LABELS[s].toLowerCase()).join(', ')}` : null;
-  }
-
-  const joined = (...parts: (string | null)[]): string | null => parts.filter(Boolean).join(' · ') || null;
-
-  function frameRate({ trials, positive }: FramePeriod): string {
-    const rate = trials > 0 ? Math.round((positive / trials) * 1000) / 10 : 0;
-    return `${positive} positive of ${Math.round(trials)} counted (${rate}%)`;
-  }
-
-  function evidenceDetail(evidence: Extract<JournalEvent, { kind: 'rule_archive' }>['evidence']): string | null {
-    if (!evidence) return null;
-    const p = 'pBest' in evidence ? evidence.pBest : evidence.pBeatsLeader;
-    return `win chance ${Math.round(p * 100)}% · ${Math.round(evidence.n)} sends`;
-  }
-
-  function journalText(e: JournalEvent): { text: string; detail: string | null; why: string | null } {
-    switch (e.kind) {
-      case 'proposed':
-        return {
-          text: `Proposed to you: ${e.title}`,
-          detail: e.status !== 'pending'
-            ? PROPOSAL_OUTCOME[e.status]
-            : e.change.kind === 'add-means' ? 'waiting for you to set it up' : `applies ${fmtDay(e.change.applyOn)} unless you stop it`,
-          why: null,
-        };
-      case 'settings':
-        return {
-          text: e.actor === 'user' ? 'You changed how Ace reaches out' : 'Changed how Ace reaches out',
-          detail: joined(reachRows(e.diff).map((r) => `${r.label}: ${r.from} → ${r.to}`).join(' · '), onSignals(e.evidence)),
-          why: e.reason,
-        };
-      case 'frame':
-        return {
-          text: e.actor === 'user' ? 'You started a new frame' : 'Started a new frame',
-          detail: joined('measuring from here', onSignals(e.evidence)),
-          why: e.reason,
-        };
-      case 'document': {
-        const name = DOCUMENT_NAMES[e.target];
-        return { text: e.actor === 'user' ? `You edited ${name}` : `Adjusted ${name}`, detail: onSignals(e.evidence), why: e.reason };
-      }
-      case 'option':
-        return { text: `${OPTION_VERBS[e.target][e.actor][e.op]} “${e.label ?? e.optionId}”`, detail: onSignals(e.evidence), why: e.reason };
-      case 'rule_archive': {
-        const name = `“${e.label ?? e.optionId}”`;
-        const detail = evidenceDetail(e.evidence);
-        if (e.reason === 'rotated') return { text: `Swapped out ${name} — results stayed flat`, detail, why: null };
-        return e.target === 'variant'
-          ? { text: `Retired ${name} — a stronger angle won`, detail, why: null }
-          : { text: `Stopped searching via ${name} — another search did better`, detail, why: null };
-      }
-      case 'rule_restore': {
-        const name = `“${e.label ?? e.optionId}”`;
-        const detail = evidenceDetail(e.evidence);
-        return e.target === 'variant'
-          ? { text: `Brought back ${name} — its results caught up`, detail, why: null }
-          : { text: `Resumed searching via ${name} — its results caught up`, detail, why: null };
-      }
-    }
-  }
   let trendMax = $derived(Math.max(1, ...(summary?.trend ?? []).map((t) => t.sent)));
   let hasTrendActivity = $derived((summary?.trend ?? []).some((t) => t.sent > 0 || t.responses > 0));
   // The reaction rates are the selected-window KPI, independent of the fixed 30-day trend bars below them.
@@ -484,97 +396,16 @@
 
       <div class="space-y-3 lg:col-span-2">
         <div class="card p-5">
-          <div class="mb-3 flex items-center gap-2">
-            <Brain size={18} class="text-inbound" />
-            <h3 class="font-display text-lg font-semibold text-text">What the AI is doing</h3>
+          <div class="mb-3 flex items-center justify-between gap-3">
+            <h3 class="flex items-center gap-2 font-display text-lg font-semibold text-text">
+              <History size={18} class="text-inbound" />History
+            </h3>
+            <a href="/history" class="text-sm font-semibold text-accent-strong hover:underline">View all</a>
           </div>
-          {#if summary.learning.angles.length > 0 || summary.journal.length > 0}
-            <ul class="space-y-4 text-sm">
-              <li>
-                <p class="flex items-center gap-2 text-text">
-                  <FlaskConical size={16} class="text-inbound" />
-                  {#if summary.learning.state === 'optimizing'}
-                    Optimizing across {summary.learning.angles.length} message {summary.learning.angles.length === 1 ? 'angle' : 'angles'}
-                  {:else}
-                    Still learning — gathering data
-                  {/if}
-                </p>
-                {#if summary.learning.needsNewAngle}
-                  <p class="mt-0.5 text-xs text-text-muted">Recruiting a fresh angle — the next evaluation adds one.</p>
-                {/if}
-              </li>
-              <li class="border-t border-border pt-4">
-                <p class="flex justify-between gap-2 text-xs font-semibold text-text-muted">
-                  What its changes rested on<span class="font-normal">last 30 days</span>
-                </p>
-                <p class="mt-1 text-text">
-                  {summary.loop.changes} {summary.loop.changes === 1 ? 'change' : 'changes'} by Ace
-                </p>
-                <ul class="mt-2 space-y-1.5">
-                  {#each CHANGE_SIGNALS as signal}
-                    <li class="flex items-baseline justify-between gap-2">
-                      <span class="text-text-secondary">{SIGNAL_LABELS[signal]}</span>
-                      <span class="shrink-0 text-xs tabular-nums text-text-secondary">{summary.loop.bySignal[signal]}</span>
-                    </li>
-                  {/each}
-                </ul>
-                <p class="mt-3 text-xs text-text-muted">
-                  This frame{summary.loop.frame.start ? ` (since ${fmtDay(summary.loop.frame.start.day)})` : ''}:
-                  <span class="tabular-nums text-text-secondary">{frameRate(summary.loop.frame)}</span>
-                </p>
-                {#if summary.loop.previousFrame}
-                  <p class="text-xs text-text-muted">
-                    The frame before: <span class="tabular-nums text-text-secondary">{frameRate(summary.loop.previousFrame)}</span>
-                  </p>
-                {/if}
-              </li>
-              {#if summary.learning.angles.length > 0}
-                <li class="border-t border-border pt-4">
-                  <p class="flex justify-between gap-2 text-xs font-semibold text-text-muted">
-                    Testing now<span class="font-normal">positive / with interest</span>
-                  </p>
-                  <ul class="mt-2 space-y-1.5">
-                    {#each summary.learning.angles as angle}
-                      <li class="flex items-baseline justify-between gap-2">
-                        <span class="min-w-0 truncate text-text" title={angle.variantId}>
-                          {angle.label ?? angle.variantId}
-                          {#if angle.leader}<span class="chip ml-1 bg-inbound/15 text-inbound">Leading</span>{/if}
-                        </span>
-                        <span class="shrink-0 text-xs tabular-nums text-text-secondary">
-                          {angle.total} {angle.total === 1 ? 'send' : 'sends'} · {angle.mature
-                            ? `${angle.positiveRate}% / ${angle.interestedRate}%`
-                            : 'maturing'}
-                        </span>
-                      </li>
-                    {/each}
-                  </ul>
-                </li>
-              {/if}
-              {#if summary.journal.length > 0}
-                <li class="border-t border-border pt-4">
-                  <p class="text-xs font-semibold text-text-muted">Recent decisions</p>
-                  <ul class="mt-2 space-y-2">
-                    {#each summary.journal.slice(0, JOURNAL_SHOWN) as event}
-                      {@const j = journalText(event)}
-                      <li class="flex gap-3">
-                        <span class="w-12 shrink-0 text-xs tabular-nums text-text-muted">{fmtDay(event.date)}</span>
-                        <span class="min-w-0 break-words text-text-secondary">
-                          {j.text}{#if j.detail}{' '}<span class="text-text-muted">({j.detail})</span>{/if}
-                          {#if j.why}<span class="mt-0.5 block text-xs text-text-muted">{j.why}</span>{/if}
-                        </span>
-                      </li>
-                    {/each}
-                  </ul>
-                  {#if summary.journal.length > JOURNAL_SHOWN}
-                    <p class="mt-2 text-xs text-text-muted">+{summary.journal.length - JOURNAL_SHOWN} more in the last 30 days</p>
-                  {/if}
-                </li>
-              {/if}
-            </ul>
+          {#if summary.history.length > 0}
+            <HistoryList rows={summary.history.slice(0, HISTORY_SHOWN)} />
           {:else}
-            <p class="text-sm text-text-muted">
-              Still learning. Once enough has been sent, the AI starts testing message angles and reports its decisions here.
-            </p>
+            <p class="text-sm text-text-muted">Nothing yet. What Ace does and decides shows up here.</p>
           {/if}
         </div>
 
