@@ -280,9 +280,11 @@ export async function applyDocumentChange(
     .where(and(eq(projectDocuments.projectId, projectId), eq(projectDocuments.slug, target)))
     .orderBy(desc(projectDocuments.createdAt), desc(projectDocuments.id))
     .limit(1)
+  // Stamped after the lock, not at the transaction's start, so a save that
+  // waited on it still sorts after the one it waited for.
   const [doc] = await db
     .insert(projectDocuments)
-    .values({ tenantId, projectId, slug: target, content, approvedAt: by.actor === 'user' ? new Date() : null })
+    .values({ tenantId, projectId, slug: target, content, approvedAt: by.actor === 'user' ? new Date() : null, createdAt: sql`clock_timestamp()` })
     .returning({ id: projectDocuments.id, createdAt: projectDocuments.createdAt, approvedAt: projectDocuments.approvedAt })
   if (latest?.content !== content) await log(db, tenantId, projectId, [{ target, op: 'update', ...by }])
   return doc!

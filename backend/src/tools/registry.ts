@@ -2172,7 +2172,7 @@ export function buildToolRegistry(): ToolDef[] {
     'Get the latest version of a project document by slug. For playbook_<strategy-slug> the latest version the user approved in the Web UI; a playbook with only unapproved versions answers that it is not usable yet.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
-      slug: z.string().describe('Document slug: "business", "sales_strategy", "search_notes", "public_journal", or "playbook_<strategy-slug>"'),
+      slug: z.string().describe('Document slug: "business", "sales_strategy", "answering_replies" (how the person answers replies; answer drafts follow it), "search_notes", "public_journal", or "playbook_<strategy-slug>"'),
     },
     async ({ projectId, slug }, ctx) => {
       const { ok, status, data } = await ctx.callApi('GET', `/projects/${encodeURIComponent(projectId)}/documents/${slug}`, null)
@@ -2198,10 +2198,10 @@ export function buildToolRegistry(): ToolDef[] {
     'Save a project document by slug as a new immutable version; prior versions preserved. Pass the whole document as content, or only the sections that change as sections. A playbook_<strategy-slug> version saved here stays pending until the user approves it in the Web UI → Documents; skills follow only approved playbook versions. public_journal is anonymized server-side (third-party names → industry + role/size) before it is stored.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
-      slug: z.string().describe('Document slug: "business", "sales_strategy", "search_notes", "public_journal", or "playbook_<strategy-slug>"'),
+      slug: z.string().describe('Document slug: "business", "sales_strategy", "answering_replies" (how the person answers replies; answer drafts follow it), "search_notes", "public_journal", or "playbook_<strategy-slug>"'),
       content: z.string().optional().describe('The whole markdown document'),
       sections: z.array(sectionEditSchema).max(50).optional().describe('In place of content: each section that changes, written whole; every other section of the latest version stays as it is'),
-      reason: changeReason.describe('Why, in one line; kept in the change log for business and sales_strategy.'),
+      reason: changeReason.describe('Why, in one line; kept in the change log for business, sales_strategy and answering_replies.'),
     },
     async ({ projectId, slug, content, sections, reason }, ctx) => {
       const { ok, data } = await ctx.callApi('PUT', `/projects/${encodeURIComponent(projectId)}/documents/${slug}`, { content, sections, reason })

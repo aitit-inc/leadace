@@ -1255,6 +1255,9 @@ export const answers = pgTable('answers', {
   body: text('body'),
   status: answerStatusEnum('status').notNull().default('draft'),
   sentAt: timestamp('sent_at', { withTimezone: true }),
+  // When the answering review (services/loop/propose.ts) read this sent
+  // rewrite; NULL until then, so each is learned from once.
+  reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
 }, (table) => [
   unique('uq_answers_response').on(table.responseId),
   foreignKey({

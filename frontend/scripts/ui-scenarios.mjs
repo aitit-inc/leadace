@@ -635,7 +635,13 @@ function seedDashboardFixture(ctx, projectId, { pending = 'loosen' } = {}) {
      (${q(tenant)}, ${q(projectId)}, 'variant', 'rst_20260715_a', 'archive', 'rule', NULL, 'lost', '{"pBest":0.02,"n":30}'::jsonb, ${q(retiredAt)}),
      (${q(tenant)}, ${q(projectId)}, 'variant', 'rst_20260715_c', 'archive', 'rule', NULL, 'lost', '{"pBest":0.01,"n":32}'::jsonb, ${q(retiredAt)}),
      (${q(tenant)}, ${q(projectId)}, 'variant', 'rst_20260715_c', 'restore', 'rule', NULL, NULL, '{"pBeatsLeader":0.41,"n":48}'::jsonb, ${q(restoredAt)}),
-     (${q(tenant)}, ${q(projectId)}, 'sales_strategy', NULL, 'update', 'ace', ${q(DASH_TARGET_WHY)}, NULL, '{"signals":["replies","declines"]}'::jsonb, ${q(iso(now - 3 * DAY))});`,
+     (${q(tenant)}, ${q(projectId)}, 'sales_strategy', NULL, 'update', 'ace', ${q(DASH_TARGET_WHY)}, NULL, '{"signals":["replies","declines"]}'::jsonb, ${q(iso(now - 3 * DAY))}),
+     (${q(tenant)}, ${q(projectId)}, 'answering_replies', NULL, 'update', 'ace', ${q('Three rewrites cut the answer to two lines, added the same booking link and signed off "— Alex"')}, NULL, '{"signals":["person"]}'::jsonb, ${q(iso(now - DAY))});`,
+  );
+  // What Ace learned from those rewrites: the answering guide every answer draft follows.
+  psql(
+    `INSERT INTO project_documents (tenant_id, project_id, slug, content, created_at) VALUES
+     (${q(tenant)}, ${q(projectId)}, 'answering_replies', ${q('Keep replies to two or three lines.\nWhen offering a call, use https://cal.example/alex/20min.\nSign off — Alex.\n')}, ${q(iso(now - DAY))});`,
   );
   // A reach change the person made, and Ace's proposals: one stopped, a
   // loosening or a new frame waiting on its card for tomorrow's cycle, and a
@@ -1161,7 +1167,8 @@ const SCENARIOS = [
           click: 'button:has-text("Please send over a calendar link") >> nth=0',
           expect: ['Ace drafted an answer', 'Here is my calendar: {booking link}', 'Send', 'Mark answered'],
         },
-        { name: 'history', path: '/history', expect: ['What was decided', 'Retired', 'Started testing the angle', 'Contacted', 'Edited the sales strategy'] },
+        { name: 'history', path: '/history', expect: ['What was decided', 'Retired', 'Started testing the angle', 'Contacted', 'Edited the sales strategy', 'Edited how you answer replies'] },
+        { name: 'answering-guide', path: '/documents', click: 'button:has-text("Answering Replies")', expect: ['Answering Replies', 'https://cal.example/alex/20min'] },
         { name: 'history-row', path: '/history', click: 'summary:has-text("Edited the sales strategy")', expect: ['On reply rates, the noes'] },
         { name: 'old-link', path: '/evaluations', expect: ['What was decided'] },
       ];

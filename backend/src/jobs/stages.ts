@@ -17,7 +17,7 @@ import { discoveryPausedReason, getRemainingProspectQuota } from '../services/pl
 import { runDiscover } from '../services/pipeline/discover'
 import { runEnrich } from '../services/pipeline/enrich'
 import { draftLogEntry, draftOne, loadDraftBatch, refillDrawSize, summarizeDraftOutcomes, type DraftOutcome } from '../services/pipeline/draft'
-import { runEvaluate, runFrameReview } from '../services/loop/propose'
+import { runAnsweringReview, runEvaluate, runFrameReview } from '../services/loop/propose'
 import { runJournal, type CycleDigest } from '../services/pipeline/journal'
 import { sendDraft, wasSentSince } from '../services/outreach'
 import { withPaidCallScope } from '../services/paid-calls'
@@ -284,6 +284,12 @@ export async function frameReviewStage(ctx: StageCtx): Promise<{ summary: string
   const { tenantId, projectId }: Ids = ctx.job
   return ctx.step.do('frame-review', STEP_RETRY, () => paidScoped(ctx, () => stepDb(ctx)(async (db) =>
     unwrap(await runFrameReview(db, tenantId, ctx.env, projectId)))))
+}
+
+export async function answeringReviewStage(ctx: StageCtx): Promise<{ summary: string }> {
+  const { tenantId, projectId }: Ids = ctx.job
+  return ctx.step.do('answering-review', STEP_RETRY, () => paidScoped(ctx, () => stepDb(ctx)(async (db) =>
+    unwrap(await runAnsweringReview(db, tenantId, ctx.env, projectId)))))
 }
 
 export async function journalStage(ctx: StageCtx, digest: CycleDigest | null): Promise<Extract<JobResult, { kind: 'journal' }>> {

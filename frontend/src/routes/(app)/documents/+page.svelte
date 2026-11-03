@@ -13,6 +13,7 @@
   const SLUG_LABELS: Record<string, string> = {
     business: 'Business',
     sales_strategy: 'Sales Strategy',
+    answering_replies: 'Answering Replies',
     search_notes: 'Search Notes',
     public_journal: 'Public Journal',
   };

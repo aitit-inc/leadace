@@ -22,7 +22,7 @@ import { applySectionEdits, sectionEditSchema, type SectionEditResult } from '..
 
 // public_journal: one version per daily cycle, served on /live while the
 // project's publicScoreboardEnabled setting is on.
-const DOCUMENT_SLUGS = ['business', 'sales_strategy', 'search_notes', PUBLIC_JOURNAL_SLUG] as const
+const DOCUMENT_SLUGS = ['business', 'sales_strategy', 'answering_replies', 'search_notes', PUBLIC_JOURNAL_SLUG] as const
 
 function isWritableSlug(slug: string): boolean {
   return (DOCUMENT_SLUGS as readonly string[]).includes(slug) || playbookStrategySlug(slug) !== null

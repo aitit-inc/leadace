@@ -102,7 +102,7 @@ const OPTION_VERBS: Record<OptionTarget, Record<OptionOp, string>> = {
   variant: { add: 'Started testing the angle', update: 'Rewrote the angle', archive: 'Retired the angle', restore: 'Brought back the angle' },
   strategy: { add: 'Started searching via', update: 'Changed the search', archive: 'Stopped searching via', restore: 'Resumed searching via' },
 }
-const DOCUMENT_NAMES: Record<DocumentTarget, string> = { sales_strategy: 'the sales strategy', business: 'the business profile' }
+const DOCUMENT_NAMES: Record<DocumentTarget, string> = { sales_strategy: 'the sales strategy', business: 'the business profile', answering_replies: 'how you answer replies' }
 const PROPOSAL_OUTCOME = { applied: 'Applied', stopped: 'You stopped it', outdated: 'Dropped: a change came first' } as const
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`

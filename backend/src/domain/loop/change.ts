@@ -8,10 +8,10 @@ import type { OutboundMode } from '../../db/schema'
 // settings that decide whom the project reaches and how much goes out, and a
 // 'frame' row where a new frame starts: the loop measures from the latest one.
 // The tick's daily reweighting is not in it; that is lever_decisions.
-export const POLICY_TARGETS = ['variant', 'strategy', 'business', 'sales_strategy', 'settings', 'frame'] as const
+export const POLICY_TARGETS = ['variant', 'strategy', 'business', 'sales_strategy', 'answering_replies', 'settings', 'frame'] as const
 export type PolicyTarget = (typeof POLICY_TARGETS)[number]
 export type OptionTarget = Extract<PolicyTarget, 'variant' | 'strategy'>
-export type DocumentTarget = Extract<PolicyTarget, 'business' | 'sales_strategy'>
+export type DocumentTarget = Extract<PolicyTarget, 'business' | 'sales_strategy' | 'answering_replies'>
 
 export const POLICY_OPS = ['add', 'update', 'archive', 'restore'] as const
 export type OptionOp = (typeof POLICY_OPS)[number]
@@ -48,7 +48,7 @@ export function authorOf(origin: JobOrigin, reason: string | null, signals: Chan
 }
 
 export function isDocumentTarget(slug: string): slug is DocumentTarget {
-  return slug === 'business' || slug === 'sales_strategy'
+  return slug === 'business' || slug === 'sales_strategy' || slug === 'answering_replies'
 }
 
 // The settings that decide whom the project reaches and how. Nothing else

@@ -19,7 +19,7 @@ import { editionOf } from '../services/pipeline/context'
 import { CYCLE_MIN_CANDIDATES_PER_SEARCH } from '../services/pipeline/discover'
 import { listHostedReachable } from '../services/pipeline/draft'
 import type { CycleDigest } from '../services/pipeline/journal'
-import { discoverStage, draftStage, evaluateStage, frameReviewStage, journalStage, logStep, STEP_RETRY, tenantTx, unwrap, type StageCtx } from './stages'
+import { answeringReviewStage, discoverStage, draftStage, evaluateStage, frameReviewStage, journalStage, logStep, STEP_RETRY, tenantTx, unwrap, type StageCtx } from './stages'
 
 // The cycle itself reads nothing of these stages but their summary. Losing one
 // costs a day of what it writes, which beats losing the day's sends.
@@ -102,6 +102,7 @@ async function learn(ctx: StageCtx, { stage, decide }: CycleLog): Promise<void> 
   // The outer layer before the middle: evaluate then reads a frame that waits on the person.
   if (tick.frameOpen) await decide(`frame review: ${await advisory(() => frameReviewStage(ctx))}`)
   await stage('evaluate', await advisory(() => evaluateStage(ctx)))
+  await decide(`answering replies: ${await advisory(() => answeringReviewStage(ctx))}`)
 }
 
 async function act(ctx: StageCtx, params: JobParamsOf<'daily_cycle'>, { stage, decide }: CycleLog): Promise<StrategyPlanCompliance[]> {

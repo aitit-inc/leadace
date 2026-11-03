@@ -17,6 +17,23 @@ export function answerSubject(replySubject: string | null, outreachSubject: stri
   return base ? `Re: ${base}` : 'Re:'
 }
 
+export type AnswerRewrite = { ace: string; sent: string }
+
+const MAX_REWRITE_CHARS = 1500
+
+function indent(text: string): string {
+  return text
+    .split('\n')
+    .map((l) => `    ${l}`)
+    .join('\n')
+}
+
+export function answerRewriteEntries(rewrites: AnswerRewrite[]): string {
+  return rewrites
+    .map((r) => `- Ace wrote:\n${indent(r.ace.slice(0, MAX_REWRITE_CHARS))}\n  They sent:\n${indent(r.sent.slice(0, MAX_REWRITE_CHARS))}`)
+    .join('\n')
+}
+
 export type InboundReply = {
   messageId: string
   fromEmail: string
