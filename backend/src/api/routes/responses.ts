@@ -7,8 +7,11 @@ import {
   recordResponseSchema,
   listProjectResponses,
   getRejectionFeedbackSummary,
+  markResponseAnswered,
 } from '../../services/responses'
 import { projectRefParamSchema } from '../../services/projects'
+import { answerBodySchema, saveAnswer } from '../../services/answers'
+import { responseIdParamSchema } from '../../domain/ids'
 import { scheduleDeliverabilityStamp } from '../deliverability-stamp'
 import { respondWithError } from '../respond'
 import type { Env, Variables } from '../types'
@@ -22,6 +25,25 @@ responsesRouter.post('/responses', zValidator('json', recordResponseSchema), asy
   scheduleDeliverabilityStamp(c, emailsToVerify)
   return c.json(body, 201)
 })
+
+responsesRouter.post('/responses/:id/mark-answered', zValidator('param', responseIdParamSchema), async (c) => {
+  const { id } = c.req.valid('param')
+  const result = await markResponseAnswered(c.get('db'), c.get('tenantId'), id)
+  if (!result.ok) return respondWithError(c, result)
+  return c.json({ id })
+})
+
+responsesRouter.put(
+  '/responses/:id/answer',
+  zValidator('param', responseIdParamSchema),
+  zValidator('json', answerBodySchema),
+  async (c) => {
+    const { id } = c.req.valid('param')
+    const result = await saveAnswer(c.get('db'), c.get('tenantId'), id, c.req.valid('json'))
+    if (!result.ok) return respondWithError(c, result)
+    return c.json({ id })
+  },
+)
 
 responsesRouter.get(
   '/projects/:id/responses',

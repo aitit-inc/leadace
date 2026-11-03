@@ -1,15 +1,18 @@
-import { and, eq, gte, inArray, isNotNull, or, sql } from 'drizzle-orm'
+import { and, eq, gte, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm'
 import type { Db } from '../db/connection'
 import { isUniqueViolation, secretQuery } from '../db/errors'
 import { outreachLogs, projects, prospects, responses, sendingIdentities } from '../db/schema'
 import { asSendingIdentityId, asTenantId, type TenantId } from '../domain/ids'
 import { hasReplyReadScope, parseSendingIdentitySecret } from '../domain/sending-identity'
 import {
+  AWAITING_ANSWER,
   attributeReply,
+  awaitsAnswer,
   normalizeEmailForMatch,
   sameDomainCandidates,
   toInboundReply,
   type Attribution,
+  type AwaitingAnswer,
   type CapturedReply,
   type InboundReply,
   type OutreachCandidate,
@@ -17,13 +20,14 @@ import {
 import { classifyDeterministically, leadingUnquotedText, type ReplyClassification } from '../domain/reply-classify'
 import { REAPPROACH_REASONS } from '../domain/rejection-feedback'
 import { getGmailAccessToken } from '../auth/google'
-import { pollGmailInbox } from './gmail-poll'
+import { gmailAnsweredAt, pollGmailInbox } from './gmail-poll'
 import { pollImapInbox } from './imap-poll'
 import { classifyReply, matchSameDomainReply } from './reply-classify'
 import type { LlmEnv } from './llm'
 import { notify, notifyCtxOf, type NotifyEnv } from './notifications'
 import { withPaidCallScope } from './paid-calls'
 import { recordResponse, type RecordResponseInput } from './responses'
+import { draftAnswer, recordAnswer } from './answers'
 
 type ReplyIngestEnv = LlmEnv & NotifyEnv & { DATABASE_URL: string }
 
@@ -118,6 +122,21 @@ export function recordFieldsForReply(
   return { responseType: classified.responseType, markDoNotContact: false }
 }
 
+// Replies to a Send-As alias land in the parent's inbox, so the parent's poll
+// owns the alias's sends too.
+function sentFromMailbox(db: Db, tenantId: TenantId, identityId: string) {
+  return or(
+    eq(outreachLogs.sendingIdentityId, identityId),
+    inArray(
+      outreachLogs.sendingIdentityId,
+      db
+        .select({ identityId: sendingIdentities.identityId })
+        .from(sendingIdentities)
+        .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.parentIdentityId, identityId))),
+    ),
+  )
+}
+
 async function loadCandidates(
   db: Db,
   tenantId: TenantId,
@@ -136,18 +155,7 @@ async function loadCandidates(
     .where(
       and(
         eq(outreachLogs.tenantId, tenantId),
-        // Replies to a Send-As alias land in the parent's inbox, so the parent's
-        // poll owns the alias's sends too.
-        or(
-          eq(outreachLogs.sendingIdentityId, identityId),
-          inArray(
-            outreachLogs.sendingIdentityId,
-            db
-              .select({ identityId: sendingIdentities.identityId })
-              .from(sendingIdentities)
-              .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.parentIdentityId, identityId))),
-          ),
-        ),
+        sentFromMailbox(db, tenantId, identityId),
         eq(outreachLogs.channel, 'email'),
         eq(outreachLogs.status, 'sent'),
         gte(outreachLogs.sentAt, cutoff),
@@ -170,7 +178,8 @@ async function notifyReplyToAnswer(
   inbox: string,
   outreachLogId: number,
   reply: InboundReply,
-  responseType: 'reply' | 'meeting_request',
+  responseType: AwaitingAnswer,
+  draft: string | null,
 ): Promise<void> {
   try {
     const [row] = await db
@@ -187,13 +196,17 @@ async function notifyReplyToAnswer(
       reference: `reply:${reply.messageId}`,
       subject: `${responseType === 'meeting_request' ? 'Meeting request' : 'Reply'} from ${row.prospect}`,
       body: [
-        `${row.prospect} (project ${row.project}) wrote back. The reply is in the ${inbox} inbox. Answer it there.`,
+        `${row.prospect} (project ${row.project}) wrote back to ${inbox}.`,
         '',
         `From: ${reply.fromEmail}`,
         '',
         text.length > MAX_NOTICE_EXCERPT_CHARS ? text.slice(0, MAX_NOTICE_EXCERPT_CHARS) + ' …' : text,
+        '',
+        ...(draft
+          ? ['Ace drafted an answer. Edit it if you like and send it from LeadAce:', '', draft]
+          : ['Answer it from LeadAce or from that inbox.']),
       ].join('\n'),
-      link: '/responses',
+      link: '/responses?answer=waiting',
     })
     if (!result.ok) console.warn(`[reply-ingest] reply notification failed msg=${reply.messageId}: ${result.error}`)
   } catch (e) {
@@ -257,8 +270,9 @@ async function matchBySameDomain(
   return { outreachLogId: verdict.outreachLogId, binding: 'domain' }
 }
 
+// The Gmail token also serves the answer check that follows the poll.
 type CaptureResult =
-  | { ok: true; replies: CapturedReply[] }
+  | { ok: true; replies: CapturedReply[]; gmailAccessToken: string | null }
   | { ok: false; detail: string; authRevoked: boolean }
 
 async function capture(
@@ -276,7 +290,7 @@ async function capture(
       since,
       MAX_MESSAGES_PER_POLL,
     )
-    return polled.ok ? polled : { ...polled, authRevoked: false }
+    return polled.ok ? { ...polled, gmailAccessToken: null } : { ...polled, authRevoked: false }
   }
   const token = await getGmailAccessToken(db, {
     tenantId,
@@ -292,7 +306,7 @@ async function capture(
       : { ok: false, detail: `Blocked by the Google Workspace admin: ${token.detail}`, authRevoked: false }
   }
   const polled = await pollGmailInbox(token.accessToken, since, MAX_MESSAGES_PER_POLL)
-  return polled.ok ? polled : { ...polled, authRevoked: false }
+  return polled.ok ? { ...polled, gmailAccessToken: token.accessToken } : { ...polled, authRevoked: false }
 }
 
 // A failure string can embed a full server response.
@@ -312,6 +326,43 @@ async function markPollFailed(
       lastPollError: detail.slice(0, MAX_POLL_ERROR_CHARS),
     })
     .where(and(eq(sendingIdentities.tenantId, tenantId), eq(sendingIdentities.identityId, identityId)))
+}
+
+// Two Gmail calls per reply checked; past the cap a random sample, so every
+// waiting reply comes up within a few polls.
+const MAX_ANSWER_CHECKS = 25
+
+// A reply in this mailbox waits until the mailbox sends a later message in its
+// thread. Best-effort: an unchecked or failed one is checked again next poll.
+async function settleAnswered(db: Db, tenantId: TenantId, identityId: string, accessToken: string): Promise<void> {
+  const waiting = await db
+    .select({ id: responses.id, messageId: responses.sourceMessageId, receivedAt: responses.receivedAt })
+    .from(responses)
+    .innerJoin(outreachLogs, eq(outreachLogs.id, responses.outreachLogId))
+    .where(
+      and(
+        eq(responses.tenantId, tenantId),
+        inArray(responses.responseType, [...AWAITING_ANSWER]),
+        isNull(responses.answeredAt),
+        isNotNull(responses.sourceMessageId),
+        sentFromMailbox(db, tenantId, identityId),
+      ),
+    )
+    .orderBy(sql`random()`)
+    .limit(MAX_ANSWER_CHECKS)
+  for (const reply of waiting) {
+    if (!reply.messageId) continue
+    try {
+      const answeredAt = await gmailAnsweredAt(accessToken, reply.messageId, reply.receivedAt)
+      if (!answeredAt) continue
+      await db
+        .update(responses)
+        .set({ answeredAt })
+        .where(and(eq(responses.tenantId, tenantId), eq(responses.id, reply.id), isNull(responses.answeredAt)))
+    } catch (e) {
+      console.warn(`[reply-ingest] answer check failed identity=${identityId} response=${reply.id}: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
 }
 
 async function markPollSucceeded(db: Db, tenantId: TenantId, identityId: string): Promise<void> {
@@ -358,6 +409,7 @@ async function ingestIdentity(
     return
   }
   summary.identitiesPolled++
+  if (polled.gmailAccessToken) await settleAnswered(db, tenantId, identity.identity_id, polled.gmailAccessToken)
   const lastPolledAt = identity.last_polled_at ? new Date(identity.last_polled_at) : null
   if (
     lastPolledAt &&
@@ -432,14 +484,26 @@ async function ingestIdentity(
       // The cron runs outside the RLS request transaction, so each reply gets its
       // own (record_response does several writes); the unique index backstops a
       // concurrent re-poll.
-      await db.transaction(async (tx) => {
+      const responseId = await db.transaction(async (tx) => {
         const result = await recordResponse(tx as unknown as Db, tenantId, input)
         if (!result.ok) throw new Error(`${result.code}: ${result.error}`)
+        const id = result.value.id
+        // With the reply, so a re-poll that skips it never leaves it without an answer to send.
+        if (id !== undefined && awaitsAnswer(input.responseType)) {
+          await recordAnswer(tx as unknown as Db, tenantId, { responseId: id, outreachLogId, reply })
+        }
+        return id
       })
       summary.recorded++
       seen.add(reply.messageId)
-      if (input.responseType === 'reply' || input.responseType === 'meeting_request') {
-        await notifyReplyToAnswer(db, env, tenantId, identity.from_email, outreachLogId, reply, input.responseType)
+      if (awaitsAnswer(input.responseType)) {
+        const draft = responseId === undefined
+          ? null
+          : await draftAnswer(db, env, tenantId, { responseId, outreachLogId, reply }).catch((e: unknown) => {
+              console.warn(`[reply-ingest] answer not drafted msg=${reply.messageId}: ${e instanceof Error ? e.message : String(e)}`)
+              return null
+            })
+        await notifyReplyToAnswer(db, env, tenantId, identity.from_email, outreachLogId, reply, input.responseType, draft)
       }
     } catch (e) {
       if (isUniqueViolation(e)) {

@@ -7,7 +7,7 @@ export type QuotaAllowance = 'contacted' | 'found'
 // The single "does anything need the user?" feed — every surface (bell,
 // banners, dashboard) renders a view of this list, none judges on its own.
 export type AttentionItem =
-  | { kind: 'hot_leads'; count: number }
+  | { kind: 'replies_waiting'; count: number; since: string }
   | { kind: 'no_project' }
   | { kind: 'compliance_incomplete'; missing: string[] }
   | { kind: 'gmail_disconnected' }
@@ -126,7 +126,8 @@ export type AttentionInput = {
   project: {
     outboundChannelsConfigured: boolean
     pendingDrafts: number
-    hotLeadsRecent: number
+    // Replies no answer has settled yet (domain/reply AWAITING_ANSWER) and the oldest one's arrival.
+    repliesWaiting: { count: number; since: Date } | null
   } | null
 }
 
@@ -138,8 +139,8 @@ export function deriveAttentionItems(input: AttentionInput): AttentionItem[] {
   const degraded = identity.filter((i) => i.kind !== 'gmail_auth_revoked')
 
   const items: AttentionItem[] = []
-  if (input.project && input.project.hotLeadsRecent > 0) {
-    items.push({ kind: 'hot_leads', count: input.project.hotLeadsRecent })
+  if (input.project?.repliesWaiting) {
+    items.push({ kind: 'replies_waiting', count: input.project.repliesWaiting.count, since: input.project.repliesWaiting.since.toISOString() })
   }
   if (!input.hasProject) items.push({ kind: 'no_project' })
   if (!input.compliance.ready) {

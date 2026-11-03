@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { gmailAfter, extractBody, flattenGmailParts, type GmailPart } from './gmail-poll'
+import { gmailAfter, extractBody, firstSentAfter, flattenGmailParts, type GmailPart } from './gmail-poll'
 import { parseDsnOriginalMessageId } from '../domain/dsn'
 
 function b64url(text: string): string {
@@ -132,5 +132,29 @@ describe('flattenGmailParts -> parseDsnOriginalMessageId (Gmail bounce tree)', (
 
   it('does not mistake the DSN own Message-ID for the original', () => {
     expect(parseDsnOriginalMessageId(flattenGmailParts(payload))).not.toBe('<dsn-own@mail.gmail.com>')
+  })
+})
+
+describe('firstSentAfter', () => {
+  const received = new Date('2026-10-13T09:00:00Z')
+  const at = (iso: string) => String(new Date(iso).getTime())
+
+  it('takes the earliest message the mailbox sent after the reply', () => {
+    const thread = [
+      { labelIds: ['SENT'], internalDate: at('2026-10-10T09:00:00Z') },
+      { labelIds: ['INBOX', 'UNREAD'], internalDate: at('2026-10-13T09:00:00Z') },
+      { labelIds: ['SENT'], internalDate: at('2026-10-14T10:00:00Z') },
+      { labelIds: ['SENT'], internalDate: at('2026-10-13T11:00:00Z') },
+    ]
+    expect(firstSentAfter(thread, received)).toEqual(new Date('2026-10-13T11:00:00Z'))
+  })
+
+  it('is null while only the original send and the reply are in the thread', () => {
+    const thread = [
+      { labelIds: ['SENT'], internalDate: at('2026-10-10T09:00:00Z') },
+      { labelIds: ['INBOX'], internalDate: at('2026-10-13T09:00:00Z') },
+      { labelIds: ['DRAFT'], internalDate: at('2026-10-13T12:00:00Z') },
+    ]
+    expect(firstSentAfter(thread, received)).toBeNull()
   })
 })

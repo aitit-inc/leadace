@@ -16,7 +16,8 @@
 #      the follow-up arm, labeled cycle.kind='short_cycle_followup', touchNumber=2.
 #   4. A second 'sent' advances the sequence (touches=2, next gap=7d, touch_number=2).
 #   5. A real reply (responseType=reply) flips status to 'responded' AND clears
-#      next_followup_after (stop-wiring).
+#      next_followup_after (stop-wiring). It then waits for an answer — listed
+#      and on the dashboard — until the person marks it answered.
 #   6. The enabled=false kill-switch clears an in-progress next_followup_after.
 #   7. A cadence-only PUT that omits `enabled` reads back disabled and ALSO clears
 #      (the effective-disabled fix — not just an explicit false).
@@ -209,6 +210,15 @@ RESP_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "Authorization: 
 assert_eq "record reply 2xx"            "${RESP_CODE:0:1}" "2"
 assert_eq "status=responded"            "$(ppstatus "$P_SEQ")" "responded"
 assert_eq "next_followup_after cleared" "$(nfa_null "$P_SEQ")" "t"
+
+step "the reply waits for an answer until the person marks it"
+waiting_on_dashboard() { api GET "/api/projects/$PROJECT_ID/dashboard" | jq -r '[.attention[] | select(.kind == "replies_waiting") | .count] | first // 0'; }
+REPLY_ID="$(api GET "/api/projects/$PROJECT_ID/responses?answer=waiting" | jq -r '.responses[0].id // ""')"
+[[ -n "$REPLY_ID" ]] || { echo "the reply is not listed as waiting" >&2; exit 1; }
+assert_eq "dashboard: 1 reply waiting"   "$(waiting_on_dashboard)" "1"
+assert_eq "mark answered"                "$(api POST "/api/responses/$REPLY_ID/mark-answered" | jq -r '.id // ""')" "$REPLY_ID"
+assert_eq "dashboard: none waiting"      "$(waiting_on_dashboard)" "0"
+assert_eq "listed as answered"           "$(api GET "/api/projects/$PROJECT_ID/responses?answer=answered" | jq -r '.responses[0].answer // ""')" "answered"
 
 step "kill-switch: PUT enabled:false clears an in-progress sequence"
 send_outreach "$P_KILL" > /dev/null

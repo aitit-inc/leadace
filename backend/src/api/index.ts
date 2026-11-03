@@ -110,6 +110,7 @@ app.route('/api', chatRunnerRouter)
 // commits before the provider call.
 app.use('/api/outreach/send-and-record', authMiddleware)
 app.use('/api/outreach/drafts/:id/send', authMiddleware)
+app.use('/api/responses/:id/answer/send', authMiddleware)
 app.route('/api', outreachSendRouter)
 
 // All routes below require authentication + tenant-scoped RLS

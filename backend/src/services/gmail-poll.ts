@@ -1,10 +1,12 @@
 import type { CapturedReply } from '../domain/reply'
 import type { ParsedEmail, MessagePart } from '../domain/email-message'
 import { parseDsnOriginalMessageId } from '../domain/dsn'
+import { gmailThreadIdOf } from '../auth/google'
 
 // Server-side Gmail reply poll via the Gmail API (requires gmail.readonly),
 // normalized to the same CapturedReply the IMAP arm produces. gmail_oauth only.
 const GMAIL_API = 'https://gmail.googleapis.com/gmail/v1/users/me/messages'
+const GMAIL_THREADS_API = 'https://gmail.googleapis.com/gmail/v1/users/me/threads'
 
 type GmailHeader = { name: string; value: string }
 export type GmailPart = {
@@ -118,4 +120,26 @@ export async function pollGmailInbox(
   } catch (e) {
     return { ok: false, detail: e instanceof Error ? e.message : String(e) }
   }
+}
+
+type GmailThreadMessage = { labelIds?: string[]; internalDate?: string }
+
+export function firstSentAfter(messages: GmailThreadMessage[], after: Date): Date | null {
+  let first: Date | null = null
+  for (const m of messages) {
+    if (!m.labelIds?.includes('SENT') || !m.internalDate) continue
+    const at = new Date(Number(m.internalDate))
+    if (at > after && (first === null || at < first)) first = at
+  }
+  return first
+}
+
+// The answer is the first message this mailbox sent later in the same thread.
+export async function gmailAnsweredAt(accessToken: string, messageId: string, receivedAt: Date): Promise<Date | null> {
+  const threadId = await gmailThreadIdOf(accessToken, messageId)
+  if (!threadId) return null
+  const threadRes = await fetch(`${GMAIL_THREADS_API}/${threadId}?format=minimal`, { headers: { Authorization: `Bearer ${accessToken}` } })
+  if (!threadRes.ok) throw new Error(`Gmail thread read failed (${threadRes.status}): ${await threadRes.text()}`)
+  const thread = (await threadRes.json()) as { messages?: GmailThreadMessage[] }
+  return firstSentAfter(thread.messages ?? [], receivedAt)
 }

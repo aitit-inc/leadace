@@ -3,7 +3,7 @@ export type QuotaConstraint = 'lifetime' | 'monthly';
 export type QuotaAllowance = 'contacted' | 'found';
 
 export type AttentionItem =
-	| { kind: 'hot_leads'; count: number }
+	| { kind: 'replies_waiting'; count: number; since: string }
 	| { kind: 'no_project' }
 	| { kind: 'compliance_incomplete'; missing: string[] }
 	| { kind: 'gmail_disconnected' }

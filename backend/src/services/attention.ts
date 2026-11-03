@@ -1,6 +1,6 @@
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, min, sql } from 'drizzle-orm'
 import type { Db } from '../db/connection'
-import { outreachLogs, projectSettings, sendingIdentities, tenantPlans } from '../db/schema'
+import { outreachLogs, projectSettings, responses, sendingIdentities, tenantPlans } from '../db/schema'
 import {
   deriveAttentionItems,
   type AttentionInput,
@@ -10,6 +10,7 @@ import type { VitalsAssessment } from '../domain/loop/frame'
 import type { Edition } from '../domain/edition'
 import type { ProjectId, TenantId } from '../domain/ids'
 import { inboxTestHolds } from '../domain/inbox-test'
+import { AWAITING_ANSWER } from '../domain/reply'
 import { hostedChannels } from '../domain/outbound-channel'
 import { getPlanInfo } from './billing'
 import { isContactQuotaExhausted, isFoundQuotaExhausted, type ProspectQuota } from './plan-limits'
@@ -133,41 +134,26 @@ async function listRanDry(db: Db, tenantId: TenantId, edition: Edition, projectI
   return reachable.ok && reachable.value.withinChannels === 0
 }
 
-// No per-lead seen/handled state exists, so this is "recent" rather than a true unread count.
-const HOT_LEADS_WINDOW_DAYS = 7
-
 export async function listProjectAttention(
   db: Db,
   tenantId: TenantId,
   userId: string,
   edition: Edition,
   projectId: ProjectId,
-  now: Date,
 ): Promise<ServiceResult<AttentionItem[]>> {
-  const hotSinceIso = new Date(now.getTime() - HOT_LEADS_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString()
-  const [tenant, allowlist, [pendingDrafts], hotLeads] = await Promise.all([
+  const [tenant, allowlist, [pendingDrafts], [waiting]] = await Promise.all([
     loadTenantAttention(db, tenantId, userId, edition),
     loadProjectOutboundAllowlist(db, projectId),
     db
       .select({ count: sql<number>`COUNT(*)::int` })
       .from(outreachLogs)
       .where(and(eq(outreachLogs.projectId, projectId), eq(outreachLogs.status, 'pending_review'))),
-    // Distinct prospects who asked for a meeting. Self-serve signups
-    // (signup_clicked) are excluded — the item routes to /responses (the
-    // meeting/reply queue), where a signup wouldn't appear.
-    db.execute<{ count: string | number }>(sql`
-      WITH ev AS (
-        SELECT ol.prospect_id AS pid
-        FROM responses r JOIN outreach_logs ol ON ol.id = r.outreach_log_id
-        WHERE ol.project_id = ${projectId} AND r.response_type = 'meeting_request'
-          AND r.received_at >= ${hotSinceIso}::timestamptz
-        UNION
-        SELECT s.prospect_id AS pid
-        FROM inquiry_sessions s JOIN outreach_logs ol ON ol.id = s.outreach_log_id
-        WHERE ol.project_id = ${projectId} AND s.outcome = 'lead'
-          AND s.opened_at >= ${hotSinceIso}::timestamptz
-      )
-      SELECT COUNT(DISTINCT pid)::int AS count FROM ev`),
+    // An inquiry page's lead is recorded as a meeting request, so it waits here too.
+    db
+      .select({ count: sql<number>`COUNT(*)::int`, since: min(responses.receivedAt) })
+      .from(responses)
+      .innerJoin(outreachLogs, eq(outreachLogs.id, responses.outreachLogId))
+      .where(and(eq(outreachLogs.projectId, projectId), inArray(responses.responseType, [...AWAITING_ANSWER]), isNull(responses.answeredAt))),
   ])
   if (!tenant.ok) return tenant
   const { input, quota } = tenant.value
@@ -181,7 +167,7 @@ export async function listProjectAttention(
       project: {
         outboundChannelsConfigured: allowlist.outboundChannels.length > 0,
         pendingDrafts: Number(pendingDrafts?.count ?? 0),
-        hotLeadsRecent: Number(Array.from(hotLeads)[0]?.count ?? 0),
+        repliesWaiting: waiting?.since ? { count: Number(waiting.count), since: waiting.since } : null,
       },
     }),
   )

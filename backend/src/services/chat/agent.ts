@@ -190,7 +190,7 @@ async function buildContext(deps: ChatTurnDeps, threadProjectId: string | null, 
     Promise.all([
       listProjects(db, deps.tenantId),
       threadProjectId
-        ? listProjectAttention(db, deps.tenantId, deps.userId, edition, asProjectId(threadProjectId), new Date())
+        ? listProjectAttention(db, deps.tenantId, deps.userId, edition, asProjectId(threadProjectId))
         : listTenantAttention(db, deps.tenantId, deps.userId, edition),
     ]),
   )

@@ -1,6 +1,7 @@
 import { z } from 'zod'
-import { eq, and, desc, sql, gte, isNotNull, ilike } from 'drizzle-orm'
+import { eq, and, desc, sql, gte, inArray, isNotNull, isNull, ilike } from 'drizzle-orm'
 import {
+  answers,
   outreachLogs,
   responses,
   projects,
@@ -11,6 +12,7 @@ import {
   responseTypeEnum,
   channelEnum,
   REJECTION_RECONTACT_WINDOWS,
+  type AnswerStatus,
   type Channel,
   type RejectionFeedbackV1,
   type RejectionRecontactWindow,
@@ -38,6 +40,7 @@ import { addMonthsUtc, nextStatusFromResponse } from '../domain/prospect-status'
 import { UNDELIVERABLE } from '../domain/email-deliverability'
 import { projectProspectInsertValues } from '../domain/project-prospect'
 import { isoDateTimeSchema } from '../domain/time'
+import { AWAITING_ANSWER, awaitsAnswer } from '../domain/reply'
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { loadProjectReapproachSettings } from './project-settings'
@@ -82,8 +85,18 @@ export const listResponsesQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).default(0),
   sentiment: z.enum(sentimentEnum.enumValues).optional(),
   responseType: z.enum(responseTypeEnum.enumValues).optional(),
+  answer: z.enum(['waiting', 'answered']).optional(),
+  ids: z
+    .string()
+    .regex(/^\d+(,\d+){0,199}$/)
+    .transform((s) => s.split(',').map(Number))
+    .pipe(z.array(z.number().int().min(1).max(2_147_483_647)))
+    .optional(),
 })
 export type ListResponsesQuery = z.infer<typeof listResponsesQuerySchema>
+
+// 'none': a kind no answer is waited for (domain/reply AWAITING_ANSWER).
+export type ResponseAnswer = 'waiting' | 'answered' | 'none'
 
 // Lives in the service, not domain — shapes which SQL queries fire, not
 // underlying rules.
@@ -463,6 +476,18 @@ export type ListedResponse = {
   prospectId: number
   prospectName: string
   outreachSubject: string | null
+  answer: ResponseAnswer
+  answerEmail: AnswerEmail | null
+}
+
+// Listed in every status, so a send card shows each answer a send could take.
+export type AnswerEmail = {
+  from: string | null
+  to: string
+  subject: string
+  body: string | null
+  status: AnswerStatus
+  sentAt: Date | null
 }
 
 export async function listProjectResponses(
@@ -475,11 +500,14 @@ export async function listProjectResponses(
   if (!resolved.ok) return resolved
   const projectId = resolved.value
 
-  const { limit, offset, sentiment, responseType } = query
+  const { limit, offset, sentiment, responseType, answer, ids } = query
 
   const conditions = [eq(outreachLogs.projectId, projectId)]
   if (sentiment) conditions.push(eq(responses.sentiment, sentiment))
   if (responseType) conditions.push(eq(responses.responseType, responseType))
+  if (answer === 'waiting') conditions.push(inArray(responses.responseType, [...AWAITING_ANSWER]), isNull(responses.answeredAt))
+  if (answer === 'answered') conditions.push(isNotNull(responses.answeredAt))
+  if (ids) conditions.push(inArray(responses.id, ids))
 
   const where = and(...conditions)
 
@@ -496,10 +524,18 @@ export async function listProjectResponses(
         prospectId: outreachLogs.prospectId,
         prospectName: prospects.name,
         outreachSubject: outreachLogs.subject,
+        answeredAt: responses.answeredAt,
+        from: outreachLogs.fromEmail,
+        answerTo: answers.toEmail,
+        answerSubject: answers.subject,
+        answerBody: answers.body,
+        answerStatus: answers.status,
+        answerSentAt: answers.sentAt,
       })
       .from(responses)
       .innerJoin(outreachLogs, eq(outreachLogs.id, responses.outreachLogId))
       .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
+      .leftJoin(answers, eq(answers.responseId, responses.id))
       .where(where)
       .orderBy(desc(responses.receivedAt), desc(responses.id))
       .limit(limit)
@@ -511,7 +547,33 @@ export async function listProjectResponses(
       .where(where),
   ])
 
-  return ok({ responses: rows, total: countRows[0]?.total ?? 0 })
+  return ok({
+    responses: rows.map(({ answeredAt, from, answerTo, answerSubject, answerBody, answerStatus, answerSentAt, ...row }) => ({
+      ...row,
+      answer: answerOf(row.responseType, answeredAt),
+      answerEmail:
+        answerTo !== null && answerSubject !== null && answerStatus !== null
+          ? { from, to: answerTo, subject: answerSubject, body: answerBody, status: answerStatus, sentAt: answerSentAt }
+          : null,
+    })),
+    total: countRows[0]?.total ?? 0,
+  })
+}
+
+function answerOf(type: ListedResponse['responseType'], answeredAt: Date | null): ResponseAnswer {
+  if (answeredAt) return 'answered'
+  return awaitsAnswer(type) ? 'waiting' : 'none'
+}
+
+// The person answered some other way: a call, another address, a new thread.
+export async function markResponseAnswered(db: Db, tenantId: TenantId, responseId: number): Promise<ServiceResult<undefined>> {
+  const [row] = await db
+    .update(responses)
+    .set({ answeredAt: sql`COALESCE(${responses.answeredAt}, now())` })
+    .where(and(eq(responses.tenantId, tenantId), eq(responses.id, responseId), inArray(responses.responseType, [...AWAITING_ANSWER])))
+    .returning({ id: responses.id })
+  if (!row) return err('NOT_FOUND', `No reply waiting for an answer has id ${responseId}`)
+  return ok(undefined)
 }
 
 export type RecontactSample = {

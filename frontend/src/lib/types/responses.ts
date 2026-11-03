@@ -18,6 +18,9 @@ export interface OutreachResponse {
   receivedAt: string;
 }
 
+// Mirrors backend services/responses ResponseAnswer. 'none': a kind that needs no answer.
+export type ResponseAnswer = 'waiting' | 'answered' | 'none';
+
 export interface ResponseRecord {
   id: number;
   channel: Channel;
@@ -28,4 +31,16 @@ export interface ResponseRecord {
   prospectId: number;
   prospectName: string;
   outreachSubject: string | null;
+  answer: ResponseAnswer;
+  answerEmail: AnswerEmail | null;
+}
+
+// Mirrors backend services/responses AnswerEmail.
+export interface AnswerEmail {
+  from: string | null;
+  to: string;
+  subject: string;
+  body: string | null;
+  status: 'draft' | 'sending' | 'sent';
+  sentAt: string | null;
 }

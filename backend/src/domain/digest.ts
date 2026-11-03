@@ -68,8 +68,8 @@ const QUOTA_LINE: Record<QuotaAllowance, Record<QuotaConstraint, string>> = {
 // Judged once in domain/attention; this only words it.
 function attentionLine(item: AttentionItem): string {
   switch (item.kind) {
-    case 'hot_leads':
-      return `${item.count} meeting request${item.count === 1 ? '' : 's'} waiting — book the call.`
+    case 'replies_waiting':
+      return `${item.count} ${item.count === 1 ? 'reply is' : 'replies are'} waiting for your answer, the oldest since ${item.since.slice(0, 10)}.`
     case 'no_project':
       return 'Finish setting up: paste your website URL in the chat.'
     case 'compliance_incomplete':

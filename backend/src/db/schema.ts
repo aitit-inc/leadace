@@ -1206,6 +1206,10 @@ export const responses = pgTable('responses', {
   // Captured reply's Message-ID — idempotency key for server-side ingest re-polls.
   // NULL for plugin / form / SNS responses.
   sourceMessageId: text('source_message_id'),
+  // When the person answered a response that waits for one (domain/reply
+  // AWAITING_ANSWER): a message of theirs later in its thread, an answer sent
+  // from LeadAce, or their own mark. NULL until then, and on every other kind.
+  answeredAt: timestamp('answered_at', { withTimezone: true }),
 }, (table) => [
   // Required so inquiry_sessions can declare a composite (response_id,
   // tenant_id) foreign key (defense-in-depth on top of RLS).
@@ -1223,6 +1227,42 @@ export const responses = pgTable('responses', {
   }).onDelete('cascade'),
   index('idx_responses_tenant').on(table.tenantId),
   index('idx_responses_outreach').on(table.outreachLogId),
+])
+
+// 'sending' holds the answer while the provider call runs, so a second send
+// cannot start; a failed send goes back to 'draft'.
+export const ANSWER_STATUSES = ['draft', 'sending', 'sent'] as const
+export type AnswerStatus = (typeof ANSWER_STATUSES)[number]
+export const answerStatusEnum = pgEnum('answer_status', ANSWER_STATUSES)
+
+// The email that answers a reply waiting for one, made when the reply is
+// ingested; only the person sends it. Not an outreach_logs row: what the
+// learning loop, the quota and the follow-up sequence count is outreach, and
+// an answer is the conversation after it.
+export const answers = pgTable('answers', {
+  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  responseId: integer('response_id').notNull(),
+  // The reply's sender and subject, known only from the ingested message.
+  toEmail: text('to_email').notNull(),
+  subject: text('subject').notNull(),
+  // Ace's draft as written, never changed, so what the person changed can be
+  // learned from. NULL when Ace could not draft one.
+  aceBody: text('ace_body'),
+  // What is sent: Ace's draft as the person left it. NULL until written.
+  body: text('body'),
+  status: answerStatusEnum('status').notNull().default('draft'),
+  sentAt: timestamp('sent_at', { withTimezone: true }),
+}, (table) => [
+  unique('uq_answers_response').on(table.responseId),
+  foreignKey({
+    columns: [table.responseId, table.tenantId],
+    foreignColumns: [responses.id, responses.tenantId],
+    name: 'fk_answer_response_tenant',
+  }).onDelete('cascade'),
+  index('idx_answers_tenant').on(table.tenantId),
 ])
 
 export const inquiryTokens = pgTable('inquiry_tokens', {

@@ -1,4 +1,21 @@
+import type { responseTypeEnum } from '../db/schema'
 import { getHeader, parseAddress, parseMessageIdList, type ParsedEmail } from './email-message'
+
+type ResponseType = (typeof responseTypeEnum.enumValues)[number]
+
+// A person wrote back and only an answer settles it; a bounce, auto-reply,
+// opt-out or decline is settled by its record.
+export const AWAITING_ANSWER = ['reply', 'meeting_request'] as const satisfies readonly ResponseType[]
+export type AwaitingAnswer = (typeof AWAITING_ANSWER)[number]
+
+export function awaitsAnswer(type: ResponseType): type is AwaitingAnswer {
+  return (AWAITING_ANSWER as readonly ResponseType[]).includes(type)
+}
+
+export function answerSubject(replySubject: string | null, outreachSubject: string | null): string {
+  const base = (replySubject || outreachSubject || '').replace(/^\s*((re|aw|sv|fwd?)\s*[:：]\s*)+/i, '').trim()
+  return base ? `Re: ${base}` : 'Re:'
+}
 
 export type InboundReply = {
   messageId: string

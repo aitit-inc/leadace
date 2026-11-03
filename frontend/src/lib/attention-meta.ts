@@ -5,10 +5,10 @@ import {
 	MailQuestion,
 	MailX,
 	Megaphone,
+	Reply,
 	CreditCard,
 	Rocket,
 	ShieldAlert,
-	Target,
 	Unplug,
 	Zap,
 } from '@lucide/svelte';
@@ -44,14 +44,14 @@ const QUOTA_DESC: Record<QuotaAllowance, Record<QuotaConstraint, string>> = {
 
 export function attentionMeta(item: AttentionItem): AttentionMeta {
 	switch (item.kind) {
-		case 'hot_leads':
+		case 'replies_waiting':
 			return {
-				icon: Target,
+				icon: Reply,
 				tone: 'inbound',
-				title: `${item.count} meeting ${item.count === 1 ? 'request' : 'requests'} waiting`,
-				desc: 'Prospects asked to talk — book the call',
+				title: `${item.count} ${item.count === 1 ? 'reply' : 'replies'} waiting for your answer`,
+				desc: `The oldest came ${new Date(item.since).toLocaleDateString()} — send Ace's draft or mark it answered`,
 				ctaLabel: 'Review',
-				href: '/responses',
+				href: '/responses?answer=waiting',
 			};
 		case 'outreach_drafts':
 			return {

@@ -1,31 +1,36 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
+  import { goto, invalidate } from '$app/navigation';
   import { page } from '$app/state';
   import type { ResponseType } from '$lib/types/responses';
   import ChannelBadge from '$lib/components/ChannelBadge.svelte';
   import SentimentBadge from '$lib/components/SentimentBadge.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import Pagination from '$lib/components/Pagination.svelte';
+  import AnswerState from '$lib/components/responses/AnswerState.svelte';
   import type { PageProps } from './$types';
   import { PAGE_SIZE } from '$lib/pagination';
-  import { SENTIMENTS, TYPES } from './constants';
+  import { ANSWERS, SENTIMENTS, TYPES } from './constants';
 
   let { data }: PageProps = $props();
   let expandedId = $state<number | null>(null);
 
   let filterSentiment = $derived<string>(data.filters.sentiment ?? '');
   let filterType = $derived<string>(data.filters.responseType ?? '');
+  let filterAnswer = $derived<string>(data.filters.answer ?? '');
 
-  function updateUrl(next: { sentiment?: string; responseType?: string; page?: number }) {
+  function updateUrl(next: { sentiment?: string; responseType?: string; answer?: string; page?: number }) {
     const sp = new URLSearchParams(page.url.searchParams);
     const sentiment = next.sentiment ?? filterSentiment;
     const responseType = next.responseType ?? filterType;
+    const answer = next.answer ?? filterAnswer;
     const nextPage = next.page ?? data.page;
 
     if (sentiment) sp.set('sentiment', sentiment);
     else sp.delete('sentiment');
     if (responseType) sp.set('responseType', responseType);
     else sp.delete('responseType');
+    if (answer) sp.set('answer', answer);
+    else sp.delete('answer');
     if (next.page !== undefined && nextPage > 1) sp.set('page', String(nextPage));
     else sp.delete('page');
 
@@ -39,8 +44,17 @@
   function onTypeChange(e: Event) {
     updateUrl({ responseType: (e.currentTarget as HTMLSelectElement).value, page: 1 });
   }
+  function onAnswerChange(e: Event) {
+    updateUrl({ answer: (e.currentTarget as HTMLSelectElement).value, page: 1 });
+  }
   function onPageChange(n: number) {
     updateUrl({ page: n });
+  }
+
+  // Marking the only row of a filtered page moves it off the list: step back a page.
+  async function onAnswerChanged() {
+    if (filterAnswer && data.responses.length === 1 && data.page > 1) onPageChange(data.page - 1);
+    else await invalidate('app:responses');
   }
 
   function formatDate(iso: string) {
@@ -76,6 +90,12 @@
       <option value={t}>{formatType(t)}</option>
     {/each}
   </select>
+  <select value={filterAnswer} onchange={onAnswerChange} class="field w-auto">
+    <option value="">Answered or not</option>
+    {#each ANSWERS as a}
+      <option value={a}>{a === 'waiting' ? 'Waiting for your answer' : 'Answered'}</option>
+    {/each}
+  </select>
 </div>
 
 {#if data.responses.length === 0}
@@ -107,7 +127,10 @@
               <p class="text-text truncate">{truncate(r.content)}</p>
             </div>
             <span class="self-center"><SentimentBadge sentiment={r.sentiment} /></span>
-            <span class="text-xs text-text-secondary self-center">{formatType(r.responseType)}</span>
+            <span class="text-xs text-text-secondary self-center">
+              {formatType(r.responseType)}
+              {#if r.answer === 'waiting'}<span class="chip bg-warning/15 text-warning">Waiting</span>{/if}
+            </span>
           </button>
 
           <button
@@ -126,12 +149,16 @@
               {#if r.outreachSubject}&mdash; re: {r.outreachSubject}{/if}
             </p>
             <p class="text-sm text-text line-clamp-2">{truncate(r.content, 140)}</p>
-            <span class="text-xs text-text-secondary">{formatType(r.responseType)}</span>
+            <span class="text-xs text-text-secondary">
+              {formatType(r.responseType)}
+              {#if r.answer === 'waiting'}<span class="chip bg-warning/15 text-warning">Waiting</span>{/if}
+            </span>
           </button>
 
           {#if expandedId === r.id}
             <div class="mx-5 mb-4 rounded-xl bg-page px-4 py-3">
               <p class="text-sm text-text whitespace-pre-wrap break-words">{r.content}</p>
+              <AnswerState response={r} token={data.session?.access_token} onChanged={onAnswerChanged} />
             </div>
           {/if}
         </div>

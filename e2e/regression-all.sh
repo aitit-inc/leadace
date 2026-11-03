@@ -37,6 +37,7 @@ SUITES=(
   regression-content-check
   regression-inflight-reachable
   regression-followup-sequence
+  regression-answers
   regression-mailbox-warmup
   regression-sending-identities
   regression-prospect-update-channel

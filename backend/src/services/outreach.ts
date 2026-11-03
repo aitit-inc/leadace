@@ -232,7 +232,7 @@ async function loadEffectiveRecipientCountry(
 
 // Bypassed under E2E: sendForIdentity redirects every recipient to a test sink,
 // so the localhost links a dev stack produces never reach a real inbox.
-function assertPublicHttpsSendHosts(ctx: SendContext): ServiceResult<undefined> {
+export function assertPublicHttpsSendHosts(ctx: SendContext): ServiceResult<undefined> {
   if (ctx.e2eRecipientOverride) return ok(undefined)
   for (const [name, value] of [
     ['APP_URL', ctx.appUrl],

@@ -245,7 +245,7 @@ export async function getDashboardSummary(
       ...(windowDays !== undefined ? { windowDays } : {}),
     }),
     listRecentOutreachById(db, tenantId, projectId, { limit: RECENT_ACTIVITY_CANDIDATES, offset: 0, period: 'all' }),
-    listProjectAttention(db, tenantId, userId, edition, projectId, now),
+    listProjectAttention(db, tenantId, userId, edition, projectId),
     loadLeverConfig(db, projectId),
     db
       .select({

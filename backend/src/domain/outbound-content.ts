@@ -28,7 +28,7 @@ const PLACEHOLDER_PATTERNS: readonly RegExp[] = [
   /\[[A-Za-z][A-Za-z0-9 ._'-]{0,40}\](?!\()/,
 ]
 
-function findPlaceholder(text: string): string | null {
+export function findPlaceholder(text: string): string | null {
   for (const pattern of PLACEHOLDER_PATTERNS) {
     const match = pattern.exec(text)
     if (match) return match[0]

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  answerSubject,
   attributeReply,
   normalizeEmailForMatch,
   normalizeMessageId,
@@ -40,6 +41,17 @@ const NOW = new Date('2026-06-10T12:00:00Z')
 describe('normalizeEmailForMatch', () => {
   it('lowercases and trims', () => {
     expect(normalizeEmailForMatch('  Lead@Acme.COM ')).toBe('lead@acme.com')
+  })
+})
+
+describe('answerSubject', () => {
+  it('keeps one "Re:" over whatever prefixes the thread piled up', () => {
+    expect(answerSubject('RE: Re: Fwd: Pricing', 'Pricing')).toBe('Re: Pricing')
+    expect(answerSubject('Re：資料のご送付', null)).toBe('Re: 資料のご送付')
+  })
+  it('falls back to our subject when the reply has none', () => {
+    expect(answerSubject('', 'Quick question')).toBe('Re: Quick question')
+    expect(answerSubject(null, null)).toBe('Re:')
   })
 })
 

@@ -106,7 +106,9 @@ async function runSession(
       await expect(null, [250])
     }
 
-    await send('QUIT')
+    // After the 250 to DATA the server owns the message: a failed QUIT must not
+    // report a delivered email as failed, or a retry sends it twice.
+    await send('QUIT').catch(() => {})
   } catch (e) {
     if (timedOut) throw new SmtpError(`SMTP timed out after ${timeoutMs}ms`)
     throw e

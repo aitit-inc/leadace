@@ -102,6 +102,7 @@ class GmailSendError extends Error {
 export async function sendGmailMessage(args: {
   accessToken: string
   rfc822: string
+  threadId?: string
 }): Promise<{ id: string; threadId: string }> {
   const raw = base64UrlEncode(args.rfc822)
   const res = await fetch(GMAIL_SEND_URL, {
@@ -110,7 +111,7 @@ export async function sendGmailMessage(args: {
       Authorization: `Bearer ${args.accessToken}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ raw }),
+    body: JSON.stringify({ raw, threadId: args.threadId }),
   })
   if (!res.ok) {
     const detail = await res.text()
@@ -137,6 +138,14 @@ async function readBackRfc822MessageId(accessToken: string, id: string): Promise
     console.warn(`[gmail-send] Message-ID read-back threw: ${e instanceof Error ? e.message : String(e)}`)
     return null
   }
+}
+
+export async function gmailThreadIdOf(accessToken: string, rfc822MessageId: string): Promise<string | null> {
+  const q = encodeURIComponent(`rfc822msgid:${rfc822MessageId.trim().replace(/^<|>$/g, '')}`)
+  const res = await fetch(`${GMAIL_MESSAGES_URL}?q=${q}&maxResults=1`, { headers: { Authorization: `Bearer ${accessToken}` } })
+  if (!res.ok) throw new Error(`Gmail search failed (${res.status}): ${await res.text()}`)
+  const list = (await res.json()) as { messages?: Array<{ threadId: string }> }
+  return list.messages?.[0]?.threadId ?? null
 }
 
 // `override` is sourced from `E2E_RECIPIENT_OVERRIDE` — unset in production
@@ -182,6 +191,8 @@ export function buildRfc822(args: {
   // MSAs preserve it too (a rewriting MSA degrades that identity to sender-recency).
   messageId?: string
   inReplyTo?: string
+  // Earlier Message-IDs of the thread, oldest first.
+  references?: string[]
   extraHeaders?: Record<string, string>
   // SMTP passes 'quoted-printable' (7-bit-clean, no 8BITMIME); Gmail API takes 8bit.
   bodyEncoding?: '8bit' | 'quoted-printable'
@@ -205,7 +216,8 @@ export function buildRfc822(args: {
     // but a CR/LF leak here would let a caller inject arbitrary headers (Bcc).
     const id = args.inReplyTo.replace(/[\r\n]/g, '')
     lines.push(`In-Reply-To: ${id}`)
-    lines.push(`References: ${id}`)
+    const earlier = (args.references ?? []).map((r) => r.replace(/[\r\n]/g, '')).filter((r) => r !== id)
+    lines.push(`References: ${[...earlier, id].join(' ')}`)
   }
   if (args.extraHeaders) {
     for (const [name, value] of Object.entries(args.extraHeaders)) {
@@ -549,6 +561,7 @@ export async function sendForIdentity(
     subject: string
     body: string
     inReplyTo?: string
+    references?: string[]
     extraHeaders?: Record<string, string>
     senderDisplayName?: string | null
     e2eRecipientOverride?: string | null
@@ -594,6 +607,7 @@ export async function sendForIdentity(
     body: args.body,
     messageId: rfc822MessageId,
     inReplyTo: args.inReplyTo,
+    references: args.references,
     extraHeaders: envelope.extraHeaders,
   }
 
@@ -625,7 +639,10 @@ export async function sendForIdentity(
 
       try {
         const rfc822 = buildRfc822({ ...baseRfc822, bcc: envelope.bcc })
-        const result = await sendGmailMessage({ accessToken: token.accessToken, rfc822 })
+        // Gmail files a reply into the sender's thread only when told its id;
+        // the headers alone thread it on the recipient's side.
+        const threadId = args.inReplyTo ? await gmailThreadIdOf(token.accessToken, args.inReplyTo).catch(() => null) : null
+        const result = await sendGmailMessage({ accessToken: token.accessToken, rfc822, threadId: threadId ?? undefined })
         return {
           ok: true,
           kind: 'sent',

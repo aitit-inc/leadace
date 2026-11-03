@@ -92,6 +92,11 @@ on, need no Claude session, and run fast:
 - `regression-draft-send.sh` — `sendDraft`/`markDraftSent` preconditions +
   re-applied compliance/country at send time; `markDraftSent` happy path (no
   Gmail); `sendDraft` Gmail leg gated on `sending_identities` + override.
+- `regression-answers.sh` — the answer Ace drafts to a waiting reply: saving
+  sends nothing and keeps Ace's draft as written; a `{placeholder}`, an
+  answered reply or a do-not-contact prospect is not sent to; the send leg is
+  gated on Gmail + override like `sendDraft`, and a sent answer keeps what
+  went out and marks its reply answered.
 - `regression-draft-reviews.sh` — `draft_reviews`: an edit keeps the agent's
   text once; a wrong-message discard returns the prospect, a wrong-prospect
   discard sets it `inactive`; a sent draft gets no discard record.

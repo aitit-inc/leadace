@@ -186,6 +186,44 @@ function sendingScope(params: JobParams): SendScope | null {
   }
 }
 
+type AnswerEmailWire = { from: string | null; to: string; subject: string; body: string | null; status: string; sentAt: string | null }
+type ResponseWire = {
+  id: number
+  receivedAt: string
+  prospectName: string
+  responseType: string
+  sentiment: string
+  answer: string
+  content: string
+  answerEmail: AnswerEmailWire | null
+}
+
+async function listResponsesWire(
+  ctx: ToolCtx,
+  projectRef: string,
+  q: { answer?: string; ids?: number[]; limit: number; offset: number },
+): Promise<{ ok: true; responses: ResponseWire[]; total: number } | { ok: false; error: string }> {
+  const qs = new URLSearchParams({ limit: String(q.limit), offset: String(q.offset), ...(q.answer ? { answer: q.answer } : {}), ...(q.ids ? { ids: q.ids.join(',') } : {}) })
+  const { ok, data } = await ctx.callApi('GET', `/projects/${encodeURIComponent(projectRef)}/responses?${qs}`, null)
+  if (!ok) return { ok: false, error: (data as { error: string }).error }
+  const { responses, total } = data as { responses: ResponseWire[]; total: number }
+  return { ok: true, responses, total }
+}
+
+// A draft is only worth naming while its reply still waits.
+function answerEmailState(r: ResponseWire): string | null {
+  const e = r.answerEmail
+  if (!e) return null
+  if (e.status === 'sent') return `answered from LeadAce ${e.sentAt?.slice(0, 10) ?? ''}`.trim()
+  if (e.status === 'sending') return 'answer email being sent'
+  if (r.answer !== 'waiting') return null
+  return e.body ? 'answer email drafted' : 'answer email not written yet'
+}
+
+function answerEmailText(e: AnswerEmailWire, body: string | null = e.body): string {
+  return `${e.from ? `From: ${e.from}\n` : ''}To: ${e.to}\nSubject: ${e.subject}\n\n${body ?? '(no text yet)'}`
+}
+
 export type DraftToSend = { prospectName: string; prospectEmail: string | null; subject: string | null; body: string }
 
 function emailText(d: DraftToSend): string {
@@ -1882,6 +1920,136 @@ export function buildToolRegistry(): ToolDef[] {
         ? ''
         : ' Derived prospects: ' + derived.map((p) => `${p.name} (id ${p.id}, ${p.action})`).join(', ') + '.'
       return { content: [{ type: 'text' as const, text: `Response recorded (id: ${result.id}).${derivedNote}` }] }
+    },
+  )
+
+  defineTool(
+    'list_responses',
+    'List a project\'s responses, newest first: one line each with id, date, prospect, kind, sentiment, answer state (waiting, answered, or none = needs no answer), the state of its answer email from LeadAce, if any, and an excerpt. answer narrows the list to waiting or answered; ids shows those responses in full with their answer email.',
+    {
+      projectId: z.string().min(1).describe('Project name or ID'),
+      answer: z.enum(['waiting', 'answered']).optional(),
+      ids: z.array(z.number().int().positive()).min(1).max(50).optional().describe('Only these responses, in full.'),
+      limit: z.number().int().min(1).max(100).default(20),
+      offset: z.number().int().min(0).default(0),
+    },
+    async ({ projectId, answer, ids, limit, offset }, ctx) => {
+      const listed = await listResponsesWire(ctx, projectId, { answer, ids, limit, offset })
+      if (!listed.ok) return { content: [{ type: 'text' as const, text: `Error: ${listed.error}` }], isError: true }
+      const { responses, total } = listed
+      const lines = responses.map((r) => {
+        const head = `#${r.id} ${r.receivedAt.slice(0, 10)} ${r.prospectName} — ${r.responseType}, ${r.sentiment}, ${r.answer}`
+        const state = answerEmailState(r)
+        if (ids) {
+          return [head, 'Their reply:', r.content, ...(state && r.answerEmail ? [`${state}:`, answerEmailText(r.answerEmail)] : [])].join('\n')
+        }
+        const text = r.content.replace(/\s+/g, ' ').trim()
+        return `${head}${state ? `, ${state}` : ''}: ${text.length > 160 ? `${text.slice(0, 160)}…` : text}`
+      })
+      return { content: [{ type: 'text' as const, text: `${total} response(s); showing ${responses.length} from offset ${offset}.${lines.length > 0 ? `\n${lines.join(ids ? '\n\n' : '\n')}` : ''}` }] }
+    },
+    { readOnly: true },
+  )
+
+  defineTool(
+    'save_answer',
+    'Rewrite the answer email Ace drafted to a waiting reply; nothing is sent. Answers with the response id.',
+    {
+      responseId: z.number().int().positive().describe('Response id from list_responses.'),
+      body: z.string().min(1).describe('The whole new body, not a diff. The send adds the legal footer.'),
+    },
+    async ({ responseId, body }, ctx) => {
+      const { ok, data } = await ctx.callApi('PUT', `/responses/${responseId}/answer`, { body })
+      if (!ok) {
+        const err = data as { error: string; detail?: string }
+        return { content: [{ type: 'text' as const, text: `Error: ${err.detail ? `${err.error}: ${err.detail}` : err.error}` }], isError: true }
+      }
+      return { content: [{ type: 'text' as const, text: `Saved the answer to response ${responseId}.` }] }
+    },
+  )
+
+  defineTool(
+    'send_answers',
+    'Send answer emails to waiting replies, each with the body given, from the mailbox its reply reached into the reply\'s thread. The card shows each email as given; a sent one is kept as the answer and marks its reply answered. Answers with one line per reply: sent, or why not.',
+    {
+      projectId: z.string().min(1).describe('Project name or ID'),
+      answers: z
+        .array(
+          z.object({
+            responseId: z.number().int().positive(),
+            body: z.string().min(1).describe('The whole text to send (list_responses with ids shows the current one). The send adds the legal footer.'),
+          }),
+        )
+        .min(1)
+        .max(50),
+    },
+    async ({ projectId, answers }, ctx) => {
+      const listed = await listResponsesWire(ctx, projectId, { ids: answers.map((a) => a.responseId), limit: 100, offset: 0 })
+      if (!listed.ok) return { content: [{ type: 'text' as const, text: `Error: ${listed.error}` }], isError: true }
+      const inProject = new Set(listed.responses.map((r) => r.id))
+      const lines: string[] = []
+      for (const { responseId: id, body } of answers) {
+        if (!inProject.has(id)) {
+          lines.push(`#${id}: not a response of this project; not sent.`)
+          continue
+        }
+        const { ok, data } = await ctx.callApi('POST', `/responses/${id}/answer/send`, { body })
+        if (ok) {
+          const sent = data as { to: string; from: string }
+          lines.push(`#${id}: sent from ${sent.from} to ${sent.to}.`)
+        } else {
+          const err = data as { error: string; detail?: string }
+          lines.push(`#${id}: not sent: ${err.detail ? `${err.error}: ${err.detail}` : err.error}`)
+        }
+      }
+      return { content: [{ type: 'text' as const, text: lines.join('\n') }] }
+    },
+    {
+      confirm: async ({ projectId, answers }, ctx) => {
+        const [name, listed] = await Promise.all([
+          projectLabel(ctx, projectId),
+          listResponsesWire(ctx, projectId, { ids: answers.map((a) => a.responseId), limit: 100, offset: 0 }),
+        ])
+        const emailOf = new Map(listed.ok ? listed.responses.map((r) => [r.id, r.answerEmail]) : [])
+        // An id with no answer email (another project's, or a reply from before
+        // LeadAce drafted answers) is refused by the send, so it shows no text.
+        const emails = answers.map(({ responseId, body }) => {
+          const e = emailOf.get(responseId)
+          if (!listed.ok) return `#${responseId}\n\n${body}`
+          if (!e) return `#${responseId}: no answer to send from LeadAce; not sent.`
+          const state = e.status === 'sent' ? 'Already sent: not sent again.\n' : e.status === 'sending' ? 'Being sent now.\n' : ''
+          return `${state}${answerEmailText(e, body)}`
+        })
+        return {
+          title: answers.length === 1 ? 'Send this answer' : 'Send these answers',
+          facts: [
+            { label: 'Project', value: name },
+            { label: 'What happens', value: 'Each is sent into its reply\'s thread, from the mailbox the reply reached' },
+          ],
+          body: emails.join('\n\n— — —\n\n'),
+          warning: [
+            listed.ok ? null : 'The answers could not be loaded to show here: decline and ask again.',
+            'Sent email cannot be recalled.',
+          ]
+            .filter((w) => w !== null)
+            .join(' '),
+          confirmLabel: `Send ${plural(answers.length, 'answer')}`,
+        }
+      },
+    },
+  )
+
+  defineTool(
+    'mark_response_answered',
+    'Mark a waiting reply answered when the person answered it outside its thread (a call, another address). A reply answered in its Gmail thread clears itself at the next hourly poll.',
+    { responseId: z.number().int().positive().describe('Response id from list_responses.') },
+    async ({ responseId }, ctx) => {
+      const { ok, data } = await ctx.callApi('POST', `/responses/${responseId}/mark-answered`, null)
+      if (!ok) {
+        const err = data as { error: string }
+        return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
+      }
+      return { content: [{ type: 'text' as const, text: `Response ${responseId} is marked answered.` }] }
     },
   )
 

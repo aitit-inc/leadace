@@ -371,7 +371,8 @@ function seedThread(ctx, { projectId, title, userText, modelText, toolName, args
 //    feed prints them as "27m ago" — so the chart looks the same at any hour.
 //  - Variant stats only count sends older than rewardWindowDays (14) and call an
 //    arm mature at minSamplePerArm (30).
-//  - hot_leads uses a fixed 7-day window, whatever period the page is showing.
+//  - Every reply is answered but the two newest meeting requests, which wait for
+//    an answer whatever period the page is showing.
 const DASH_PROOF = 'rst_20260715_b';
 const DASH_SINGLE = 'rst_20260715_d';
 const DASH_SUBJECT = 'Three minutes a day: AI practice that makes you clearer';
@@ -449,8 +450,8 @@ function seedDashboardFixture(ctx, projectId, { pending = 'loosen' } = {}) {
   curMature.slice(19, 53).forEach((s) => (s.variant = DASH_SINGLE));
 
   const responses = [];
-  const add = (send, type, sentiment, receivedAt, content, feedback = null) =>
-    responses.push({ send, type, sentiment, receivedAt, content, feedback });
+  const add = (send, type, sentiment, receivedAt, content, feedback = null, waiting = false) =>
+    responses.push({ send, type, sentiment, receivedAt, content, feedback, waiting });
   const prevSorted = [...prevSends].sort((a, b) => a.sentAt - b.sentAt);
   add(prevSorted[0], 'meeting_request', 'positive', prevSorted[0].sentAt + 2 * DAY, 'Happy to find a time next week.');
   add(prevSorted[1], 'meeting_request', 'positive', prevSorted[1].sentAt + 2 * DAY, 'Could we set up a short call?');
@@ -468,13 +469,10 @@ function seedDashboardFixture(ctx, projectId, { pending = 'loosen' } = {}) {
     .filter((s) => s.window === 'cur' && s.day > 15 && !s.isNamed)
     .sort((a, b) => a.sentAt - b.sentAt);
   const unsubscribe = { primary_reason: 'unsubscribe_request', free_text: '', preferred_recontact_window: 'never' };
-  // Every reply is dated from its own send, so none can predate it and the
-  // hot-leads window lands the same way at any hour: slots 19 and 28 are days 24
-  // and 25, which put two meeting requests inside the fixed seven days, and slot
-  // 0 is day 18, which keeps the third one outside.
+  // Every reply is dated from its own send, so none can predate it.
   add(slots[0], 'meeting_request', 'positive', slots[0].sentAt + DAY, 'We would like a walkthrough.');
-  add(slots[19], 'meeting_request', 'positive', slots[19].sentAt + DAY, 'Can you do Thursday afternoon?');
-  add(slots[28], 'meeting_request', 'positive', slots[28].sentAt + DAY, 'Please send over a calendar link.');
+  add(slots[19], 'meeting_request', 'positive', slots[19].sentAt + DAY, 'Can you do Thursday afternoon?', null, true);
+  add(slots[28], 'meeting_request', 'positive', slots[28].sentAt + DAY, 'Please send over a calendar link.', null, true);
   add(slots[5], 'rejection', 'negative', slots[5].sentAt + DAY, 'Please remove me from this list.', unsubscribe);
   add(slots[6], 'rejection', 'negative', slots[6].sentAt + DAY, 'Unsubscribe.', unsubscribe);
   add(slots[7], 'reply', 'neutral', slots[7].sentAt + DAY, 'Noted, thank you.');
@@ -549,21 +547,33 @@ function seedDashboardFixture(ctx, projectId, { pending = 'loosen' } = {}) {
   }
   for (const part of chunk(responses, 30)) {
     psql(
-      `INSERT INTO responses (tenant_id, outreach_log_id, channel, content, sentiment, response_type, received_at, rejection_feedback) ` +
-        `SELECT ${q(tenant)}, ol.id, 'email', v.content, v.sentiment::sentiment, v.rtype::response_type, v.received_at::timestamptz, v.feedback::jsonb ` +
+      `INSERT INTO responses (tenant_id, outreach_log_id, channel, content, sentiment, response_type, received_at, rejection_feedback, answered_at) ` +
+        `SELECT ${q(tenant)}, ol.id, 'email', v.content, v.sentiment::sentiment, v.rtype::response_type, v.received_at::timestamptz, v.feedback::jsonb, ` +
+        `CASE WHEN v.rtype IN ('reply', 'meeting_request') AND NOT v.waiting THEN v.received_at::timestamptz + interval '2 hours' END ` +
         `FROM (VALUES ` +
         part
           .map(
             (r) =>
-              `(${q(r.send.named.domain)}, ${q(r.content)}, ${q(r.sentiment)}, ${q(r.type)}, ${q(iso(r.receivedAt))}, ${r.feedback ? q(JSON.stringify(r.feedback)) : 'NULL'})`,
+              `(${q(r.send.named.domain)}, ${q(r.content)}, ${q(r.sentiment)}, ${q(r.type)}, ${q(iso(r.receivedAt))}, ${r.feedback ? q(JSON.stringify(r.feedback)) : 'NULL'}, ${r.waiting})`,
           )
           .join(',') +
-        `) AS v(domain, content, sentiment, rtype, received_at, feedback) ` +
+        `) AS v(domain, content, sentiment, rtype, received_at, feedback, waiting) ` +
         `JOIN organizations o ON o.domain = v.domain AND o.tenant_id = ${q(tenant)} ` +
         `JOIN prospects p ON p.organization_id = o.id AND p.tenant_id = ${q(tenant)} ` +
         `JOIN outreach_logs ol ON ol.prospect_id = p.id AND ol.project_id = ${q(projectId)};`,
     );
   }
+
+  // Ace drafted an answer to each reply still waiting when it came in.
+  psql(
+    `INSERT INTO answers (tenant_id, response_id, to_email, subject, ace_body, body) ` +
+      `SELECT r.tenant_id, r.id, COALESCE(p.email, 'contact@' || o.domain), 'Re: ' || ol.subject, v.body, v.body ` +
+      `FROM responses r JOIN outreach_logs ol ON ol.id = r.outreach_log_id ` +
+      `JOIN prospects p ON p.id = ol.prospect_id JOIN organizations o ON o.id = p.organization_id ` +
+      `JOIN (VALUES (${q('Please send over a calendar link.')}, ${q('Hi,\n\nThanks for coming back to me. Here is my calendar: {booking link}\n\nPick any slot that suits you and the invite follows.\n\nBest,\nAlex')}), ` +
+      `(${q('Can you do Thursday afternoon?')}, ${q('Hi,\n\nThursday afternoon works for me. What time suits you best? I will send an invite as soon as you confirm.\n\nBest,\nAlex')})) AS v(content, body) ON v.content = r.content ` +
+      `WHERE r.tenant_id = ${q(tenant)} AND r.answered_at IS NULL;`,
+  );
 
   // Every variant predates the 30-day history window, so the only entries are
   // the two the retirement cycle archived — a newer created_at would add
@@ -1120,7 +1130,7 @@ const SCENARIOS = [
           name: 'page',
           path: '/dashboard',
           expect: [
-            '2 meeting requests waiting',
+            '2 replies waiting for your answer',
             'History',
             'Wantedly stories reach the schools email is bouncing at',
           ],
@@ -1144,6 +1154,12 @@ const SCENARIOS = [
           path: '/dashboard',
           click: 'button:has-text("Something else")',
           expect: ['This proposal stops', 'Send to Ace'],
+        },
+        {
+          name: 'replies-waiting',
+          path: '/responses?answer=waiting',
+          click: 'button:has-text("Please send over a calendar link") >> nth=0',
+          expect: ['Ace drafted an answer', 'Here is my calendar: {booking link}', 'Send', 'Mark answered'],
         },
         { name: 'history', path: '/history', expect: ['What was decided', 'Retired', 'Started testing the angle', 'Contacted', 'Edited the sales strategy'] },
         { name: 'history-row', path: '/history', click: 'summary:has-text("Edited the sales strategy")', expect: ['On reply rates, the noes'] },

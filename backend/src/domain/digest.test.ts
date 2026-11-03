@@ -169,14 +169,14 @@ describe('buildDigest', () => {
         summary: {
           kpis: { ...emptySummary.kpis, approached: { current: 50, previous: 0, deltaPct: null } },
           attention: [
-            { kind: 'hot_leads', count: 1 },
+            { kind: 'replies_waiting', count: 1, since: '2026-09-19T03:00:00.000Z' },
             { kind: 'quota_exhausted', allowance: 'contacted', constraint: 'lifetime' },
           ],
         },
       }),
     )
     expect(digest?.body).toContain(
-      'Needs you\n1 meeting request waiting — book the call.\nEvery prospect in your plan has been contacted. Follow-ups still go out; open the plans page to reach new ones.',
+      'Needs you\n1 reply is waiting for your answer, the oldest since 2026-09-19.\nEvery prospect in your plan has been contacted. Follow-ups still go out; open the plans page to reach new ones.',
     )
   })
 

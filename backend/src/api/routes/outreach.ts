@@ -29,6 +29,8 @@ import {
   type SendContext,
 } from '../../services/outreach'
 import { projectRefParamSchema } from '../../services/projects'
+import { answerBodySchema, sendAnswer } from '../../services/answers'
+import { responseIdParamSchema } from '../../domain/ids'
 import { respondWithError } from '../respond'
 import { scheduleAutoTopUp } from '../auto-top-up'
 import { withTenantConnection, type TenantRun } from '../../db/rls'
@@ -236,6 +238,17 @@ outreachSendRouter.post(
     )
     if (!result.ok) return respondWithError(c, result)
     scheduleAutoTopUp(c)
+    return c.json(result.value, 200)
+  },
+)
+
+outreachSendRouter.post(
+  '/responses/:id/answer/send',
+  zValidator('param', responseIdParamSchema),
+  zValidator('json', answerBodySchema),
+  async (c) => {
+    const result = await sendAnswer(tenantRun(c), c.get('tenantId'), sendContext(c), c.req.valid('param').id, c.req.valid('json'))
+    if (!result.ok) return respondWithError(c, result)
     return c.json(result.value, 200)
   },
 )

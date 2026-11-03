@@ -121,20 +121,20 @@ describe('deriveAttentionItems', () => {
     billing: { plan: 'starter', holdsSubscription: true },
     creditTopUpFailedAt: null,
     now: NOW,
-    project: { outboundChannelsConfigured: true, pendingDrafts: 0, hotLeadsRecent: 0 },
+    project: { outboundChannelsConfigured: true, pendingDrafts: 0, repliesWaiting: null },
   }
 
   it('returns nothing when everything is healthy', () => {
     expect(deriveAttentionItems(clean)).toEqual([])
   })
 
-  it('surfaces hot leads first (revenue opportunity), then the review queue', () => {
+  it('surfaces the replies waiting for an answer first, then the review queue', () => {
     const items = deriveAttentionItems({
       ...clean,
-      project: { outboundChannelsConfigured: true, pendingDrafts: 4, hotLeadsRecent: 2 },
+      project: { outboundChannelsConfigured: true, pendingDrafts: 4, repliesWaiting: { count: 2, since: new Date('2026-09-20T08:00:00Z') } },
     })
     expect(items).toEqual([
-      { kind: 'hot_leads', count: 2 },
+      { kind: 'replies_waiting', count: 2, since: '2026-09-20T08:00:00.000Z' },
       { kind: 'outreach_drafts', count: 4 },
     ])
   })
@@ -160,10 +160,10 @@ describe('deriveAttentionItems', () => {
       ],
       quota: { exhausted: 'contacted', constraint: 'monthly' },
       futileProjects: [{ projectId: 'p-acme', projectName: 'Acme', sends: 400, engaged: 0 }],
-      project: { outboundChannelsConfigured: false, pendingDrafts: 3, hotLeadsRecent: 1 },
+      project: { outboundChannelsConfigured: false, pendingDrafts: 3, repliesWaiting: { count: 1, since: NOW } },
     })
     expect(items.map((i) => i.kind)).toEqual([
-      'hot_leads',
+      'replies_waiting',
       'no_project',
       'compliance_incomplete',
       'gmail_disconnected',
