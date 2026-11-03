@@ -3,8 +3,8 @@
 ![Status: Public Beta](https://img.shields.io/badge/status-Public_Beta-E8755E) ![License](https://img.shields.io/badge/license-Apache_2.0_modified-6EADB0) [![Listed on mcpservers.org](https://mcpservers.org/badge.svg)](https://mcpservers.org/servers/aitit-inc/leadace)
 
 Autonomous outbound sales agent in your browser. Builds prospect lists, writes
-and sends one email per company from your own mailbox, and improves its
-strategy from every reply and rejection.
+and sends one email per company from your own mailbox, and changes who it
+contacts and what it says from the replies, noes and bounces that come back.
 
 Website: https://leadace.ai
 

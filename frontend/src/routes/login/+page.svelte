@@ -75,7 +75,7 @@
       <span class="font-display text-2xl font-semibold tracking-tight text-text">LeadAce</span>
     </div>
     <h1 class="mt-10 animate-rise font-display text-3xl font-semibold leading-tight tracking-tight text-balance text-text">
-      {fromSignupCta ? 'See every email before it goes out. Then let it run.' : 'Welcome back'}
+      {fromSignupCta ? 'Find out who buys. Ace does the asking.' : 'Welcome back'}
     </h1>
     <p class="mt-3 animate-rise text-base text-text-secondary">
       {fromSignupCta
