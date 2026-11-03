@@ -7,8 +7,15 @@
   let {
     content,
     onopenfile,
-  }: { content: Exclude<ChatContent, { role: 'job' }>; onopenfile?: (file: ChatAttachment) => void } = $props();
+    onundo,
+  }: {
+    content: Exclude<ChatContent, { role: 'job' }>;
+    onopenfile?: (file: ChatAttachment) => void;
+    // Set while nothing the person said came after these steps: an Undo sends its instruction as their message.
+    onundo?: (instruction: string) => void;
+  } = $props();
   let expanded = $state(false);
+  let undone = $state(false);
 
   function stepResult(r: Record<string, unknown>): string {
     const v = r['result'] ?? r['error'];
@@ -37,10 +44,28 @@
     <div class="prose-chat max-w-[85%] text-base leading-relaxed text-text">{@html renderChatMarkdown(text)}</div>
   {/if}
 {:else}
+  {@const undos = content.parts.flatMap((p) => {
+    const undo = p.functionResponse.response['undo'];
+    return typeof undo === 'string' ? [{ name: p.functionResponse.name, instruction: undo }] : [];
+  })}
   <div class="max-w-[85%]">
-    <button type="button" class="text-xs font-semibold text-text-muted hover:text-text" onclick={() => (expanded = !expanded)}>
-      {content.parts.length} step{content.parts.length === 1 ? '' : 's'} {expanded ? '▾' : '▸'}
-    </button>
+    <div class="flex flex-wrap items-center gap-2">
+      <button type="button" class="text-xs font-semibold text-text-muted hover:text-text" onclick={() => (expanded = !expanded)}>
+        {content.parts.length} step{content.parts.length === 1 ? '' : 's'} {expanded ? '▾' : '▸'}
+      </button>
+      {#if onundo && !undone}
+        {#each undos as u (u.instruction)}
+          <button
+            type="button"
+            class="btn btn-ghost btn-sm"
+            onclick={() => {
+              undone = true;
+              onundo(u.instruction);
+            }}>{undos.length === 1 ? 'Undo' : `Undo ${humanize(u.name).toLowerCase()}`}</button
+          >
+        {/each}
+      {/if}
+    </div>
     {#if expanded}
       <dl class="mt-1 space-y-1 border-l-2 border-border pl-3 text-xs text-text-muted">
         {#each content.parts as p (p.functionResponse.id)}

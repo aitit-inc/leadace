@@ -71,6 +71,6 @@ describe('unattendedTools', () => {
 
   it('holds nothing for approval, so a run never parks on a card', () => {
     const { tools } = attended()
-    expect(unattendedTools(tools, 'p1').confirmSummary('send_email_and_record', {})).toBeNull()
+    expect(unattendedTools(tools, 'p1').confirmSummary('send_email_and_record', {}, false)).toBeNull()
   })
 })

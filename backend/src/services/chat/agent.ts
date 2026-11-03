@@ -30,7 +30,7 @@ import { buildSystemInstruction } from './system-prompt'
 export type ToolExecutor = {
   declarations: FunctionTool[]
   // The approval card for a call that must not run unattended, or null.
-  confirmSummary: (name: string, args: Record<string, unknown>) => Promise<ConfirmSummary | null> | ConfirmSummary | null
+  confirmSummary: (name: string, args: Record<string, unknown>, personAsked: boolean) => Promise<ConfirmSummary | null> | ConfirmSummary | null
   isReadOnly: (name: string) => boolean
   // Whether the tool can raise an approval card at all, whatever its
   // arguments. The unattended policy keys on this, never on one call's card.
@@ -80,7 +80,8 @@ type ToolResponse = { id: string; name: string; response: Record<string, unknown
 type ToolPart = { functionResponse: ToolResponse }
 
 function toolResponse(call: Call, result: ToolResult): ToolResponse {
-  return { id: call.id, name: call.name, response: result.ok ? { result: result.text } : { error: result.text } }
+  const undo = result.effect?.kind === 'undo' ? { undo: result.effect.instruction } : {}
+  return { id: call.id, name: call.name, response: result.ok ? { result: result.text, ...undo } : { error: result.text } }
 }
 
 // What the person actually answered: the action, its warning and the content
@@ -272,6 +273,7 @@ async function* settleCalls(
   threadId: string,
   modelMessageId: number,
   calls: Call[],
+  personAsked: boolean,
 ): AsyncGenerator<ChatEvent, ToolPart[] | { pending: PendingCall }> {
   // One write in the batch and the whole turn stays sequential: order is part
   // of what a write means, and a gate has to hold the turn where it sits.
@@ -294,7 +296,7 @@ async function* settleCalls(
       responses.push(toolResponse(call, INTERRUPTED))
       continue
     }
-    const summary = await deps.tools.confirmSummary(call.name, call.args)
+    const summary = await deps.tools.confirmSummary(call.name, call.args, personAsked)
     if (summary) {
       gated.push({ ...call, summary })
       continue
@@ -313,6 +315,7 @@ async function* settleCalls(
         summary: first.summary,
         otherResponses: responses,
         remaining: rest.map((c) => ({ callId: c.id, name: c.name, args: c.args, summary: c.summary })),
+        personAsked,
       },
     }
   }
@@ -352,6 +355,11 @@ export async function* runChatTurn(deps: ChatTurnDeps, threadId: string, input: 
     return
   }
 
+  // Whether the turn answers the person's own message: one of theirs it reads
+  // unread, or, for an approval, what the card's turn answered. A scheduled
+  // run's instruction is no one's request.
+  let personAsked = false
+
   if (input.kind === 'confirm') {
     // The claim is the only path to execution: a concurrent or repeated
     // confirmation finds nothing to run.
@@ -361,10 +369,11 @@ export async function* runChatTurn(deps: ChatTurnDeps, threadId: string, input: 
       return
     }
     const call: Call = { id: claimed.callId, name: claimed.name, args: claimed.args }
+    personAsked = claimed.personAsked === true
     // The card was a promise made when it was shown; if the world moved under
     // it, the new terms go back to the person instead of running.
     if (input.approve) {
-      const fresh = await deps.tools.confirmSummary(call.name, call.args)
+      const fresh = await deps.tools.confirmSummary(call.name, call.args, personAsked)
       if (fresh && termsChanged(claimed.summary, fresh) && !deps.signal.aborted) {
         yield* holdPending(deps, threadId, { ...claimed, summary: fresh })
         return
@@ -380,9 +389,10 @@ export async function* runChatTurn(deps: ChatTurnDeps, threadId: string, input: 
         name: next.name,
         args: next.args,
         // Read as it comes up: the call just answered can change its terms.
-        summary: (await deps.tools.confirmSummary(next.name, next.args)) ?? next.summary,
+        summary: (await deps.tools.confirmSummary(next.name, next.args, personAsked)) ?? next.summary,
         otherResponses: answered,
         remaining: rest,
+        personAsked,
       })
       return
     }
@@ -402,6 +412,8 @@ export async function* runChatTurn(deps: ChatTurnDeps, threadId: string, input: 
     }
     // A message sent after Stop is not the stopped turn's to read.
     if (deps.signal.aborted) return
+    // A person's message lands unread; a scheduled instruction and a job's notice are not theirs.
+    if (input.kind === 'unread') personAsked = history.value.messages.some((m) => m.readAfter === null && m.role === 'user')
     // Read once: a turn that fails from here on is not retried until something new arrives.
     await deps.run((db) => markRead(db, deps.tenantId, threadId, history.value.messages))
     messages = inReadingOrder(history.value.messages)
@@ -449,7 +461,7 @@ export async function* runChatTurn(deps: ChatTurnDeps, threadId: string, input: 
     messages.push({ ...modelMsg, content })
     if (calls.length === 0) break
 
-    const settled = yield* settleCalls(deps, threadId, modelMsg.id, calls)
+    const settled = yield* settleCalls(deps, threadId, modelMsg.id, calls, personAsked)
     if ('pending' in settled) {
       yield* holdPending(deps, threadId, settled.pending)
       return

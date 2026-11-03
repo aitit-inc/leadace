@@ -74,8 +74,14 @@ export type PendingCall = {
   otherResponses: Array<{ id: string; name: string; response: Record<string, unknown> }>
   // Further gated calls from the same turn, each asked about in order.
   remaining: Array<{ callId: string; name: string; args: Record<string, unknown>; summary: ConfirmSummary }>
+  // Whether the turn that raised the card answered the person's own message;
+  // the turn the approval continues keeps it. Absent on cards from before it.
+  personAsked?: boolean
 }
 
 export type ToolEffect =
   | { kind: 'job_started'; jobId: string; jobKind: string }
   | { kind: 'project_created'; projectId: string }
+  // A change the person can take back: the chat offers it as an Undo, which
+  // sends `instruction` as their message.
+  | { kind: 'undo'; instruction: string }

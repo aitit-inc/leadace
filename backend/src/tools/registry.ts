@@ -293,6 +293,11 @@ export type ToolCtx = {
   callApi: (method: string, path: string, body: unknown) => Promise<{ ok: boolean; status: number; data: unknown }>
 }
 
+// personAsked: the turn answers the person's own message, not a job's notice.
+// A change they can take back then runs without a card; one Ace takes on its
+// own still asks (CLAUDE.md, One API, every surface).
+export type ConfirmCtx = ToolCtx & { personAsked: boolean }
+
 export type ToolCallResult = CallToolResult & { effect?: ToolEffect }
 
 export type ToolDef = {
@@ -302,7 +307,7 @@ export type ToolDef = {
   surface: 'shared' | 'chat'
   // Decided on parsed arguments: what the person is asked to approve, or null
   // when the call runs unattended. Absent = never gated.
-  confirm?: (args: Record<string, unknown>, ctx: ToolCtx) => Promise<ConfirmSummary | null> | ConfirmSummary | null
+  confirm?: (args: Record<string, unknown>, ctx: ConfirmCtx) => Promise<ConfirmSummary | null> | ConfirmSummary | null
   // Writes nothing and holds no order against a sibling call, so the chat
   // agent may run several at once.
   readOnly: boolean
@@ -322,7 +327,7 @@ export function buildToolRegistry(): ToolDef[] {
     handler: (args: z.infer<z.ZodObject<S>>, ctx: ToolCtx) => Promise<ToolCallResult> | ToolCallResult,
     opts: { surface?: ToolDef['surface'] } & (
       | {
-          confirm?: (args: z.infer<z.ZodObject<S>>, ctx: ToolCtx) => Promise<ConfirmSummary | null> | ConfirmSummary | null
+          confirm?: (args: z.infer<z.ZodObject<S>>, ctx: ConfirmCtx) => Promise<ConfirmSummary | null> | ConfirmSummary | null
           readOnly?: never
         }
       | { readOnly: true; confirm?: never }
@@ -791,7 +796,15 @@ export function buildToolRegistry(): ToolDef[] {
         h.sendRefusal ? `provider refusal unresolved (latest ${h.sendRefusal.lastAt})` : null,
         h.inboxTestHeld ? 'held by the latest inbox test (spam)' : null,
       ]
-      return { content: [{ type: 'text' as const, text: parts.filter((p) => p !== null).join('; ') }] }
+      // A resolved refusal or inbox test has nothing to go back to; a cap and a pause do.
+      const back = [
+        dailyCap !== undefined ? `dailyCap ${JSON.stringify(found.dailyCapOverride)}` : null,
+        pausedUntil !== undefined ? `pausedUntil ${JSON.stringify(found.pausedUntil)}` : null,
+      ].filter((b) => b !== null)
+      return {
+        content: [{ type: 'text' as const, text: parts.filter((p) => p !== null).join('; ') }],
+        ...(back.length > 0 ? { effect: { kind: 'undo' as const, instruction: `Undo: set mailbox ${mailbox} back to ${back.join(', ')}.` } } : {}),
+      }
     },
     {
       surface: 'chat',
@@ -799,6 +812,10 @@ export function buildToolRegistry(): ToolDef[] {
         // Nothing to change: the call fails at the API, so there is nothing to approve.
         if (resolveRefusal === undefined && resumeInboxTest === undefined && dailyCap === undefined && pausedUntil === undefined) return null
         const current = await findMailbox(ctx, mailbox)
+        // A pause the person asked for that starts or lengthens one only stops sending.
+        const pauseOnly = typeof pausedUntil === 'string' && resolveRefusal === undefined && resumeInboxTest === undefined && dailyCap === undefined
+        if (ctx.personAsked && pauseOnly && current && Date.parse(pausedUntil) > Date.now()
+          && (current.pausedUntil === null || Date.parse(pausedUntil) >= Date.parse(current.pausedUntil))) return null
         const facts: Array<{ label: string; value: string }> = [{ label: 'Mailbox', value: mailbox }]
         if (resolveRefusal) {
           facts.push({
@@ -2479,17 +2496,28 @@ export function buildToolRegistry(): ToolDef[] {
         .describe('Language of this project\'s outbound messages (default "en"): sets the compliance-footer / identity localization and the language outbound subjects and bodies are written in. Independent of targetCountries; recipient-facing web pages (inquiry landing, unsubscribe) follow the visitor\'s browser language instead.'),
     },
     async ({ projectId, ...patch }, ctx) => {
+      const before = (await readApi(ctx, `/projects/${encodeURIComponent(projectId)}/settings`)) as Record<string, unknown> | null
+      if (!before) return { content: [{ type: 'text' as const, text: `Error: could not read project ${projectId}'s settings; nothing was changed` }], isError: true }
       const { ok, data } = await ctx.callApi('PUT', `/projects/${encodeURIComponent(projectId)}/settings`, patch)
       if (!ok) {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
       }
-      return { content: [{ type: 'text' as const, text: `${JSON.stringify(data, null, 2)}\n${await dailyTargetLine(ctx, projectId)}` }] }
+      const back = Object.entries(patch)
+        .filter(([k, v]) => v !== undefined && JSON.stringify(v) !== JSON.stringify(before[k]))
+        .map(([k]) => `${k} ${JSON.stringify(before[k])}`)
+      const undo = back.length > 0 ? `Undo: set project ${projectId} back to ${back.join(', ')}.` : null
+      return {
+        content: [{ type: 'text' as const, text: `${JSON.stringify(data, null, 2)}\n${await dailyTargetLine(ctx, projectId)}` }],
+        ...(undo ? { effect: { kind: 'undo' as const, instruction: undo } } : {}),
+      }
     },
     {
       confirm: async ({ projectId, ...patch }, ctx) => {
         const changes = GUARDED_SETTINGS.filter((k) => patch[k] !== undefined)
         if (changes.length === 0) return null
+        // Holding drafts for review tightens the guard, and the person can switch back.
+        if (ctx.personAsked && changes.length === 1 && patch.outboundMode === 'draft') return null
         const now = (await readApi(ctx, `/projects/${encodeURIComponent(projectId)}/settings`)) as Record<string, unknown> | null
         const shown = (v: unknown) => (v === null ? 'none' : String(v))
         const facts = [
@@ -2575,6 +2603,8 @@ export function buildToolRegistry(): ToolDef[] {
           outboundPreview(ctx, projectId),
           params.kind === 'send' ? draftsToSend(ctx, projectId, params.draftIds) : [],
         ])
+        // What the person asked for runs when it only drafts; an email sent cannot be taken back.
+        if (ctx.personAsked && params.kind !== 'send' && preview?.outboundMode === 'draft') return null
         return startJobConfirmSummary(params, name, preview, drafts)
       },
     },
@@ -2656,6 +2686,9 @@ export function buildToolRegistry(): ToolDef[] {
     ((await readApi(ctx, '/schedules')) as { schedules: ScheduleWire[] } | null)?.schedules.find((s) => s.id === id)
   const whenLine = (s: Pick<ScheduleWire, 'hour' | 'days' | 'timezone'>): string =>
     `${s.days.length === 7 ? 'every day' : s.days.map((d) => DAY_NAMES[d]).join(' ')} at ${String(s.hour).padStart(2, '0')}:00 ${s.timezone}`
+  // Everything set_schedule takes, so an Undo can restore it.
+  const scheduleState = (s: ScheduleWire): string =>
+    `${s.enabled ? 'on' : 'off'}, hour ${s.hour}, days ${JSON.stringify(s.days)}, timezone ${s.timezone}, prompt ${JSON.stringify(s.prompt)}`
   const scheduleLine = (s: ScheduleWire): string => {
     const ran = s.lastRunAt ? `, last ran ${s.lastRunAt}` : ''
     const failed = s.lastError ? ` — last run failed: ${s.lastError}` : ''
@@ -2702,6 +2735,9 @@ export function buildToolRegistry(): ToolDef[] {
       }
       // JSON drops the keys left undefined, so one body serves both calls.
       const body = { prompt, timezone, hour, days, enabled }
+      const before = scheduleId ? await findSchedule(ctx, scheduleId) : undefined
+      // Without the schedule as it stands there is nothing to undo to, so nothing changes.
+      if (scheduleId && !before) return { content: [{ type: 'text' as const, text: `Error: could not read schedule ${scheduleId}; nothing was changed` }], isError: true }
       const { ok, data } = scheduleId
         ? await ctx.callApi('PATCH', `/schedules/${encodeURIComponent(scheduleId)}`, body)
         : await ctx.callApi('POST', '/schedules', { ...body, projectId, days: days ?? DAYS_OF_WEEK })
@@ -2709,13 +2745,23 @@ export function buildToolRegistry(): ToolDef[] {
         const e = data as { error: string; detail?: string }
         return { content: [{ type: 'text' as const, text: `Error: ${e.detail ? `${e.error}: ${e.detail}` : e.error}` }], isError: true }
       }
-      return { content: [{ type: 'text' as const, text: `Saved: ${scheduleLine(data as ScheduleWire)}` }] }
+      const saved = data as ScheduleWire
+      const back = before
+        ? (['prompt', 'timezone', 'hour', 'days', 'enabled'] as const)
+            .filter((k) => body[k] !== undefined && JSON.stringify(body[k]) !== JSON.stringify(before[k]))
+            .map((k) => `${k} ${JSON.stringify(before[k])}`)
+        : []
+      const undo = before ? (back.length > 0 ? `Undo: set schedule ${saved.id} back to ${back.join(', ')}.` : null) : `Undo: remove schedule ${saved.id}.`
+      return {
+        content: [{ type: 'text' as const, text: `Saved: ${scheduleLine(saved)}` }],
+        ...(undo ? { effect: { kind: 'undo' as const, instruction: undo } } : {}),
+      }
     },
     {
       surface: 'chat',
       confirm: async ({ scheduleId, projectId, prompt, timezone, hour, days, enabled }, ctx) => {
-        // Switching one off grants nothing, so it is not a card.
-        if (enabled === false) return null
+        // Switching one off grants nothing, and one the person asked for can be switched off again.
+        if (enabled === false || ctx.personAsked) return null
         const existing = scheduleId ? await findSchedule(ctx, scheduleId) : undefined
         // An edit runs on the stored schedule's project, whatever projectId says.
         const target = scheduleId ? existing?.projectId : projectId
@@ -2753,16 +2799,22 @@ export function buildToolRegistry(): ToolDef[] {
     'Remove a scheduled run by id. Its past runs stay in the chat thread it logged them to; answers with the id removed.',
     { scheduleId: z.string().min(1).describe('Schedule id from list_schedules.') },
     async ({ scheduleId }, ctx) => {
+      const before = await findSchedule(ctx, scheduleId)
+      if (!before) return { content: [{ type: 'text' as const, text: `Error: could not read schedule ${scheduleId}; nothing was removed` }], isError: true }
       const { ok, data } = await ctx.callApi('DELETE', `/schedules/${encodeURIComponent(scheduleId)}`, null)
       if (!ok) {
         const e = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${e.error}` }], isError: true }
       }
-      return { content: [{ type: 'text' as const, text: `Removed schedule ${(data as { id: string }).id}.` }] }
+      return {
+        content: [{ type: 'text' as const, text: `Removed schedule ${(data as { id: string }).id}.` }],
+        effect: { kind: 'undo' as const, instruction: `Undo: recreate the removed schedule on project ${before.projectId}: ${scheduleState(before)}.` },
+      }
     },
     {
       surface: 'chat',
       confirm: async ({ scheduleId }, ctx) => {
+        if (ctx.personAsked) return null
         const existing = await findSchedule(ctx, scheduleId)
         return {
           title: 'Stop this scheduled run',
@@ -2865,17 +2917,25 @@ export function buildToolRegistry(): ToolDef[] {
       return { content: [{ type: 'text' as const, text: `Saved: ${saved.join(', ')}.` }] }
     },
     {
-      confirm: async ({ projectId, draft }, ctx) => ({
-        title: 'Save this setup',
-        facts: [
-          { label: 'Project', value: await projectLabel(ctx, projectId) },
-          { label: 'Who to contact', value: `${draft.discoveryStrategies.length} search strategies` },
-          { label: 'What to say', value: `${draft.messageVariants.length} message angles, written in ${draft.targetLanguage}` },
-          { label: 'Channels', value: draft.outboundChannels.map((c) => c.replace(/_/g, ' ')).join(', ') },
-        ],
-        warning: "This replaces the project's current strategy and messaging.",
-        confirmLabel: 'Save setup',
-      }),
+      confirm: async ({ projectId, draft }, ctx) => {
+        // A first setup the person went ahead on replaces nothing; over an existing one,
+        // the angles and search strategies it rewrites keep no copy to go back to.
+        if (ctx.personAsked) {
+          const docs = (await readApi(ctx, `/projects/${encodeURIComponent(projectId)}/documents`)) as { documents: Array<{ slug: string }> } | null
+          if (docs && !docs.documents.some((d) => d.slug === 'sales_strategy')) return null
+        }
+        return {
+          title: 'Save this setup',
+          facts: [
+            { label: 'Project', value: await projectLabel(ctx, projectId) },
+            { label: 'Who to contact', value: `${draft.discoveryStrategies.length} search strategies` },
+            { label: 'What to say', value: `${draft.messageVariants.length} message angles, written in ${draft.targetLanguage}` },
+            { label: 'Channels', value: draft.outboundChannels.map((c) => c.replace(/_/g, ' ')).join(', ') },
+          ],
+          warning: "This replaces the project's current strategy and messaging.",
+          confirmLabel: 'Save setup',
+        }
+      },
     },
   )
 

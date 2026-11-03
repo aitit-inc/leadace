@@ -139,6 +139,8 @@
     return [...data.messages, ...liveMessages.filter((m) => !seen.has(m.id))];
   });
 
+  let lastAsked = $derived(messages.findLastIndex((m) => m.content.role === 'user'));
+
   let activity = $derived(data.thread ? [] : data.jobs.map((j) => jobs[j.id] ?? j));
 
   $effect(() => {
@@ -659,7 +661,7 @@
               <JobCard {job} oncancel={cancel} ondetails={loadDetails} showOrigin />
             {/each}
           {/if}
-          {#each messages as m (m.id)}
+          {#each messages as m, i (m.id)}
             <div class={m.id === echoed ? undefined : 'animate-rise'}>
               {#if m.content.role === 'job'}
                 {#if jobs[m.content.jobId]}
@@ -668,7 +670,11 @@
                   <p class="text-sm text-text-muted">{m.content.summary}</p>
                 {/if}
               {:else}
-                <MessageItem content={m.content} onopenfile={openFile} />
+                <MessageItem
+                  content={m.content}
+                  onopenfile={openFile}
+                  onundo={m.content.role === 'tool' && i > lastAsked ? (instruction) => send(instruction) : undefined}
+                />
               {/if}
             </div>
           {/each}

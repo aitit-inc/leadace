@@ -56,14 +56,14 @@ export function buildToolExecutor(
   }
   return {
     declarations,
-    confirmSummary: (name, args) => {
+    confirmSummary: (name, args, personAsked) => {
       const tool = byName.get(name)
       if (!tool?.confirm) return null
       const parsed = parseToolArgs(tool, args)
       // Arguments the schema rejects are not gated: execute answers the model
       // with the validation error instead of asking the person about nonsense.
       if (!parsed.ok) return null
-      return tool.confirm(parsed.value, ctx)
+      return tool.confirm(parsed.value, { ...ctx, personAsked })
     },
     isReadOnly: (name) => byName.get(name)?.readOnly ?? false,
     isGated: (name) => {

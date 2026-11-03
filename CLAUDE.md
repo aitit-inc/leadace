@@ -103,10 +103,12 @@ scenarios (e2e/README.md → UI scenarios).
   are clients of the same API, so what a page lets the person do, the chat
   can do through a tool; a page-only action is a gap unless only a browser can
   run it (OAuth consent, payment). A call waits for the person's approval
-  card because of its effect — a send, a deletion, a rewritten strategy, a
-  schedule that runs unwatched, a loosened guardrail (mailbox caps, pauses,
-  who may be contacted) — never because of where the conversation is, and the
-  card shows that effect itself (the emails it sends). What needs the person
+  card because its effect cannot be taken back or loosens a guardrail — a
+  send, a deletion, a new frame, sending without review, a loosened mailbox
+  cap or pause, who may be contacted — and the card shows that effect itself
+  (the emails it sends). A change the person asked for in their own message
+  that can be taken back runs, and its result offers an Undo; the same step
+  Ace takes on its own (on a job's notice) still asks. What needs the person
   is judged once (`domain/attention`); every surface renders that list and
   none judges on its own.
 - **Where a rule ends and judgment begins**: a decision is a rule only when

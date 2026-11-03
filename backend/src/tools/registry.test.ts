@@ -8,14 +8,64 @@ const byName = new Map(buildToolRegistry().map((t) => [t.name, t]))
 // hold the gate.
 const blindCtx: ToolCtx = { callApi: async () => ({ ok: false, status: 500, data: null }) }
 
-const gate = async (name: string, args: Record<string, unknown>) => {
+// Reads answer from these routes (by path prefix); the rest fail.
+const seen = (routes: Record<string, unknown>): ToolCtx => ({
+  callApi: async (_method, path) => {
+    const hit = Object.entries(routes).find(([prefix]) => path.startsWith(prefix))
+    return hit ? { ok: true, status: 200, data: hit[1] } : { ok: false, status: 404, data: null }
+  },
+})
+
+const gate = async (name: string, args: Record<string, unknown>, personAsked = false, ctx: ToolCtx = blindCtx) => {
   const tool = byName.get(name)!
   if (!tool.confirm) return null
   const parsed = parseToolArgs(tool, args)
-  return parsed.ok ? await tool.confirm(parsed.value, blindCtx) : null
+  return parsed.ok ? await tool.confirm(parsed.value, { ...ctx, personAsked }) : null
+}
+
+const reachable = (outboundMode: 'draft' | 'send') => seen({ '/projects/p/prospects/reachable': { total: 3, outboundMode, outboundBlocked: false } })
+const mailbox = (pausedUntil: string | null) =>
+  seen({ '/me/sending-identities': { identities: [{ identityId: 'i', fromEmail: 'a@b.example', dailyCapOverride: null, pausedUntil, sendRefusal: null, inboxTestHeld: false }] } })
+const DRAFT = {
+  targetLanguage: 'en',
+  business: '# Business',
+  salesStrategy: '# Sales strategy',
+  discoveryStrategies: ['school-lists', 'job-boards', 'event-pages'].map((slug) => ({ slug, approach: 'Search there.' })),
+  messageVariants: ['angle_a', 'angle_b', 'angle_c', 'angle_d'].map((variantId) => ({ variantId, subjectPattern: 'Hi {{org}}', bodyApproach: 'Short.', label: variantId })),
+  inquiryChatBrief: 'What we do.',
+  inquiryOneLiner: 'One line.',
+  outboundChannels: ['email'],
 }
 
 describe('confirmation gate', () => {
+  it('runs what the person asked for when it can be taken back, and still asks what cannot', async () => {
+    const schedule = { projectId: 'p', prompt: 'Run today', timezone: 'UTC', hour: 9 }
+    expect(await gate('set_schedule', schedule)).not.toBeNull()
+    expect(await gate('set_schedule', schedule, true)).toBeNull()
+    expect(await gate('delete_schedule', { scheduleId: 's' }, true)).toBeNull()
+    // A cycle that only drafts runs; one that sends, or one whose mode cannot be read, asks.
+    expect(await gate('start_job', { projectId: 'p', params: { kind: 'daily_cycle' } }, true, reachable('draft'))).toBeNull()
+    expect(await gate('start_job', { projectId: 'p', params: { kind: 'daily_cycle' } }, true, reachable('send'))).not.toBeNull()
+    expect(await gate('start_job', { projectId: 'p', params: { kind: 'daily_cycle' } }, true)).not.toBeNull()
+    expect(await gate('start_job', { projectId: 'p', params: { kind: 'send', draftIds: [1] } }, true, reachable('draft'))).not.toBeNull()
+    // A first setup replaces nothing; over an existing one it asks.
+    expect(await gate('apply_strategy_draft', { projectId: 'p', draft: DRAFT }, true, seen({ '/projects/p/documents': { documents: [] } }))).toBeNull()
+    expect(await gate('apply_strategy_draft', { projectId: 'p', draft: DRAFT }, true, seen({ '/projects/p/documents': { documents: [{ slug: 'sales_strategy' }] } }))).not.toBeNull()
+    expect(await gate('apply_strategy_draft', { projectId: 'p', draft: DRAFT }, false, seen({ '/projects/p/documents': { documents: [] } }))).not.toBeNull()
+    expect(await gate('update_project_settings', { projectId: 'p', outboundMode: 'draft' }, true)).toBeNull()
+    expect(await gate('update_project_settings', { projectId: 'p', outboundMode: 'send' }, true)).not.toBeNull()
+    expect(await gate('update_project_settings', { projectId: 'p', senderDisplayName: 'Leo' }, true)).not.toBeNull()
+    // A pause that starts or lengthens one runs; one in the past or shorter than the current asks.
+    expect(await gate('update_mailbox_sending', { mailbox: 'a@b.example', pausedUntil: '2099-01-01T00:00:00Z' }, true, mailbox(null))).toBeNull()
+    expect(await gate('update_mailbox_sending', { mailbox: 'a@b.example', pausedUntil: '2020-01-01T00:00:00Z' }, true, mailbox(null))).not.toBeNull()
+    expect(await gate('update_mailbox_sending', { mailbox: 'a@b.example', pausedUntil: '2098-01-01T00:00:00Z' }, true, mailbox('2099-01-01T00:00:00Z'))).not.toBeNull()
+    expect(await gate('update_mailbox_sending', { mailbox: 'a@b.example', pausedUntil: null }, true, mailbox('2099-01-01T00:00:00Z'))).not.toBeNull()
+    expect(await gate('update_mailbox_sending', { mailbox: 'a@b.example', dailyCap: 50 }, true)).not.toBeNull()
+    expect(await gate('send_email_and_record', { projectId: 'p', prospectId: 1, subject: 's', body: 'b' }, true)).not.toBeNull()
+    expect(await gate('delete_prospects', { prospectIds: [1] }, true)).not.toBeNull()
+    expect(await gate('set_prospect_do_not_contact', { prospectId: 1, doNotContact: false }, true)).not.toBeNull()
+  })
+
   it('gates tools that send, delete, or reshape the workspace', async () => {
     expect(await gate('send_email_and_record', { projectId: 'p', prospectId: 1, subject: 's', body: 'b' })).not.toBeNull()
     expect(await gate('delete_prospects', { prospectIds: [1] })).not.toBeNull()
