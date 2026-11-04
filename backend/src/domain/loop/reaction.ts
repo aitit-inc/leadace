@@ -17,7 +17,9 @@ export const rewardWeightsSchema = z.object({
   meetingRequest: rewardWeight.default(1),
   positiveReply: rewardWeight.default(1),
   neutralReply: rewardWeight.default(0.5),
-  negativeReply: rewardWeight.default(0),
+  // A no is still the market answering.
+  negativeReply: rewardWeight.default(0.2),
+  optOut: rewardWeight.default(0),
   inquiryChatEngaged: rewardWeight.default(0.5),
   inquirySignupClicked: rewardWeight.default(1),
 })
@@ -27,6 +29,7 @@ export const rewardWeightsPatchSchema = z.object({
   positiveReply: rewardWeight.optional(),
   neutralReply: rewardWeight.optional(),
   negativeReply: rewardWeight.optional(),
+  optOut: rewardWeight.optional(),
   inquiryChatEngaged: rewardWeight.optional(),
   inquirySignupClicked: rewardWeight.optional(),
 })
@@ -41,10 +44,13 @@ const INQUIRY_REWARD_WEIGHT: Record<InquiryOutcome, keyof RewardWeights | null> 
   inquired: 'inquiryChatEngaged',
   lead: null,
   signup_clicked: 'inquirySignupClicked',
-  unsubscribed: null,
+  unsubscribed: 'optOut',
 }
 
-export const REWARDED_INQUIRY_OUTCOMES: readonly InquiryOutcome[] = INQUIRY_OUTCOMES.filter(
+// The inquiry-page acts the reward and sendOutcome read, so the ones a query
+// has to fetch. An opt-out is one even with no reply beside it, as when the
+// person gives no reason.
+export const SCORED_INQUIRY_OUTCOMES: readonly InquiryOutcome[] = INQUIRY_OUTCOMES.filter(
   (outcome) => INQUIRY_REWARD_WEIGHT[outcome] !== null,
 )
 
@@ -59,6 +65,7 @@ const LEVEL: Record<keyof RewardWeights, ReactionLevel> = {
   neutralReply: 'interest',
   inquiryChatEngaged: 'interest',
   negativeReply: 'none',
+  optOut: 'none',
 }
 const RANK: Record<ReactionLevel, number> = { none: 0, interest: 1, positive: 2 }
 
@@ -71,27 +78,29 @@ function weightOf(reaction: Reaction): keyof RewardWeights | null {
   if (reaction.kind === 'inquiry') return INQUIRY_REWARD_WEIGHT[reaction.outcome]
   if (!countableReply(reaction)) return null
   if (reaction.responseType === 'meeting_request') return 'meetingRequest'
-  if (reaction.responseType === 'rejection') return 'negativeReply'
+  if (reaction.responseType === 'rejection' || reaction.sentiment === 'negative') {
+    return reaction.reason === 'unsubscribe_request' ? 'optOut' : 'negativeReply'
+  }
   switch (reaction.sentiment) {
     case 'positive':
       return 'positiveReply'
     case 'neutral':
       return 'neutralReply'
-    case 'negative':
-      return 'negativeReply'
   }
 }
 
 export type SendReaction = { reward: number; level: ReactionLevel }
 
 // A send is scored once, by the strongest reaction it drew: a thread of two
-// positive replies, or a reply plus a signup, is one positive send.
+// positive replies, or a reply plus a signup, is one positive send. A no that
+// came with an opt-out scores as the opt-out.
 export function sendReaction(reactions: readonly Reaction[], weights: RewardWeights = defaultRewardWeights): SendReaction {
+  const optedOut = reactions.some((reaction) => weightOf(reaction) === 'optOut')
   let reward = 0
   let level: ReactionLevel = 'none'
   for (const reaction of reactions) {
     const key = weightOf(reaction)
-    if (key === null) continue
+    if (key === null || (optedOut && key === 'negativeReply')) continue
     reward = Math.max(reward, weights[key])
     if (RANK[LEVEL[key]] > RANK[level]) level = LEVEL[key]
   }
@@ -131,14 +140,11 @@ export type SendOutcome =
   | { kind: 'positive' | 'interest' | 'bounced' | 'silent' }
   | { kind: 'declined'; reason: RejectionPrimaryReason | null }
 
-// The inquiry-page acts sendOutcome reads: the rewarded ones and an opt-out,
-// which the page records with no reply when the person gives no reason.
-export const OBSERVED_INQUIRY_OUTCOMES: readonly InquiryOutcome[] = [...REWARDED_INQUIRY_OUTCOMES, 'unsubscribed']
-
 // undefined when the reaction is not a no.
 function declineReason(reaction: Reaction): RejectionPrimaryReason | null | undefined {
   if (reaction.kind === 'inquiry') return reaction.outcome === 'unsubscribed' ? 'unsubscribe_request' : undefined
-  return weightOf(reaction) === 'negativeReply' ? reaction.reason : undefined
+  const key = weightOf(reaction)
+  return key === 'negativeReply' || key === 'optOut' ? reaction.reason : undefined
 }
 
 // `reactions` in the order they arrived: a later stated reason wins, and

@@ -56,13 +56,18 @@ describe('evidenceOf', () => {
     const e = evidenceOf([send(30, [reply('bounce', 'neutral')]), send(30, [], { bounceable: false })], NOW, defaultRewardWeights)
     expect(e).toMatchObject({ sends: 2, trials: 1, replied: 0, bounced: 1, bounceable: 1 })
   })
-  it('counts a no as a trial with no reward, by its stated reason', () => {
+  it('counts a no as a trial at the no weight, by its stated reason, and an opt-out at none', () => {
     const e = evidenceOf(
-      [send(1, [reply('rejection', 'negative', 'not_relevant')]), send(1, [reply('reply', 'negative')]), send(1, [reply('rejection', 'negative', 'budget')])],
+      [
+        send(1, [reply('rejection', 'negative', 'not_relevant')]),
+        send(1, [reply('reply', 'negative')]),
+        send(1, [reply('rejection', 'negative', 'unsubscribe_request')]),
+      ],
       NOW,
       defaultRewardWeights,
     )
-    expect(e).toMatchObject({ trials: 3, rewardSum: 0, replied: 3, interested: 0, declined: 3, reasons: { not_relevant: 1, budget: 1 } })
+    expect(e).toMatchObject({ trials: 3, replied: 3, interested: 0, declined: 3, reasons: { not_relevant: 1, unsubscribe_request: 1 } })
+    expect(e.rewardSum).toBeCloseTo(0.4)
   })
   it('scores interest at its weight and counts it as interested, not positive', () => {
     const e = evidenceOf([send(1, [reply('reply', 'neutral')])], NOW, defaultRewardWeights)

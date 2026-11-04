@@ -33,7 +33,7 @@ import {
   type NotRelevantNote,
   type RejectionQuote,
 } from '../domain/dashboard'
-import { NON_COUNTABLE_RESPONSE_TYPES, REWARDED_INQUIRY_OUTCOMES } from '../domain/loop/reaction'
+import { NON_COUNTABLE_RESPONSE_TYPES, SCORED_INQUIRY_OUTCOMES } from '../domain/loop/reaction'
 import { primaryReasonOf } from '../domain/rejection-feedback'
 import type { RejectionRecontactWindow } from '../db/schema'
 import { ok, type ServiceResult } from './result'
@@ -206,7 +206,7 @@ export async function getDashboardSummary(
       .where(and(
         eq(outreachLogs.projectId, projectId),
         eq(outreachLogs.status, 'sent'),
-        inArray(inquirySessions.outcome, [...REWARDED_INQUIRY_OUTCOMES]),
+        inArray(inquirySessions.outcome, [...SCORED_INQUIRY_OUTCOMES]),
       )),
     raw<{ day: string; count: string | number }>(sql`
       SELECT (sent_at AT TIME ZONE 'UTC')::date::text AS day, COUNT(*)::int AS count

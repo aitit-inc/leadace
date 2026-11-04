@@ -96,7 +96,7 @@ describe('verdictOf', () => {
 describe('ownPublishedEmails', () => {
   const site = 'https://www.example.co.jp/'
   const page = (url: string, text: string) => ({ requestedUrl: url, url, text })
-  const email = (address: string, foundOnUrl: string, selfPublished = false) => ({ address, foundOnUrl, noSolicitation: false, salesContact: true, selfPublished })
+  const email = (address: string, foundOnUrl: string, selfPublished = false) => ({ address, foundOnUrl, noSolicitation: false, salesContact: true, buyer: false, selfPublished })
   const kept = (emails: ReturnType<typeof email>[], pages: ReturnType<typeof page>[], siteUrl = site) => ownPublishedEmails(emails, pages, siteUrl).map((e) => e.address)
 
   it('keeps an address that is text on a fetched page of the organization\'s own site, whatever its domain', () => {
@@ -137,7 +137,7 @@ describe('ownPublishedEmails', () => {
   it('hands back the address without the judgment it was kept on', () => {
     const contact = 'https://www.example.co.jp/contact'
     expect(ownPublishedEmails([email('info@example.co.jp', contact)], [page(contact, 'info@example.co.jp')], site))
-      .toEqual([{ address: 'info@example.co.jp', foundOnUrl: contact, noSolicitation: false, salesContact: true }])
+      .toEqual([{ address: 'info@example.co.jp', foundOnUrl: contact, noSolicitation: false, salesContact: true, buyer: false }])
   })
   it('on a host shared with others, keeps to the path we hold for the organization', () => {
     const shared = 'https://sites.google.com/view/target'

@@ -10,7 +10,7 @@ describe('leverConfigSchema', () => {
   it('parses an empty object into the neutral-prior defaults', () => {
     expect(defaultLeverConfig).toEqual({
       minSamplePerArm: 30,
-      reward: { meetingRequest: 1, positiveReply: 1, neutralReply: 0.5, negativeReply: 0, inquiryChatEngaged: 0.5, inquirySignupClicked: 1 },
+      reward: { meetingRequest: 1, positiveReply: 1, neutralReply: 0.5, negativeReply: 0.2, optOut: 0, inquiryChatEngaged: 0.5, inquirySignupClicked: 1 },
       priorStrength: 25,
       explorationShare: 0.2,
       archiveThreshold: 0.02,

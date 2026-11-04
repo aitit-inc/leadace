@@ -184,7 +184,7 @@ export const delayOptionsScenarios: OptionsScenario[] = [10, 20].flatMap((sendsP
   optionsScenario('message', sendsPerDay, 0.03, 0.1),
 ])
 
-// Human replies that carry no reward: 58 rejections + 11 neutral of 2,429
+// Human replies that are not positive: 58 rejections + 11 neutral of 2,429
 // emails over 90 days (leo's tenant, 2026-10-17).
 export const NON_POSITIVE_REPLY_RATE = 0.025
 

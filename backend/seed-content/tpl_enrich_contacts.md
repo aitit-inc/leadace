@@ -60,7 +60,7 @@ Check the pages identified in step 1 one by one using `fetch_url.py`. Stop as so
 
 Search tips:
 - Look for general contact emails like `info@`, `contact@`, `sales@`, as well as personal contact emails
-- Which to prefer: follow the contact policy in SALES_STRATEGY.md. Without one, `privacy@`, `legal@`, `dpo@`, `abuse@`, `noreply@`, `support@`, `recruit@`, `careers@` and `press@` are not sales contacts: skip them and keep looking
+- Which to prefer: follow the contact policy in SALES_STRATEGY.md. Without one, prefer the buying function's address over a general mailbox; `privacy@`, `legal@`, `dpo@`, `abuse@`, `noreply@`, `support@`, `recruit@`, `careers@` and `press@` are not sales contacts: skip them and keep looking
 - Extract `mailto:` links found on the page
 
 ### 3. Search for Inquiry Form URL (Only if no sales contact email found)

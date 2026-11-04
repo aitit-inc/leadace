@@ -23,7 +23,7 @@ import {
 } from '../../db/schema'
 import type { Db } from '../../db/connection'
 import type { ProjectId, ProjectRef, TenantId } from '../../domain/ids'
-import { NON_COUNTABLE_RESPONSE_TYPES, OBSERVED_INQUIRY_OUTCOMES, reactionTotalsByKey, REWARDED_INQUIRY_OUTCOMES, sendReaction, type Reaction, type ReactionLevel, type ReactionTotals, type RewardWeights } from '../../domain/loop/reaction'
+import { NON_COUNTABLE_RESPONSE_TYPES, reactionTotalsByKey, SCORED_INQUIRY_OUTCOMES, sendReaction, type Reaction, type ReactionLevel, type ReactionTotals, type RewardWeights } from '../../domain/loop/reaction'
 import { evidenceBy, evidenceOf, REPLY_ARRIVAL_DAYS, type Evidence, type SendObservation } from '../../domain/loop/evidence'
 import { unquotedText } from '../../domain/reply-classify'
 import { primaryReasonOf } from '../../domain/rejection-feedback'
@@ -96,7 +96,7 @@ async function observeSends(db: Db, projectId: ProjectId, since: Date | undefine
     db.select({ outreachLogId: inquirySessions.outreachLogId, outcome: inquirySessions.outcome })
       .from(inquirySessions)
       .innerJoin(outreachLogs, eq(outreachLogs.id, inquirySessions.outreachLogId))
-      .where(and(sentBy(projectId, window), inArray(inquirySessions.outcome, OBSERVED_INQUIRY_OUTCOMES))),
+      .where(and(sentBy(projectId, window), inArray(inquirySessions.outcome, SCORED_INQUIRY_OUTCOMES))),
   ])
   const reactionsOf = new Map<number, Reaction[]>()
   const push = (id: number, reaction: Reaction) => reactionsOf.set(id, [...(reactionsOf.get(id) ?? []), reaction])
@@ -207,7 +207,7 @@ async function reactedSends(db: Db, projectId: ProjectId, where: SQL | undefined
       .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
       .leftJoin(projectProspects, inProject)
       .innerJoin(inquirySessions, eq(inquirySessions.outreachLogId, outreachLogs.id))
-      .where(and(sentBy(projectId, where), inArray(inquirySessions.outcome, REWARDED_INQUIRY_OUTCOMES))),
+      .where(and(sentBy(projectId, where), inArray(inquirySessions.outcome, SCORED_INQUIRY_OUTCOMES))),
   ])
   const bucketed = ({ prospectCountry, organizationCountry, industry, ...rest }: typeof replies[number] | typeof sessions[number]) => ({
     outreachLogId: rest.outreachLogId,
@@ -881,7 +881,7 @@ export async function activityDays(db: Db, projectId: ProjectId, since: Date): P
       .where(sentBy(projectId, and(gte(responses.receivedAt, since), ne(responses.responseType, 'auto_reply')))),
     db.select({ day: utcDate(inquirySessions.openedAt), outreachLogId: outreachLogs.id, outcome: inquirySessions.outcome })
       .from(inquirySessions).innerJoin(outreachLogs, eq(outreachLogs.id, inquirySessions.outreachLogId))
-      .where(sentBy(projectId, and(gte(inquirySessions.openedAt, since), inArray(inquirySessions.outcome, OBSERVED_INQUIRY_OUTCOMES)))),
+      .where(sentBy(projectId, and(gte(inquirySessions.openedAt, since), inArray(inquirySessions.outcome, SCORED_INQUIRY_OUTCOMES)))),
   ])
   return buildActivityDays({
     research,

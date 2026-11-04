@@ -31,7 +31,7 @@ type DatedEvent = z.infer<typeof datedEventSchema>
 
 const pageReadSchema = z.object({
   noSolicitationText: z.string().nullable(),
-  emails: z.array(z.object({ address: z.string(), foundOnUrl: z.string(), noSolicitation: z.boolean(), salesContact: z.boolean() })),
+  emails: z.array(z.object({ address: z.string(), foundOnUrl: z.string(), noSolicitation: z.boolean(), salesContact: z.boolean(), buyer: z.boolean() })),
   pagesToRead: z.array(z.string()),
   contactForm: z.object({ url: z.string(), formType: z.enum(FORM_TYPES), noSolicitation: z.boolean() }).nullable(),
   contactName: z.string().nullable(),
@@ -89,6 +89,8 @@ type Enriched = {
 }
 
 const BUSINESS_MAILBOX = `Its reader is there to take business approaches: a general company mailbox, or the function that would buy. A mailbox with another job is not, even when it is the only one published (privacy, public affairs, legal, abuse, no-reply, support, recruiting, press, social media, supplier onboarding, billing, bids, dispatch), nor is someone at another organization; the sales strategy's contact policy, when it states one, overrides this.`
+// A general mailbox drew about half the answers the buying function's did (2026-11-04).
+const BUYER = `buyer: the address reaches the function that would buy, or a named person in it, rather than a general company mailbox.`
 
 function eventsRule(since: string): string {
   return `events: up to 5 things this organization states it did on or after ${since} (a release, funding, hire, partnership, expansion, award, office, event), each restated from the page as "YYYY-MM-DD: what happened" — one self-contained sentence with names, dates and figures exactly as the page gives them; foundOnUrl is the exact URL of that page. Omit anything undated, dated before ${since}, or about someone else; never infer a date.`
@@ -110,6 +112,7 @@ ${args.procedure}
 Answer rules:
 - Record only what appears verbatim on a page you read. Every email address must be a literal string on the page (a mailto: link or visible text) and foundOnUrl must be the exact page URL it appeared on; noSolicitation is true when a sales-refusal notice sits next to that address. Never construct an address from a name and a domain, never guess.
 - salesContact: whether the address is one to write a first sales approach to, best one listed first. ${BUSINESS_MAILBOX}
+- ${BUYER}
 - noSolicitationText: the notice text when a page you read refuses sales approaches for the organization as a whole (a header, footer or contact-page statement such as 営業お断り), else null. A notice attached to one address or one form is not site-wide: mark that address or form instead.
 - pagesToRead: up to 6 absolute URLs on this site that likely carry a contact (contact, about, company, team, imprint / legal, 特定商取引法), most likely first; empty when a sales contact without a refusal notice was already found.
 - contactForm: only a general or B2B inquiry form (never signup, support, careers, feedback) that the sales strategy's contact policy, when it states one, allows, with its formType per the procedure and noSolicitation true when the form or its page states no sales inquiries; null otherwise.
@@ -136,7 +139,8 @@ export function pickEvidencedEmail(emails: ReadEmail[], retrieved: string[]): Re
   // A notice counts wherever the address was seen, sales contact or not.
   const refused = new Set(evidenced.filter((e) => e.noSolicitation).map((e) => e.address.toLowerCase()))
   const merged = evidenced.filter((e) => e.salesContact).map((e) => ({ ...e, noSolicitation: refused.has(e.address.toLowerCase()) }))
-  return merged.find((e) => !e.noSolicitation) ?? merged[0]
+  const usable = merged.filter((e) => !e.noSolicitation)
+  return usable.find((e) => e.buyer) ?? usable[0] ?? merged[0]
 }
 
 // Sites break an address so a scraper misses it; a reader sees the same address.
@@ -339,7 +343,7 @@ ${ctx.salesStrategy}
 The bar:
 - The address is literal text on a live page you opened with open_page. Never construct or guess one; a search result is a lead, and an archived copy of a page is out of date.
 - The organization itself put it there. selfPublished says so: true on its own site, in a release it issued, or on a profile or listing it keeps itself (its app-store listing, its company page on a platform); false on a directory, a roster or an article someone else compiled, even when the address is right.
-- ${BUSINESS_MAILBOX} salesContact says whether the address meets this.
+- ${BUSINESS_MAILBOX} salesContact says whether the address meets this. ${BUYER}
 - noSolicitation is true when a sales-refusal notice (such as 営業お断り) sits next to that address. noSolicitationText is the notice text when a page you opened refuses sales approaches for the organization as a whole, else null.
 
 Its top pages were read already and showed no such address, so it sits deeper if it exists: a news post, an FAQ, a legal-notice or 特定商取引法 page, a department's page, a page in another language, a release it issued, a profile it keeps elsewhere. Where to look is yours to decide.

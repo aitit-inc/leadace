@@ -3,7 +3,7 @@ import {
   countableReply,
   defaultRewardWeights,
   reactionTotalsByKey,
-  REWARDED_INQUIRY_OUTCOMES,
+  SCORED_INQUIRY_OUTCOMES,
   rewardWeightsSchema,
   sendOutcome,
   sendReaction,
@@ -40,12 +40,24 @@ describe('sendReaction (default weights)', () => {
   it('grades a plain reply by sentiment', () => {
     expect(sendReaction([reply('reply', 'positive')])).toEqual({ reward: 1, level: 'positive' })
     expect(sendReaction([reply('reply', 'neutral')])).toEqual({ reward: 0.5, level: 'interest' })
-    expect(sendReaction([reply('reply', 'negative')])).toEqual({ reward: 0, level: 'none' })
+    expect(sendReaction([reply('reply', 'negative')])).toEqual({ reward: 0.2, level: 'none' })
   })
 
-  it('gives zero reward to a rejection (a reply, but not a positive outcome)', () => {
-    expect(sendReaction([reply('rejection', 'negative')])).toEqual({ reward: 0, level: 'none' })
-    expect(sendReaction([reply('rejection', 'neutral')])).toEqual({ reward: 0, level: 'none' })
+  it('gives a no a small reward (the market answered), and an opt-out none', () => {
+    expect(sendReaction([reply('rejection', 'negative')])).toEqual({ reward: 0.2, level: 'none' })
+    expect(sendReaction([reply('rejection', 'neutral')])).toEqual({ reward: 0.2, level: 'none' })
+    const optOut: Reaction = { kind: 'reply', responseType: 'rejection', sentiment: 'negative', reason: 'unsubscribe_request' }
+    expect(sendReaction([optOut])).toEqual({ reward: 0, level: 'none' })
+    expect(sendReaction([{ ...optOut, responseType: 'reply' }])).toEqual({ reward: 0, level: 'none' })
+  })
+
+  it('scores a no that came with an opt-out as the opt-out, in either order or from the page', () => {
+    const no: Reaction = { kind: 'reply', responseType: 'rejection', sentiment: 'negative', reason: 'budget' }
+    const optOut: Reaction = { ...no, reason: 'unsubscribe_request' }
+    expect(sendReaction([no, optOut]).reward).toBe(0)
+    expect(sendReaction([optOut, no]).reward).toBe(0)
+    expect(sendReaction([{ ...no, reason: 'not_relevant' }, inquiry('unsubscribed')]).reward).toBe(0)
+    expect(sendReaction([reply('reply', 'neutral'), inquiry('unsubscribed')])).toEqual({ reward: 0.5, level: 'interest' })
   })
 
   it('never rewards machine noise', () => {
@@ -97,9 +109,9 @@ describe('sendReaction (custom weights)', () => {
   })
 })
 
-describe('REWARDED_INQUIRY_OUTCOMES', () => {
+describe('SCORED_INQUIRY_OUTCOMES', () => {
   it('names exactly the outcomes a query has to fetch', () => {
-    expect([...REWARDED_INQUIRY_OUTCOMES]).toEqual(['inquired', 'signup_clicked'])
+    expect([...SCORED_INQUIRY_OUTCOMES]).toEqual(['inquired', 'signup_clicked', 'unsubscribed'])
   })
 })
 
@@ -120,7 +132,7 @@ describe('reactionTotalsByKey', () => {
       { key: 'yc-hn', outreachLogId: 3, reaction: reply('rejection', 'negative') },
       { key: null, outreachLogId: 4, reaction: inquiry('signup_clicked') },
     ])
-    expect(byKey.get('yc-hn')).toEqual({ rewardSum: 1.5, positive: 1, interested: 2 })
+    expect(byKey.get('yc-hn')).toEqual({ rewardSum: 1.7, positive: 1, interested: 2 })
     expect(byKey.get(null)).toEqual({ rewardSum: 1, positive: 1, interested: 1 })
   })
 })
