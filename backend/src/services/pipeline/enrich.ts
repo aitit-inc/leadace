@@ -286,8 +286,8 @@ ${salesStrategy}
 ${candidate.signals.map((s) => `- ${s.text}`).join('\n') || '(none claimed)'}
 
 Answer rules:
-- verdict: "fit" when the pages show it is the kind of organization the Target names and nothing on them places it outside the Target, contradicts a Prerequisite or matches "Not a fit"; "not_fit" when a page shows it outside the Target, contradicting a Prerequisite, or matching "Not a fit"; "unclear" only when the pages do not show what kind of organization it is. A condition the pages do not mention never counts against it, and neither does a condition on how to contact it: its contact is read in a later step.
-- evidenceUrl: for fit, the exact URL of the page that best shows it inside the Target; else null.
+- verdict: "fit" when the pages show it is the kind of organization the Target names and nothing on them places it outside the Target, contradicts a Prerequisite or matches "Not a fit"; "not_fit" when a page shows it outside the Target, contradicting a Prerequisite, or matching "Not a fit"; "unclear" only when the pages do not show what kind of organization it is. A condition the pages do not mention never counts against it, and neither does a condition on how to contact it: its contact is read in a later step. When the Target requires that the organization itself has stated a need, not only that it has one, that statement is no such condition: it is fit only on a page making it, never on one that only shows what it is or already does.
+- evidenceUrl: for fit, the exact URL of the page that best shows it inside the Target — the page making that statement, when the Target requires one; else null.
 - claim: for fit, one sentence stating what that page says about this organization that places it in the Target, as the page says it; else null.
 - reason: one sentence naming the Target trait you saw, or what failed.
 - signals: keep a claimed event only when a page you read states it about this organization. Restate it from that page as "YYYY-MM-DD: what happened" — one self-contained sentence naming who did what, with names, dates and figures exactly as the page gives them; foundOnUrl is the exact URL of that page.

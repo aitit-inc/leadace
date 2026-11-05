@@ -1,9 +1,12 @@
+import { getDocumentProxy } from 'unpdf'
+
 export type FetchedPage = { requestedUrl: string; url: string; text: string }
 
 const TIMEOUT_MS = 20_000
 const MAX_BYTES = 3_000_000
 const MAX_TEXT_CHARS = 30_000
 const MAX_LINKS = 80
+const MAX_PDF_PAGES = 100
 // JS shells measured 7–18 characters; a 166-character page still told the
 // model what the organization does (2026-09-19). Japanese packs more per character.
 const MIN_TEXT_CHARS = 50
@@ -180,22 +183,54 @@ export function pageProse(page: FetchedPage): string {
   return at === -1 ? page.text : page.text.slice(0, at)
 }
 
-// null: nothing a model could read — failed, not HTML, or too little text.
+// Pages are read one at a time and stop at the text cap: reading all of a
+// many-page PDF at once overran the Worker's 128 MB. Verbosity 0 keeps pdf.js's
+// font warnings out of the Worker logs.
+async function pdfText(bytes: Uint8Array): Promise<string> {
+  const doc = await getDocumentProxy(bytes, { verbosity: 0 })
+  try {
+    let text = ''
+    for (let n = 1; n <= Math.min(doc.numPages, MAX_PDF_PAGES) && text.length < MAX_TEXT_CHARS; n++) {
+      const page = await doc.getPage(n)
+      const { items } = await page.getTextContent()
+      text += items.map((item) => ('str' in item ? item.str + (item.hasEOL ? '\n' : '') : '')).join('') + '\n'
+      page.cleanup()
+    }
+    return text.replace(/\s+/g, ' ').trim()
+  } finally {
+    await doc.loadingTask.destroy()
+  }
+}
+
+// null: nothing a model could read — failed, neither HTML nor PDF, or too little text.
 export async function fetchPage(url: string): Promise<FetchedPage | null> {
   let res: Response
   try {
     res = await fetch(url, {
       redirect: 'follow',
       signal: AbortSignal.timeout(TIMEOUT_MS),
-      headers: { 'user-agent': 'Mozilla/5.0 (compatible; LeadAce/1.0; +https://leadace.ai)', accept: 'text/html,text/plain;q=0.9' },
+      headers: { 'user-agent': 'Mozilla/5.0 (compatible; LeadAce/1.0; +https://leadace.ai)', accept: 'text/html,text/plain;q=0.9,application/pdf;q=0.8' },
     })
   } catch {
     return null
   }
   const type = res.headers.get('content-type') ?? ''
-  if (!res.ok || !/text\/(html|plain)|application\/xhtml/i.test(type)) {
+  const pdf = /application\/pdf/i.test(type)
+  if (!res.ok || !(pdf || /text\/(html|plain)|application\/xhtml/i.test(type))) {
     await res.body?.cancel().catch(() => {})
     return null
+  }
+  if (pdf) {
+    let text: string
+    try {
+      const bytes = await readCapped(res)
+      // A PDF cut short can parse as an earlier revision of itself.
+      if (bytes.byteLength >= MAX_BYTES) return null
+      text = await pdfText(bytes)
+    } catch {
+      return null
+    }
+    return text.length < MIN_TEXT_CHARS ? null : { requestedUrl: url, url: res.url || url, text: text.slice(0, MAX_TEXT_CHARS) }
   }
   let html: string
   try {

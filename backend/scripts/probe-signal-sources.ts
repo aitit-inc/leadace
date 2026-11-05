@@ -14,7 +14,7 @@
  *   yield   — entries in the window, i.e. is there enough supply
  *   contact — how far an entry gets you toward a reachable prospect
  *
- * ICP is competitive_strategy.md A3.4 層 1: solo founders and contract engineers
+ * ICP is competitive_strategy.md A2.3 層 1: solo founders and contract engineers
  * building with AI agents, whose named touchpoints are GitHub, HN, X, Indie
  * Hackers and the Claude Code marketplace.
  *
