@@ -12,7 +12,7 @@ Targets should be defined at the following level of specificity — not vague de
 3. **Connection to your service**: Why your service is a solution for them
 4. **Decision-maker profile**: Title, age group, interests, information sources
 5. **Budget**: Budget range available for adoption
-6. **Stated need**: what such an organization publishes when it needs this now (a job post for the work, a call or tender, a plan, a post) — the evidence the Target names
+6. **Stated need**: what such an organization publishes when it needs this now, and where — the evidence the Target names
 7. **Search keywords**: 5 or more search queries to find them online
 8. **Prerequisites**: what must already be true to use the product (stack, tooling, jurisdiction) and where that is publicly observable (repositories, registries, job posts, filings)
 9. **Not a fit**: who resembles the target but cannot use it, has no reason to buy, or is so large that a published address reaches no one who decides
@@ -70,5 +70,5 @@ SALES_STRATEGY.md should list at least 10 search keywords. Cover the following p
 - Industry × region (e.g., "[City] [industry] company", "New York fintech startup")
 - Challenge-based (e.g., "digital transformation SMB", "labor shortage manufacturing")
 - Competitor customers (e.g., "{competitor name} users", "{competitor name} case studies")
-- Stated need (e.g., "{task} outsourcing call", "hiring {role}", "{service} tender results")
+- Stated need: the words such an organization uses to state the need
 - Evidence of the Prerequisites (e.g., "{tool} plugin" repositories, "{stack}" job posts) — selects for people who can use the product, not for companies that exist

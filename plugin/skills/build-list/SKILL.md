@@ -113,7 +113,7 @@ Avoid every keyword listed under `## Exhausted Keywords` in `search_notes`
 (those previously returned ≥ 70% duplicates). Pick a synonym or different
 angle instead.
 
-Choose query types for the target. Where the Target names a need organizations state themselves, search the pages stating it (job posts, calls and tenders with their results, plans, posts) — a list of organizations shows no need. Otherwise: industry + region; association / federation member lists; industry media and news; trade-show exhibitor lists; competitors' client case studies; job sites; school / corporate directories and public databases.
+Choose query types that find the evidence the Target names. Where that is a need an organization states itself, search for the pages stating it; a list of organizations shows none. Otherwise: industry + region; association / federation member lists; industry media and news; trade-show exhibitor lists; competitors' client case studies; job sites; school / corporate directories and public databases.
 
 Strategies may be search-driven (WebSearch queries) or **crawl-driven** — walking a
 directory, association member list, exhibitor list, or GitHub topic/org page with

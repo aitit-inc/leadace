@@ -166,7 +166,7 @@ Business / service / product overview (what the org does, what to sell).
 - If vague: "Specifically, what problem does it solve for what type of customer?"
 
 #### 4-2. Target Customers
-Who to sell to: organizations that state, on a page of their own, a need the product meets (which need, on what kind of page — a job post, a call or tender and its result, a plan or report, a post) and who they are (industry, size, role); the Prerequisites (what must already be true for them to use it, and where that is publicly observable) and Not a fit.
+Who to sell to: organizations that state, on a page of their own, a need the product meets (which need, and the kind of page that states it) and who they are (industry, size, role); the Prerequisites (what must already be true for them to use it, and where that is publicly observable) and Not a fit.
 - Propose a full profile from 4-1; ask only where it is uncertain — a wrong premise wastes every send after it.
 
 #### 4-3. Features, Differentiation, Competition
@@ -192,7 +192,7 @@ Price range or pricing structure + current sales challenges.
 
 #### 4-6. Prospect Discovery Sources
 Where to find prospect candidates (depends on target market, industry, region). Registered as 3-6 *named strategies* via `upsert_discovery_strategy` in Step 7 (kebab-case slug + `approach`: where/how to search and why it should work) — /build-list executes them and /evaluate measures reply rate per strategy. Diversify source types.
-- Search where organizations themselves state the 4-2 need (job posts, calls and tenders with their results, plans and reports, posts); a list of organizations shows no need.
+- Search where organizations show the evidence the 4-2 Target names; a list of organizations shows none.
 - "Up to you" → reasonable defaults by target market, formulated as named strategies.
 
 #### 4-7. Sender Identity
