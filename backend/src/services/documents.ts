@@ -167,6 +167,10 @@ export async function getDocumentHistory(
   return ok({ history: rows })
 }
 
+// A write past 64 KiB never returns on the deployed runtime: a search_notes
+// rewrite that size held its Workflow step until the 30-minute timeout (2026-11-05).
+const MAX_DOCUMENT_BYTES = 60_000
+
 export type SaveDocumentResult = {
   id: number
   slug: string
@@ -206,6 +210,9 @@ export async function saveDocument(
   const content =
     slug === PUBLIC_JOURNAL_SLUG ? await redactPublicJournal(env, written.content) : ok(written.content)
   if (!content.ok) return content
+  if (new TextEncoder().encode(content.value).byteLength > MAX_DOCUMENT_BYTES) {
+    return err('INVALID_INPUT', 'Document too large', `At most ${MAX_DOCUMENT_BYTES} bytes as UTF-8. Shorten it.`)
+  }
 
   const approvedAt = origin === 'ui' ? new Date() : null
   const doc = isDocumentTarget(slug)
