@@ -82,7 +82,7 @@ export function usableOnExpr(channels: readonly OutboundChannel[]): SQL {
   return or(...channels.map(channelAvailabilityClause)) ?? sql`false`
 }
 
-const hasContactExpr: SQL = or(
+export const hasContactExpr: SQL = or(
   isNotNull(prospects.email),
   isNotNull(prospects.contactFormUrl),
   isNotNull(prospects.snsAccounts),

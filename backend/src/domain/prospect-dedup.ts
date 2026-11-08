@@ -1,3 +1,4 @@
+import type { ProspectStatus } from '../db/schema'
 import type { ProjectId } from './ids'
 
 // Pre-flight subset of a prospect's identifiers — the keys available before
@@ -107,4 +108,22 @@ export function claimRow(
     return
   }
   if (projectId) idx.claimedDomains.add(claimedDomainKey(projectId, input.organizationDomain))
+}
+
+// A listed organization the project already holds.
+export type KnownOrganization = {
+  prospects: Array<{ id: number; status: ProspectStatus; doNotContact: boolean; qualified: boolean; hasEmail: boolean; hasContact: boolean }>
+  judgedPages: ReadonlySet<string>
+}
+
+// Judged again only while it has never been contacted and has no address to
+// send to, and only on a cited page never read for it. Only the person leaves a
+// prospect with a contact out of the targets, so their decision is never
+// written back (#803).
+export function prospectToRejudge(known: KnownOrganization, citedPages: readonly string[]): number | null {
+  const [only, ...more] = known.prospects
+  if (only === undefined || more.length > 0) return null
+  if (only.status !== 'new' || only.doNotContact || only.hasEmail) return null
+  if (!only.qualified && only.hasContact) return null
+  return citedPages.some((url) => !known.judgedPages.has(url)) ? only.id : null
 }

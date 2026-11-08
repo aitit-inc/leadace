@@ -22,6 +22,8 @@ import { getDiscoveryPolicy } from '../loop/policy'
 import { apportionLargestRemainder } from '../../domain/loop/allocation'
 import { loadProjectOutboundAllowlist } from '../project-settings'
 import { checkProspectDedup } from '../prospect-import'
+import { loadKnownOrganizations } from '../discovery-evidence'
+import { prospectToRejudge } from '../../domain/prospect-dedup'
 import { discoveryPausedReason, getRemainingProspectQuota } from '../plan-limits'
 import { saveDocument } from '../documents'
 import { utcDateKey } from '../../domain/time'
@@ -63,7 +65,7 @@ const LISTED_PER_ASKED = 4
 export const extractionSchema = z.object({
   candidates: z.array(
     discoverCandidateSchema
-      .omit({ discoveryStrategy: true, priority: true, matchSourceUrls: true, websiteUrl: true, country: true, employeeBand: true, signals: true })
+      .omit({ discoveryStrategy: true, priority: true, matchSourceUrls: true, websiteUrl: true, country: true, employeeBand: true, signals: true, knownProspectId: true })
       .extend({
         websiteUrl: z.string().max(500),
         country: discoverCandidateSchema.shape.country.unwrap().nullable(),
@@ -373,7 +375,18 @@ export async function runDiscover(
         candidates: chunk.map((c) => ({ organizationDomain: apexDomainOf(c.websiteUrl)! })),
       })
       if (!dedup.ok) return dedup
-      kept.push(...chunk.filter((_, k) => dedup.value.decisions[k]?.kind === 'fresh'))
+      // Need is stated on pages, and a listed organization may state a new one.
+      const listed = chunk.filter((_, k) => {
+        const d = dedup.value.decisions[k]
+        return d?.kind === 'skip' && d.reason === 'already_in_project'
+      })
+      const known = await loadKnownOrganizations(db, tenantId, projectId, listed.map((c) => apexDomainOf(c.websiteUrl)!))
+      kept.push(...chunk.flatMap((c, k): DiscoverCandidate[] => {
+        if (dedup.value.decisions[k]?.kind === 'fresh') return [c]
+        const held = known.get(apexDomainOf(c.websiteUrl)!)
+        const knownProspectId = held && prospectToRejudge(held, c.matchSourceUrls)
+        return knownProspectId ? [{ ...c, knownProspectId }] : []
+      }))
     }
     const notes = carried?.notes
     if (notes && notes !== (await loadDoc(db, tenantId, projectId, 'search_notes'))) {
@@ -396,7 +409,9 @@ export async function runDiscover(
 
   const ran = plan.length - unavailable.length
   const note = unavailable.length === 0 ? '' : ` Unavailable upstream: ${unavailable.join(', ')}.`
-  const summary = `Found ${unique.length} candidates across ${ran} of ${plan.length} strateg${plan.length === 1 ? 'y' : 'ies'}; ${fresh.length} new after dedup.${note}`
+  const relisted = fresh.filter((c) => c.knownProspectId !== undefined).length
+  const again = relisted === 0 ? '' : ` (${relisted} of them already listed, on a page not read for them before)`
+  const summary = `Found ${unique.length} candidates across ${ran} of ${plan.length} strateg${plan.length === 1 ? 'y' : 'ies'}; ${fresh.length} new after dedup${again}.${note}`
   return ok({
     candidates: fresh,
     result: {

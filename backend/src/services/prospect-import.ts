@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import { eq, and, sql, inArray } from 'drizzle-orm'
+import { eq, and, sql, inArray, not, isNull, or, ne, notExists } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
 import {
   organizations,
   prospects,
@@ -31,8 +32,11 @@ import {
 } from './plan-limits'
 import { ok, err, type ServiceResult } from './result'
 import { debitFound } from './credits'
-import { nextFoundRegistration } from '../domain/credits'
+import { nextFoundRegistration, type FoundRegistration } from '../domain/credits'
 import { resolveProject } from './projects'
+import { hasContactExpr } from './prospects'
+import { loadProjectOutboundAllowlist } from './project-settings'
+import { contactDecision, type OutboundChannel } from '../domain/outbound-channel'
 import { listDiscoveryStrategiesById } from './discovery-strategies'
 import { parseCsv } from '../domain/csv'
 import type { Edition } from '../domain/edition'
@@ -460,6 +464,33 @@ export type BatchRegisterResult = {
 // Prerequisite check) spends the found allowance.
 export type FoundVerdict = 'billable' | 'unreachable' | 'unqualified'
 
+// The found allowance left this period, read once under the tenant lock:
+// 'paused' when none may be spent, null when it is unlimited.
+type FoundBudget = { freeSlots: number; balanceCents: number | null } | 'paused' | null
+
+async function readFoundBudget(db: Db, tenantId: TenantId, tp: Awaited<ReturnType<typeof getTenantPlan>>): Promise<FoundBudget> {
+  const quota = await getRemainingProspectQuotaForPlan(db, tenantId, tp)
+  if (quota.kind !== 'capped') return null
+  if (discoveryPausedReason(quota)) return 'paused'
+  return { freeSlots: quota.found.remaining, balanceCents: quota.credits?.balanceCents ?? null }
+}
+
+function nextFound(budget: FoundBudget): FoundRegistration {
+  if (budget === null) return { charge: false }
+  return budget === 'paused' ? null : nextFoundRegistration(budget.freeSlots, budget.balanceCents)
+}
+
+async function spendFound(db: Db, tenantId: TenantId, prospectId: number, budget: FoundBudget, registration: NonNullable<FoundRegistration>, now: Date): Promise<void> {
+  await db.insert(discoveryCharges).values({ tenantId, prospectId, createdAt: now })
+  if (budget === null || budget === 'paused') return
+  if (registration.charge) {
+    await debitFound(db, tenantId, prospectId)
+    budget.balanceCents = registration.balanceAfterCents
+  } else {
+    budget.freeSlots -= 1
+  }
+}
+
 // The registering path's own claim, never the request body's: the hosted
 // discovery pipeline registers 'found', every API caller 'brought_in'.
 export type Registration = { origin: 'brought_in' } | { origin: 'found'; verdict: FoundVerdict }
@@ -534,18 +565,8 @@ export async function batchRegister(
   // and on the dedup read, which no unique key backs for a contactless record.
   // Past the free slots each row debits credits while the balance covers it
   // (domain/credits.ts nextFoundRegistration); the caller tops up afterwards.
-  let foundBudget: { freeSlots: number; balanceCents: number | null } | null = null
   if (path.origin === 'found') await db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${tenantId}))`)
-  if (billable) {
-    const quota = await getRemainingProspectQuotaForPlan(db, tenantId, tp)
-    if (quota.kind === 'capped') {
-      if (discoveryPausedReason(quota)) {
-        prospectBudget = 0
-      } else {
-        foundBudget = { freeSlots: quota.found.remaining, balanceCents: quota.credits?.balanceCents ?? null }
-      }
-    }
-  }
+  const foundBudget = billable ? await readFoundBudget(db, tenantId, tp) : null
 
   const dedup = await buildDedupIndex(db, tenantId, projectId, inputs)
 
@@ -558,9 +579,7 @@ export async function batchRegister(
       skipped.push({ name: input.name, reason: 'plan_limit' })
       continue
     }
-    const registration = foundBudget
-      ? nextFoundRegistration(foundBudget.freeSlots, foundBudget.balanceCents)
-      : ({ charge: false } as const)
+    const registration = nextFound(foundBudget)
     if (!registration) {
       skipped.push({ name: input.name, reason: 'plan_limit' })
       continue
@@ -602,17 +621,7 @@ export async function batchRegister(
       .returning({ id: prospects.id })
     if (!newProspect) continue
 
-    if (billable) {
-      await db.insert(discoveryCharges).values({ tenantId, prospectId: newProspect.id, createdAt: now })
-      if (foundBudget) {
-        if (registration.charge) {
-          await debitFound(db, tenantId, newProspect.id)
-          foundBudget.balanceCents = registration.balanceAfterCents
-        } else {
-          foundBudget.freeSlots -= 1
-        }
-      }
-    }
+    if (billable) await spendFound(db, tenantId, newProspect.id, foundBudget, registration, now)
 
     if (projectId) {
       await db.insert(projectProspects).values({
@@ -634,6 +643,138 @@ export async function batchRegister(
   }
 
   return ok({ registered, skippedDetails: skipped, emailsToVerify })
+}
+
+export type Rejudged = { prospectId: number; input: ProspectInput; verdict: FoundVerdict }
+
+type OnFile = { email: string | null; emailNoSolicitation: boolean; form: string | null; formNoSolicitation: boolean; sns: SnsAccounts | null }
+
+function reachableOnFile(p: OnFile, channels: readonly OutboundChannel[]): boolean {
+  const state = (value: string | null, refused: boolean) => (value === null ? null : refused ? 'refused' as const : 'usable' as const)
+  const found = { email: state(p.email, p.emailNoSolicitation), form: state(p.form, p.formNoSolicitation), x: Boolean(p.sns?.x), linkedin: Boolean(p.sns?.linkedin) }
+  return contactDecision(found, channels) === 'reachable'
+}
+
+// A listed prospect judged again on a page not read for it (#1081); which ones,
+// prospectToRejudge decides, checked again here on locked rows. A fit fills in
+// contacts where none is on file and becomes a target. What is on file after
+// the write decides the charge: a found prospect reachable for the first time
+// spends the found allowance as a new one does.
+export async function applyRejudged(
+  db: Db,
+  tenantId: TenantId,
+  edition: Edition,
+  projectId: ProjectId,
+  rows: Rejudged[],
+): Promise<ServiceResult<{ skipped: Map<number, 'plan_limit' | DedupSkipReason>; emailsToVerify: string[] }>> {
+  const ids = rows.map((r) => r.prospectId)
+  const emails = rows.flatMap((r) => (r.input.email ? [r.input.email] : []))
+  const forms = rows.flatMap((r) => (r.input.contactFormUrl ? [r.input.contactFormUrl] : []))
+  const otherPp = alias(projectProspects, 'other_pp')
+  const otherP = alias(prospects, 'other_p')
+  await db.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${tenantId}))`)
+  const [open, takenEmails, takenForms, charged, budget, allowlist] = await Promise.all([
+    db
+      .select({
+        id: prospects.id,
+        organizationId: prospects.organizationId,
+        origin: prospects.origin,
+        email: prospects.email,
+        emailNoSolicitation: prospects.emailNoSolicitation,
+        form: prospects.contactFormUrl,
+        formNoSolicitation: prospects.formNoSolicitation,
+        sns: prospects.snsAccounts,
+      })
+      .from(projectProspects)
+      .innerJoin(prospects, eq(prospects.id, projectProspects.prospectId))
+      .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
+      .where(and(
+        eq(projectProspects.tenantId, tenantId),
+        eq(projectProspects.projectId, projectId),
+        inArray(projectProspects.prospectId, ids),
+        eq(projectProspects.status, 'new'),
+        eq(prospects.doNotContact, false),
+        eq(organizations.doNotContact, false),
+        isNull(prospects.email),
+        or(eq(projectProspects.qualified, true), not(hasContactExpr)),
+        notExists(db
+          .select({ id: otherP.id })
+          .from(otherPp)
+          .innerJoin(otherP, eq(otherP.id, otherPp.prospectId))
+          .where(and(eq(otherPp.projectId, projectId), eq(otherP.organizationId, prospects.organizationId), ne(otherP.id, prospects.id)))),
+      ))
+      // The person's own edits take no tenant lock; the row locks hold them
+      // off until this write lands, so it never overwrites one.
+      .for('update', { of: [projectProspects, prospects] }),
+    emails.length > 0
+      ? db.select({ email: prospects.email }).from(prospects).where(and(eq(prospects.tenantId, tenantId), inArray(prospects.email, emails)))
+      : Promise.resolve([]),
+    forms.length > 0
+      ? db.select({ id: prospects.id, form: prospects.contactFormUrl }).from(prospects).where(and(eq(prospects.tenantId, tenantId), inArray(prospects.contactFormUrl, forms)))
+      : Promise.resolve([]),
+    db.select({ prospectId: discoveryCharges.prospectId }).from(discoveryCharges).where(and(eq(discoveryCharges.tenantId, tenantId), inArray(discoveryCharges.prospectId, ids))),
+    rows.some((r) => r.verdict === 'billable') ? getTenantPlan(db, tenantId, edition).then((tp) => readFoundBudget(db, tenantId, tp)) : Promise.resolve(null),
+    loadProjectOutboundAllowlist(db, projectId),
+  ])
+  const held = new Map(open.map((r) => [r.id, r]))
+  const used = new Set(takenEmails.flatMap((r) => (r.email ? [r.email] : [])))
+  const formOwner = new Map(takenForms.flatMap((r) => (r.form ? [[r.form, r.id] as const] : [])))
+  const chargedBefore = new Set(charged.map((r) => r.prospectId))
+  const { outboundChannels: channels } = allowlist
+  const skipped = new Map<number, 'plan_limit' | DedupSkipReason>()
+  const emailsToVerify: string[] = []
+  const now = new Date()
+  for (const { prospectId, input: found, verdict } of rows) {
+    const row = held.get(prospectId)
+    if (row === undefined) {
+      skipped.set(prospectId, 'already_in_project')
+      continue
+    }
+    if (verdict === 'unqualified') continue
+    const { contactFormUrl, formType, formNoSolicitation, snsAccounts, ...rest } = found
+    const input = {
+      ...rest,
+      ...(row.form === null && { contactFormUrl, formType, formNoSolicitation }),
+      ...(row.sns === null && { snsAccounts }),
+    }
+    if (input.email && used.has(input.email)) {
+      skipped.set(prospectId, 'email_duplicate')
+      continue
+    }
+    const formHolder = input.contactFormUrl ? formOwner.get(input.contactFormUrl) : undefined
+    if (formHolder !== undefined && formHolder !== prospectId) {
+      skipped.set(prospectId, 'form_url_duplicate')
+      continue
+    }
+    const mayCharge = verdict === 'billable' && row.origin === 'found' && !chargedBefore.has(prospectId) && !reachableOnFile(row, channels)
+    const registration = mayCharge ? nextFound(budget) : ({ charge: false } as const)
+    if (!registration) {
+      skipped.set(prospectId, 'plan_limit')
+      continue
+    }
+    const [after] = await db
+      .update(prospects)
+      .set(prospectUpdateSet(input, row.organizationId, now))
+      .where(and(eq(prospects.tenantId, tenantId), eq(prospects.id, prospectId)))
+      .returning({
+        email: prospects.email,
+        emailNoSolicitation: prospects.emailNoSolicitation,
+        form: prospects.contactFormUrl,
+        formNoSolicitation: prospects.formNoSolicitation,
+        sns: prospects.snsAccounts,
+      })
+    await db
+      .update(projectProspects)
+      .set({ qualified: true, matchReason: input.matchReason!, updatedAt: now })
+      .where(and(eq(projectProspects.tenantId, tenantId), eq(projectProspects.projectId, projectId), eq(projectProspects.prospectId, prospectId)))
+    if (mayCharge && after && reachableOnFile(after, channels)) await spendFound(db, tenantId, prospectId, budget, registration, now)
+    if (input.email) {
+      used.add(input.email)
+      if (!input.emailNoSolicitation) emailsToVerify.push(input.email)
+    }
+    if (input.contactFormUrl) formOwner.set(input.contactFormUrl, prospectId)
+  }
+  return ok({ skipped, emailsToVerify })
 }
 
 export type DedupDecisionKind = 'fresh' | 'skip'

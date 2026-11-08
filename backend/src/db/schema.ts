@@ -916,6 +916,38 @@ export const projectProspects = pgTable('project_prospects', {
   index('idx_pp_status').on(table.status),
 ])
 
+// The pages a discovery judgment read about an organization for a project.
+// Discover judges a listed organization again only on a cited page not read.
+export const discoveryEvidence = pgTable('discovery_evidence', {
+  id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
+  tenantId: text('tenant_id')
+    .notNull()
+    .references(() => tenants.id, { onDelete: 'cascade' }),
+  projectId: text('project_id').notNull(),
+  organizationId: integer('organization_id').notNull(),
+  pageUrl: text('page_url').notNull(),
+  // What the page states that places the organization in the Target. NULL =
+  // read, not the evidence of a fit.
+  claim: text('claim'),
+  // The date the page gives that statement. NULL = undated, or no claim.
+  statedOn: date('stated_on'),
+  judgedAt: timestamp('judged_at', { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  unique('uq_discovery_evidence_page').on(table.projectId, table.organizationId, table.pageUrl),
+  check('chk_discovery_evidence_dated_claim', sql`${table.statedOn} IS NULL OR ${table.claim} IS NOT NULL`),
+  foreignKey({
+    columns: [table.projectId, table.tenantId],
+    foreignColumns: [projects.id, projects.tenantId],
+    name: 'fk_discovery_evidence_project_tenant',
+  }).onDelete('cascade'),
+  foreignKey({
+    columns: [table.organizationId, table.tenantId],
+    foreignColumns: [organizations.id, organizations.tenantId],
+    name: 'fk_discovery_evidence_org_tenant',
+  }).onDelete('cascade'),
+  index('idx_discovery_evidence_tenant').on(table.tenantId),
+])
+
 export const outreachLogs = pgTable('outreach_logs', {
   id: integer('id').generatedAlwaysAsIdentity().primaryKey(),
   tenantId: text('tenant_id')

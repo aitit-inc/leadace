@@ -58,6 +58,9 @@ export const discoverCandidateSchema = z.object({
   discoveryStrategy: discoveryStrategySchema.optional(),
   // Unconfirmed claims; enrich keeps only the ones their pages state.
   signals: z.array(discoverSignalSchema).max(5).default([]),
+  // The project's prospect for this organization, when it holds one already:
+  // judged again on a page cited above that was never read for it.
+  knownProspectId: z.number().int().positive().optional(),
 })
 export type DiscoverCandidate = z.infer<typeof discoverCandidateSchema>
 
@@ -78,7 +81,8 @@ export const jobParamsSchema = z.discriminatedUnion('kind', [
   }),
   z.object({
     kind: z.literal('enrich'),
-    candidates: z.array(discoverCandidateSchema).min(1).max(100),
+    // Only discover knows which organizations the project already holds.
+    candidates: z.array(discoverCandidateSchema.omit({ knownProspectId: true })).min(1).max(100),
   }),
   z.object({
     kind: z.literal('draft'),

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { asProjectId } from './ids'
-import { resolveDedup, claimRow, type DedupIndex, type DedupCandidate } from './prospect-dedup'
+import { resolveDedup, claimRow, prospectToRejudge, type DedupIndex, type DedupCandidate, type KnownOrganization } from './prospect-dedup'
 
 const proj = asProjectId('proj_1')
 
@@ -141,5 +141,40 @@ describe('resolveDedup — intra-batch "first wins" via claimRow', () => {
       .toEqual({ kind: 'insert' })
     expect(resolveDedup(idx, proj, candidate({ email: 'y@b.com', organizationDomain: 'platform.com' })))
       .toEqual({ kind: 'insert' })
+  })
+})
+
+describe('prospectToRejudge', () => {
+  const page = 'https://example.com/plan.pdf'
+  const known = (over: Partial<KnownOrganization['prospects'][number]> = {}, judged: string[] = []): KnownOrganization => ({
+    prospects: [{ id: 9, status: 'new', doNotContact: false, qualified: false, hasEmail: false, hasContact: false, ...over }],
+    judgedPages: new Set(judged),
+  })
+
+  it('re-judges an uncontacted prospect with no address on a page never read for it', () => {
+    expect(prospectToRejudge(known(), [page])).toBe(9)
+    expect(prospectToRejudge(known({ qualified: true, hasContact: true }), [page])).toBe(9)
+    expect(prospectToRejudge(known({}, ['https://example.com/old']), ['https://example.com/old', page])).toBe(9)
+  })
+
+  it('never on a page already read, or with no cited page', () => {
+    expect(prospectToRejudge(known({}, [page]), [page])).toBeNull()
+    expect(prospectToRejudge(known(), [])).toBeNull()
+  })
+
+  it('never once contacted, refused, or holding an address', () => {
+    expect(prospectToRejudge(known({ status: 'contacted' }), [page])).toBeNull()
+    expect(prospectToRejudge(known({ doNotContact: true }), [page])).toBeNull()
+    expect(prospectToRejudge(known({ qualified: true, hasEmail: true, hasContact: true }), [page])).toBeNull()
+  })
+
+  it('never one the person took out: out of the targets while holding a contact', () => {
+    expect(prospectToRejudge(known({ qualified: false, hasContact: true }), [page])).toBeNull()
+  })
+
+  it('never when the project holds the organization under more than one prospect', () => {
+    const two = known()
+    two.prospects.push({ id: 10, status: 'new', doNotContact: false, qualified: false, hasEmail: false, hasContact: false })
+    expect(prospectToRejudge(two, [page])).toBeNull()
   })
 })
