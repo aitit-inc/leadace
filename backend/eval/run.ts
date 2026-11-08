@@ -22,10 +22,9 @@
  *
  * Usage (from backend/, OPENAI_API_KEY in .dev.vars). Every
  * command takes `--provider gemini|openai`, default openai; collect runs only
- * what production runs, which is openai. `--extractor <model>` extracts with
- * that model instead of the production route's; collect takes a comma list and
- * extracts every model from the same search:
- *   npx tsx eval/run.ts collect  <target>   # run production discover, write candidates.json
+ * what production runs, which is openai. `--extractor <model>` names a run
+ * collected before the searcher replaced search + extraction:
+ *   npx tsx eval/run.ts collect  <target>   # one cold pass of the production searcher, write candidates.json
  *   npx tsx eval/run.ts snapshot <target>   # freeze page text for candidates + reference
  *   npx tsx eval/run.ts hits     <target>   # qualifying-term hits per snapshot, for the adjudicator
  *   npx tsx eval/run.ts score    <target>   # precision, coverage, verdict counts
@@ -35,14 +34,11 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { z } from 'zod'
-import { extractionPrompt, extractionSchema, searchPrompt, shapeCandidates } from '../src/services/pipeline/discover'
-import { callLlmGroundedText, LlmError, type GroundedText, type LlmEnv } from '../src/services/llm'
-import { callOpenAIFollowUpJson } from '../src/services/llm/openai'
-import { OPENAI_ROUTES } from '../src/services/llm/routes'
+import { searchOnce, searchPrompt, type MapRows } from '../src/services/pipeline/discover'
+import { LlmError, type LlmEnv } from '../src/services/llm'
 import { apexDomainOf, parseIndustryVocabulary } from '../src/services/pipeline/context'
 import { utcDateKey } from '../src/domain/time'
 import { discoverCandidateSchema } from '../src/domain/jobs'
-import type { LlmModel } from '../src/domain/paid-calls'
 import { BASES, envKey, labelsSchema, readJson, referenceSchema, snapshotSite, specSchema, targetDir, VERDICTS, writeJson, type Basis, type Verdict } from './common'
 
 // Production discover runs on OpenAI. `gemini` names the runs collected before
@@ -191,106 +187,47 @@ async function onceMore<T>(label: string, call: () => Promise<T>): Promise<T> {
   }
 }
 
-function extract(env: LlmEnv, extractor: string | null, args: { after: GroundedText; prompt: string }): Promise<z.infer<typeof extractionSchema>> {
-  const route = OPENAI_ROUTES['discover.extract']
-  // The eval compares models production does not price; its calls run outside
-  // a paid-call scope, so none of them reaches the ledger.
-  const model = (extractor ?? route.model) as LlmModel
-  return callOpenAIFollowUpJson({ op: 'discover.extract', apiKey: env.OPENAI_API_KEY, ...route, model, ...args, schema: extractionSchema })
-}
-
 async function collect(target: string, provider: Provider, extractors: (string | null)[]): Promise<void> {
   if (provider !== 'openai') throw new Error('collect runs production discover, which runs on openai; gemini runs can only be scored')
-  const runs = extractors.map((extractor) => ({ provider, extractor }))
+  if (extractors.some((e) => e !== null)) throw new Error('collect runs the production searcher, which has no separate extraction; --extractor only names runs collected before it')
+  const run: Run = { provider, extractor: null }
   const dir = targetDir(target)
   const spec = readJson(resolve(dir, 'spec.json'), specSchema)
   const env: LlmEnv = { OPENAI_API_KEY: envKey('OPENAI_API_KEY') }
   const industries = parseIndustryVocabulary(readFileSync(resolve(__dirname, '../seed-content/tpl_industries.md'), 'utf8'))
-  const today = utcDateKey()
 
-  // Serial and with searchNotes null: every pass must face the same blank
-  // slate, or a later pass is scored on knowledge the earlier one bought.
-  // Each pass lands on disk before the next starts, because a search is paid
-  // for per call — delete a pass file to re-buy just that one. Extractors
-  // compared on one search are rewritten together, so a pair never mixes two
-  // searches.
-  for (const run of runs) mkdirSync(passesDir(dir, run), { recursive: true })
-  const passSchema = candidatesSchema.shape.passes.element
-  const unfinished: string[] = []
-  for (const entry of spec.strategies) {
-    const passPaths = runs.map((run) => resolve(passesDir(dir, run), `${entry.slug}.json`))
-    if (passPaths.every((p) => existsSync(p))) {
-      process.stderr.write(`[collect] ${entry.slug} — already collected, skipping\n`)
-      continue
-    }
-    process.stderr.write(`[collect] ${entry.slug}\n`)
-    const prompt = searchPrompt({
-      plan: entry,
-      business: spec.business,
-      salesStrategy: spec.salesStrategy,
-      searchNotes: null,
-      reviewFeedback: null,
-      targetCountries: spec.targetCountries,
-      today,
-    })
-    let search: GroundedText
-    let searchUsage: Usage
-    let searchCost: number
+  // One pass with no map and nothing held, so a pass is comparable with the
+  // next. It lands on disk before scoring reads it, because a search is paid
+  // for per call — delete the pass file to re-buy it.
+  mkdirSync(passesDir(dir, run), { recursive: true })
+  const passPath = resolve(passesDir(dir, run), 'search.json')
+  if (!existsSync(passPath)) {
+    const rows: MapRows = { active: spec.strategies.map(({ slug, approach }) => ({ slug, approach })), closed: [], pinned: null }
+    const prompt = searchPrompt({ rows, business: spec.business, salesStrategy: spec.salesStrategy, map: null, reviewFeedback: null, targetCountries: spec.targetCountries, industries, today: utcDateKey() })
     try {
-      const searched = await onceMore(`${entry.slug} search`, () => withUsage(() => callLlmGroundedText(env, 'discover.search', { prompt })))
-      search = searched.value
-      searchUsage = searched.usage
-      searchCost = searched.cost
-    } catch (e) {
-      // No pass file: the search never landed, so a rerun re-buys only this one.
-      if (!(e instanceof LlmError)) throw e
-      process.stderr.write(`[collect] ${entry.slug} — search unavailable (${e.message}), moving on\n`)
-      unfinished.push(entry.slug)
-      continue
-    }
-
-    const extractPrompt = extractionPrompt({ search, industries, priorNotes: null, today, strategySlug: entry.slug })
-    // Each pass carries the search's cost too, so it reads as one production pass.
-    for (const [i, run] of runs.entries()) {
-      let extracted: z.infer<typeof extractionSchema> | null = null
-      let extractionFailed: string | null = null
-      let usage = searchUsage
-      let cost = searchCost
-      try {
-        const result = await onceMore(`${entry.slug} extraction (${runName(run)})`, () => withUsage(() => extract(env, run.extractor, { after: search, prompt: extractPrompt })))
-        extracted = result.value
-        usage = addUsage(usage, result.usage)
-        cost += result.cost
-      } catch (e) {
-        if (!(e instanceof LlmError)) throw e
-        extractionFailed = e.message
-      }
-      const candidates = shapeCandidates(extracted?.candidates ?? [], entry, industries, search.citations)
-      writeJson(passPaths[i]!, {
-        strategy: entry.slug,
-        searchQueries: usage.searchQueries,
-        searchText: search.text,
-        candidates,
-        extractionFailed,
-        usage,
-        cost,
+      const searched = await onceMore('search', () => withUsage(() => searchOnce(env, { prompt, rows, industries, standings: async (domains) => domains.map(() => 'new' as const) })))
+      writeJson(passPath, {
+        strategy: 'search',
+        searchQueries: searched.usage.searchQueries,
+        searchText: searched.value.map,
+        candidates: searched.value.candidates,
+        extractionFailed: null,
+        usage: searched.usage,
+        cost: searched.cost,
       })
+    } catch (e) {
+      if (!(e instanceof LlmError)) throw e
+      console.log(`  search never landed, rerun to re-buy: ${e.message}`)
+      return
     }
   }
 
-  for (const run of runs) {
-    const passes = spec.strategies.flatMap((s) => {
-      const passPath = resolve(passesDir(dir, run), `${s.slug}.json`)
-      return existsSync(passPath) ? [readJson(passPath, passSchema)] : []
-    })
-    const out = candidatesPath(dir, run)
-    writeJson(out, { collectedAt: new Date().toISOString(), specFrozenAt: spec.frozenAt, provider, extractor: run.extractor, passes })
-    const total = passes.reduce((n, p) => n + p.candidates.length, 0)
-    const queries = passes.reduce((n, p) => n + p.searchQueries, 0)
-    console.log(`collected ${total} candidates over ${passes.length}/${spec.strategies.length} strategies, ${queries} search queries → ${out}`)
-    for (const p of passes.filter((x) => x.extractionFailed !== null)) console.log(`  extraction failed after a retry: ${p.strategy} — ${p.extractionFailed ?? ''}`)
-  }
-  for (const slug of unfinished) console.log(`  search never landed, rerun to re-buy: ${slug}`)
+  const passes = [readJson(passPath, candidatesSchema.shape.passes.element)]
+  const out = candidatesPath(dir, run)
+  writeJson(out, { collectedAt: new Date().toISOString(), specFrozenAt: spec.frozenAt, provider, extractor: null, passes })
+  const total = passes.reduce((n, p) => n + p.candidates.length, 0)
+  const queries = passes.reduce((n, p) => n + p.searchQueries, 0)
+  console.log(`collected ${total} candidates, ${queries} search queries → ${out}`)
 }
 
 // --- snapshot --------------------------------------------------------------

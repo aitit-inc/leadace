@@ -140,8 +140,7 @@ export async function getLeverStateById(
   })
 }
 
-// What discovery reads, without the message-variant evidence the full view computes.
-export async function getDiscoveryPolicy(db: Db, projectId: ProjectId, batchSize: number = DEFAULT_BATCH_PLAN_SIZE): Promise<DiscoveryPolicy> {
+async function getDiscoveryPolicy(db: Db, projectId: ProjectId, batchSize: number): Promise<DiscoveryPolicy> {
   const [config, rows, [state]] = await Promise.all([
     loadLeverConfig(db, projectId),
     listDiscoveryStrategiesById(db, projectId),

@@ -74,10 +74,8 @@ export const jobParamsSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('discover'),
     count: z.number().int().min(1).max(100).default(10),
-    // Pin one registered strategy instead of following the tick's batch plan.
+    // Search only where one registered strategy points.
     strategySlug: discoveryStrategySchema.optional(),
-    // Set by the unattended cycle only, so a person's count is never lifted.
-    minCandidatesPerSearch: z.number().int().min(1).max(50).optional(),
   }),
   z.object({
     kind: z.literal('enrich'),
@@ -108,20 +106,13 @@ export type JobProgress = {
   total: number | null
 }
 
-// One row per planned strategy, so a strategy that was asked for is never
-// absent. It tells "search returned nothing" apart from "enrich dropped
-// them"; registration counts alone collapse both to zero.
-//   asked       what the search was told to find (the bandit's allocation
-//               lifted to the cycle minimum; the raw allocation stays in
-//               lever_decisions)
-//   returned    the raw extraction yield, before any dedup
-//   fresh       what survived dedup and so reached enrich — the only counter
-//               comparable with registrations. A domain two strategies both
-//               surfaced is credited to whichever ran first, so a low fresh
-//               against a high returned can mean "another strategy got it"
-//               as well as "already in the pool"
-//   unavailable passes that shed upstream; their zeros mean "never ran"
-export type StrategyPlanCompliance = { slug: string; asked: number; returned: number; fresh: number; unavailable: number }
+// One row per discovery strategy a pass tagged candidates with. It tells
+// "search returned nothing" apart from "enrich dropped them"; registration
+// counts alone collapse both to zero.
+//   returned  candidates listed, before dedup
+//   fresh     what survived dedup and so reached enrich — the only counter
+//             comparable with registrations
+export type StrategyPlanCompliance = { slug: string; returned: number; fresh: number }
 
 // Per-kind outcome. `summary` is the one line a person (or the chat agent)
 // reads; the structured fields let the UI and the daily cycle branch.

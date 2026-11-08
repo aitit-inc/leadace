@@ -2,24 +2,17 @@ import type { OpenAIRoute } from './openai'
 
 export type JsonOp = 'draft' | 'evaluate' | 'journal' | 'reply-classify' | 'reply-domain-match' | 'answer-draft'
 export type PagesJsonOp = 'enrich.site' | 'enrich.pages' | 'enrich.judge' | 'enrich.events' | 'enrich.events.pages'
-export type GroundedTextOp = 'discover.search' | 'strategy-draft.competitors'
-export type FollowUpJsonOp = 'discover.extract' | 'strategy-draft.competitors.extract'
-export type ToolLoopOp = 'enrich.contact'
+export type GroundedTextOp = 'strategy-draft.competitors'
+export type FollowUpJsonOp = 'strategy-draft.competitors.extract'
+export type ToolLoopOp = 'discover.search' | 'enrich.contact'
 
-// Search skips flex: its bill is mostly per call, which flex does not halve,
-// and flex ran past 120 s where standard answered in about 65 s (2026-09-19).
-// GPT-6 Luna search took 69–224 s on the eval strategies (2026-09-24), and
-// 55–435 s with up to 24k reasoning tokens on strategies that look for stated
-// needs (2026-11-05). 600 s is the SDK's own request limit.
-// Extraction picks from what the search found: on the same search, Luna
-// chose the same organizations as Terra across 13 eval passes at a tenth of
-// the cost (2026-09-19). Production inputs of up to 136k tokens ran past
-// standard's 120 s. It skips flex: its answer runs 5k–11k tokens, which flex
-// writes at half standard's speed, so 14 of 20 flex attempts ran past 60 s
-// and were redone on standard (2026-09-19).
 export const OPENAI_ROUTES: Record<JsonOp | PagesJsonOp | GroundedTextOp | FollowUpJsonOp | ToolLoopOp | 'chat', OpenAIRoute> = {
-  'discover.search': { model: 'gpt-6-luna', timeoutMs: 600_000, flexTimeoutMs: null, maxOutputTokens: 49_152 },
-  'discover.extract': { model: 'gpt-6-luna', timeoutMs: 180_000, flexTimeoutMs: null, maxOutputTokens: 49_152 },
+  // The timeout is one turn's; the whole pass must fit one step (jobs/stages.ts
+  // STEP_RETRY): measured passes took 8–25 minutes with their judging, the
+  // search alone 7 on a local run (#1081). A report of 54 candidates ran past
+  // 32k output tokens. It skips flex: the bill is mostly per search call,
+  // which flex does not halve.
+  'discover.search': { model: 'gpt-6-luna', timeoutMs: 300_000, flexTimeoutMs: null, maxOutputTokens: 49_152 },
   draft: { model: 'gpt-6-luna', timeoutMs: 120_000, flexTimeoutMs: 60_000, maxOutputTokens: 8_192 },
   // Flex answered in 85–104 s with the strategy rewritten (2026-09-19).
   evaluate: { model: 'gpt-6-luna', timeoutMs: 240_000, flexTimeoutMs: 180_000, maxOutputTokens: 32_768 },

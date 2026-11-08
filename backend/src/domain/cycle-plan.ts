@@ -17,7 +17,7 @@ export type ReachableSnapshot = {
   blocked: string | null
 }
 
-// A runaway-day guard, not a business rule: a strategy yielding a prospect or
+// A runaway-day guard, not a business rule: a search yielding a prospect or
 // two per pass would otherwise search all day.
 export const MAX_DISCOVERY_PASSES = 6
 
@@ -62,15 +62,16 @@ export function nextCycleStep(s: {
   return { kind: 'discover', count: s.want }
 }
 
-// A discover job's count is prospects to register; null ends the job.
+// A discover job's count is prospects to register; null ends the job. A pass
+// that registered nothing ends it too, as a dry pass ends the day.
 export function nextDiscoverPass(s: {
   wanted: number
   registered: number
-  active: string[]
-  searched: string[]
+  lastRegistered: number
+  passes: number
   paused: boolean
 }): { count: number } | null {
   const left = s.wanted - s.registered
-  if (left <= 0 || s.paused || s.active.every((slug) => s.searched.includes(slug))) return null
+  if (left <= 0 || s.paused || s.lastRegistered === 0 || s.passes >= MAX_DISCOVERY_PASSES) return null
   return { count: left }
 }

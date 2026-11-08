@@ -366,6 +366,7 @@ export async function searchContact(env: LlmEnv, candidate: DiscoverCandidate, c
     ],
     answer: { name: 'report', description: 'End the search with every address of this organization you saw on a page you opened, best sales contact first; none when there is none.', schema: contactAnswerSchema },
     maxToolCalls: CONTACT_SEARCH_BUDGET,
+    budget: 'cap',
   })
   const emails = ownPublishedEmails(value.emails, pages, candidate.websiteUrl)
   console.log({ message: '[enrich] contact search', domain: apexDomainOf(candidate.websiteUrl), toolCalls, reported: value.emails.length, own: emails.length })

@@ -100,7 +100,7 @@ const offBy = (d: StrategyDiscovery): string => {
   return counts.length === 0 ? '' : ` (${counts.join(', ')})`
 }
 const explored = (d: StrategyDiscovery): string =>
-  `explored ${d.passes} passes: asked ${d.asked}, returned ${d.returned}, new ${d.fresh}; registered ${d.registered} (not targeted ${d.unqualified}; in the Target: sendable ${d.sendable}, contact only on a channel that is off ${d.channelsOff}${offBy(d)}, contact on file but unusable ${d.registered - d.unqualified - d.sendable - d.channelsOff - d.noContact}, no contact found ${d.noContact})`
+  `explored ${d.passes} passes: returned ${d.returned}, new ${d.fresh}; registered ${d.registered} (not targeted ${d.unqualified}; in the Target: sendable ${d.sendable}, contact only on a channel that is off ${d.channelsOff}${offBy(d)}, contact on file but unusable ${d.registered - d.unqualified - d.sendable - d.channelsOff - d.noContact}, no contact found ${d.noContact})`
 const perSendable = ({ usd, sendable }: ProposeEvidence['discoveryCost']): string =>
   `$${usd.toFixed(2)}${sendable === 0 ? '' : ` ($${(usd / sendable).toFixed(3)} per sendable prospect registered)`}`
 const axis = (buckets: AxisBucket[]): string => buckets.map((b) => `${b.value ?? '(none)'} ${counted(b)}`).join('; ') || 'none'
@@ -221,7 +221,7 @@ async function gather(db: Db, tenantId: TenantId, projectId: ProjectId) {
 type Judged = Extract<Awaited<ReturnType<typeof gather>>, { ok: true }>['value']
 
 function measuredSections({ config, evidence, rejections, lever, reviews, changes, proposals, reach }: Judged): string {
-  return `## Measured data (sends since ${evidence.frameStart ?? 'the first send'}; n = trials, as the tick counts them: a send that drew a reply counts 1 when the reply arrives, a silent one by its age (0.5 at 6 hours, 0.9 at 6 days, 1 from 14 days), a bounced one 0${config.rewardLookbackDays === undefined ? '' : `; the variant and strategy lines count only sends from the last ${config.rewardLookbackDays} days`}; positive = a meeting request, positive reply or signup; interested adds neutral replies and chats; declined = a no, by its stated reason; w / p = today's weight and P(best); explored = the strategy's hosted discovery over the last ${DISCOVERY_WINDOW_DAYS} days — candidates asked for, returned and new after dedup, then, counted apart from those passes, every prospect registered under the strategy in that time (hosted or brought in))
+  return `## Measured data (sends since ${evidence.frameStart ?? 'the first send'}; n = trials, as the tick counts them: a send that drew a reply counts 1 when the reply arrives, a silent one by its age (0.5 at 6 hours, 0.9 at 6 days, 1 from 14 days), a bounced one 0${config.rewardLookbackDays === undefined ? '' : `; the variant and strategy lines count only sends from the last ${config.rewardLookbackDays} days`}; positive = a meeting request, positive reply or signup; interested adds neutral replies and chats; declined = a no, by its stated reason; w / p = today's weight and P(best); explored = the strategy's hosted discovery over the last ${DISCOVERY_WINDOW_DAYS} days — candidates the searcher tagged with it and new after dedup, then, counted apart from those passes, every prospect registered under the strategy in that time (hosted or brought in))
 ${measuredData(evidence, lever, reach.targetCountries)}
 rejection feedback (30 days, tactical): ${rejections ? JSON.stringify(rejections) : '(unavailable this run)'}
 

@@ -2562,7 +2562,7 @@ export function buildToolRegistry(): ToolDef[] {
     return `${j.id} ${j.kind} [${j.status}] project ${j.projectId}, started by ${j.startedBy} at ${j.createdAt}${tail}`
   }
   const planLine = (p: StrategyPlanCompliance): string =>
-    `plan ${p.slug}: asked ${p.asked}, returned ${p.returned}, fresh ${p.fresh}, unavailable ${p.unavailable}`
+    `strategy ${p.slug}: returned ${p.returned}, fresh ${p.fresh}`
   const jobLogLine = (l: JobLogLine): string => {
     const at = `${l.at.slice(11, 16)} UTC`
     switch (l.kind) {
@@ -2577,7 +2577,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'start_job',
-    'Start a server-run job for a project and answer with its id and status line. Kinds: daily_cycle (evaluate → lever tick → follow-ups → new prospects, searching again whenever the list runs out → re-approaches → journal), discover (find and register N new prospects, following the tick\'s strategy plan and, while short of N, the strategies it left out; strategySlug searches that one alone), enrich (read the candidates\' sites for contacts and register them), draft (compose outreach for the next N reachable prospects or the given prospectIds; the project\'s outbound mode decides draft vs send), send (send the given pending drafts), evaluate, journal. Runs in the background — poll get_job. The daily cycle refuses a second start while one is still running for the project.',
+    'Start a server-run job for a project and answer with its id and status line. Kinds: daily_cycle (evaluate → lever tick → follow-ups → new prospects, searching again whenever the list runs out → re-approaches → journal), discover (find and register N new prospects: a search over the whole Target where the map in search_notes says new ones are, again while short of N; strategySlug searches only where that strategy points), enrich (read the candidates\' sites for contacts and register them), draft (compose outreach for the next N reachable prospects or the given prospectIds; the project\'s outbound mode decides draft vs send), send (send the given pending drafts), evaluate, journal. Runs in the background — poll get_job. The daily cycle refuses a second start while one is still running for the project.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       params: jobParamsSchema.describe('Job kind and its parameters.'),
@@ -2612,7 +2612,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'get_job',
-    'Status of one job: kind, status (queued / running / succeeded / failed / cancelled), current step and progress while running, the result summary when succeeded, the error when failed; a discover adds one line per planned strategy (asked, returned, fresh, unavailable), a daily cycle one per strategy per discovery pass — then its log, one UTC-timed line per stage finished, decision taken, and prospect registered, sent, drafted, skipped, or failed on (with the prospect id, the subject, or the reason).',
+    'Status of one job: kind, status (queued / running / succeeded / failed / cancelled), current step and progress while running, the result summary when succeeded, the error when failed; a discover adds one line per strategy its candidates were tagged with (returned, fresh), a daily cycle one per strategy per discovery pass — then its log, one UTC-timed line per stage finished, decision taken, and prospect registered, sent, drafted, skipped, or failed on (with the prospect id, the subject, or the reason).',
     { id: z.string().min(1).describe('Job id from start_job or list_jobs.') },
     async ({ id }, ctx) => {
       const { ok, data } = await ctx.callApi('GET', `/jobs/${encodeURIComponent(id)}`, null)

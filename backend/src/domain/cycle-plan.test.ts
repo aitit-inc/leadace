@@ -37,18 +37,21 @@ describe('nextCycleStep', () => {
 })
 
 describe('nextDiscoverPass', () => {
-  const short = { wanted: 3, registered: 1, active: ['a', 'b', 'c'], searched: ['a'], paused: false }
+  const short = { wanted: 3, registered: 1, lastRegistered: 1, passes: 1, paused: false }
 
-  it('asks the unsearched strategies for what is still wanted', () => {
+  it('searches again for what is still wanted', () => {
     expect(nextDiscoverPass(short)).toEqual({ count: 2 })
-    expect(nextDiscoverPass({ ...short, registered: 0 })).toEqual({ count: 3 })
+    expect(nextDiscoverPass({ ...short, passes: MAX_DISCOVERY_PASSES - 1 })).toEqual({ count: 2 })
   })
   it('ends once the count is registered', () => {
     expect(nextDiscoverPass({ ...short, registered: 3 })).toBeNull()
     expect(nextDiscoverPass({ ...short, registered: 5 })).toBeNull()
   })
-  it('ends when every active strategy has been searched', () => {
-    expect(nextDiscoverPass({ ...short, searched: ['c', 'a', 'b', 'archived-since'] })).toBeNull()
+  it('ends after a pass that registered nothing', () => {
+    expect(nextDiscoverPass({ ...short, lastRegistered: 0 })).toBeNull()
+  })
+  it('ends at the pass cap', () => {
+    expect(nextDiscoverPass({ ...short, passes: MAX_DISCOVERY_PASSES })).toBeNull()
   })
   it('ends when discovery is paused', () => {
     expect(nextDiscoverPass({ ...short, paused: true })).toBeNull()

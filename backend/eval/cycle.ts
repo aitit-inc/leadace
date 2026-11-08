@@ -17,9 +17,9 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { z } from 'zod'
-import { extractionPrompt, extractionSchema, searchPrompt, shapeCandidates } from '../src/services/pipeline/discover'
+import { searchOnce, searchPrompt, type MapRows, type Standing } from '../src/services/pipeline/discover'
 import { enrichCandidate, verdictOf } from '../src/services/pipeline/enrich'
-import { callLlmFollowUpJson, callLlmGroundedText, LlmError, type LlmEnv } from '../src/services/llm'
+import { LlmError, type LlmEnv } from '../src/services/llm'
 import { apexDomainOf, parseIndustryVocabulary } from '../src/services/pipeline/context'
 import { discoverCandidateSchema, type DiscoverCandidate } from '../src/domain/jobs'
 import { NO_TOKENS, paidCallCostUsd, type PaidCall } from '../src/domain/paid-calls'
@@ -81,16 +81,8 @@ const VERIFY_USD = paidCallCostUsd({ model: 'emailable', tier: 'default', usage:
 // --- records ---------------------------------------------------------------
 
 const searchRecordSchema = z.object({
-  strategy: z.string(),
-  search: z.object({ text: z.string(), citations: z.array(z.object({ passage: z.string(), pages: z.array(z.string()) })), responseId: z.string() }).nullable(),
-  unavailable: z.string().nullable(),
-  calls: z.array(paidCallSchema),
-})
-
-const extractRecordSchema = z.object({
-  strategy: z.string(),
   candidates: z.array(discoverCandidateSchema),
-  notes: z.string().nullable(),
+  map: z.string().nullable(),
   unavailable: z.string().nullable(),
   calls: z.array(paidCallSchema),
 })
@@ -146,7 +138,7 @@ function enrichRecords(dir: string, arm: Arm, pass: PassRecord): EnrichRecord[] 
   return pass.fresh.map((d) => readJson(resolve(passDir(dir, arm, pass.pass), 'enrich', `${d}.json`), enrichRecordSchema))
 }
 
-function stageCalls(dir: string, arm: Arm, n: number, stage: 'search' | 'extract'): Call[] {
+function stageCalls(dir: string, arm: Arm, n: number, stage: 'search'): Call[] {
   const at = passDir(dir, arm, n)
   return readdirSync(at)
     .filter((f) => f.startsWith(`${stage}.`))
@@ -172,56 +164,26 @@ async function runPass(target: string, arm: Arm, n: number): Promise<void> {
 
   // Each unit lands on disk before the next needs it; a rerun buys only what
   // is missing.
-  const searches = await Promise.all(
-    spec.strategies.map(async (entry) => {
-      const path = resolve(at, `search.${entry.slug}.json`)
-      if (existsSync(path)) return readJson(path, searchRecordSchema)
-      const args = { plan: entry, business: spec.business, salesStrategy: spec.salesStrategy, searchNotes: notesAtStart, reviewFeedback: null, targetCountries: spec.targetCountries, today }
-      const prompt = searchPrompt(args)
-      const { value, calls } = await paid(async () => {
-        try {
-          return { search: await callLlmGroundedText(env, 'discover.search', { prompt }), unavailable: null }
-        } catch (e) {
-          if (!(e instanceof LlmError)) throw e
-          return { search: null, unavailable: e.message }
-        }
-      })
-      const record = { strategy: entry.slug, ...value, calls }
-      writeJson(path, record)
-      process.stderr.write(`[cycle]   search ${entry.slug} — ${value.unavailable ?? `${calls.reduce((k, c) => k + c.usage.searchCalls, 0)} web_search`}, $${costOf(calls).toFixed(3)}\n`)
-      return record
-    }),
-  )
-
-  let notes = notesAtStart
-  const found: DiscoverCandidate[] = []
-  for (const s of searches) {
-    const entry = spec.strategies.find((e) => e.slug === s.strategy)!
-    if (s.search === null) continue
-    const path = resolve(at, `extract.${entry.slug}.json`)
-    let record = existsSync(path) ? readJson(path, extractRecordSchema) : null
-    if (record === null) {
-      const search = s.search
-      const { value, calls } = await paid(async () => {
-        try {
-          const extracted = await callLlmFollowUpJson(env, 'discover.extract', {
-            after: search,
-            prompt: extractionPrompt({ search, industries, priorNotes: notes, today, strategySlug: entry.slug }),
-            schema: extractionSchema,
-          })
-          return { candidates: shapeCandidates(extracted.candidates, entry, industries, search.citations), notes: extracted.searchNotes, unavailable: null }
-        } catch (e) {
-          if (!(e instanceof LlmError)) throw e
-          return { candidates: [], notes: null, unavailable: e.message }
-        }
-      })
-      record = { strategy: entry.slug, ...value, calls }
-      writeJson(path, record)
-      process.stderr.write(`[cycle]   extract ${entry.slug} — ${value.unavailable ?? `${value.candidates.length} candidates`}\n`)
-    }
-    found.push(...record.candidates)
-    notes = record.notes ?? notes
+  const searchPath = resolve(at, 'search.json')
+  let search = existsSync(searchPath) ? readJson(searchPath, searchRecordSchema) : null
+  if (search === null) {
+    const rows: MapRows = { active: spec.strategies.map(({ slug, approach }) => ({ slug, approach })), closed: [], pinned: null }
+    const prompt = searchPrompt({ rows, business: spec.business, salesStrategy: spec.salesStrategy, map: notesAtStart, reviewFeedback: null, targetCountries: spec.targetCountries, industries, today })
+    const standings = async (domains: string[]): Promise<Standing[]> => domains.map((d) => (known.has(d) ? 'held' : 'new'))
+    const { value, calls } = await paid(async () => {
+      try {
+        return { ...(await searchOnce(env, { prompt, rows, industries, standings })), unavailable: null }
+      } catch (e) {
+        if (!(e instanceof LlmError)) throw e
+        return { candidates: [], map: null, unavailable: e.message }
+      }
+    })
+    search = { ...value, calls }
+    writeJson(searchPath, search)
+    process.stderr.write(`[cycle]   search — ${value.unavailable ?? `${value.candidates.length} candidates`}, $${costOf(calls).toFixed(3)}\n`)
   }
+  const notes = search.map ?? notesAtStart
+  const found = search.candidates
 
   const byDomain = new Map<string, DiscoverCandidate>()
   for (const c of found) {
@@ -348,14 +310,14 @@ function score(target: string): void {
     const passes = completedPasses(dir, arm)
     if (passes.length === 0) continue
     console.log(`\n== ${target} — ${arm}`)
-    console.log('pass  found  unique  fresh  billable  search+extract  enrich   verify   total    cum $/billable')
+    console.log('pass  found  unique  fresh  billable  search          enrich   verify   total    cum $/billable')
     let cumCost = 0
     const billableDomains: string[] = []
     const byStrategy = new Map<string, number[]>()
     for (const p of passes) {
       const enriched = enrichRecords(dir, arm, p)
       const billable = enriched.filter((e) => e.verdict === 'billable')
-      const discover = costOf([...stageCalls(dir, arm, p.pass, 'search'), ...stageCalls(dir, arm, p.pass, 'extract')])
+      const discover = costOf(stageCalls(dir, arm, p.pass, 'search'))
       const enrich = costOf(enriched.flatMap((e) => e.calls))
       const verify = billable.length * VERIFY_USD
       cumCost += discover + enrich + verify

@@ -23,8 +23,8 @@ reasons, over months.
 
 ## What it deliberately does not measure
 
-`collect` runs every pass cold: `searchNotes` is null and nothing dedups against
-the tenant's existing pool, so one pass is comparable with the next. The price is
+`collect` runs one cold pass: the map is empty and nothing is held, so one
+pass is comparable with the next. The price is
 that precision here is the first batch from a blank slate, never the twentieth,
 and the harness is silent on supply durability, on novelty against what is
 already held, and on portfolio breadth.
@@ -56,14 +56,13 @@ what production pays per prospect it bills, and whether that holds as passes
 pile up. It exists because this harness's precision, measured on the targets
 it was tuned on, picked a model that halved supply (#791).
 
-- A pass is production's: all strategies searched in parallel on the notes
-  the pass started with, extracted serially, deduped against every domain
-  earlier passes registered, enriched on the email channel alone (a new
+- A pass is production's: one search over the whole Target on the map the
+  pass started with (`searchOnce`, its check_known answered from every domain
+  earlier passes registered), deduped against those domains, enriched on the
+  email channel alone (a new
   project's default). Billable is `verdictOf` as production bills it; each
   billable prospect pays one address verification. Cost is `paidCallCostUsd`,
   the table `paid_calls` bills with, so the number reads beside production's.
-- Every strategy the spec has runs, zero-yield ones included: production pays
-  for them too.
 - Fit is judged blind. `judge` pools the billable prospects of every arm; the
   judge gets the domain, its snapshot and the frozen spec, never the arm or
   the candidate's claims. `audit` draws one in ten for a person to re-judge,
@@ -134,25 +133,20 @@ npx tsx --env-file=.env.production eval/learning.ts --tenant <id> [--project <id
 counts every signal a send came back with, including the ones the reward
 function weights at zero.
 
-`collect` runs the production discover calls (`discover.search` and
-`discover.extract` as `services/llm/routes.ts` configures them) and spends what
-a production cycle spends.
+`collect` runs the production searcher (`searchOnce`, `discover.search` as
+`services/llm/routes.ts` configures it) and spends what a production pass
+spends. Runs collected before the searcher replaced search + extraction
+(2026-11-09) hold one pass per strategy.
 
 Every command takes `--provider gemini|openai` (default `openai`). `collect`
 only runs `openai`, what production runs; `gemini` names the runs collected
 before the switch, which `snapshot`, `hits` and `score` still read. Each writes
 beside the other (`passes/` + `candidates.json` for Gemini, `passes.openai/` +
 `candidates.openai.json` for OpenAI), so both score against one set of labels.
-`--extractor <model>` extracts with that model instead of the route's and
-writes `passes.openai.<model>/` + `candidates.openai.<model>.json`. `collect`
-takes a comma list (`--extractor gpt-5.6-terra,gpt-5.6-luna`) and extracts
-every model from the same search, so the difference is the model's alone —
-only for passes collected in that one call, since an existing pass is skipped.
+`--extractor <model>` names a run collected before then with that extraction
+model (`passes.openai.<model>/` + `candidates.openai.<model>.json`).
 Snapshots and `labels.json` are keyed by domain and shared: a verdict is about
-the organization, not about which provider surfaced it. `passes.openai/`
-records no extractor model: it holds whatever the route used when each pass
-was collected (Luna for the passes of 2026-09-17). Pass `--extractor` to pin
-the model.
+the organization, not about which provider surfaced it.
 
 `collect` records the tokens, cached tokens, reasoning tokens, search calls and
 unique queries each call reported, and the pass's list-price cost by model;

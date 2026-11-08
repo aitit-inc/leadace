@@ -16,7 +16,6 @@ import { getActiveStrategySlugs } from '../services/discovery-strategies'
 import { discoveryPausedReason, formatContactQuotaError, getRemainingProspectQuota, isContactQuotaExhausted } from '../services/plan-limits'
 import { assertTenantComplianceReady } from '../services/tenants'
 import { editionOf } from '../services/pipeline/context'
-import { CYCLE_MIN_CANDIDATES_PER_SEARCH } from '../services/pipeline/discover'
 import { listHostedReachable } from '../services/pipeline/draft'
 import type { CycleDigest } from '../services/pipeline/journal'
 import { answeringReviewStage, discoverStage, draftStage, evaluateStage, frameReviewStage, journalStage, logStep, STEP_RETRY, tenantTx, unwrap, type StageCtx } from './stages'
@@ -174,7 +173,7 @@ async function act(ctx: StageCtx, params: JobParamsOf<'daily_cycle'>, { stage, d
       }
       passes++
       await decide(`${snap.deliverable} reachable, ${step.count} still wanted${snap.needsHands > 0 ? ` (${snap.needsHands} more need a browser)` : ''} → discovery pass ${passes}`)
-      const found = await discoverStage(ctx, { kind: 'discover', count: step.count, minCandidatesPerSearch: CYCLE_MIN_CANDIDATES_PER_SEARCH }, `discover:${passes}`)
+      const found = await discoverStage(ctx, { kind: 'discover', count: step.count }, `discover:${passes}`)
       await stage('discover', found.summary)
       planCompliance.push(...found.planCompliance)
       last = { kind: 'discover', deliverableBefore: snap.deliverable }

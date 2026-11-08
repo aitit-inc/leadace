@@ -265,7 +265,17 @@ export type ToolLoopRequest<T> = {
   answer: { name: string; description: string; schema: z.ZodType<T> }
   // Searches and tool runs together; the answer is not one.
   maxToolCalls: number
+  // 'cap': a ceiling the model answers within. 'spend': meant to be used up —
+  // a pause is told to go on, and an answer with over a quarter of the budget
+  // left is sent back once (#1081).
+  budget: 'cap' | 'spend'
 }
+
+// A response that searched without end ran past its turn's timeout (#1081).
+const SEARCHES_PER_TURN = 8
+// A search that spends its budget answers by then, so its step (30 minutes,
+// jobs/stages.ts STEP_RETRY) never times out and buys the search again.
+const SPEND_MS = 20 * 60_000
 
 // Every turn is one billed call, stored so the next sends only what came after it.
 export async function callOpenAIToolLoop<T>(args: OpenAICall & ToolLoopRequest<T>): Promise<{ value: T; toolCalls: number }> {
@@ -286,6 +296,8 @@ export async function callOpenAIToolLoop<T>(args: OpenAICall & ToolLoopRequest<T
   let input: string | ResponseInputItem[] = args.prompt
   let previous: string | null = null
   let value: T | null = null
+  // The answer sent back once, kept in case no later one parses.
+  let early: T | null = null
 
   // Returns how many calls the turn made that still await the model.
   const turn = async (forceAnswer: boolean): Promise<number> => {
@@ -297,7 +309,7 @@ export async function callOpenAIToolLoop<T>(args: OpenAICall & ToolLoopRequest<T
       tools,
       store: true,
       max_output_tokens: args.maxOutputTokens,
-      max_tool_calls: Math.max(1, args.maxToolCalls - toolCalls),
+      max_tool_calls: Math.max(1, Math.min(SEARCHES_PER_TURN, args.maxToolCalls - toolCalls)),
       ...(forceAnswer ? { tool_choice: { type: 'function' as const, name: args.answer.name } } : {}),
     }
     const response = await attempt(args, 'default', args.timeoutMs, (_tier, signal) => client.responses.create(body as ResponseCreateParamsNonStreaming, { signal }))
@@ -307,6 +319,12 @@ export async function callOpenAIToolLoop<T>(args: OpenAICall & ToolLoopRequest<T
     for (const call of response.output.flatMap((o) => (o.type === 'function_call' ? [o] : []))) {
       if (call.name === args.answer.name) {
         const answer = args.answer.schema.safeParse(parsed(call.arguments))
+        const left = args.maxToolCalls - toolCalls
+        if (answer.success && args.budget === 'spend' && early === null && !forceAnswer && left > args.maxToolCalls / 4) {
+          early = answer.data
+          outputs.push({ type: 'function_call_output', call_id: call.call_id, output: `Not recorded: ${left} tool calls left. Keep finding new ones, then call ${args.answer.name} with everything.` })
+          continue
+        }
         if (answer.success) value = answer.data
         outputs.push({ type: 'function_call_output', call_id: call.call_id, output: answer.success ? 'recorded' : 'not recorded: the arguments did not match' })
         continue
@@ -326,19 +344,33 @@ export async function callOpenAIToolLoop<T>(args: OpenAICall & ToolLoopRequest<T
     return outputs.length
   }
 
-  // Every turn but one whose answer did not parse spends budget; the count stops that one repeating.
-  for (let turns = 0; turns <= args.maxToolCalls; turns++) {
-    const pending = await turn(false)
-    if (value !== null) break
-    // It answered in text, or spent the budget: one turn that can only answer.
-    if (pending === 0 || toolCalls >= args.maxToolCalls) {
-      if (pending === 0) input = [{ role: 'user', content: `Call ${args.answer.name} now with what you found.` }]
-      await turn(true)
-      break
+  const started = Date.now()
+  try {
+    // A turn that spends no budget (an answer that did not parse or was sent
+    // back, a pause told to go on) is bounded by the count.
+    for (let turns = 0; turns <= args.maxToolCalls; turns++) {
+      const pending = await turn(false)
+      if (value !== null) break
+      const left = args.maxToolCalls - toolCalls
+      const spending = args.budget === 'spend' && Date.now() - started < SPEND_MS
+      const last = turns === args.maxToolCalls
+      if (pending === 0 && spending && left > 0 && !last) {
+        input = [{ role: 'user', content: `${left} tool calls left: go on, and call ${args.answer.name} with everything when about 3 are left.` }]
+        continue
+      }
+      // It answered in text, spent the budget, or ran out of time or turns: one turn that can only answer.
+      if (pending === 0 || left <= 0 || (args.budget === 'spend' && !spending) || last) {
+        if (pending === 0) input = [{ role: 'user', content: `Call ${args.answer.name} now with what you found.` }]
+        await turn(true)
+        break
+      }
     }
+  } catch (e) {
+    // A report sent back stands when a later turn fails upstream.
+    if (!(e instanceof LlmError) || early === null) throw e
   }
   // TS cannot see the assignment inside `turn`.
-  const answered = value as T | null
+  const answered = (value ?? early) as T | null
   if (answered === null) throw new LlmError('upstream LLM gave no answer', 502)
   return { value: answered, toolCalls }
 }

@@ -12,7 +12,6 @@ import type { DiscoverCandidate, JobLogEntry, JobParamsOf, JobResult } from '../
 import type { ServiceResult } from '../services/result'
 import { appendJobLog, loadJobForRun, writeJobProgress, type LoadedJob } from '../services/jobs'
 import { kickAutoTopUp } from '../services/credits'
-import { getActiveStrategySlugs } from '../services/discovery-strategies'
 import { discoveryPausedReason, getRemainingProspectQuota } from '../services/plan-limits'
 import { runDiscover } from '../services/pipeline/discover'
 import { runEnrich } from '../services/pipeline/enrich'
@@ -106,12 +105,11 @@ export async function discoverStage(
   ctx: StageCtx,
   params: JobParamsOf<'discover'>,
   namePrefix = 'discover',
-  searched: readonly string[] = [],
 ): Promise<DiscoverResult> {
   const { tenantId, projectId }: Ids = ctx.job
   const scoped = stepDb(ctx)
   const progress: ProgressFn = (step, done, total) => scoped((db) => progressWriter(ctx, db, 'discover')(step, done, total))
-  const discovered = unwrap(await runDiscover(scoped, tenantId, ctx.env, projectId, params, searched, checkpointOf(ctx, namePrefix), progress))
+  const discovered = unwrap(await runDiscover(scoped, tenantId, ctx.env, projectId, params, checkpointOf(ctx, namePrefix), progress))
   const enriched = await enrichStage(ctx, discovered.candidates, `${namePrefix}:enrich`)
   return {
     ...discovered.result,
@@ -120,27 +118,26 @@ export async function discoverStage(
   }
 }
 
-// One pass searches the strategies the tick's plan picks for the count; a
-// small count leaves most of them out, and one poor source would end the job
-// with nothing. A strategy the person named is searched alone.
+// One pass is one search, and a search's yield varies widely (0–20 sendable on
+// the same project, #1081), so a short pass is followed by another that starts
+// from the map the last one left.
 export async function discoverJob(ctx: StageCtx, params: JobParamsOf<'discover'>): Promise<DiscoverResult> {
-  const { tenantId, projectId }: Ids = ctx.job
+  const { tenantId }: Ids = ctx.job
   let total = await discoverStage(ctx, params)
-  if (params.strategySlug) return total
+  let last = total.registered
   for (let pass = 2; ; pass++) {
-    const searched = total.planCompliance.map((p) => p.slug)
     const next = await ctx.step.do(`discover:next:${pass}`, STEP_RETRY, () => tenantTx(ctx, async (db) =>
       nextDiscoverPass({
         wanted: params.count,
         registered: total.registered,
-        active: await getActiveStrategySlugs(db, projectId),
-        searched,
+        lastRegistered: last,
+        passes: pass - 1,
         paused: discoveryPausedReason(await getRemainingProspectQuota(db, tenantId, editionOf(ctx.env))) !== null,
       }),
     ))
     if (next === null) return total
     // What the earlier passes registered stands, so their result does too.
-    const more = await discoverStage(ctx, { ...params, count: next.count }, `discover:pass${pass}`, searched).catch((e: unknown) => {
+    const more = await discoverStage(ctx, { ...params, count: next.count }, `discover:pass${pass}`).catch((e: unknown) => {
       console.error(`[jobs] discover pass ${pass} failed job=${ctx.job.id}`, e)
       return e instanceof Error ? e.message : String(e)
     })
@@ -154,6 +151,7 @@ export async function discoverJob(ctx: StageCtx, params: JobParamsOf<'discover'>
       skipped: total.skipped + more.skipped,
       planCompliance: [...total.planCompliance, ...more.planCompliance],
     }
+    last = more.registered
   }
 }
 

@@ -1,21 +1,43 @@
 import { describe, expect, it } from 'vitest'
-import { passageUrls } from './discover'
+import { shapeCandidates, type MapRows } from './discover'
 
-const citation = (pages: string[]) => ({ passage: 'p', pages })
+const rows: MapRows = { active: [{ slug: 'regional-lists', approach: 'a' }, { slug: 'job-posts', approach: 'b' }], closed: [], pinned: null }
+const reported = {
+  name: 'Acme',
+  organizationName: '',
+  websiteUrl: 'https://acme.example',
+  overview: 'Makes things.',
+  industry: 'SaaS',
+  country: 'US',
+  employeeBand: null,
+  matchReason: 'Listed as a call center.',
+  priority: 2,
+  sourceUrls: ['https://list.example/a', 'https://list.example/a', 'not a url'],
+  signals: [{ text: '2026-11-01: hiring', sourceUrls: ['https://acme.example/jobs'] }, { text: '2026-10-01: funding', sourceUrls: [] }],
+  row: 'regional-lists',
+}
 
-describe('passageUrls', () => {
-  it('keeps one entry per page across repeated citations', () => {
-    const citations = [citation(['https://a.example/x']), citation(['https://a.example/x', 'https://b.example'])]
-    expect(passageUrls([1, 2], citations)).toEqual(['https://a.example/x', 'https://b.example'])
+describe('shapeCandidates', () => {
+  it('holds a reported candidate to the candidate shape', () => {
+    const [c] = shapeCandidates([reported], rows, ['SaaS'])
+    expect(c).toMatchObject({
+      organizationName: 'Acme',
+      industry: 'SaaS',
+      country: 'US',
+      matchSourceUrls: ['https://list.example/a'],
+      discoveryStrategy: 'regional-lists',
+      signals: [{ text: '2026-11-01: hiring', sourceUrls: ['https://acme.example/jobs'] }],
+    })
+    expect(c).not.toHaveProperty('employeeBand')
   })
-
-  it('drops passage numbers with no citation and non-http pages', () => {
-    const citations = [citation(['ftp://a.example', 'https://b.example'])]
-    expect(passageUrls([1, 7], citations)).toEqual(['https://b.example'])
+  it('tags only an active row, or the pinned one', () => {
+    const base = { ...reported, sourceUrls: [], signals: [] }
+    expect(shapeCandidates([{ ...base, row: 'closed-row' }], rows, [])[0]).not.toHaveProperty('discoveryStrategy')
+    expect(shapeCandidates([{ ...base, row: null }], { ...rows, pinned: 'job-posts' }, [])[0]?.discoveryStrategy).toBe('job-posts')
   })
-
-  it('caps at the source limit so one claim cannot fan out', () => {
-    const citations = [citation(['https://a.example', 'https://b.example', 'https://c.example', 'https://d.example'])]
-    expect(passageUrls([1], citations)).toHaveLength(3)
+  it('drops a candidate it cannot hold and clamps the rest', () => {
+    const base = { ...reported, sourceUrls: [], signals: [] }
+    expect(shapeCandidates([{ ...base, websiteUrl: 'acme' }, { ...base, name: ' ' }], rows, [])).toEqual([])
+    expect(shapeCandidates([{ ...base, priority: 9, industry: 'Unknown', country: 'usa' }], rows, ['SaaS'])[0]).toMatchObject({ priority: 5, industry: 'Other' })
   })
 })

@@ -35,7 +35,7 @@ import type { TickEvidence } from '../../domain/loop/decide'
 import type { ArmStat } from '../../domain/loop/bandit'
 import type { FramePeriod } from '../../domain/loop/frame'
 import { buildActivityDays, type ActivityDay, type HistoryOutcomes } from '../../domain/history'
-import type { FollowUpJsonOp, GroundedTextOp, PagesJsonOp } from '../llm/routes'
+import type { PagesJsonOp, ToolLoopOp } from '../llm/routes'
 import { loadLeverConfig, loadProjectOutboundAllowlist } from '../project-settings'
 import { ok, type ServiceResult } from '../result'
 import { resolveProject } from '../projects'
@@ -583,7 +583,6 @@ export type VariantEvidence = Evidence & {
 // a platform no channel sends on).
 export type StrategyDiscovery = {
   passes: number
-  asked: number
   returned: number
   fresh: number
   registered: number
@@ -637,7 +636,7 @@ export const DISCOVERY_WINDOW_DAYS = 14
 const REPLIED_SENDS_SHOWN = 30
 const EVIDENCE_TEXT_CHARS = 1500
 const SUFFICIENT_TRIALS = 30
-const DISCOVERY_OPS = ['discover.search', 'discover.extract', 'enrich.judge', 'enrich.site', 'enrich.pages'] satisfies (GroundedTextOp | FollowUpJsonOp | PagesJsonOp)[]
+const DISCOVERY_OPS = ['discover.search', 'enrich.judge', 'enrich.site', 'enrich.pages'] satisfies (ToolLoopOp | PagesJsonOp)[]
 
 export async function getProposeEvidence(db: Db, projectId: ProjectId, config: LeverConfig, now: Date = new Date()): Promise<ProposeEvidence> {
   const start = await frameStart(db, projectId)
@@ -680,6 +679,8 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
     // A job that failed left no result, so its passes are missing here.
     db.select({ result: jobs.result }).from(jobs)
       .where(and(eq(jobs.projectId, projectId), inArray(jobs.kind, ['daily_cycle', 'discover']), isNotNull(jobs.result), gte(jobs.createdAt, daysAgo(DISCOVERY_WINDOW_DAYS)))),
+    // Untagged finds form a group of their own: they count toward the cost per
+    // sendable prospect, never toward a strategy.
     db.select({
       strategy: prospects.discoveryStrategy,
       registered: count(),
@@ -691,7 +692,7 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
       foundSendable: count(sql`CASE WHEN ${prospects.origin} = 'found' AND ${qualified} AND ${usable} THEN 1 END`),
     })
       .from(projectProspects).innerJoin(prospects, eq(prospects.id, projectProspects.prospectId))
-      .where(and(eq(projectProspects.projectId, projectId), isNotNull(prospects.discoveryStrategy), gte(projectProspects.createdAt, daysAgo(DISCOVERY_WINDOW_DAYS))))
+      .where(and(eq(projectProspects.projectId, projectId), gte(projectProspects.createdAt, daysAgo(DISCOVERY_WINDOW_DAYS))))
       .groupBy(prospects.discoveryStrategy),
     db.select({ usd: sum(paidCalls.costUsd).mapWith(Number) }).from(paidCalls)
       .where(and(eq(paidCalls.projectId, projectId), inArray(paidCalls.op, DISCOVERY_OPS), gte(paidCalls.createdAt, daysAgo(DISCOVERY_WINDOW_DAYS)))),
@@ -739,14 +740,13 @@ export async function getProposeEvidence(db: Db, projectId: ProjectId, config: L
     at === null ? null : archivals.get(id) ?? { day: dayOf(at), actor: null, reason: null }
 
   const registeredBy = new Map(registeredRows.map((r) => [r.strategy, r]))
-  const noPasses = { passes: 0, asked: 0, returned: 0, fresh: 0 }
+  const noPasses = { passes: 0, returned: 0, fresh: 0 }
   const passesBy = new Map<string, typeof noPasses>()
   for (const { result } of discoveryJobs) {
     if (result === null || !('planCompliance' in result)) continue
-    // A pass whose source was down upstream says nothing about the source.
-    for (const pass of result.planCompliance.filter((p) => p.unavailable === 0)) {
+    for (const pass of result.planCompliance) {
       const held = passesBy.get(pass.slug) ?? noPasses
-      passesBy.set(pass.slug, { passes: held.passes + 1, asked: held.asked + pass.asked, returned: held.returned + pass.returned, fresh: held.fresh + pass.fresh })
+      passesBy.set(pass.slug, { passes: held.passes + 1, returned: held.returned + pass.returned, fresh: held.fresh + pass.fresh })
     }
   }
 
