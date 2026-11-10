@@ -3,11 +3,12 @@ import type { ReachDiff, ReachSettings } from './dashboard';
 
 export type ProposalStatus = 'pending' | 'applied' | 'stopped' | 'outdated';
 
-// A loosening or a frame applies on `applyOn` unless the person stops it;
-// `from` is the setting it was written against. A means waits for the person
-// to set it up.
+// A loosening, a widened Target or a frame applies on `applyOn` unless the
+// person stops it; `from` is the setting it was written against. A means waits
+// for the person to set it up.
 export type ProposedChange =
   | ({ kind: 'loosen'; applyOn: string; reason: string } & Pick<ReachDiff, 'outboundChannels' | 'targetCountries'>)
+  | { kind: 'widen'; applyOn: string; reason: string; salesStrategyFrom: number; edit: { heading: string; content: string } }
   | {
       kind: 'frame';
       applyOn: string;

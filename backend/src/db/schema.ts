@@ -148,6 +148,14 @@ export const PROSPECT_ORIGINS = ['found', 'brought_in'] as const
 export type ProspectOrigin = (typeof PROSPECT_ORIGINS)[number]
 export const prospectOriginEnum = pgEnum('prospect_origin', PROSPECT_ORIGINS)
 
+// What the hosted discovery's latest judgment of an organization saw (#1081):
+// it in the Target; outside it, yet stating a need the seller's offer answers;
+// nothing read showing what the Target requires; outside it; a site it could
+// not read.
+export const DISCOVERY_JUDGMENTS = ['fit', 'need_outside', 'unproven', 'outside', 'unreadable'] as const
+export type DiscoveryJudgment = (typeof DISCOVERY_JUDGMENTS)[number]
+export const discoveryJudgmentEnum = pgEnum('discovery_judgment', DISCOVERY_JUDGMENTS)
+
 export const tenantRoleEnum = pgEnum('tenant_role', ['owner', 'admin', 'member'])
 
 // Trust ranking for country values: manual is authoritative; tld_inferred is
@@ -885,6 +893,10 @@ export const projectProspects = pgTable('project_prospects', {
   // Whether the project targets this prospect: false when the hosted discovery
   // did not confirm the Prerequisite, or the person took it out.
   qualified: boolean('qualified').notNull().default(true),
+  // What the latest judgment saw, on a separate axis from qualified, which the
+  // person can change. A prospect put in by the person or Ace starts as fit,
+  // the judgment it was put in on.
+  judgment: discoveryJudgmentEnum('judgment').notNull().default('fit'),
   // Day-scale follow-up axis (P1), kept separate from prospects.next_outreach_after
   // (months-scale) so the two re-eligibility windows never collide. NULL
   // next_followup_after = no sequence in progress.
@@ -926,8 +938,9 @@ export const discoveryEvidence = pgTable('discovery_evidence', {
   projectId: text('project_id').notNull(),
   organizationId: integer('organization_id').notNull(),
   pageUrl: text('page_url').notNull(),
-  // What the page states that places the organization in the Target. NULL =
-  // read, not the evidence of a fit.
+  // What the page states: what places the organization in the Target, or a
+  // need of its own the seller's offer answers when it is outside
+  // (project_prospects.judgment says which). NULL = read, evidence of neither.
   claim: text('claim'),
   // The date the page gives that statement. NULL = undated, or no claim.
   statedOn: date('stated_on'),
@@ -1482,10 +1495,11 @@ export const proposals = pgTable('proposals', {
   status: proposalStatusEnum('status').notNull().default('pending'),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
 }, (table) => [
-  // One loosening or new frame at a time: the person reads one, two never race
-  // for the same setting, and none is written under a frame about to change.
+  // One loosening, widened Target or new frame at a time: the person reads one,
+  // two never race for the same setting, and none is written under a frame
+  // about to change.
   uniqueIndex('uq_proposals_pending').on(table.projectId)
-    .where(sql`${table.status} = 'pending' AND ${table.change}->>'kind' IN ('loosen', 'frame')`),
+    .where(sql`${table.status} = 'pending' AND ${table.change}->>'kind' IN ('loosen', 'widen', 'frame')`),
   // A means is asked once; the person's answer stands.
   uniqueIndex('uq_proposals_add_means').on(table.projectId, sql`(${table.change}->>'strategy')`)
     .where(sql`${table.change}->>'kind' = 'add-means'`),

@@ -9,9 +9,9 @@
  *
  * <dataset>/cases.jsonl is the input. record writes snapshots/<id>.json.gz and
  * labeling/<id>.md; both modes write runs/<name>/<id>.json. stdout carries
- * numbers only. The model's own web search inside enrich.contact cannot be
- * replayed. Replay fetches a page missing from the snapshot live, keeps it, and
- * reports how many there were.
+ * numbers only. The model's own web search inside enrich.evidence and
+ * enrich.contact cannot be replayed. Replay fetches a page missing from the
+ * snapshot live, keeps it, and reports how many there were.
  */
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -216,7 +216,7 @@ async function runCase(c: (typeof cases)[number]): Promise<void> {
     const draft = draftable ? await composeDraft(e, business, salesStrategy) : null
     const contentCheck = draft ? await checkContent(draft, e, business, store) : null
     mkdirSync(resolve(dir, 'runs', runName), { recursive: true })
-    writeFileSync(resolve(dir, 'runs', runName, `${c.id}.json`), JSON.stringify({ id: c.id, skip: e.skip, qualified: e.qualified, email: e.email, emailSourceUrl: e.emailSourceUrl, noSolicitation: e.noSolicitation, contactName: e.contactName, country: e.country, claim: e.candidate.matchReason, draft, contentCheck, costUsd: store.costUsd, ms: Date.now() - started, misses: store.misses }, null, 1))
+    writeFileSync(resolve(dir, 'runs', runName, `${c.id}.json`), JSON.stringify({ id: c.id, skip: e.skip, judgment: e.judgment, email: e.email, emailSourceUrl: e.emailSourceUrl, noSolicitation: e.noSolicitation, contactName: e.contactName, country: e.country, claim: e.candidate.matchReason, draft, contentCheck, costUsd: store.costUsd, ms: Date.now() - started, misses: store.misses }, null, 1))
     if (mode === 'record') await writeLabelView(c, store)
     mkdirSync(resolve(dir, 'snapshots'), { recursive: true })
     writeFileSync(snapshotPath(c.id), gzipSync(JSON.stringify(Object.fromEntries(store.snapshot))))

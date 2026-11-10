@@ -1,0 +1,2 @@
+DROP INDEX "uq_proposals_pending";--> statement-breakpoint
+CREATE UNIQUE INDEX "uq_proposals_pending" ON "proposals" USING btree ("project_id") WHERE "proposals"."status" = 'pending' AND "proposals"."change"->>'kind' IN ('loosen', 'widen', 'frame');

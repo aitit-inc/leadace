@@ -14,6 +14,7 @@ import {
   type CountrySource,
   type EmployeeBand,
   type ProspectOrigin,
+  type DiscoveryJudgment,
 } from '../db/schema'
 import type { Db } from '../db/connection'
 import {
@@ -461,8 +462,11 @@ export type BatchRegisterResult = {
 }
 
 // Only a billable candidate (reachable on the project's channels, past the
-// Prerequisite check) spends the found allowance.
-export type FoundVerdict = 'billable' | 'unreachable' | 'unqualified'
+// Prerequisite check) spends the found allowance. A fit is billable or
+// unreachable; any other judgment is unqualified.
+export type Found =
+  | { verdict: 'billable' | 'unreachable' }
+  | { verdict: 'unqualified'; judgment: Exclude<DiscoveryJudgment, 'fit'> }
 
 // The found allowance left this period, read once under the tenant lock:
 // 'paused' when none may be spent, null when it is unlimited.
@@ -493,7 +497,7 @@ async function spendFound(db: Db, tenantId: TenantId, prospectId: number, budget
 
 // The registering path's own claim, never the request body's: the hosted
 // discovery pipeline registers 'found', every API caller 'brought_in'.
-export type Registration = { origin: 'brought_in' } | { origin: 'found'; verdict: FoundVerdict }
+export type Registration = { origin: 'brought_in' } | ({ origin: 'found' } & Found)
 
 export async function batchRegister(
   db: Db,
@@ -504,6 +508,8 @@ export async function batchRegister(
 ): Promise<ServiceResult<BatchRegisterResult>> {
   const { projectId: projectRef, prospects: inputs } = input
   const billable = path.origin === 'found' && path.verdict === 'billable'
+  // A prospect the person brings in is a fit by their judgment.
+  const judgment: DiscoveryJudgment = path.origin === 'found' && path.verdict === 'unqualified' ? path.judgment : 'fit'
 
   const [resolved, tp] = await Promise.all([
     projectRef ? resolveProject(db, tenantId, projectRef) : Promise.resolve(null),
@@ -633,7 +639,8 @@ export async function batchRegister(
           priority: input.priority,
           now,
         }),
-        qualified: path.origin === 'brought_in' || path.verdict !== 'unqualified',
+        qualified: judgment === 'fit',
+        judgment,
       })
     }
 
@@ -645,7 +652,7 @@ export async function batchRegister(
   return ok({ registered, skippedDetails: skipped, emailsToVerify })
 }
 
-export type Rejudged = { prospectId: number; input: ProspectInput; verdict: FoundVerdict }
+export type Rejudged = { prospectId: number; input: ProspectInput } & Found
 
 type OnFile = { email: string | null; emailNoSolicitation: boolean; form: string | null; formNoSolicitation: boolean; sns: SnsAccounts | null }
 
@@ -724,13 +731,20 @@ export async function applyRejudged(
   const skipped = new Map<number, 'plan_limit' | DedupSkipReason>()
   const emailsToVerify: string[] = []
   const now = new Date()
-  for (const { prospectId, input: found, verdict } of rows) {
+  const inProject = (prospectId: number) =>
+    and(eq(projectProspects.tenantId, tenantId), eq(projectProspects.projectId, projectId), eq(projectProspects.prospectId, prospectId))
+  for (const r of rows) {
+    const { prospectId, input: found } = r
     const row = held.get(prospectId)
     if (row === undefined) {
       skipped.set(prospectId, 'already_in_project')
       continue
     }
-    if (verdict === 'unqualified') continue
+    // A miss leaves the row as it was but for what the judgment saw.
+    if (r.verdict === 'unqualified') {
+      await db.update(projectProspects).set({ judgment: r.judgment, updatedAt: now }).where(inProject(prospectId))
+      continue
+    }
     const { contactFormUrl, formType, formNoSolicitation, snsAccounts, ...rest } = found
     const input = {
       ...rest,
@@ -746,7 +760,7 @@ export async function applyRejudged(
       skipped.set(prospectId, 'form_url_duplicate')
       continue
     }
-    const mayCharge = verdict === 'billable' && row.origin === 'found' && !chargedBefore.has(prospectId) && !reachableOnFile(row, channels)
+    const mayCharge = r.verdict === 'billable' && row.origin === 'found' && !chargedBefore.has(prospectId) && !reachableOnFile(row, channels)
     const registration = mayCharge ? nextFound(budget) : ({ charge: false } as const)
     if (!registration) {
       skipped.set(prospectId, 'plan_limit')
@@ -765,8 +779,8 @@ export async function applyRejudged(
       })
     await db
       .update(projectProspects)
-      .set({ qualified: true, matchReason: input.matchReason!, updatedAt: now })
-      .where(and(eq(projectProspects.tenantId, tenantId), eq(projectProspects.projectId, projectId), eq(projectProspects.prospectId, prospectId)))
+      .set({ qualified: true, judgment: 'fit', matchReason: input.matchReason!, updatedAt: now })
+      .where(inProject(prospectId))
     if (mayCharge && after && reachableOnFile(after, channels)) await spendFound(db, tenantId, prospectId, budget, registration, now)
     if (input.email) {
       used.add(input.email)

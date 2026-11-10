@@ -6,6 +6,8 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import Pagination from '$lib/components/Pagination.svelte';
   import ProspectDetail from '$lib/components/prospects/ProspectDetail.svelte';
+  import { fmtStatedOn } from '$lib/stated-on';
+  import { PROSPECT_GROUPS, type ProspectGroup } from '$lib/types/prospects';
   import type { PageProps } from './$types';
   import { PAGE_SIZE } from '$lib/pagination';
   import { STATUSES } from './constants';
@@ -19,14 +21,21 @@
   let filterStatus = $derived<string>(data.filters.status ?? '');
   let filterPriority = $derived<string>(String(data.filters.priority));
   let filterQ = $derived<string>(data.filters.q ?? '');
-  let filterScope = $derived<string>(data.filters.scope);
+  let filterGroup = $derived<ProspectGroup>(data.filters.group);
 
-  function updateUrl(next: { status?: string; priority?: string; q?: string; scope?: string; page?: number }) {
+  const GROUP_LABELS: Record<ProspectGroup, string> = {
+    ace: 'Ace contacts',
+    yours: 'Yours to contact',
+    need_outside: 'Need outside your Target',
+    out: 'Not a target',
+  };
+
+  function updateUrl(next: { status?: string; priority?: string; q?: string; group?: ProspectGroup; page?: number }) {
     const sp = new URLSearchParams(page.url.searchParams);
     const status = next.status ?? filterStatus;
     const priority = next.priority ?? filterPriority;
     const q = next.q ?? filterQ;
-    const scope = next.scope ?? filterScope;
+    const group = next.group ?? filterGroup;
     const nextPage = next.page ?? data.page;
 
     if (status) sp.set('status', status);
@@ -35,8 +44,8 @@
     else sp.delete('priority');
     if (q) sp.set('q', q);
     else sp.delete('q');
-    if (scope) sp.set('scope', scope);
-    else sp.delete('scope');
+    if (group !== 'ace') sp.set('group', group);
+    else sp.delete('group');
     if (next.page !== undefined && nextPage > 1) sp.set('page', String(nextPage));
     else sp.delete('page');
 
@@ -49,9 +58,6 @@
   }
   function onPriorityChange(e: Event) {
     updateUrl({ priority: (e.currentTarget as HTMLSelectElement).value, page: 1 });
-  }
-  function onScopeChange(e: Event) {
-    updateUrl({ scope: (e.currentTarget as HTMLSelectElement).value, page: 1 });
   }
   function onQueryInput(e: Event) {
     const next = (e.currentTarget as HTMLInputElement).value.trim();
@@ -70,6 +76,21 @@
 <div class="flex items-center justify-between mb-4">
   <h2 class="font-display text-2xl font-semibold tracking-tight text-text">Prospects</h2>
   <span class="text-sm tabular-nums text-text-muted">{data.total} total</span>
+</div>
+
+<div class="mb-4 inline-flex flex-wrap rounded-2xl bg-surface-2 p-0.5" role="group" aria-label="Group">
+  {#each PROSPECT_GROUPS as g}
+    <button
+      type="button"
+      onclick={() => updateUrl({ group: g, page: 1 })}
+      aria-pressed={filterGroup === g}
+      class="rounded-full px-3 py-1 text-sm transition-colors {filterGroup === g
+        ? 'bg-surface font-semibold text-text'
+        : 'text-text-secondary hover:text-text'}"
+    >
+      {GROUP_LABELS[g]} <span class="tabular-nums text-text-muted">{data.groups[g]}</span>
+    </button>
+  {/each}
 </div>
 
 <div class="flex flex-wrap items-center gap-3 mb-4">
@@ -91,10 +112,6 @@
     {#each [1, 2, 3, 4, 5] as p}
       <option value={String(p)}>P{p}</option>
     {/each}
-  </select>
-  <select value={filterScope} onchange={onScopeChange} class="field w-auto">
-    <option value="">Targets only</option>
-    <option value="all">Include screened out</option>
   </select>
 </div>
 
@@ -120,8 +137,11 @@
             <div class="min-w-0">
               <p class="text-text truncate">{p.name}</p>
               <p class="text-xs text-text-muted truncate">
-                {p.organizationName}{#if !p.qualified}{' · Not a target'}{/if}
+                {p.organizationName}
               </p>
+              {#if p.evidence}
+                <p class="mt-0.5 text-xs text-text-secondary truncate">{#if p.evidence.statedOn}{`${fmtStatedOn(p.evidence.statedOn)} · `}{/if}{p.evidence.claim}</p>
+              {/if}
             </div>
             <span class="text-text-secondary self-center">{channelLabel(p)}</span>
             <span class="self-center"><StatusBadge status={p.status} /></span>
@@ -139,9 +159,10 @@
               <p class="min-w-0 flex-1 truncate text-sm text-text">{p.name}</p>
               <span class="shrink-0"><StatusBadge status={p.status} /></span>
             </div>
-            <p class="text-xs text-text-muted truncate">
-              {p.organizationName}{#if !p.qualified}{' · Not a target'}{/if}
-            </p>
+            <p class="text-xs text-text-muted truncate">{p.organizationName}</p>
+            {#if p.evidence}
+              <p class="text-xs text-text-secondary line-clamp-2">{#if p.evidence.statedOn}{`${fmtStatedOn(p.evidence.statedOn)} · `}{/if}{p.evidence.claim}</p>
+            {/if}
             <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs tabular-nums text-text-muted">
               <span>{channelLabel(p)}</span>
               <span aria-hidden="true">·</span>

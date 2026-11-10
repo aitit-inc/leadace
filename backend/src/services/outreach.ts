@@ -377,7 +377,7 @@ async function assertSendableContent(
   )
 }
 
-const NOT_A_TARGET = 'Prospect is not a target of this project (see list_project_prospects scope=all); only the person can make it one'
+const NOT_A_TARGET = 'Prospect is not a target of this project (its group in list_project_prospects); only the person can make it one'
 
 async function assertProspectContactable(
   db: Db,

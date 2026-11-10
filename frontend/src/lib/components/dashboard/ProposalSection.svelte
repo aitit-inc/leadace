@@ -54,7 +54,7 @@
 
 <section class="card">
   <div class="flex flex-wrap items-center gap-2 px-5 pb-2 pt-4">
-    {#if change.kind === 'loosen'}
+    {#if change.kind === 'loosen' || change.kind === 'widen'}
       <h2 class="font-display text-lg font-semibold text-text">Proposed change</h2>
       <span class="chip bg-accent/10 text-accent">Applies {fmtApplyDay(change.applyOn)}</span>
       <span class="ml-auto hidden text-sm text-text-muted sm:inline">Ace makes it unless you stop it</span>
@@ -97,10 +97,10 @@
         {/if}
       </dl>
     {/if}
-    {#if change.kind === 'frame'}
+    {#if change.kind === 'widen' || change.kind === 'frame'}
       <details class="text-sm">
-        <summary class="cursor-pointer text-text-secondary">The new sales strategy</summary>
-        <p class="mt-2 max-h-80 overflow-y-auto whitespace-pre-line rounded-xl bg-surface-2 px-3 py-2 text-text-secondary">{change.salesStrategy}</p>
+        <summary class="cursor-pointer text-text-secondary">{change.kind === 'widen' ? 'The new Target' : 'The new sales strategy'}</summary>
+        <p class="mt-2 max-h-80 overflow-y-auto whitespace-pre-line rounded-xl bg-surface-2 px-3 py-2 text-text-secondary">{change.kind === 'widen' ? change.edit.content : change.salesStrategy}</p>
       </details>
     {/if}
     {#if error}

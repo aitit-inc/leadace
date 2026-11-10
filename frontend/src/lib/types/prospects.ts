@@ -7,6 +7,10 @@ export type ProspectStatus =
   | 'inactive'
   | 'deferred';
 
+// Mirrors backend domain/prospect-group.ts ProspectGroup.
+export const PROSPECT_GROUPS = ['ace', 'yours', 'need_outside', 'out'] as const;
+export type ProspectGroup = (typeof PROSPECT_GROUPS)[number];
+
 export interface SnsAccounts {
   x?: string;
   linkedin?: string;
@@ -34,8 +38,8 @@ export interface Prospect {
   matchReason: string;
   priority: number;
   status: ProspectStatus;
-  // false: not a target (Prerequisite not confirmed, or taken out by the person).
-  qualified: boolean;
+  group: ProspectGroup;
+  evidence: { url: string; claim: string; statedOn: string | null } | null;
   organizationId: number;
   organizationName: string;
   createdAt: string;

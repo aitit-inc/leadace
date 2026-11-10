@@ -46,11 +46,12 @@ export async function loadKnownOrganizations(
 
 export type Evidence = { url: string; claim: string; statedOn: string | null }
 
-// pages: the cited pages a judgment read; evidence: the page a fit rests on.
+// pages: the pages found elsewhere that a judgment read; evidence: the page a
+// fit rests on, or the need a miss found.
 export type Judged = { domain: string; pages: string[]; evidence: Evidence | null }
 
-// A page read for a judgment that found no fit keeps the claim an earlier one
-// found there.
+// A page read for a judgment that found no evidence on it keeps the claim an
+// earlier one found there.
 export async function recordEvidence(db: Db, tenantId: TenantId, projectId: ProjectId, judged: Judged[]): Promise<void> {
   const domains = [...new Set(judged.map((j) => j.domain))]
   if (domains.length === 0) return
@@ -69,14 +70,14 @@ export async function recordEvidence(db: Db, tenantId: TenantId, projectId: Proj
   )
   // One row per page: an upsert may not touch a row twice, and a batch can
   // carry the same organization twice.
-  const fits = [...new Map(rows.flatMap(({ organizationId, evidence }) =>
+  const claimed = [...new Map(rows.flatMap(({ organizationId, evidence }) =>
     evidence === null ? [] : [[`${organizationId} ${evidence.url}`, { tenantId, projectId, organizationId, pageUrl: evidence.url, claim: evidence.claim, statedOn: evidence.statedOn, judgedAt }] as const],
   )).values()]
   if (read.length > 0) await db.insert(discoveryEvidence).values(read).onConflictDoNothing()
-  if (fits.length > 0) {
+  if (claimed.length > 0) {
     await db
       .insert(discoveryEvidence)
-      .values(fits)
+      .values(claimed)
       .onConflictDoUpdate({
         target: [discoveryEvidence.projectId, discoveryEvidence.organizationId, discoveryEvidence.pageUrl],
         set: { claim: sql`excluded.claim`, statedOn: sql`excluded.stated_on`, judgedAt },

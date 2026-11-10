@@ -1,7 +1,7 @@
-// What Ace hands the person to decide (product_principles §2.2). A loosening or
-// a new frame applies on its day unless the person applies it sooner or stops
-// it, through the same writer as every other change. A means waits for the
-// person and is applied once its playbook is approved.
+// What Ace hands the person to decide (product_principles §2.2). A loosening, a
+// widened Target or a new frame applies on its day unless the person applies it
+// sooner or stops it, through the same writer as every other change. A means
+// waits for the person and is applied once its playbook is approved.
 import { z } from 'zod'
 import { and, asc, desc, eq, gte, inArray, or, sql } from 'drizzle-orm'
 import { discoveryStrategies, messageVariants, proposals, type OutboundMode } from '../../db/schema'
@@ -26,11 +26,11 @@ import {
   type ProposalStatus,
   type ProposedChange,
 } from '../../domain/loop/proposal'
-import { applySectionEdits } from '../../domain/document-sections'
+import { applySectionEdits, type SectionEdit } from '../../domain/document-sections'
 import { ok, err, type ServiceResult } from '../result'
 import { resolveProject } from '../projects'
 import { loadLeverConfig, loadProjectOutboundAllowlist } from '../project-settings'
-import { applyFrameChange, applyReachChange, latestDocument, loadReach } from './change'
+import { applyFrameChange, applyReachChange, applySalesStrategyEdit, latestDocument, loadReach } from './change'
 
 export const listProposalsQuerySchema = z.object({
   status: z.enum(PROPOSAL_STATUSES).optional(),
@@ -66,11 +66,10 @@ const cols = {
 
 const kindIs = (kind: ProposedChange['kind']) => sql`${proposals.change}->>'kind' = ${kind}`
 // The kinds that apply on their day; one of them is pending at a time.
-const appliesOnItsDay = sql`${proposals.change}->>'kind' IN ('loosen', 'frame')`
+const appliesOnItsDay = sql`${proposals.change}->>'kind' IN ('loosen', 'widen', 'frame')`
 
-export type RecordLooseningResult =
-  | { recorded: true; id: number; applyOn: string }
-  | { recorded: false; why: 'one is pending' | 'loosens nothing' }
+// A loosening, a widened Target or a frame: recorded, or why not.
+type Recorded = { recorded: true; id: number; applyOn: string } | { recorded: false; why: string }
 
 export type RecordAddMeansResult = { recorded: true; id: number } | { recorded: false; why: 'asked before' }
 
@@ -88,7 +87,7 @@ export async function recordLoosening(
   projectId: ProjectId,
   input: LoosenInput,
   today: string,
-): Promise<RecordLooseningResult> {
+): Promise<Recorded> {
   const diff = loosening(await loadProjectOutboundAllowlist(db, projectId), input)
   if (diff === null) return { recorded: false, why: 'loosens nothing' }
   const applyOn = applyOnFor(today)
@@ -116,6 +115,43 @@ export async function recordAddMeans(
     .onConflictDoNothing()
     .returning({ id: proposals.id })
   return ok(row ? { recorded: true, id: row.id } : { recorded: false, why: 'asked before' })
+}
+
+// `read` is the sales strategy the model read, whatever was written since.
+export async function recordWidening(
+  db: Db,
+  tenantId: TenantId,
+  projectId: ProjectId,
+  input: { edit: SectionEdit; title: string; body: string; reason: string },
+  read: { salesStrategyId: number; salesStrategy: string },
+  today: string,
+): Promise<Recorded> {
+  const edited = applySectionEdits(read.salesStrategy, [input.edit])
+  if (!edited.ok) return { recorded: false, why: `its edit does not apply: ${edited.why}` }
+  if (edited.content === read.salesStrategy) return { recorded: false, why: 'it changes nothing' }
+  const applyOn = applyOnFor(today)
+  const change: ProposedChange = { kind: 'widen', applyOn, reason: input.reason, salesStrategyFrom: read.salesStrategyId, edit: input.edit }
+  const [row] = await db
+    .insert(proposals)
+    .values({ tenantId, projectId, change, title: input.title, body: input.body })
+    .onConflictDoNothing()
+    .returning({ id: proposals.id })
+  return row ? { recorded: true, id: row.id, applyOn } : { recorded: false, why: 'one is pending' }
+}
+
+// Applies on the version it was written against, so the edit lands as the
+// person read it.
+async function applyWidening(
+  db: Db,
+  tenantId: TenantId,
+  projectId: ProjectId,
+  change: Extract<ProposedChange, { kind: 'widen' }>,
+  by: ChangeAuthor,
+): Promise<boolean> {
+  const current = await latestDocument(db, projectId, 'sales_strategy')
+  if (current?.id !== change.salesStrategyFrom) return false
+  const edited = applySectionEdits(current.content, [change.edit])
+  return edited.ok && applySalesStrategyEdit(db, tenantId, projectId, edited.content, by, change.salesStrategyFrom)
 }
 
 type FrameInput = Omit<FrameBody, 'reason'>
@@ -157,8 +193,6 @@ async function frameOf(
   }
 }
 
-export type RecordFrameResult = { recorded: true; id: number; applyOn: string } | { recorded: false; why: string }
-
 // `read` is what the review read: the sales strategy version and the reach the
 // frame is written against, however long the model took, and the outbound mode.
 export async function recordFrame(
@@ -169,7 +203,7 @@ export async function recordFrame(
   read: { salesStrategyId: number; salesStrategy: string; reach: ReachSettings; mode: OutboundMode },
   today: string,
   limits: FrameLimits,
-): Promise<RecordFrameResult> {
+): Promise<Recorded> {
   // A frame is measured only by what the cycle sends; one it cannot send on is never measured.
   if (!input.outboundChannels.some((c) => hostedChannels(read.mode).includes(c))) return { recorded: false, why: 'Ace sends on none of its channels' }
   const built = await frameOf(db, projectId, input, read, today, limits)
@@ -237,8 +271,8 @@ export async function recentProposals(db: Db, projectId: ProjectId, since: Date)
     .orderBy(desc(proposals.createdAt), desc(proposals.id))
 }
 
-// Applies a loosening or a frame as written. When what it was written against
-// changed since, it is outdated and nothing applies.
+// Applies a loosening, a widened Target or a frame as written. When what it was
+// written against changed since, it is outdated and nothing applies.
 async function applyProposal(
   db: Db,
   tenantId: TenantId,
@@ -263,14 +297,16 @@ async function applyProposal(
         by,
         (current) => stillApplies(change, current),
       )) !== null
-    : await applyFrameChange(
-        db,
-        tenantId,
-        projectId,
-        change,
-        by,
-        (current) => current.salesStrategyId === change.salesStrategyFrom && sameReach(change.reachFrom, current.reach),
-      )
+    : change.kind === 'widen'
+      ? await applyWidening(db, tenantId, projectId, change, by)
+      : await applyFrameChange(
+          db,
+          tenantId,
+          projectId,
+          change,
+          by,
+          (current) => current.salesStrategyId === change.salesStrategyFrom && sameReach(change.reachFrom, current.reach),
+        )
   const status = applied ? 'applied' : 'outdated'
   await db.update(proposals).set({ status }).where(eq(proposals.id, proposalId))
   return ok({ id: proposalId, status })
@@ -303,8 +339,9 @@ export async function stopProposal(
   return ok(row)
 }
 
-// The tick's first step: a loosening or a frame nobody stopped by its day
-// applies. One the person resolved in the meantime is theirs and is skipped.
+// The tick's first step: a loosening, a widened Target or a frame nobody stopped
+// by its day applies. One the person resolved in the meantime is theirs and is
+// skipped.
 export async function applyDueProposals(db: Db, tenantId: TenantId, projectId: ProjectId, today: string): Promise<void> {
   const due = await db
     .select({ id: proposals.id })

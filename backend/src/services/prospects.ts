@@ -7,6 +7,7 @@ import {
   outreachLogs,
   responses,
   leverState,
+  discoveryEvidence,
   formTypeEnum,
   prospectStatusEnum,
   responseTypeEnum,
@@ -56,6 +57,8 @@ import { siteReadPatch } from '../domain/site-read'
 import { drawExploreSlots, floorRescuedWeights, PRIORITY_MULTIPLIERS, type ChannelRank } from '../domain/loop/allocation'
 import type { JobOrigin } from '../domain/jobs'
 import type { ReachArm } from '../domain/cycle-plan'
+import { PROSPECT_GROUPS, type ProspectGroup } from '../domain/prospect-group'
+import type { Evidence } from './discovery-evidence'
 
 // Shared by the reachable gate and the byChannel summary so both agree.
 const emailUsableExpr: SQL = and(
@@ -94,6 +97,24 @@ export const hasContactExpr: SQL = or(
 // no contact on file).
 export const projectTargetExpr: SQL = and(eq(projectProspects.qualified, true), hasContactExpr)!
 
+function groupExpr(channels: readonly OutboundChannel[]): SQL<ProspectGroup> {
+  return sql<ProspectGroup>`CASE
+    WHEN ${prospects.doNotContact} OR ${organizations.doNotContact} THEN 'out'
+    WHEN ${projectProspects.qualified} AND (${usableOnExpr(channels)}) THEN 'ace'
+    WHEN ${projectProspects.qualified} THEN 'yours'
+    WHEN ${projectProspects.judgment} = 'need_outside' THEN 'need_outside'
+    ELSE 'out' END`
+}
+
+const evidenceExpr = sql<Evidence | null>`(
+  SELECT json_build_object('url', ${discoveryEvidence.pageUrl}, 'claim', ${discoveryEvidence.claim}, 'statedOn', ${discoveryEvidence.statedOn})
+  FROM ${discoveryEvidence}
+  WHERE ${discoveryEvidence.projectId} = ${projectProspects.projectId}
+    AND ${discoveryEvidence.organizationId} = ${prospects.organizationId}
+    AND ${discoveryEvidence.claim} IS NOT NULL
+  ORDER BY ${discoveryEvidence.judgedAt} DESC
+  LIMIT 1)`
+
 export { prospectIdParamSchema } from '../domain/ids'
 
 // Guards outreach_logs inserts (FK prospect_id → prospects.id) so a bogus id
@@ -130,8 +151,7 @@ export const listProjectProspectsQuerySchema = z.object({
   status: z.enum(prospectStatusEnum.enumValues).optional(),
   priority: priorityCoerceSchema.optional(),
   q: z.string().trim().min(1).optional(),
-  // 'all' adds the candidates projectTargetExpr leaves out.
-  scope: z.enum(['targets', 'all']).default('targets'),
+  group: z.enum(PROSPECT_GROUPS).optional(),
 })
 export type ListProjectProspectsQuery = z.infer<typeof listProjectProspectsQuerySchema>
 
@@ -302,6 +322,8 @@ export type ProjectProspectRow = {
   matchReason: string
   priority: Priority
   status: ProspectStatus
+  group: ProspectGroup
+  evidence: Evidence | null
   organizationId: number
   organizationName: string
   createdAt: Date
@@ -924,7 +946,7 @@ export async function setProspectTarget(
 }
 
 // Shared so the list and single-prospect detail can never drift.
-const projectProspectSelection = {
+const projectProspectSelection = (channels: readonly OutboundChannel[]) => ({
   ppId: projectProspects.id,
   prospectId: prospects.id,
   name: prospects.name,
@@ -945,10 +967,12 @@ const projectProspectSelection = {
   priority: projectProspects.priority,
   status: projectProspects.status,
   qualified: projectProspects.qualified,
+  group: groupExpr(channels),
+  evidence: evidenceExpr,
   organizationId: prospects.organizationId,
   organizationName: organizations.name,
   createdAt: projectProspects.createdAt,
-}
+})
 
 export const projectProspectParamSchema = z.object({
   id: projectRefSchema,
@@ -965,9 +989,10 @@ export async function getProjectProspect(
   const resolved = await resolveProject(db, tenantId, projectRef)
   if (!resolved.ok) return resolved
   const projectId = resolved.value
+  const { outboundChannels } = await loadProjectOutboundAllowlist(db, projectId)
 
   const [row] = await db
-    .select(projectProspectSelection)
+    .select(projectProspectSelection(outboundChannels))
     .from(projectProspects)
     .innerJoin(prospects, eq(prospects.id, projectProspects.prospectId))
     .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
@@ -990,19 +1015,19 @@ export async function listProjectProspects(
 ): Promise<ServiceResult<{
   prospects: ProjectProspectRow[]
   total: number
+  groups: Record<ProspectGroup, number>
 }>> {
   const resolved = await resolveProject(db, tenantId, projectRef)
   if (!resolved.ok) return resolved
   const projectId = resolved.value
+  const { outboundChannels } = await loadProjectOutboundAllowlist(db, projectId)
 
-  const { limit, offset, status, priority, q, scope } = query
+  const { limit, offset, status, priority, q, group } = query
 
   const conditions = [
     eq(projectProspects.projectId, projectId),
     eq(projectProspects.tenantId, tenantId),
   ]
-
-  if (scope === 'targets') conditions.push(projectTargetExpr)
 
   if (status) conditions.push(eq(projectProspects.status, status))
   if (priority !== undefined) {
@@ -1018,15 +1043,14 @@ export async function listProjectProspects(
     )!)
   }
 
-  const where = and(...conditions)
-
+  const grouped = groupExpr(outboundChannels)
   const [rows, countRows] = await Promise.all([
     db
-      .select(projectProspectSelection)
+      .select(projectProspectSelection(outboundChannels))
       .from(projectProspects)
       .innerJoin(prospects, eq(prospects.id, projectProspects.prospectId))
       .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
-      .where(where)
+      .where(and(...conditions, group ? eq(grouped, group) : undefined))
       .orderBy(
         projectProspects.priority,
         desc(projectProspects.createdAt),
@@ -1034,17 +1058,23 @@ export async function listProjectProspects(
       )
       .limit(limit)
       .offset(offset),
+    // Without the group filter, so every group gets its count.
     db
-      .select({ total: sql<number>`COUNT(*)::int` })
+      .select({ group: grouped, n: sql<number>`COUNT(*)::int` })
       .from(projectProspects)
       .innerJoin(prospects, eq(prospects.id, projectProspects.prospectId))
       .innerJoin(organizations, eq(organizations.id, prospects.organizationId))
-      .where(where),
+      .where(and(...conditions))
+      // By position: repeating the expression rebinds its params, so Postgres
+      // would not match it to the selected one.
+      .groupBy(sql`1`),
   ])
 
+  const groups = Object.fromEntries(PROSPECT_GROUPS.map((g) => [g, countRows.find((r) => r.group === g)?.n ?? 0])) as Record<ProspectGroup, number>
   return ok({
     prospects: rows,
-    total: countRows[0]?.total ?? 0,
+    total: group ? groups[group] : PROSPECT_GROUPS.reduce((total, g) => total + groups[g], 0),
+    groups,
   })
 }
 

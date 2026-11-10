@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { datedEvents, inRetrieved, newestFirst, ownPublishedEmails, parseStored, verdictOf } from './enrich'
+import { datedEvents, foundOf, inRetrieved, newestFirst, ownPublishedEmails, parseStored } from './enrich'
 
 describe('inRetrieved', () => {
   const retrieved = ['https://Example.com/News/A/']
@@ -61,18 +61,19 @@ describe('parseStored', () => {
   })
 })
 
-describe('verdictOf', () => {
+describe('foundOf', () => {
   it('bills only a send target', () => {
-    expect(verdictOf(null, true)).toBe('billable')
-    expect(verdictOf('channel_not_enabled', true)).toBe('unreachable')
+    expect(foundOf(null, 'fit')).toEqual({ verdict: 'billable' })
+    expect(foundOf('channel_not_enabled', 'fit')).toEqual({ verdict: 'unreachable' })
   })
-  it('keeps every candidate the check did not pass out of the targets', () => {
-    expect(verdictOf('prereq_unverified', false)).toBe('unqualified')
-    expect(verdictOf('no_contact_found', false)).toBe('unqualified')
-    expect(verdictOf('site_unreadable', false)).toBe('unqualified')
+  it('keeps every candidate the check did not pass out of the targets, with what it saw', () => {
+    expect(foundOf(null, 'need_outside')).toEqual({ verdict: 'unqualified', judgment: 'need_outside' })
+    expect(foundOf(null, 'unproven')).toEqual({ verdict: 'unqualified', judgment: 'unproven' })
+    expect(foundOf(null, 'unreadable')).toEqual({ verdict: 'unqualified', judgment: 'unreadable' })
   })
   it('registers nothing the model did not judge', () => {
-    expect(verdictOf('read_failed', false)).toBeNull()
+    expect(foundOf('read_failed', null)).toBeNull()
+    expect(foundOf('read_failed', 'fit')).toBeNull()
   })
 })
 

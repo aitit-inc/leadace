@@ -1,11 +1,15 @@
 import { listProspects } from '$lib/api/prospects';
 import { PAGE_SIZE, parsePageNumber } from '$lib/pagination';
-import type { ProspectStatus } from '$lib/types/prospects';
+import { PROSPECT_GROUPS, type ProspectGroup, type ProspectStatus } from '$lib/types/prospects';
 import type { PageServerLoad } from './$types';
 import { STATUSES } from './constants';
 
 function parseStatus(raw: string | null): ProspectStatus | '' {
   return raw && (STATUSES as string[]).includes(raw) ? (raw as ProspectStatus) : '';
+}
+
+function parseGroup(raw: string | null): ProspectGroup {
+  return (PROSPECT_GROUPS as readonly string[]).includes(raw ?? '') ? (raw as ProspectGroup) : 'ace';
 }
 
 function parsePriority(raw: string | null): number | '' {
@@ -19,7 +23,7 @@ export const load: PageServerLoad = async ({ fetch, parent, url, locals }) => {
   const status = parseStatus(url.searchParams.get('status'));
   const priority = parsePriority(url.searchParams.get('priority'));
   const q = url.searchParams.get('q')?.trim() ?? '';
-  const scope = url.searchParams.get('scope') === 'all' ? 'all' : '';
+  const group = parseGroup(url.searchParams.get('group'));
   const page = parsePageNumber(url.searchParams.get('page'));
 
   if (!activeProjectId) {
@@ -27,8 +31,9 @@ export const load: PageServerLoad = async ({ fetch, parent, url, locals }) => {
       activeProjectId: null,
       prospects: [],
       total: 0,
+      groups: { ace: 0, yours: 0, need_outside: 0, out: 0 },
       page,
-      filters: { status, priority, q, scope },
+      filters: { status, priority, q, group },
     };
   }
 
@@ -40,7 +45,7 @@ export const load: PageServerLoad = async ({ fetch, parent, url, locals }) => {
       status: status === '' ? undefined : status,
       priority: priority === '' ? undefined : priority,
       q: q || undefined,
-      scope: scope || undefined,
+      group,
     },
     fetch,
     locals.session?.access_token,
@@ -50,7 +55,8 @@ export const load: PageServerLoad = async ({ fetch, parent, url, locals }) => {
     activeProjectId,
     prospects: res.prospects,
     total: res.total,
+    groups: res.groups,
     page,
-    filters: { status, priority, q, scope },
+    filters: { status, priority, q, group },
   };
 };

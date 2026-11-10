@@ -18,7 +18,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { resolve } from 'node:path'
 import { z } from 'zod'
 import { searchOnce, searchPrompt, type MapRows, type Standing } from '../src/services/pipeline/discover'
-import { enrichCandidate, verdictOf } from '../src/services/pipeline/enrich'
+import { enrichCandidate, foundOf } from '../src/services/pipeline/enrich'
 import { LlmError, type LlmEnv } from '../src/services/llm'
 import { apexDomainOf, parseIndustryVocabulary } from '../src/services/pipeline/context'
 import { discoverCandidateSchema, type DiscoverCandidate } from '../src/domain/jobs'
@@ -204,7 +204,7 @@ async function runPass(target: string, arm: Arm, n: number): Promise<void> {
     await Promise.all(
       todo.slice(i, i + ENRICH_CONCURRENCY).map(async ([domain, candidate]) => {
         const { value, calls } = await paid(() => enrichCandidate(env, candidate, ctx))
-        const verdict = verdictOf(value.skip, value.qualified)
+        const verdict = foundOf(value.skip, value.judgment)?.verdict ?? null
         writeJson(resolve(at, 'enrich', `${domain}.json`), { domain, name: candidate.name, websiteUrl: candidate.websiteUrl, strategy: candidate.discoveryStrategy ?? null, verdict, skip: value.skip, calls })
         process.stderr.write(`[cycle]   enrich ${domain} — ${verdict ?? value.skip}\n`)
       }),

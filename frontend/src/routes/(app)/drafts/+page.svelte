@@ -583,7 +583,7 @@
         {#if expanded && e}
           <div class="space-y-4 border-t border-border p-4">
             <a
-              href="/prospects?q={encodeURIComponent(draft.prospectName)}"
+              href="/prospects/{draft.prospectId}"
               class="inline-flex items-center gap-1 text-sm text-accent-strong hover:underline"
             >
               View prospect →

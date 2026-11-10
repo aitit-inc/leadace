@@ -3,13 +3,13 @@ import { OUTBOUND_CHANNELS, type OutboundChannel } from '../outbound-channel'
 import { ALLOWED_SEND_COUNTRIES, type AllowedSendCountry } from '../country'
 import { discoveryStrategySchema } from '../ids'
 import { localeSchema } from '../locale'
-import { sectionEditSchema } from '../document-sections'
+import { sectionEditSchema, type SectionEdit } from '../document-sections'
 import { changeReasonSchema, reachDiff, reachLine, type ChangeSignal, type ReachDiff, type ReachSettings } from './change'
 
-// What Ace hands the person to decide (product_principles §2.2). A loosening or
-// a new frame applies as written on its day unless the person stops it: no
-// model runs at apply time. A means that needs the person's account waits for
-// them and is applied once its playbook is approved.
+// What Ace hands the person to decide (product_principles §2.2). A loosening, a
+// widened Target or a new frame applies as written on its day unless the person
+// stops it: no model runs at apply time. A means that needs the person's
+// account waits for them and is applied once its playbook is approved.
 export const PROPOSAL_WINDOW_DAYS = 1
 
 export const PROPOSAL_STATUSES = ['pending', 'applied', 'stopped', 'outdated'] as const
@@ -60,6 +60,10 @@ export type ProposedChange =
   // Written against sales_strategy version `salesStrategyFrom` and the reach
   // `reachFrom`.
   | ({ kind: 'frame'; applyOn: string; reason: string; salesStrategyFrom: number; reachFrom: ReachSettings } & Frame)
+  // The Target section rewritten to take in organizations it leaves out that
+  // state a need the offer answers. Written against sales_strategy version
+  // `salesStrategyFrom`.
+  | { kind: 'widen'; applyOn: string; reason: string; salesStrategyFrom: number; edit: SectionEdit }
   | { kind: 'add-means'; strategy: string; instruction: string }
 
 type Limits = { outboundChannels: readonly OutboundChannel[]; targetCountries: readonly string[] }
@@ -116,10 +120,10 @@ export function freshVariantIds(taken: ReadonlySet<string>, today: string, n: nu
   return ids
 }
 
-// A loosening rests on whom discovery found but cannot reach; a frame on its
-// positive rate.
-export function proposalSignals(change: Extract<ProposedChange, { kind: 'loosen' | 'frame' }>): ChangeSignal[] {
-  return change.kind === 'loosen' ? ['discovery'] : ['replies']
+// A loosening rests on whom discovery found but cannot reach, a widened Target
+// on the needs it found outside it; a frame on its positive rate.
+export function proposalSignals(change: Extract<ProposedChange, { kind: 'loosen' | 'widen' | 'frame' }>): ChangeSignal[] {
+  return change.kind === 'frame' ? ['replies'] : ['discovery']
 }
 
 export function applyOnFor(today: string): string {
@@ -132,6 +136,8 @@ export function proposalWhat(change: ProposedChange): string {
   switch (change.kind) {
     case 'loosen':
       return reachLine(change)
+    case 'widen':
+      return 'the Target widened to take in needs found outside it'
     case 'frame':
       return ['a new frame: sales strategy rewritten', reachLine(reachDiff(change.reachFrom, change.reach)), `${change.variants.length} angles`, `${change.strategies.length} search strategies`]
         .filter(Boolean).join('; ')

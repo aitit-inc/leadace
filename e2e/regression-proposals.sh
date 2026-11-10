@@ -24,6 +24,9 @@
 #      loosening and never lifts a pause, MCP → 403, used slugs → 400.
 #   9. The dashboard history carries the settings changes, the frame starts and
 #      the proposals.
+#  10. A widened Target: never beside a pending loosening; the tick rewrites the
+#      Target section on its day, logged as Ace on discovery; one written against
+#      an older sales strategy is outdated and the person's edit stands.
 #
 # Loosenings are inserted with psql: the model writes them in evaluate, which
 # this harness does not run. The pure rules (what loosens, what still applies)
@@ -139,6 +142,14 @@ propose_frame() { # sales-strategy-from apply_on tag → id
                           jsonb_build_object('slug', '$3-a', 'approach', 'a'),
                           jsonb_build_object('slug', '$3-b', 'approach', 'b'))),
                       'Reach nursing schools', 'Medical prep schools: 0 positive in 120 trials.')
+              RETURNING id;" | head -1
+}
+propose_widen() { # sales-strategy-from apply_on target-text → id
+  psql_local "INSERT INTO proposals (tenant_id, project_id, change, title, body)
+              VALUES ('$TENANT_ID', '$PROJECT_ID',
+                      jsonb_build_object('kind', 'widen', 'applyOn', '$2', 'reason', 'pet shops state the need', 'salesStrategyFrom', $1,
+                                         'edit', jsonb_build_object('heading', 'Target', 'content', E'## Target\\n$3')),
+                      'Add pet shops', 'Pet shops outside the Target state the need: 6.')
               RETURNING id;" | head -1
 }
 active_options() { psql_local "SELECT (SELECT string_agg(variant_id, ',' ORDER BY variant_id) FROM message_variants WHERE project_id = '$PROJECT_ID' AND archived_at IS NULL) || ' | ' || (SELECT string_agg(slug, ',' ORDER BY slug) FROM discovery_strategies WHERE project_id = '$PROJECT_ID' AND archived_at IS NULL);"; }
@@ -304,6 +315,26 @@ assert_eq "the loop's changes marked as learned" "$(api_body | jq -r '[.history[
 assert_eq "a frame states the one before" "$(api_body | jq -r '[.history[] | select(.text == "Started a new frame") | .result | contains("The frame before")] | all')" "true"
 assert_eq "proposals on the record with their outcome" \
   "$(api_body | jq -r '[.history[] | select(.text | startswith("Proposed:")) | .result] | group_by(.) | map("\(.[0]):\(length)") | join(",")')" "Applied:4,Dropped: a change came first:4,You stopped it:3"
+
+step "10. a widened Target"
+L1="$(propose '["email"]' '["email","form"]' "$TOMORROW")"
+DUP="$(propose_widen "$(strategy_doc_id)" "$TODAY" dup 2>&1)"
+assert_eq "a widening beside a pending loosening is refused" "$(echo "$DUP" | grep -c uq_proposals_pending)" "1"
+ui POST "/api/proposals/$L1/stop" > /dev/null
+W1="$(propose_widen "$(strategy_doc_id)" "$TODAY" "vets and pet shops")"
+[[ -n "$W1" ]] || { echo "widening insert failed" >&2; exit 1; }
+ui POST "/api/projects/$PROJECT_ID/run-lever-tick" > /dev/null
+assert_eq "on its day: applied" "$(status_of "$W1")" "applied"
+assert_eq "the Target section is the widened one" \
+  "$(psql_local "SELECT content FROM project_documents WHERE id = $(strategy_doc_id);")" $'# Strategy edited by the person\n\n## Target\nvets and pet shops'
+assert_eq "logged as Ace with the proposal's reason, on discovery" \
+  "$(psql_local "SELECT actor || ' | ' || reason || ' | ' || (evidence->>'signals') FROM policy_changes WHERE project_id = '$PROJECT_ID' AND target = 'sales_strategy' ORDER BY id DESC LIMIT 1;")" \
+  'ace | pet shops state the need | ["discovery"]'
+W2="$(propose_widen "$(strategy_doc_id)" "$TOMORROW" "vets, pet shops and groomers")"
+ui PUT "/api/projects/$PROJECT_ID/documents/sales_strategy" '{"content":"# Strategy edited by the person\n\n## Target\nvets only"}' > /dev/null
+STATUS="$(ui POST "/api/proposals/$W2/apply")"
+assert_eq "written against an older sales strategy: outdated" "$STATUS $(status_of "$W2")" "200 outdated"
+assert_eq "the person's edit stands" "$(psql_local "SELECT content FROM project_documents WHERE id = $(strategy_doc_id);")" $'# Strategy edited by the person\n\n## Target\nvets only'
 
 step "summary"
 echo "  PASS=$PASS  FAIL=$FAIL" >&2

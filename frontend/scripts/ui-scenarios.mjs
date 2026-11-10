@@ -644,8 +644,8 @@ function seedDashboardFixture(ctx, projectId, { pending = 'loosen' } = {}) {
      (${q(tenant)}, ${q(projectId)}, 'answering_replies', ${q('Keep replies to two or three lines.\nWhen offering a call, use https://cal.example/alex/20min.\nSign off — Alex.\n')}, ${q(iso(now - DAY))});`,
   );
   // A reach change the person made, and Ace's proposals: one stopped, a
-  // loosening or a new frame waiting on its card for tomorrow's cycle, and a
-  // means only the person can set up.
+  // loosening, a widened Target or a new frame waiting on its card for
+  // tomorrow's cycle, and a means only the person can set up.
   const loosen = (applyOn, reason, diff) => q(JSON.stringify({ kind: 'loosen', applyOn, reason, ...diff }));
   const FRAME_CHANGE = {
     kind: 'frame',
@@ -666,8 +666,26 @@ function seedDashboardFixture(ctx, projectId, { pending = 'loosen' } = {}) {
       { slug: 'ph-nursing-colleges', approach: 'Philippine nursing colleges with English-language admissions pages.' },
     ],
   };
-  // One loosening or new frame is pending at a time.
-  const pendingRow = pending === 'frame'
+  const WIDEN_CHANGE = {
+    kind: 'widen',
+    applyOn: ymd(now + DAY),
+    reason: '9 nursing schools outside the Target state the interview-practice need',
+    salesStrategyFrom: 0,
+    edit: {
+      heading: 'Target',
+      content: '## Target\n### Primary Target\n- Medical prep schools preparing students for admission interviews\n- Nursing schools with a licensing interview or OSCE step\n### Prerequisites\n- An interview step in admission or licensing\n### Not a fit\n- Schools with no interview step',
+    },
+  };
+  // One loosening, widened Target or new frame is pending at a time.
+  const pendingRow = pending === 'widen'
+    ? `(${q(tenant)}, ${q(projectId)}, ${q(JSON.stringify(WIDEN_CHANGE))}::jsonb,
+      'Add nursing schools with a licensing interview step',
+      ${q(
+        'Discovery found 9 nursing schools outside your Target that say on their own pages that students need interview practice, such as ' +
+          '"Students will sit a new OSCE interview station from April." Taking them into the Target lets Ace find and contact schools like them.',
+      )},
+      'pending', ${q(iso(now - 3600 * 1000))})`
+    : pending === 'frame'
     ? `(${q(tenant)}, ${q(projectId)}, ${q(JSON.stringify(FRAME_CHANGE))}::jsonb,
       'Move to nursing schools preparing for licensing interviews',
       ${q(
@@ -936,17 +954,33 @@ const SCENARIOS = [
   },
   {
     name: 'prospects',
-    summary: 'The prospect list, with candidates the discovery judged but kept out of the targets',
+    summary: 'The prospect list as a demand map: whom Ace contacts, whom the person does, needs outside the Target, the rest',
     stack: 'self-host',
     setup: async (ctx) => {
       const projectId = await seedProject(ctx, { name: 'Northwind outbound', settings: {} });
-      const [, , , unqualified, contactless, excluded] = await seedProspects(ctx, projectId, 6);
-      psql(`UPDATE project_prospects SET qualified = false WHERE project_id = ${q(projectId)} AND prospect_id = ${unqualified.prospectId};
-            UPDATE prospects SET email = NULL WHERE id = ${contactless.prospectId};`);
-      await apiFor(ctx)('PATCH', `/api/projects/${projectId}/prospects/target`, { prospectIds: [excluded.prospectId], target: false });
+      const [dana, miles, , tom, ines, ray] = await seedProspects(ctx, projectId, 6);
+      const site = (seed) => `https://${seed.domain}-${ctx.tag}.example`;
+      const evidence = [
+        [dana, `${site(dana)}/careers/front-desk`, 'Harbor Dental Group is hiring a front-desk coordinator to manage patient scheduling across its two new locations.', '2026-10-14'],
+        [miles, `${site(miles)}/news/hydrotherapy`, 'Cedar Ridge Physio says booking for its new hydrotherapy service opens in November, by phone only for now.', '2026-10-02'],
+        [tom, `${site(tom)}/blog/inspection-wait`, 'Sunfield Roofing says customers wait up to two weeks for an inspection slot and it is looking for an online booking tool.', '2026-09-21'],
+      ];
+      const inProject = (seed) => `project_id = ${q(projectId)} AND prospect_id = ${seed.prospectId}`;
+      psql(`UPDATE project_prospects SET match_reason = ${q(evidence[0][2])} WHERE ${inProject(dana)};
+            UPDATE project_prospects SET match_reason = ${q(evidence[1][2])} WHERE ${inProject(miles)};
+            UPDATE prospects SET email = NULL, contact_form_url = ${q(`${site(miles)}/contact`)}, form_type = 'native_html' WHERE id = ${miles.prospectId};
+            UPDATE project_prospects SET qualified = false, judgment = 'need_outside', match_reason = 'Sunfield Roofing is a roofing contractor, not a clinic the Target names.' WHERE ${inProject(tom)};
+            UPDATE project_prospects SET qualified = false, judgment = 'unproven', match_reason = 'Its pages do not show that it books appointments.' WHERE ${inProject(ines)};
+            INSERT INTO discovery_evidence (tenant_id, project_id, organization_id, page_url, claim, stated_on)
+              SELECT p.tenant_id, ${q(projectId)}, p.organization_id, v.url, v.claim, v.stated::date
+              FROM prospects p JOIN (VALUES ${evidence.map(([seed, url, claim, stated]) => `(${seed.prospectId}, ${q(url)}, ${q(claim)}, ${q(stated)})`).join(', ')}) AS v(id, url, claim, stated) ON p.id = v.id;`);
+      await apiFor(ctx)('PATCH', `/api/projects/${projectId}/prospects/target`, { prospectIds: [ray.prospectId], target: false });
       return [
-        { name: 'targets', path: '/prospects', expect: ['3 total', 'Dana Brooks'] },
-        { name: 'all', path: '/prospects?scope=all', expect: ['6 total', 'Not a target'] },
+        { name: 'ace', path: '/prospects', expect: ['2 total', 'front-desk coordinator'] },
+        { name: 'yours', path: '/prospects?group=yours', expect: ['1 total', 'hydrotherapy'] },
+        { name: 'need', path: '/prospects?group=need_outside', expect: ['1 total', 'two weeks'] },
+        { name: 'need-detail', path: '/prospects?group=need_outside', click: ['button:has-text("Tom Alvarez") >> nth=0'], expect: ['Need it states', 'Why it is outside'] },
+        { name: 'out', path: '/prospects?group=out', expect: ['2 total', 'Blue Kettle Coffee'] },
       ];
     },
   },
@@ -1187,6 +1221,24 @@ const SCENARIOS = [
           path: '/dashboard',
           scrollTo: 'text=Proposed new frame',
           expect: ['Move to nursing schools', 'Licensing-interview drills', 'nursing-school-directories', 'JP, PH'],
+        },
+      ];
+    },
+  },
+  {
+    name: 'dashboard-widen',
+    summary: 'The dashboard with a widened Target waiting on the person',
+    stack: 'self-host',
+    setup: async (ctx) => {
+      const projectId = await seedProject(ctx, { name: 'SpeechMonster', settings: { outboundMode: 'send' } });
+      seedDashboardFixture(ctx, projectId, { pending: 'widen' });
+      return [
+        {
+          name: 'proposal-widen',
+          path: '/dashboard',
+          scrollTo: 'h3:has-text("Add nursing schools")',
+          click: 'summary:has-text("The new Target")',
+          expect: ['Add nursing schools', 'Nursing schools with a licensing interview'],
         },
       ];
     },

@@ -636,7 +636,7 @@ export const DISCOVERY_WINDOW_DAYS = 14
 const REPLIED_SENDS_SHOWN = 30
 const EVIDENCE_TEXT_CHARS = 1500
 const SUFFICIENT_TRIALS = 30
-const DISCOVERY_OPS = ['discover.search', 'enrich.judge', 'enrich.site', 'enrich.pages'] satisfies (ToolLoopOp | PagesJsonOp)[]
+const DISCOVERY_OPS = ['discover.search', 'enrich.judge', 'enrich.evidence', 'enrich.site', 'enrich.pages'] satisfies (ToolLoopOp | PagesJsonOp)[]
 
 export async function getProposeEvidence(db: Db, projectId: ProjectId, config: LeverConfig, now: Date = new Date()): Promise<ProposeEvidence> {
   const start = await frameStart(db, projectId)

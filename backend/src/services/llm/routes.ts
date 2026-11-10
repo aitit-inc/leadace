@@ -4,7 +4,7 @@ export type JsonOp = 'draft' | 'evaluate' | 'journal' | 'reply-classify' | 'repl
 export type PagesJsonOp = 'enrich.site' | 'enrich.pages' | 'enrich.judge' | 'enrich.events' | 'enrich.events.pages'
 export type GroundedTextOp = 'strategy-draft.competitors'
 export type FollowUpJsonOp = 'strategy-draft.competitors.extract'
-export type ToolLoopOp = 'discover.search' | 'enrich.contact'
+export type ToolLoopOp = 'discover.search' | 'enrich.evidence' | 'enrich.contact'
 
 export const OPENAI_ROUTES: Record<JsonOp | PagesJsonOp | GroundedTextOp | FollowUpJsonOp | ToolLoopOp | 'chat', OpenAIRoute> = {
   // The timeout is one turn's; the whole pass must fit one step (jobs/stages.ts
@@ -23,6 +23,12 @@ export const OPENAI_ROUTES: Record<JsonOp | PagesJsonOp | GroundedTextOp | Follo
   'enrich.site': { model: 'gpt-6-luna', timeoutMs: 90_000, flexTimeoutMs: 60_000, maxOutputTokens: 8_192 },
   'enrich.pages': { model: 'gpt-6-luna', timeoutMs: 90_000, flexTimeoutMs: 60_000, maxOutputTokens: 8_192 },
   'enrich.judge': { model: 'gpt-6-luna', timeoutMs: 90_000, flexTimeoutMs: 60_000, maxOutputTokens: 8_192 },
+  // The timeout is one turn's; its nine turns, the contact search's nine and
+  // five reads with their flex fallbacks fit a candidate's step (jobs/stages.ts
+  // STEP_RETRY).
+  // Searching 80 organizations took 1–3 minutes each with their judging, at
+  // $0.04 an organization (#1081).
+  'enrich.evidence': { model: 'gpt-6-luna', timeoutMs: 60_000, flexTimeoutMs: null, maxOutputTokens: 8_192 },
   // The timeout is one turn's; at most nine turns must fit a candidate's step
   // beside its reads (jobs/stages.ts STEP_RETRY). On 50 fits the two reads had found no address
   // for, Luna with search and page opens found 16 and Sol 22, at $0.019 and

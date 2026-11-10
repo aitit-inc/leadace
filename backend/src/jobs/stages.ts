@@ -34,10 +34,11 @@ function paidScoped<T>(ctx: StageCtx, fn: () => Promise<T>): Promise<T> {
   return withPaidCallScope({ databaseUrl: ctx.env.DATABASE_URL, tenantId: ctx.job.tenantId, projectId: ctx.job.projectId, jobId: ctx.job.id }, fn)
 }
 
-// 30 minutes: well above a step's real bound, the timeouts of the few LLM
-// calls inside it. Workflows charges CPU, not wall clock, so a wider window
+// Above a step's real bound, the timeouts of the LLM calls inside it: the
+// longest is an enrich candidate's, two nine-turn searches and five reads, 35
+// minutes at worst. Workflows charges CPU, not wall clock, so a wider window
 // only delays noticing a stuck step.
-export const STEP_RETRY = { retries: { limit: 2, delay: '20 seconds', backoff: 'exponential' }, timeout: '30 minutes' } as const
+export const STEP_RETRY = { retries: { limit: 2, delay: '20 seconds', backoff: 'exponential' }, timeout: '40 minutes' } as const
 
 // Upstream flakiness retries; anything the caller must fix does not.
 export function unwrap<T>(r: ServiceResult<T>): T {

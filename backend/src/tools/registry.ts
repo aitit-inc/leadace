@@ -16,6 +16,7 @@ import { creditsCoverOverage, USAGE_PRICE_CENTS } from '../domain/credits'
 import { isHttpOrHttpsUrl, HTTP_OR_HTTPS_ONLY_MSG } from '../domain/url'
 import type { ProspectQuota, QuotaWindowKind } from '../services/plan-limits'
 import type { DailyTarget } from '../services/daily-target'
+import { PROSPECT_GROUPS, type ProspectGroup } from '../domain/prospect-group'
 import type { DailyTargetSource } from '../domain/daily-target'
 import { SERVER_VERSION } from '../mcp/version'
 import { JOB_KINDS, JOB_STATUSES, jobParamsSchema, type JobKind, type JobLogLine, type JobParams, type JobResult, type StrategyPlanCompliance } from '../domain/jobs'
@@ -2162,7 +2163,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'list_suggestions',
-    'List Ace\'s proposals to the user for a project, newest first, one line each: id, date, status, title, and the change — a channel or country loosening or a new frame (what changes, the day it applies), or a means to set up (strategy slug, instruction). Optional status filter.',
+    'List Ace\'s proposals to the user for a project, newest first, one line each: id, date, status, title, and the change — a channel or country loosening, a widened Target or a new frame (what changes, the day it applies), or a means to set up (strategy slug, instruction). Optional status filter.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       status: z.enum(PROPOSAL_STATUSES).optional().describe('Filter by status'),
@@ -2339,19 +2340,19 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'list_project_prospects',
-    'List a project\'s prospects with per-project status, priority, and matchReason. Unlike get_outbound_targets (reachable rows only), lists prospects in any status. Sorted by priority ascending, newest first within a rank.',
+    'List a project\'s prospects with per-project status, priority, matchReason, group, and the evidence page of the latest judgment (what places it in the Target, or the need it states outside it). Starts with the count per group. Unlike get_outbound_targets (reachable rows only), lists prospects in any status. Sorted by priority ascending, newest first within a rank.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       status: z.enum(prospectStatusEnum.enumValues).optional().describe('Filter by per-project status'),
       priority: prioritySchema.optional().describe('Filter by exact priority'),
       q: z.string().min(1).optional().describe('Substring search on prospect name / contact name / organization name / domain'),
-      scope: z.enum(['targets', 'all']).default('targets').describe('all adds non-targets: qualified false (Prerequisite not confirmed, or taken out by the person) or no contact'),
+      group: z.enum(PROSPECT_GROUPS).optional().describe('ace: in the Target, reachable on a channel Ace sends on. yours: in the Target, no such channel; the person contacts it. need_outside: outside the Target but states a need the offer answers. out: the rest. Omit for all.'),
       limit: z.number().int().min(1).max(500).default(100),
       offset: z.number().int().min(0).default(0),
     },
-    async ({ projectId, status, priority, q, scope, limit, offset }, ctx) => {
+    async ({ projectId, status, priority, q, group, limit, offset }, ctx) => {
       const params = new URLSearchParams()
-      params.set('scope', scope)
+      if (group) params.set('group', group)
       if (status) params.set('status', status)
       if (priority !== undefined) params.set('priority', String(priority))
       if (q) params.set('q', q)
@@ -2363,11 +2364,12 @@ export function buildToolRegistry(): ToolDef[] {
         const err = data as { error: string }
         return { content: [{ type: 'text' as const, text: `Error: ${err.error}` }], isError: true }
       }
-      const result = data as { prospects: unknown[]; total: number }
+      const result = data as { prospects: unknown[]; total: number; groups: Record<ProspectGroup, number> }
+      const groups = PROSPECT_GROUPS.map((g) => `${g} ${result.groups[g]}`).join(', ')
       return {
         content: [{
           type: 'text' as const,
-          text: `${result.total} prospect(s) match; showing ${result.prospects.length} (offset ${offset}).\n${JSON.stringify(result.prospects, null, 2)}`,
+          text: `By group: ${groups}. ${result.total} prospect(s) match; showing ${result.prospects.length} (offset ${offset}).\n${JSON.stringify(result.prospects, null, 2)}`,
         }],
       }
     },

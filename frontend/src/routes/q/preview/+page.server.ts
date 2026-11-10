@@ -40,7 +40,7 @@ export const load: PageServerLoad = async ({ url, fetch, locals }) => {
   try {
     const res = await listProspects(
       projectId,
-      { page: 1, limit: 50, q: q || undefined },
+      { page: 1, limit: 50, q: q || undefined, group: 'ace' },
       fetch,
       locals.session.access_token,
     );

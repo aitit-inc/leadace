@@ -118,7 +118,9 @@ on, need no Claude session, and run fast:
 - `regression-proposals.sh` — what Ace hands the person to decide: reach-setting
   changes logged with what changed; one pending loosening per project; stop and
   apply are Web UI only; the tick applies a loosening on its day, outdated once
-  its setting changed; a means is proposed once and applied by its playbook.
+  its setting changed; a means is proposed once and applied by its playbook; a
+  widened Target rewrites the Target section on its day, outdated once the
+  sales strategy changed.
 - `regression-prospect-delete.sh` — data-maintenance delete surface:
   `delete-batch` skips DNC / outreach-history / multi-project rows with reasons
   and reports prospect-less orgs; org `delete-batch` refuses populated orgs;
