@@ -1,5 +1,5 @@
 import { request, type RequestFetch } from '../api';
-import type { ResponseAnswer, ResponseRecord, ResponseType, Sentiment } from '$lib/types/responses';
+import type { ConversationMessage, ResponseAnswer, ResponseRecord, ResponseType, Sentiment } from '$lib/types/responses';
 
 export type ListResponsesParams = {
   page: number;
@@ -18,6 +18,7 @@ export function listResponses(
   const sp = new URLSearchParams({
     limit: String(params.limit),
     offset: String((params.page - 1) * params.limit),
+    latestPerProspect: 'true',
   });
   if (params.sentiment) sp.set('sentiment', params.sentiment);
   if (params.responseType) sp.set('responseType', params.responseType);
@@ -25,6 +26,20 @@ export function listResponses(
   return request<{ responses: ResponseRecord[]; total: number }>(fetchFn, {
     method: 'GET',
     path: `/projects/${projectId}/responses?${sp}`,
+    auth: 'required',
+    token,
+  });
+}
+
+export function getConversation(
+  projectId: string,
+  prospectId: number,
+  fetchFn: RequestFetch = fetch,
+  token?: string,
+): Promise<{ messages: ConversationMessage[] }> {
+  return request<{ messages: ConversationMessage[] }>(fetchFn, {
+    method: 'GET',
+    path: `/projects/${projectId}/prospects/${prospectId}/conversation`,
     auth: 'required',
     token,
   });

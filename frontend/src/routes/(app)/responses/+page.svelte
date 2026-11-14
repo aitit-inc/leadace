@@ -1,18 +1,16 @@
 <script lang="ts">
-  import { goto, invalidate } from '$app/navigation';
+  import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import type { ResponseType } from '$lib/types/responses';
   import ChannelBadge from '$lib/components/ChannelBadge.svelte';
   import SentimentBadge from '$lib/components/SentimentBadge.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import Pagination from '$lib/components/Pagination.svelte';
-  import AnswerState from '$lib/components/responses/AnswerState.svelte';
   import type { PageProps } from './$types';
   import { PAGE_SIZE } from '$lib/pagination';
   import { ANSWERS, SENTIMENTS, TYPES } from './constants';
 
   let { data }: PageProps = $props();
-  let expandedId = $state<number | null>(null);
 
   let filterSentiment = $derived<string>(data.filters.sentiment ?? '');
   let filterType = $derived<string>(data.filters.responseType ?? '');
@@ -49,12 +47,6 @@
   }
   function onPageChange(n: number) {
     updateUrl({ page: n });
-  }
-
-  // Marking the only row of a filtered page moves it off the list: step back a page.
-  async function onAnswerChanged() {
-    if (filterAnswer && data.responses.length === 1 && data.page > 1) onPageChange(data.page - 1);
-    else await invalidate('app:responses');
   }
 
   function formatDate(iso: string) {
@@ -113,9 +105,9 @@
     <div class="divide-y divide-border">
       {#each data.responses as r}
         <div>
-          <button
+          <a
+            href="/prospects/{r.prospectId}"
             class="hidden md:grid w-full grid-cols-[120px_80px_1fr_80px_100px] gap-4 px-5 py-3 text-left text-sm hover:bg-surface-2 transition-colors focus-visible:-outline-offset-2"
-            onclick={() => (expandedId = expandedId === r.id ? null : r.id)}
           >
             <span class="text-text-secondary text-xs tabular-nums">{formatDate(r.receivedAt)}</span>
             <span><ChannelBadge channel={r.channel} /></span>
@@ -131,11 +123,11 @@
               {formatType(r.responseType)}
               {#if r.answer === 'waiting'}<span class="chip bg-warning/15 text-warning">Waiting</span>{/if}
             </span>
-          </button>
+          </a>
 
-          <button
+          <a
+            href="/prospects/{r.prospectId}"
             class="flex md:hidden w-full flex-col gap-1 px-5 py-3 text-left hover:bg-surface-2 transition-colors focus-visible:-outline-offset-2"
-            onclick={() => (expandedId = expandedId === r.id ? null : r.id)}
           >
             <div class="flex items-center justify-between gap-2">
               <div class="flex items-center gap-2 min-w-0">
@@ -153,14 +145,7 @@
               {formatType(r.responseType)}
               {#if r.answer === 'waiting'}<span class="chip bg-warning/15 text-warning">Waiting</span>{/if}
             </span>
-          </button>
-
-          {#if expandedId === r.id}
-            <div class="mx-5 mb-4 rounded-xl bg-page px-4 py-3">
-              <p class="text-sm text-text whitespace-pre-wrap break-words">{r.content}</p>
-              <AnswerState response={r} token={data.session?.access_token} onChanged={onAnswerChanged} />
-            </div>
-          {/if}
+          </a>
         </div>
       {/each}
     </div>

@@ -150,7 +150,7 @@ export async function listProjectAttention(
       .where(and(eq(outreachLogs.projectId, projectId), eq(outreachLogs.status, 'pending_review'))),
     // An inquiry page's lead is recorded as a meeting request, so it waits here too.
     db
-      .select({ count: sql<number>`COUNT(*)::int`, since: min(responses.receivedAt) })
+      .select({ count: sql<number>`COUNT(DISTINCT ${outreachLogs.prospectId})::int`, since: min(responses.receivedAt) })
       .from(responses)
       .innerJoin(outreachLogs, eq(outreachLogs.id, responses.outreachLogId))
       .where(and(eq(outreachLogs.projectId, projectId), inArray(responses.responseType, [...AWAITING_ANSWER]), isNull(responses.answeredAt))),

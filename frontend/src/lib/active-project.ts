@@ -15,10 +15,14 @@ function cookieAttrs(): string {
 	return `${base}; ${lifetime}${secure}`;
 }
 
+export function rememberActiveProject(id: string): void {
+	document.cookie = `${ACTIVE_PROJECT_COOKIE}=${encodeURIComponent(id)}; ${cookieAttrs()}`;
+}
+
 export async function setActiveProject(id: string | null): Promise<void> {
 	if (!browser) return;
 	if (id) {
-		document.cookie = `${ACTIVE_PROJECT_COOKIE}=${encodeURIComponent(id)}; ${cookieAttrs()}`;
+		rememberActiveProject(id);
 	} else {
 		document.cookie = `${ACTIVE_PROJECT_COOKIE}=; Path=/; SameSite=Lax; Max-Age=0${dev ? '' : '; Secure'}`;
 	}

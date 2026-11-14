@@ -9,15 +9,6 @@ export type ResponseType =
   | 'meeting_request'
   | 'rejection';
 
-export interface OutreachResponse {
-  id: number;
-  channel: Channel;
-  content: string;
-  sentiment: Sentiment;
-  responseType: ResponseType;
-  receivedAt: string;
-}
-
 // Mirrors backend services/responses ResponseAnswer. 'none': a kind that needs no answer.
 export type ResponseAnswer = 'waiting' | 'answered' | 'none';
 
@@ -44,3 +35,11 @@ export interface AnswerEmail {
   status: 'draft' | 'sending' | 'sent';
   sentAt: string | null;
 }
+
+// Mirrors backend services/responses ConversationMessage.
+export type ConversationMessage =
+  | { kind: 'sent'; at: string; channel: Channel; from: string | null; subject: string | null; body: string }
+  | ({ kind: 'received'; at: string; text: string; quoted: string } & Pick<
+      ResponseRecord,
+      'id' | 'channel' | 'sentiment' | 'responseType' | 'answer' | 'answerEmail'
+    >);

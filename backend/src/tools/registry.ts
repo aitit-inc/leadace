@@ -1988,7 +1988,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'send_answers',
-    'Send answer emails to waiting replies, each with the body given, from the mailbox its reply reached into the reply\'s thread. The card shows each email as given; a sent one is kept as the answer and marks its reply answered. Answers with one line per reply: sent, or why not.',
+    'Send answer emails to waiting replies, each with the body given, from the mailbox its reply reached into the reply\'s thread. The card shows each email as given; a sent one is kept as the answer and marks its reply, and the prospect\'s earlier ones, answered. Answers with one line per reply: sent, or why not.',
     {
       projectId: z.string().min(1).describe('Project name or ID'),
       answers: z
@@ -2059,7 +2059,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'mark_response_answered',
-    'Mark a waiting reply answered when the person answered it outside its thread (a call, another address). A reply answered in its Gmail thread clears itself at the next hourly poll.',
+    'Mark a waiting reply, and the prospect\'s earlier ones, answered when the person answered it outside its thread (a call, another address). A reply answered in its Gmail thread clears itself at the next hourly poll.',
     { responseId: z.number().int().positive().describe('Response id from list_responses.') },
     async ({ responseId }, ctx) => {
       const { ok, data } = await ctx.callApi('POST', `/responses/${responseId}/mark-answered`, null)

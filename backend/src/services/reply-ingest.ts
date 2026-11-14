@@ -25,6 +25,7 @@ import { pollImapInbox } from './imap-poll'
 import { classifyReply, matchSameDomainReply } from './reply-classify'
 import type { LlmEnv } from './llm'
 import { notify, notifyCtxOf, type NotifyEnv } from './notifications'
+import { projectLink } from '../domain/notifications'
 import { withPaidCallScope } from './paid-calls'
 import { recordResponse, type RecordResponseInput } from './responses'
 import { draftAnswer, recordAnswer } from './answers'
@@ -183,7 +184,7 @@ async function notifyReplyToAnswer(
 ): Promise<void> {
   try {
     const [row] = await db
-      .select({ prospect: prospects.name, project: projects.name })
+      .select({ prospect: prospects.name, prospectId: prospects.id, project: projects.name, projectId: projects.id })
       .from(outreachLogs)
       .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
       .innerJoin(projects, eq(projects.id, outreachLogs.projectId))
@@ -206,7 +207,7 @@ async function notifyReplyToAnswer(
           ? ['Ace drafted an answer. Edit it if you like and send it from LeadAce:', '', draft]
           : ['Answer it from LeadAce or from that inbox.']),
       ].join('\n'),
-      link: '/responses?answer=waiting',
+      link: projectLink(row.projectId, `/prospects/${row.prospectId}`),
     })
     if (!result.ok) console.warn(`[reply-ingest] reply notification failed msg=${reply.messageId}: ${result.error}`)
   } catch (e) {

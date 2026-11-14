@@ -8,11 +8,14 @@
     response,
     token,
     onChanged,
-  }: { response: ResponseRecord; token: string | undefined; onChanged: () => void } = $props();
+  }: { response: Pick<ResponseRecord, 'id' | 'answer' | 'answerEmail'>; token: string | undefined; onChanged: () => void } = $props();
 
+  // A refresh after another reply's answer changed hands every reply a new
+  // object: only a change of this answer's stored text may replace what is typed.
+  const stored = $derived(response.answerEmail?.body ?? '');
   let body = $state('');
   $effect.pre(() => {
-    body = response.answerEmail?.body ?? '';
+    body = stored;
   });
 
   let busy = $state(false);
@@ -20,7 +23,7 @@
   let confirming = $state(false);
 
   const email = $derived(response.answerEmail);
-  const dirty = $derived(email !== null && body !== (email.body ?? ''));
+  const dirty = $derived(email !== null && body !== stored);
 
   function message(e: unknown): string {
     return e instanceof ApiError ? e.detail || e.message : 'Could not save. Please try again.';
@@ -51,20 +54,11 @@
     confirming = false;
     onChanged();
   }
-
-  function formatDate(iso: string) {
-    return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-  }
 </script>
 
-{#if response.answer !== 'none'}
+{#if response.answer !== 'none' && email?.status !== 'sent'}
   <div class="mt-3 space-y-3">
-    {#if email?.status === 'sent'}
-      <p class="text-sm text-text-secondary">
-        Answered from LeadAce{email.sentAt ? ` on ${formatDate(email.sentAt)}` : ''}, to {email.to}.
-      </p>
-      <p class="whitespace-pre-wrap break-words rounded-lg bg-surface px-3 py-2 text-sm text-text-secondary">{email.body}</p>
-    {:else if response.answer === 'waiting' && email}
+    {#if response.answer === 'waiting' && email}
       <p class="text-sm text-text-secondary">
         Ace drafted an answer. It goes to {email.to}{email.from ? ` from ${email.from}` : ''}, in the reply's thread.
       </p>

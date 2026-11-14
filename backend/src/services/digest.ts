@@ -6,6 +6,7 @@ import type { ProjectId, TenantId } from '../domain/ids'
 import { buildDigest, dayOf, dayStart } from '../domain/digest'
 import { getDashboardSummary } from './dashboard'
 import { notify, type NotifyCtx } from './notifications'
+import { projectLink } from '../domain/notifications'
 import { ok, err, type ServiceResult } from './result'
 import { getTenantOwnerUserId } from './tenants'
 
@@ -62,7 +63,7 @@ export async function sendCycleDigest(
     reference: `digest:${projectId}:${today}`,
     subject: digest.subject,
     body: digest.body,
-    link: '/dashboard',
+    link: projectLink(projectId, '/dashboard'),
   })
   if (!notified.ok) return notified
   // A crash between the notification's insert and its email leaves the row

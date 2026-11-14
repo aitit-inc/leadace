@@ -27,7 +27,7 @@ import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { getActiveStrategySlugs } from './discovery-strategies'
 import { notify, type NotifyCtx, type NotifyResult } from './notifications'
-import { categoryOfJob } from '../domain/notifications'
+import { categoryOfJob, projectLink } from '../domain/notifications'
 
 // The Workflow binding, narrowed to what this service needs so it stays
 // testable and free of the Worker env type.
@@ -293,7 +293,7 @@ export async function loadJobForRun(db: Db, tenantId: TenantId, id: string): Pro
 // quietly, whatever the run returned.
 export async function notifyJobFinished(run: TenantRun, tenantId: TenantId, ctx: NotifyCtx, id: string): Promise<ServiceResult<NotifyResult>> {
   const [row] = await run((db) => db
-    .select({ kind: jobs.kind, status: jobs.status, result: jobs.result, error: jobs.error, startedBy: jobs.startedBy, threadId: jobs.threadId, project: projects.name })
+    .select({ kind: jobs.kind, status: jobs.status, result: jobs.result, error: jobs.error, startedBy: jobs.startedBy, threadId: jobs.threadId, projectId: jobs.projectId, project: projects.name })
     .from(jobs)
     .innerJoin(projects, eq(projects.id, jobs.projectId))
     .where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, id)))
@@ -305,7 +305,7 @@ export async function notifyJobFinished(run: TenantRun, tenantId: TenantId, ctx:
     reference: `job:${id}`,
     subject: `${row.kind.replace('_', ' ')} ${row.status}: ${row.project}`,
     body: (row.status === 'succeeded' ? row.result?.summary : row.error) ?? row.status,
-    link: row.threadId ? `/chat?t=${row.threadId}` : '/chat',
+    link: projectLink(row.projectId, row.threadId ? `/chat?t=${row.threadId}` : '/chat'),
   })
 }
 

@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { afterNavigate, goto } from '$app/navigation';
   import { page } from '$app/state';
+  import { rememberActiveProject } from '$lib/active-project';
   import ProjectSwitcher from '$lib/components/ProjectSwitcher.svelte';
   import Logo from '$lib/components/Logo.svelte';
   import AccountMenu from '$lib/components/AccountMenu.svelte';
@@ -28,6 +30,17 @@
   import type { LayoutProps } from './$types';
 
   let { data, children }: LayoutProps = $props();
+
+  // Arriving on a link that names its project makes it the open one, and the
+  // name leaves the URL so the switcher can change it again.
+  afterNavigate(() => {
+    const linked = page.url.searchParams.get('project');
+    if (linked === null) return;
+    if (linked === data.activeProjectId) rememberActiveProject(linked);
+    const url = new URL(page.url);
+    url.searchParams.delete('project');
+    void goto(url, { replaceState: true, noScroll: true, keepFocus: true });
+  });
   let drawerOpen = $state(false);
   let moreOpen = $state(false);
   let connectingGmail = $state(false);

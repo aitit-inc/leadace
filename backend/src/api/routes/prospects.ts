@@ -34,6 +34,7 @@ import {
   checkProspectDedup,
 } from '../../services/prospect-import'
 import { projectRefParamSchema } from '../../services/projects'
+import { getConversation } from '../../services/responses'
 import { scheduleDeliverabilityStamp } from '../deliverability-stamp'
 import { respondWithError } from '../respond'
 import type { Env, Variables } from '../types'
@@ -172,6 +173,17 @@ prospectsRouter.get(
     )
     if (!result.ok) return respondWithError(c, result)
     return c.json({ prospect: result.value })
+  },
+)
+
+prospectsRouter.get(
+  '/projects/:id/prospects/:prospectId/conversation',
+  zValidator('param', projectProspectParamSchema),
+  async (c) => {
+    const param = c.req.valid('param')
+    const result = await getConversation(c.get('db'), c.get('tenantId'), param.id, param.prospectId)
+    if (!result.ok) return respondWithError(c, result)
+    return c.json(result.value)
   },
 )
 

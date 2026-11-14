@@ -18,6 +18,7 @@ import { withPaidCallScope } from '../services/paid-calls'
 import { unattendedTools } from '../services/chat/unattended'
 import { createThread, postInstruction, titleFromMessage } from '../services/chat/threads'
 import { notify, notifyCtxOf } from '../services/notifications'
+import { projectLink } from '../domain/notifications'
 import { ok } from '../services/result'
 import {
   attachScheduleThread,
@@ -90,7 +91,7 @@ async function recordOutcome(env: Env, schedule: DueSchedule, failure: string | 
       reference: `schedule:${schedule.id}:${schedule.lastRunKey}`,
       subject: stopped ? 'A LeadAce schedule failed and is now off' : 'A LeadAce scheduled run failed',
       body: `Scheduled run: "${schedule.prompt}"\n\nError: ${failure}${stopped ? '\n\nIt failed three times in a row, so it is off. Turn it back on from the project settings page once the cause is fixed.' : ''}`,
-      link: '/project-settings',
+      link: projectLink(schedule.projectId, '/project-settings'),
     })
     if (!r.ok) console.warn(`[schedules] notification failed schedule=${schedule.id}: ${r.error}`)
   } catch (e) {

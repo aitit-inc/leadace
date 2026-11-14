@@ -10,7 +10,7 @@ import type { LayoutServerLoad } from './$types';
 // The active-project preference is a cookie (set by the project switcher) so
 // the server can pre-render the right project on first paint, without waiting
 // for client localStorage reconciliation.
-export const load: LayoutServerLoad = async ({ fetch, locals, cookies, depends }) => {
+export const load: LayoutServerLoad = async ({ fetch, locals, cookies, depends, url }) => {
 	depends('app:active-project', 'app:projects', 'app:plan', 'app:attention', 'app:notifications');
 
 	const session = locals.session;
@@ -39,13 +39,17 @@ export const load: LayoutServerLoad = async ({ fetch, locals, cookies, depends }
 	const plan: PlanInfo | null = planResult.ok ? planResult.plan : null;
 	const planError: string | null = planResult.ok ? null : planResult.message;
 
+	// A link that names its project (?project=…) shows that project. The layout
+	// makes it the open one on arrival: a hover preloads this too, and must not.
+	const linked = url.searchParams.get('project');
 	const stored = cookies.get(ACTIVE_PROJECT_COOKIE) ?? null;
-	const next = stored && projects.some((p) => p.id === stored)
-		? stored
-		: (projects[0]?.id ?? null);
+	const next =
+		[linked, stored].find((id) => id !== null && projects.some((p) => p.id === id)) ??
+		projects[0]?.id ??
+		null;
 
 	// Cookie attributes mirror $lib/active-project so client and server agree.
-	if (stored !== next) {
+	if (linked === null && stored !== next) {
 		if (next) {
 			// httpOnly: false — SvelteKit defaults to true, which would silently
 			// block client-side setActiveProject's document.cookie writes.

@@ -1,6 +1,5 @@
 import { request, type RequestFetch } from '../api';
 import type { FunnelStageFilter, OutreachLog } from '$lib/types/outreach';
-import type { OutreachResponse } from '$lib/types/responses';
 
 export type ListOutreachParams = {
   page: number;
@@ -24,19 +23,6 @@ export function listOutreach(
   return request<{ logs: OutreachLog[]; total: number }>(fetchFn, {
     method: 'GET',
     path: `/projects/${projectId}/outreach/recent?${sp}`,
-    auth: 'required',
-    token,
-  });
-}
-
-export function listOutreachResponses(
-  outreachLogId: number,
-  fetchFn: RequestFetch = fetch,
-  token?: string,
-): Promise<{ responses: OutreachResponse[] }> {
-  return request<{ responses: OutreachResponse[] }>(fetchFn, {
-    method: 'GET',
-    path: `/outreach/${outreachLogId}/responses`,
     auth: 'required',
     token,
   });

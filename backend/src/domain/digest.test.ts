@@ -176,7 +176,7 @@ describe('buildDigest', () => {
       }),
     )
     expect(digest?.body).toContain(
-      'Needs you\n1 reply is waiting for your answer, the oldest since 2026-09-19.\nEvery prospect in your plan has been contacted. Follow-ups still go out; open the plans page to reach new ones.',
+      'Needs you\n1 prospect is waiting for your answer, the oldest since 2026-09-19.\nEvery prospect in your plan has been contacted. Follow-ups still go out; open the plans page to reach new ones.',
     )
   })
 

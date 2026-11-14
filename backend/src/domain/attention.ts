@@ -126,7 +126,7 @@ export type AttentionInput = {
   project: {
     outboundChannelsConfigured: boolean
     pendingDrafts: number
-    // Replies no answer has settled yet (domain/reply AWAITING_ANSWER) and the oldest one's arrival.
+    // Prospects with a reply no answer has settled yet (domain/reply AWAITING_ANSWER) and the oldest such reply's arrival.
     repliesWaiting: { count: number; since: Date } | null
   } | null
 }

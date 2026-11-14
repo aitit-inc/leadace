@@ -12,6 +12,8 @@
 #      reply still waits.
 #   4. A reply already answered (marked by hand) is not sent to (409).
 #   5. A prospect on do-not-contact is not sent to (422).
+#   6. Marking a reply answered settles the earlier replies of that prospect and
+#      leaves a later one waiting; latestPerProspect lists a prospect once.
 #
 # The answer rows are inserted by hand: the reply ingest that drafts them needs
 # a real inbox. Curl-only, single tenant, one project, cleans up.
@@ -189,6 +191,25 @@ assert_eq "send to answered 409"        "$(code POST "/api/responses/$R_MARKED/a
 psql_local "UPDATE prospects SET do_not_contact = true WHERE id = $P_DNC;" > /dev/null
 assert_eq "send to DNC 422"             "$(code POST "/api/responses/$R_DNC/answer/send" "$CLEAN")" "422"
 assert_eq "DNC answer still a draft"    "$(answer_field "$R_DNC" status)" "draft"
+
+step "an answer settles the conversation so far, and the list shows a prospect once"
+LOG_DNC="$(psql_local "SELECT outreach_log_id FROM responses WHERE id=$R_DNC;")"
+more_reply() {
+  api POST /api/responses "$(jq -nc --argjson lid "$LOG_DNC" --arg c "$1" \
+    '{outreachLogId:$lid, channel:"email", content:$c, sentiment:"positive", responseType:"reply", markDoNotContact:false}')" | jq -r '.id // ""'
+}
+R_SECOND="$(more_reply "And the pricing?")"; R_THIRD="$(more_reply "One more thing")"
+[[ -n "$R_SECOND" && -n "$R_THIRD" ]] || { echo "extra replies failed" >&2; exit 1; }
+assert_eq "every reply total=5"         "$(api GET "/api/projects/$PROJECT_ID/responses" | jq -r '.total')" "5"
+ONCE="$(api GET "/api/projects/$PROJECT_ID/responses?latestPerProspect=true")"
+assert_eq "a prospect once total=3"     "$(echo "$ONCE" | jq -r '.total')" "3"
+assert_eq "its latest reply is shown"   "$(echo "$ONCE" | jq -r --argjson p "$P_DNC" '.responses[] | select(.prospectId==$p) | .id')" "$R_THIRD"
+# A time finer than a millisecond, as the database's own now() gives: the reply must still count as "up to itself".
+psql_local "UPDATE responses SET received_at = date_trunc('milliseconds', received_at) + interval '456 microseconds' WHERE id = $R_SECOND;" > /dev/null
+assert_eq "mark the second 200"         "$(code POST "/api/responses/$R_SECOND/mark-answered")" "200"
+assert_eq "the marked one is settled"   "$(answered "$R_SECOND")" "t"
+assert_eq "the earlier one is settled"  "$(answered "$R_DNC")" "t"
+assert_eq "the later one still waits"   "$(answered "$R_THIRD")" "f"
 
 step "summary"
 say "PASS=$PASS FAIL=$FAIL"

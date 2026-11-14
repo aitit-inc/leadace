@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { parseEmailMessage } from './email-message'
-import { classifyDeterministically, leadingUnquotedText, unquotedText } from './reply-classify'
+import { classifyDeterministically, leadingUnquotedText, splitAtQuote, unquotedText } from './reply-classify'
 
 // A reply token's no reads as its reason.
 const classify = (raw: string) => {
@@ -130,5 +130,18 @@ describe('unquotedText', () => {
 
   it('returns empty when every line is quoted', () => {
     expect(unquotedText('> On Mon someone wrote:\n> hello')).toBe('')
+  })
+})
+
+describe('splitAtQuote', () => {
+  it('keeps the quoted history apart from what was written above it', () => {
+    expect(splitAtQuote('Sounds good.\r\n\r\nOn Mon someone wrote:\r\n> first line\r\n> second line\r\nSent from my phone')).toEqual({
+      lead: 'Sounds good.\n\nOn Mon someone wrote:',
+      quoted: '> first line\n> second line\nSent from my phone',
+    })
+  })
+
+  it('has no quoted part when nothing is quoted', () => {
+    expect(splitAtQuote('Sounds good.\r\nThanks\r\n')).toEqual({ lead: 'Sounds good.\nThanks', quoted: '' })
   })
 })

@@ -14,6 +14,11 @@ export const AGENT_NOTIFICATION_CATEGORIES = ['general', 'cron'] as const satisf
 // The bell shows this many; older ones are dropped.
 export const NOTIFICATIONS_KEPT = 30
 
+// The app shows one project at a time, so a link into one names it.
+export function projectLink(projectId: string, path: string): string {
+  return `${path}${path.includes('?') ? '&' : '?'}project=${encodeURIComponent(projectId)}`
+}
+
 export function categoryOfJob(startedBy: JobOrigin): NotificationCategory {
   return startedBy === 'cron' ? 'cron' : 'general'
 }

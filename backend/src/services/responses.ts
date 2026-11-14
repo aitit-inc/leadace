@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import { eq, and, desc, sql, gte, inArray, isNotNull, isNull, ilike } from 'drizzle-orm'
+import { eq, and, asc, desc, sql, gte, lte, inArray, isNotNull, isNull, ilike, type SQL } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
 import {
   answers,
   outreachLogs,
@@ -41,6 +42,7 @@ import { UNDELIVERABLE } from '../domain/email-deliverability'
 import { projectProspectInsertValues } from '../domain/project-prospect'
 import { isoDateTimeSchema } from '../domain/time'
 import { AWAITING_ANSWER, awaitsAnswer } from '../domain/reply'
+import { splitAtQuote } from '../domain/reply-classify'
 import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { loadProjectReapproachSettings } from './project-settings'
@@ -86,6 +88,7 @@ export const listResponsesQuerySchema = z.object({
   sentiment: z.enum(sentimentEnum.enumValues).optional(),
   responseType: z.enum(responseTypeEnum.enumValues).optional(),
   answer: z.enum(['waiting', 'answered']).optional(),
+  latestPerProspect: z.stringbool().default(false),
   ids: z
     .string()
     .regex(/^\d+(,\d+){0,199}$/)
@@ -500,7 +503,7 @@ export async function listProjectResponses(
   if (!resolved.ok) return resolved
   const projectId = resolved.value
 
-  const { limit, offset, sentiment, responseType, answer, ids } = query
+  const { limit, offset, sentiment, responseType, answer, latestPerProspect, ids } = query
 
   const conditions = [eq(outreachLogs.projectId, projectId)]
   if (sentiment) conditions.push(eq(responses.sentiment, sentiment))
@@ -509,37 +512,17 @@ export async function listProjectResponses(
   if (answer === 'answered') conditions.push(isNotNull(responses.answeredAt))
   if (ids) conditions.push(inArray(responses.id, ids))
 
-  const where = and(...conditions)
+  const matching = and(...conditions)
+  const latest = db
+    .selectDistinctOn([outreachLogs.prospectId], { id: responses.id })
+    .from(responses)
+    .innerJoin(outreachLogs, eq(outreachLogs.id, responses.outreachLogId))
+    .where(matching)
+    .orderBy(outreachLogs.prospectId, desc(responses.receivedAt), desc(responses.id))
+  const where = latestPerProspect ? inArray(responses.id, latest) : matching
 
   const [rows, countRows] = await Promise.all([
-    db
-      .select({
-        id: responses.id,
-        channel: responses.channel,
-        content: responses.content,
-        sentiment: responses.sentiment,
-        responseType: responses.responseType,
-        receivedAt: responses.receivedAt,
-        rejectionFeedback: responses.rejectionFeedback,
-        prospectId: outreachLogs.prospectId,
-        prospectName: prospects.name,
-        outreachSubject: outreachLogs.subject,
-        answeredAt: responses.answeredAt,
-        from: outreachLogs.fromEmail,
-        answerTo: answers.toEmail,
-        answerSubject: answers.subject,
-        answerBody: answers.body,
-        answerStatus: answers.status,
-        answerSentAt: answers.sentAt,
-      })
-      .from(responses)
-      .innerJoin(outreachLogs, eq(outreachLogs.id, responses.outreachLogId))
-      .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
-      .leftJoin(answers, eq(answers.responseId, responses.id))
-      .where(where)
-      .orderBy(desc(responses.receivedAt), desc(responses.id))
-      .limit(limit)
-      .offset(offset),
+    selectListed(db, where).limit(limit).offset(offset),
     db
       .select({ total: sql<number>`COUNT(*)::int` })
       .from(responses)
@@ -547,17 +530,81 @@ export async function listProjectResponses(
       .where(where),
   ])
 
-  return ok({
-    responses: rows.map(({ answeredAt, from, answerTo, answerSubject, answerBody, answerStatus, answerSentAt, ...row }) => ({
-      ...row,
-      answer: answerOf(row.responseType, answeredAt),
-      answerEmail:
-        answerTo !== null && answerSubject !== null && answerStatus !== null
-          ? { from, to: answerTo, subject: answerSubject, body: answerBody, status: answerStatus, sentAt: answerSentAt }
-          : null,
-    })),
-    total: countRows[0]?.total ?? 0,
-  })
+  return ok({ responses: rows.map(toListed), total: countRows[0]?.total ?? 0 })
+}
+
+function selectListed(db: Db, where: SQL | undefined) {
+  return db
+    .select({
+      id: responses.id,
+      channel: responses.channel,
+      content: responses.content,
+      sentiment: responses.sentiment,
+      responseType: responses.responseType,
+      receivedAt: responses.receivedAt,
+      rejectionFeedback: responses.rejectionFeedback,
+      prospectId: outreachLogs.prospectId,
+      prospectName: prospects.name,
+      outreachSubject: outreachLogs.subject,
+      answeredAt: responses.answeredAt,
+      from: outreachLogs.fromEmail,
+      answerTo: answers.toEmail,
+      answerSubject: answers.subject,
+      answerBody: answers.body,
+      answerStatus: answers.status,
+      answerSentAt: answers.sentAt,
+    })
+    .from(responses)
+    .innerJoin(outreachLogs, eq(outreachLogs.id, responses.outreachLogId))
+    .innerJoin(prospects, eq(prospects.id, outreachLogs.prospectId))
+    .leftJoin(answers, eq(answers.responseId, responses.id))
+    .where(where)
+    .orderBy(desc(responses.receivedAt), desc(responses.id))
+}
+
+function toListed({ answeredAt, from, answerTo, answerSubject, answerBody, answerStatus, answerSentAt, ...row }: Awaited<ReturnType<typeof selectListed>>[number]): ListedResponse {
+  return {
+    ...row,
+    answer: answerOf(row.responseType, answeredAt),
+    answerEmail:
+      answerTo !== null && answerSubject !== null && answerStatus !== null
+        ? { from, to: answerTo, subject: answerSubject, body: answerBody, status: answerStatus, sentAt: answerSentAt }
+        : null,
+  }
+}
+
+export type ConversationMessage =
+  | { kind: 'sent'; at: Date; channel: Channel; from: string | null; subject: string | null; body: string }
+  | ({ kind: 'received'; at: Date; text: string; quoted: string } & Pick<ListedResponse, 'id' | 'channel' | 'sentiment' | 'responseType' | 'answer' | 'answerEmail'>)
+
+export async function getConversation(
+  db: Db,
+  tenantId: TenantId,
+  projectRef: ProjectRef,
+  prospectId: number,
+): Promise<ServiceResult<{ messages: ConversationMessage[] }>> {
+  const resolved = await resolveProject(db, tenantId, projectRef)
+  if (!resolved.ok) return resolved
+  const withProspect = and(eq(outreachLogs.projectId, resolved.value), eq(outreachLogs.prospectId, prospectId))
+
+  const [sends, replies] = await Promise.all([
+    db
+      .select({ at: outreachLogs.sentAt, channel: outreachLogs.channel, from: outreachLogs.fromEmail, subject: outreachLogs.subject, body: outreachLogs.body })
+      .from(outreachLogs)
+      .where(and(withProspect, eq(outreachLogs.status, 'sent')))
+      .orderBy(asc(outreachLogs.sentAt), asc(outreachLogs.id)),
+    selectListed(db, withProspect),
+  ])
+
+  const messages: ConversationMessage[] = sends.map((s) => ({ kind: 'sent', ...s }))
+  for (const { id, channel, content, sentiment, responseType, receivedAt, answer, answerEmail } of replies.map(toListed).reverse()) {
+    const { lead, quoted } = splitAtQuote(content)
+    messages.push({ kind: 'received', at: receivedAt, id, channel, sentiment, responseType, answer, answerEmail, text: lead || content, quoted: lead ? quoted : '' })
+    if (answerEmail?.status === 'sent' && answerEmail.sentAt && answerEmail.body) {
+      messages.push({ kind: 'sent', at: answerEmail.sentAt, channel: 'email', from: answerEmail.from, subject: answerEmail.subject, body: answerEmail.body })
+    }
+  }
+  return ok({ messages: messages.sort((x, y) => x.at.getTime() - y.at.getTime()) })
 }
 
 function answerOf(type: ListedResponse['responseType'], answeredAt: Date | null): ResponseAnswer {
@@ -567,13 +614,39 @@ function answerOf(type: ListedResponse['responseType'], answeredAt: Date | null)
 
 // The person answered some other way: a call, another address, a new thread.
 export async function markResponseAnswered(db: Db, tenantId: TenantId, responseId: number): Promise<ServiceResult<undefined>> {
-  const [row] = await db
-    .update(responses)
-    .set({ answeredAt: sql`COALESCE(${responses.answeredAt}, now())` })
-    .where(and(eq(responses.tenantId, tenantId), eq(responses.id, responseId), inArray(responses.responseType, [...AWAITING_ANSWER])))
-    .returning({ id: responses.id })
-  if (!row) return err('NOT_FOUND', `No reply waiting for an answer has id ${responseId}`)
+  if (!(await settleConversation(db, tenantId, responseId, new Date()))) {
+    return err('NOT_FOUND', `No reply waiting for an answer has id ${responseId}`)
+  }
   return ok(undefined)
+}
+
+// An answer answers the conversation so far: this reply and the prospect's
+// earlier ones in the project.
+export async function settleConversation(db: Db, tenantId: TenantId, responseId: number, at: Date): Promise<boolean> {
+  const [reply] = await db
+    .select({ projectId: outreachLogs.projectId, prospectId: outreachLogs.prospectId })
+    .from(responses)
+    .innerJoin(outreachLogs, eq(outreachLogs.id, responses.outreachLogId))
+    .where(and(eq(responses.tenantId, tenantId), eq(responses.id, responseId), inArray(responses.responseType, [...AWAITING_ANSWER])))
+    .limit(1)
+  if (!reply) return false
+  // Compared in the database: a time read into JS loses its microseconds, and
+  // the reply would then be later than itself.
+  const answered = alias(responses, 'answered')
+  await db
+    .update(responses)
+    .set({ answeredAt: at })
+    .where(and(
+      eq(responses.tenantId, tenantId),
+      inArray(responses.responseType, [...AWAITING_ANSWER]),
+      isNull(responses.answeredAt),
+      lte(responses.receivedAt, db.select({ at: answered.receivedAt }).from(answered).where(eq(answered.id, responseId))),
+      inArray(
+        responses.outreachLogId,
+        db.select({ id: outreachLogs.id }).from(outreachLogs).where(and(eq(outreachLogs.projectId, reply.projectId), eq(outreachLogs.prospectId, reply.prospectId))),
+      ),
+    ))
+  return true
 }
 
 export type RecontactSample = {

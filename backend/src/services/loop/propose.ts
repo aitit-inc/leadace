@@ -30,6 +30,7 @@ import { listMessageVariantsById, replaceMessageVariant, upsertMessageVariant } 
 import { upsertDiscoveryStrategy } from '../discovery-strategies'
 import { listProjectProspects, type ProjectProspectRow } from '../prospects'
 import { notify, notifyCtxOf } from '../notifications'
+import { projectLink } from '../../domain/notifications'
 import { loadMasterDoc, noProgress, requireStrategyDocs, STAGE_ORIGIN, type HostedEnv, type ProgressFn } from '../pipeline/context'
 import { utcDateKey } from '../../domain/time'
 import { runWithRls } from '../../db/rls'
@@ -202,7 +203,7 @@ async function announceProposal(
       reference: `proposal:${p.id}`,
       subject: `${project?.name ?? 'Your project'}: ${p.title} on ${p.applyOn} unless you stop it`,
       body: `${p.body}\n\nAce makes this change in the first cycle on or after ${p.applyOn} (UTC). On the dashboard you can apply it now, stop it, or tell Ace what to do instead.`,
-      link: '/dashboard',
+      link: projectLink(projectId, '/dashboard'),
     })
     if (!sent.ok) console.warn(`[evaluate] proposal ${p.id} notice failed: ${sent.error}`)
   } catch (e) {
@@ -420,7 +421,7 @@ async function reportNoFrame(db: Db, tenantId: TenantId, env: HostedEnv, project
       reference: `frame-review:${projectId}:${frameStart ?? 'start'}`,
       subject: `${project?.name ?? 'Your project'}: a new frame would not fix the replies`,
       body: note,
-      link: '/dashboard',
+      link: projectLink(projectId, '/dashboard'),
     })
     if (!sent.ok) console.warn(`[frame review] notice failed for ${projectId}: ${sent.error}`)
   } catch (e) {

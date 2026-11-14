@@ -1,7 +1,9 @@
 <script lang="ts">
   import StatusBadge from '$lib/components/StatusBadge.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import { invalidate } from '$app/navigation';
   import ProspectDetail from '$lib/components/prospects/ProspectDetail.svelte';
+  import Conversation from '$lib/components/responses/Conversation.svelte';
   import { channelLabel } from '$lib/contact-channels';
   import type { PageProps } from './$types';
 
@@ -37,4 +39,18 @@
       <ProspectDetail {p} />
     </div>
   </div>
+
+  <h3 class="mb-3 mt-6 font-display text-lg font-semibold text-text">Conversation</h3>
+  {#if data.messages.length > 0}
+    <div class="card p-5">
+      <Conversation
+        messages={data.messages}
+        prospectName={p.name}
+        token={data.session?.access_token}
+        onChanged={() => invalidate('app:responses')}
+      />
+    </div>
+  {:else}
+    <EmptyState message="Nothing sent yet" />
+  {/if}
 {/if}

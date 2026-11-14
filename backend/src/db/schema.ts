@@ -1253,7 +1253,8 @@ export const responses = pgTable('responses', {
   sourceMessageId: text('source_message_id'),
   // When the person answered a response that waits for one (domain/reply
   // AWAITING_ANSWER): a message of theirs later in its thread, an answer sent
-  // from LeadAce, or their own mark. NULL until then, and on every other kind.
+  // from LeadAce to it or to a later reply of the prospect, or their own mark.
+  // NULL until then, and on every other kind.
   answeredAt: timestamp('answered_at', { withTimezone: true }),
 }, (table) => [
   // Required so inquiry_sessions can declare a composite (response_id,

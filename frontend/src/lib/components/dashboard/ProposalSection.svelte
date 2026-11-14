@@ -97,10 +97,15 @@
         {/if}
       </dl>
     {/if}
-    {#if change.kind === 'widen' || change.kind === 'frame'}
+    {#if change.kind === 'widen'}
       <details class="text-sm">
-        <summary class="cursor-pointer text-text-secondary">{change.kind === 'widen' ? 'The new Target' : 'The new sales strategy'}</summary>
-        <p class="mt-2 max-h-80 overflow-y-auto whitespace-pre-line rounded-xl bg-surface-2 px-3 py-2 text-text-secondary">{change.kind === 'widen' ? change.edit.content : change.salesStrategy}</p>
+        <summary class="cursor-pointer text-text-secondary">The new Target</summary>
+        <p class="mt-2 max-h-80 overflow-y-auto whitespace-pre-line rounded-xl bg-surface-2 px-3 py-2 text-text-secondary">{change.edit.content}</p>
+      </details>
+    {:else if change.kind === 'frame'}
+      <details class="text-sm">
+        <summary class="cursor-pointer text-text-secondary">The new sales strategy</summary>
+        <p class="mt-2 max-h-80 overflow-y-auto whitespace-pre-line rounded-xl bg-surface-2 px-3 py-2 text-text-secondary">{change.salesStrategy}</p>
       </details>
     {/if}
     {#if error}

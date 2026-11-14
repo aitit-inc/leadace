@@ -76,12 +76,14 @@ function firstUnquotedToken(bodyText: string): string | null {
 // Our opt-out footer ("unsubscribe"/"配信停止") is quoted back on every reply, so feeding
 // the whole body to the LLM would bias it toward a false unsubscribe → wrongful DNC.
 export function leadingUnquotedText(bodyText: string): string {
-  const lines: string[] = []
-  for (const raw of bodyText.split(/\r?\n/)) {
-    if (raw.trim().startsWith('>')) break
-    lines.push(raw)
-  }
-  return lines.join('\n').trim()
+  return splitAtQuote(bodyText).lead
+}
+
+export function splitAtQuote(bodyText: string): { lead: string; quoted: string } {
+  const lines = bodyText.split(/\r?\n/)
+  const quote = lines.findIndex((line) => line.trim().startsWith('>'))
+  const at = quote === -1 ? lines.length : quote
+  return { lead: lines.slice(0, at).join('\n').trim(), quoted: lines.slice(at).join('\n').trim() }
 }
 
 // Every line the sender wrote, wherever it sits: a bottom-posted or inline

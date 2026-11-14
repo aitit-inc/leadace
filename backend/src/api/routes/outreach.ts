@@ -14,7 +14,6 @@ import {
   sendAndRecord,
   sendAndRecordSchema,
   listRecentOutreach,
-  listOutreachResponses,
   listDrafts,
   listDraftsQuerySchema,
   editDraft,
@@ -103,16 +102,6 @@ outreachRouter.get(
       c.req.valid('param').id,
       c.req.valid('query'),
     )
-    if (!result.ok) return respondWithError(c, result)
-    return c.json(result.value)
-  },
-)
-
-outreachRouter.get(
-  '/outreach/:id/responses',
-  zValidator('param', outreachLogIdParamSchema),
-  async (c) => {
-    const result = await listOutreachResponses(c.get('db'), c.get('tenantId'), c.req.valid('param').id)
     if (!result.ok) return respondWithError(c, result)
     return c.json(result.value)
   },

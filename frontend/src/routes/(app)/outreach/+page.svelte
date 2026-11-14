@@ -1,22 +1,15 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { listOutreachResponses } from '$lib/api/outreach';
   import type { FunnelStageFilter, InquiryOutcome, OutreachStatus } from '$lib/types/outreach';
-  import type { OutreachResponse } from '$lib/types/responses';
   import ChannelBadge from '$lib/components/ChannelBadge.svelte';
-  import SentimentBadge from '$lib/components/SentimentBadge.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import Pagination from '$lib/components/Pagination.svelte';
   import type { PageProps } from './$types';
   import { PAGE_SIZE } from '$lib/pagination';
 
   let { data }: PageProps = $props();
-  let token = $derived(data.session?.access_token);
-
   let expandedId = $state<number | null>(null);
-  let responsesCache = $state<Record<number, OutreachResponse[]>>({});
-  let loadingResponses = $state<Record<number, boolean>>({});
 
   let filterStage = $derived<string>(data.filters.stage);
   let filterPeriod = $derived<string>(data.filters.period);
@@ -34,9 +27,6 @@
   ];
   let stageLabel = $derived(STAGE_OPTIONS.find((s) => s.value === filterStage)?.label ?? null);
 
-  // Reset per-row expand state when the underlying list changes (page/project
-  // change). The cache is intentionally kept — replies for log #N don't
-  // change shape just because we paged away and came back.
   $effect(() => {
     void data.logs;
     expandedId = null;
@@ -69,29 +59,8 @@
     updateUrl({ page: n });
   }
 
-  async function toggleExpand(logId: number) {
-    if (expandedId === logId) {
-      expandedId = null;
-      return;
-    }
-    expandedId = logId;
-    const log = data.logs.find((l) => l.id === logId);
-    if (!log || log.responseCount === 0) return;
-    // Re-fetch when the cache snapshot is for a stale responseCount. A new
-    // response landing while the user is on this page would otherwise stay
-    // hidden behind the old expand state.
-    const cached = responsesCache[logId];
-    const cacheFresh = cached !== undefined && cached.length === log.responseCount;
-    if (cacheFresh || loadingResponses[logId]) return;
-    loadingResponses = { ...loadingResponses, [logId]: true };
-    try {
-      const res = await listOutreachResponses(logId, fetch, token);
-      responsesCache = { ...responsesCache, [logId]: res.responses };
-    } finally {
-      const next = { ...loadingResponses };
-      delete next[logId];
-      loadingResponses = next;
-    }
+  function toggleExpand(logId: number) {
+    expandedId = expandedId === logId ? null : logId;
   }
 
   function formatDate(iso: string) {
@@ -255,24 +224,11 @@
               {/if}
 
               {#if log.responseCount > 0}
-                <div class="mt-3 border-t border-border pt-3 space-y-2">
-                  <p class="text-xs font-semibold text-text-muted">Replies ({log.responseCount})</p>
-                  {#if loadingResponses[log.id]}
-                    <p class="text-xs text-text-muted">Loading replies...</p>
-                  {:else if responsesCache[log.id]}
-                    {#each responsesCache[log.id] as r}
-                      <div class="rounded-xl bg-surface px-3 py-2.5 space-y-1.5">
-                        <div class="flex flex-wrap items-center gap-2 text-xs text-text-muted">
-                          <span class="tabular-nums">{formatDate(r.receivedAt)}</span>
-                          <SentimentBadge sentiment={r.sentiment} />
-                          <span class="text-text-secondary">{r.responseType}</span>
-                          <ChannelBadge channel={r.channel} />
-                        </div>
-                        <p class="text-sm text-text-secondary whitespace-pre-wrap break-words">{r.content}</p>
-                      </div>
-                    {/each}
-                  {/if}
-                </div>
+                <p class="mt-3 border-t border-border pt-3 text-sm">
+                  <a href="/prospects/{log.prospectId}" class="text-accent-strong hover:underline">
+                    {log.responseCount === 1 ? '1 reply' : `${log.responseCount} replies`}: read the conversation
+                  </a>
+                </p>
               {/if}
             </div>
           {/if}

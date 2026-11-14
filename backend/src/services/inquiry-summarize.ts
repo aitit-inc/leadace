@@ -10,6 +10,7 @@ import {
   type MeetingRequestTarget,
 } from './inquiry-session'
 import { notify, notifyCtxOf, type NotifyEnv } from './notifications'
+import { projectLink } from '../domain/notifications'
 
 const SUMMARIZE_MODEL = 'gpt-5.4-mini'
 const SUMMARIZE_TEMPERATURE = 0.2
@@ -113,9 +114,10 @@ export type ParsedSummary = {
 
 async function notifyLead(db: Db, env: NotifyEnv, target: MeetingRequestTarget, summary: string): Promise<void> {
   const [row] = await db
-    .select({ name: prospects.name, email: prospects.email })
+    .select({ name: prospects.name, email: prospects.email, prospectId: prospects.id, projectId: outreachLogs.projectId })
     .from(inquirySessions)
     .innerJoin(prospects, eq(prospects.id, inquirySessions.prospectId))
+    .innerJoin(outreachLogs, eq(outreachLogs.id, inquirySessions.outreachLogId))
     .where(eq(inquirySessions.id, target.sessionId))
     .limit(1)
   if (!row) return
@@ -135,7 +137,7 @@ async function notifyLead(db: Db, env: NotifyEnv, target: MeetingRequestTarget, 
         'Summary:',
         summary,
       ].join('\n'),
-      link: '/responses',
+      link: projectLink(row.projectId, `/prospects/${row.prospectId}`),
     },
   )
   if (!r.ok) console.warn(`[inquiry] lead notification failed session=${target.sessionId}: ${r.error}`)

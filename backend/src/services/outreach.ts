@@ -1283,44 +1283,6 @@ export async function listRecentOutreachById(
   return ok({ logs: enriched, total: countRows[0]?.total ?? 0 })
 }
 
-export type OutreachResponseRow = {
-  id: number
-  channel: string
-  content: string
-  sentiment: string
-  responseType: string
-  receivedAt: Date
-}
-
-export async function listOutreachResponses(
-  db: Db,
-  tenantId: TenantId,
-  id: number,
-): Promise<ServiceResult<{ responses: OutreachResponseRow[] }>> {
-  const [log] = await db
-    .select({ id: outreachLogs.id })
-    .from(outreachLogs)
-    .where(and(eq(outreachLogs.id, id), eq(outreachLogs.tenantId, tenantId)))
-    .limit(1)
-
-  if (!log) return err('NOT_FOUND', 'Outreach log not found')
-
-  const rows = await db
-    .select({
-      id: responses.id,
-      channel: responses.channel,
-      content: responses.content,
-      sentiment: responses.sentiment,
-      responseType: responses.responseType,
-      receivedAt: responses.receivedAt,
-    })
-    .from(responses)
-    .where(eq(responses.outreachLogId, id))
-    .orderBy(desc(responses.receivedAt))
-
-  return ok({ responses: rows })
-}
-
 export type DraftRow = {
   id: number
   prospectId: number

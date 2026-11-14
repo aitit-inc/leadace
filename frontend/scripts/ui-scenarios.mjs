@@ -1112,6 +1112,65 @@ const SCENARIOS = [
     },
   },
   {
+    name: 'conversation',
+    summary: 'Everything sent to one prospect and everything that came back, with an answer waiting to be sent',
+    stack: 'self-host',
+    setup: async (ctx) => {
+      const projectId = await seedProject(ctx, { name: 'Northwind outbound', settings: { outboundMode: 'send' } });
+      const [dana] = await seedProspects(ctx, projectId, 1);
+      const t = q(ctx.persona.tenantId);
+      const subject = 'Fewer back-and-forths before a first call';
+      const first = outreachBody(dana, 0);
+      const answer = 'Hi Dana,\n\nIt sits beside the booking page you have: enquiries still arrive there, and it answers the ones that come by email.\n\nBest,\nSam';
+      const quote = (text) => text.split('\n').map((line) => `> ${line}`).join('\n');
+      psql(
+        `WITH sent AS (
+           INSERT INTO outreach_logs (tenant_id, project_id, prospect_id, channel, subject, body, status, sent_at, from_email)
+           VALUES (${t}, ${q(projectId)}, ${dana.prospectId}, 'email', ${q(subject)}, ${q(first)}, 'sent', now() - interval '9 days', 'sam@northwind.example')
+           RETURNING id),
+         asked AS (
+           INSERT INTO responses (tenant_id, outreach_log_id, channel, content, sentiment, response_type, received_at, answered_at)
+           SELECT ${t}, id, 'email', ${q(`Does this replace our booking page, or sit beside it?\n\nOn Tue, Sam Rivera wrote:\n${quote(first)}`)}, 'neutral', 'reply', now() - interval '7 days', now() - interval '6 days' FROM sent
+           RETURNING id),
+         wants AS (
+           INSERT INTO responses (tenant_id, outreach_log_id, channel, content, sentiment, response_type, received_at)
+           SELECT ${t}, id, 'email', ${q(`That helps. Could we talk it through next week?\n\nOn Wed, Sam Rivera wrote:\n${quote(answer)}`)}, 'positive', 'meeting_request', now() - interval '1 day' FROM sent
+           RETURNING id)
+         INSERT INTO answers (tenant_id, response_id, to_email, subject, ace_body, body, status, sent_at)
+         SELECT ${t}, id, ${q(dana.email)}, ${q(`Re: ${subject}`)}, ${q(answer)}, ${q(answer)}, 'sent'::answer_status, now() - interval '6 days' FROM asked
+         UNION ALL
+         SELECT ${t}, id, ${q(dana.email)}, ${q(`Re: ${subject}`)}, ${q('Hi Dana,\n\nGlad it helps. Here is my calendar: {booking link}\n\nBest,\nSam')}, ${q('Hi Dana,\n\nGlad it helps. Here is my calendar: {booking link}\n\nBest,\nSam')}, 'draft'::answer_status, NULL FROM wants;`,
+      );
+      const other = await seedProject(ctx, { name: 'Harbor inbound', settings: {} });
+      const open = (id) => [{ name: 'leadace_active_project', value: id }];
+      const switchedTo = 'button[aria-haspopup="menu"]:has-text("Northwind outbound")';
+      const path = `/prospects/${dana.prospectId}`;
+      // As the reply ingest files it: the link names the reply's project.
+      psql(
+        `INSERT INTO notifications (tenant_id, category, reference, subject, body, link)
+         VALUES (${t}, 'lead', 'ui:reply', 'Meeting request from Dana Brooks', 'Dana Brooks (project Northwind outbound) wrote back.', ${q(`${path}?project=${projectId}`)});
+         -- Already seen: opening the bell on an unread one reloads the layout, which would hide a stale project name.
+         UPDATE tenants SET notifications_seen_at = now() + interval '1 minute' WHERE id = ${t};`,
+      );
+      return [
+        { name: 'replies', path: '/responses', cookies: open(projectId), expect: ['Could we talk it through next week?', 'Waiting'] },
+        { name: 'thread', path, scrollTo: 'h3:has-text("Conversation")', expect: [subject, 'Does this replace our booking page', 'It sits beside the booking page', 'Quoted text'] },
+        { name: 'answer', path, scrollTo: 'button:has-text("Mark answered")', expect: ['Could we talk it through next week?', 'Ace drafted an answer', 'Here is my calendar: {booking link}', 'Send'] },
+        // The notification's link, followed while another project is open: from the email, then from the bell.
+        { name: 'linked', path: `${path}?project=${projectId}`, cookies: open(other), scrollTo: 'h3:has-text("Conversation")', expect: subject, expectSelector: switchedTo },
+        {
+          name: 'linked-from-bell',
+          path: '/dashboard',
+          cookies: open(other),
+          click: ['button[aria-haspopup="menu"][aria-label^="Alerts"]', 'a:has-text("Meeting request from Dana Brooks")'],
+          scrollTo: 'h3:has-text("Conversation")',
+          expect: subject,
+          expectSelector: switchedTo,
+        },
+      ];
+    },
+  },
+  {
     name: 'notifications',
     summary: 'The bell with notifications (one unread), and the notification settings',
     stack: 'self-host',
@@ -1170,7 +1229,7 @@ const SCENARIOS = [
           name: 'page',
           path: '/dashboard',
           expect: [
-            '2 replies waiting for your answer',
+            '2 prospects are waiting for your answer',
             'History',
             'Wantedly stories reach the schools email is bouncing at',
           ],
@@ -1195,12 +1254,7 @@ const SCENARIOS = [
           click: 'button:has-text("Something else")',
           expect: ['This proposal stops', 'Send to Ace'],
         },
-        {
-          name: 'replies-waiting',
-          path: '/responses?answer=waiting',
-          click: 'button:has-text("Please send over a calendar link") >> nth=0',
-          expect: ['Ace drafted an answer', 'Here is my calendar: {booking link}', 'Send', 'Mark answered'],
-        },
+        { name: 'replies-waiting', path: '/responses?answer=waiting', expect: ['Please send over a calendar link', 'Waiting'] },
         { name: 'history', path: '/history', expect: ['What was decided', 'Retired', 'Started testing the angle', 'Contacted', 'Edited the sales strategy', 'Edited how you answer replies'] },
         { name: 'answering-guide', path: '/documents', click: 'button:has-text("Answering Replies")', expect: ['Answering Replies', 'https://cal.example/alex/20min'] },
         { name: 'history-row', path: '/history', click: 'summary:has-text("Edited the sales strategy")', expect: ['On reply rates, the noes'] },

@@ -48,7 +48,7 @@ export function attentionMeta(item: AttentionItem): AttentionMeta {
 			return {
 				icon: Reply,
 				tone: 'inbound',
-				title: `${item.count} ${item.count === 1 ? 'reply' : 'replies'} waiting for your answer`,
+				title: `${item.count} ${item.count === 1 ? 'prospect is' : 'prospects are'} waiting for your answer`,
 				desc: `The oldest came ${new Date(item.since).toLocaleDateString()} — send Ace's draft or mark it answered`,
 				ctaLabel: 'Review',
 				href: '/responses?answer=waiting',
@@ -147,7 +147,7 @@ export function attentionMeta(item: AttentionItem): AttentionMeta {
 				title: `Outreach in ${item.projectName} is drawing no interest`,
 				desc: `${item.engaged} of ${Math.round(item.sends)} delivered emails drew a reply or inquiry-page engagement — statistically below a viable rate. Check deliverability (DMARC, spam placement) and targeting before sending more`,
 				ctaLabel: 'Review',
-				href: '/dashboard',
+				href: `/dashboard?project=${encodeURIComponent(item.projectId)}`,
 			};
 		case 'no_outbound_channels':
 			return {

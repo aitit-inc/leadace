@@ -13,6 +13,7 @@ import { loadDoc } from './pipeline/context'
 import { loadProjectSendSettings } from './project-settings'
 import { assertTenantComplianceReady, localizeComplianceIdentity } from './tenants'
 import { assertPublicHttpsSendHosts, type SendContext } from './outreach'
+import { settleConversation } from './responses'
 import { ok, err, type ServiceResult } from './result'
 
 const MAX_REPLY_CHARS = 4000
@@ -395,9 +396,6 @@ async function settleAnswerSend(
   }
   const sentAt = new Date()
   await db.update(answers).set({ status: 'sent', sentAt }).where(sending)
-  await db
-    .update(responses)
-    .set({ answeredAt: sql`COALESCE(${responses.answeredAt}, ${sentAt.toISOString()}::timestamptz)` })
-    .where(and(eq(responses.tenantId, tenantId), eq(responses.id, a.responseId)))
+  await settleConversation(db, tenantId, a.responseId, sentAt)
   return ok({ to: a.to, from: result.from })
 }
