@@ -913,7 +913,7 @@ const SCENARIOS = [
         },
       });
       return [
-        { name: 'send-drafts', path: `/chat?t=${sendDrafts}`, expect: ['Send 2 emails', 'Connect Gmail to send the emails you approve'] },
+        { name: 'send-drafts', path: `/chat?t=${sendDrafts}`, expect: ['Send 2 emails', 'Connect Gmail: Ace sends the emails you approve'] },
         { name: 'frame', path: `/chat?t=${frame}`, expect: 'Start the new frame' },
         { name: 'send-mode', path: `/chat?t=${sendMode}`, expect: 'Send without review' },
         { name: 'ordinary', path: `/chat?t=${ordinary}`, expect: 'Draft this email' },
@@ -940,7 +940,7 @@ const SCENARIOS = [
         });
       }
       return [
-        { name: 'list', path: '/drafts', expect: ['A quicker first reply', 'Connect Gmail to send the emails you approve'] },
+        { name: 'list', path: '/drafts', expect: ['A quicker first reply', 'Connect Gmail: Ace sends the emails you approve'] },
         // Back from Google after declining Gmail: still signed in, told why on the page it started from.
         {
           name: 'connect-declined',
@@ -1213,7 +1213,7 @@ const SCENARIOS = [
         (${t}, 'lead', 'ui:5', 'Reply from Fabrikam Robotics', ${replyBody}, '/responses', now() - interval '30 minutes');`);
       return [
         { name: 'bell', path: '/dashboard', click: 'button[aria-haspopup="menu"][aria-label^="Alerts"]', expect: 'Reply from Fabrikam Robotics' },
-        { name: 'settings', path: '/workspace-settings', click: 'text=Scheduled runs', expect: ['Scheduled runs', 'What we learned', 'Replies to answer'] },
+        { name: 'settings', path: '/workspace-settings', click: "text=Ace's answer when its work is done", expect: ["Ace's answer when its work is done", 'What we learned', 'Replies to answer'] },
       ];
     },
   },
@@ -1813,10 +1813,10 @@ class Recorder {
 
   // Until Ace waits on the person (a card or the sender identity form) or the
   // thread goes quiet.
-  async settle() {
+  async settle(maxMs = 3_600_000) {
     const start = Date.now();
     let quietSince = null;
-    while (Date.now() - start < 3_600_000) {
+    while (Date.now() - start < maxMs) {
       const running = await this.page.locator('button[aria-label="Stop"]').isVisible().catch(() => false);
       const card = await this.page.locator(`${CARD} button:text-is("Cancel"):enabled`).last().isVisible().catch(() => false);
       const form = await this.page.locator(IDENTITY_FORM).isVisible().catch(() => false);
@@ -1877,9 +1877,14 @@ class Recorder {
       ? card.locator('button').filter({ hasNotText: /^Cancel$/ }).last()
       : card.getByRole('button', { name: 'Cancel', exact: true });
     const label = (await button.textContent())?.trim();
-    await this.click(button);
     this.log(`${approve ? 'approved' : 'declined'}: ${label}`);
-    // The card stays up, enabled, for a moment after the click.
+    await this.press(button);
+  }
+
+  // A click that answers Ace: until Ace runs or the button goes. A card stays
+  // up, enabled, for a moment after the click.
+  async press(button) {
+    await this.click(button);
     for (let i = 0; i < 30; i++) {
       await sleep(1000);
       const running = await this.page.locator('button[aria-label="Stop"]').isVisible().catch(() => false);
@@ -1887,14 +1892,14 @@ class Recorder {
     }
   }
 
-  async fillIdentity() {
+  async fillIdentity(values = COMPLIANCE) {
     const form = this.page.locator(IDENTITY_FORM);
     const name = form.locator('input[type=text]').first();
     const address = form.locator('textarea').first();
     const country = form.locator('select').first();
-    if (!(await name.inputValue())) await name.pressSequentially(COMPLIANCE.legalName, { delay: 25 });
-    if (!(await address.inputValue())) await address.pressSequentially(COMPLIANCE.physicalAddress, { delay: 20 });
-    if (['', 'null'].includes(await country.inputValue())) await country.selectOption(COMPLIANCE.defaultSenderCountry);
+    if (!(await name.inputValue())) await name.pressSequentially(values.legalName, { delay: 25 });
+    if (!(await address.inputValue())) await address.pressSequentially(values.physicalAddress, { delay: 20 });
+    if (['', 'null'].includes(await country.inputValue())) await country.selectOption(values.defaultSenderCountry);
     await sleep(1200);
     await form.locator('button[type=submit]').click();
     this.log('saved sender identity');

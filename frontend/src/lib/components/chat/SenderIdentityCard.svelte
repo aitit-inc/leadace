@@ -72,7 +72,7 @@
     <div class="min-w-0">
       <h3 class="font-display text-lg font-semibold leading-snug text-text">Confirm your sender identity</h3>
       <p class="mt-0.5 text-sm text-text-secondary">
-        Every email's footer carries this by law. Ace filled in what your site shows; fix anything that is off.
+        Every email's footer carries this by law. Make sure it is right.
       </p>
     </div>
   </div>

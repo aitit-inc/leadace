@@ -620,9 +620,9 @@ export default async function (r) {
   // What the screen cannot show: green or red, from a value read just now.
   const rows = r.psql(`SELECT count(*) FROM ...`);
   await r.verdict(`Rows: ${rows}`, rows === '1');
-  // Also: r.setFast(on) (play a wait fast), r.settle() (the next card, form or
-  // quiet), r.page (Playwright), r.persona, r.api, r.psql, r.q, r.appUrl,
-  // r.apiUrl.
+  // Also: r.setFast(on) (play a wait fast), r.settle(maxMs) (the next card, form or
+  // quiet, or 'timeout' after maxMs: an hour unless given), r.page (Playwright),
+  // r.persona, r.api, r.psql, r.q, r.appUrl, r.apiUrl.
 }
 ```
 

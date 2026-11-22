@@ -1,6 +1,6 @@
 import { and, eq, inArray, isNull, min, sql } from 'drizzle-orm'
 import type { Db } from '../db/connection'
-import { outreachLogs, projectSettings, responses, sendingIdentities, tenantPlans } from '../db/schema'
+import { outreachLogs, projectSendingIdentities, responses, sendingIdentities, tenantPlans } from '../db/schema'
 import {
   deriveAttentionItems,
   type AttentionInput,
@@ -29,20 +29,15 @@ async function loadTenantAttention(
   userId: string,
   edition: Edition,
 ): Promise<ServiceResult<TenantAttention>> {
-  const [complianceRes, onboardingRes, gmailRes, planRes, emailDrafts, sendModeProjects, identities, vitalsRows, [subscription]] = await Promise.all([
+  const [complianceRes, onboardingRes, gmailRes, planRes, listedMailboxes, identities, vitalsRows, [subscription]] = await Promise.all([
     getTenantComplianceStatus(db, tenantId),
     getOnboardingStatus(db, tenantId),
     getCredentialsStatus(db, tenantId, userId),
     getPlanInfo(db, tenantId, edition),
     db
-      .select({ id: outreachLogs.id })
-      .from(outreachLogs)
-      .where(and(eq(outreachLogs.tenantId, tenantId), eq(outreachLogs.status, 'pending_review'), eq(outreachLogs.channel, 'email')))
-      .limit(1),
-    db
-      .select({ projectId: projectSettings.projectId })
-      .from(projectSettings)
-      .where(and(eq(projectSettings.tenantId, tenantId), eq(projectSettings.outboundMode, 'send')))
+      .select({ identityId: projectSendingIdentities.identityId })
+      .from(projectSendingIdentities)
+      .where(eq(projectSendingIdentities.tenantId, tenantId))
       .limit(1),
     db
       .select({
@@ -92,8 +87,7 @@ async function loadTenantAttention(
     hasProject: onboardingRes.value.hasProject,
     compliance: { ready: complianceRes.value.ready, missing: complianceRes.value.missing },
     gmailConnected: gmailRes.value.connected,
-    emailDraftsWaiting: emailDrafts.length > 0,
-    sendsWithoutReview: sendModeProjects.length > 0,
+    projectMailboxListed: listedMailboxes.length > 0,
     // A Send-As alias has no credentials or inbox of its own (its parent reports
     // those) but it does have its own cap, so a refusal below is its own.
     identities: identities.filter((i) => i.parentIdentityId === null),

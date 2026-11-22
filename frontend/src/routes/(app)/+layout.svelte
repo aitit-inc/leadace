@@ -232,7 +232,7 @@
             <span>
               {revoked
                 ? 'Google access was revoked — sending and reply collection are stopped until you reconnect.'
-                : 'Connect Gmail to send the emails you approve, from your own address.'}
+                : 'Connect Gmail: Ace sends the emails you approve from your own address, reads your inbox to find the replies and bounces, and emails you when its work is done.'}
             </span>
           </div>
           <button

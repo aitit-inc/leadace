@@ -36,6 +36,9 @@ export function threadRunner(dispatch: InternalDispatch) {
     // An input came in since the loop last looked for one.
     private dirty = false
     private text = ''
+    // What Ace wrote last and in which turn, for the notice of a finished job (settle).
+    private turns = 0
+    private said = { turn: 0, text: '' }
     private confirms: Array<{ callId: string; approve: boolean }> = []
     private stop = new AbortController()
     private drained = Promise.resolve()
@@ -51,6 +54,16 @@ export function threadRunner(dispatch: InternalDispatch) {
       this.running = true
       this.stop = new AbortController()
       this.drained = this.drain(ref)
+    }
+
+    // Answers what the thread holds, a finished job's notice included, and
+    // resolves once it has stopped, with what Ace wrote in the turns that began
+    // after the call: a turn already under way has not read the notice.
+    async settle(ref: ThreadRef): Promise<string> {
+      const before = this.turns
+      await this.wake(ref)
+      while (this.running) await this.drained
+      return this.said.turn > before ? this.said.text : ''
     }
 
     async confirm(ref: ThreadRef, callId: string, approve: boolean): Promise<void> {
@@ -128,6 +141,7 @@ export function threadRunner(dispatch: InternalDispatch) {
     private async turn(ref: ThreadRef, run: ChatTurnDeps['run'], input: ChatTurnInput): Promise<void> {
       this.busy = true
       this.text = ''
+      const turn = ++this.turns
       this.broadcast({ type: 'state', running: true, text: '' })
       // No person's request carries the turn, so it acts as the workspace owner.
       const userId = await run((db) => getTenantOwnerUserId(db, ref.tenantId))
@@ -141,7 +155,10 @@ export function threadRunner(dispatch: InternalDispatch) {
       await withPaidCallScope({ databaseUrl: this.env.DATABASE_URL, tenantId: ref.tenantId, threadId: ref.threadId }, async () => {
         for await (const event of runChatTurn(deps, ref.threadId, input)) {
           if (event.type === 'text_delta') this.text += event.text
-          else if (event.type === 'message') this.text = ''
+          else if (event.type === 'message') {
+            if (this.text.trim()) this.said = { turn, text: this.text.trim() }
+            this.text = ''
+          }
           this.broadcast(event)
         }
       })

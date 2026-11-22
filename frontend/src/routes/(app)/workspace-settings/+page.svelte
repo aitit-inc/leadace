@@ -261,8 +261,9 @@
         <div>
           <h2 class="text-sm font-medium text-text">Notifications</h2>
           <p class="mt-0.5 text-xs text-text-muted">
-            Replies that need your answer, leads from the inquiry page, jobs finishing, scheduled runs failing, the plugin's run
-            reports, and what the daily cycle learned. In the app they appear under the bell (the latest 30).
+            Replies that need your answer, leads from the inquiry page, what Ace says when its work is done, scheduled runs
+            failing, the plugin's run reports, and what the daily cycle learned. In the app they appear under the bell (the
+            latest 30). Emails go out from your connected Gmail.
           </p>
         </div>
         <table class="text-sm">
@@ -285,9 +286,9 @@
               <td class="px-3 text-center"><input type="checkbox" aria-label="Learning reports by email" bind:checked={formData.notifyInsightEmail} /></td>
             </tr>
             <tr>
-              <td class="py-1 pr-6 text-text">Scheduled runs</td>
-              <td class="px-3 text-center"><input type="checkbox" aria-label="Scheduled runs in the app" bind:checked={formData.notifyCronInApp} /></td>
-              <td class="px-3 text-center"><input type="checkbox" aria-label="Scheduled runs by email" bind:checked={formData.notifyCronEmail} /></td>
+              <td class="py-1 pr-6 text-text">Ace's answer when its work is done (a scheduled run, or jobs started in the chat)</td>
+              <td class="px-3 text-center"><input type="checkbox" aria-label="Ace's answers in the app" bind:checked={formData.notifyCronInApp} /></td>
+              <td class="px-3 text-center"><input type="checkbox" aria-label="Ace's answers by email" bind:checked={formData.notifyCronEmail} /></td>
             </tr>
             <tr>
               <td class="py-1 pr-6 text-text">Everything else</td>

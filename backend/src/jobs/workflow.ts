@@ -11,7 +11,7 @@ import { finishJob, loadJobForRun, markJobRunning, notifyJobFinished } from '../
 import { notifyCtxOf } from '../services/notifications'
 import { appendJobNotice } from '../services/chat/threads'
 import { runDailyCycle } from './daily-cycle'
-import { discoverJob, draftStage, enrichStage, evaluateStage, journalStage, sendStage, type StageCtx } from './stages'
+import { STEP_RETRY, discoverJob, draftStage, enrichStage, evaluateStage, journalStage, sendStage, type StageCtx } from './stages'
 
 export type JobWorkflowParams = { jobId: string; tenantId: string }
 
@@ -81,20 +81,24 @@ export class LeadAceJobWorkflow extends WorkflowEntrypoint<Env, JobWorkflowParam
       await withDb(this.env.DATABASE_URL, (db) => finishJob(db, job.tenantId, job.id, outcome))
       return true
     })
-    await step.do('notify', async () => {
+    // A thread answers its job before the person is told, so the notice
+    // carries what Ace said; without an answer it carries the job's summary.
+    // The thread wakes after the status flips, so the answer reads the job as
+    // finished.
+    let answer = ''
+    if (job.threadId) {
+      const threadId = job.threadId
+      try {
+        answer = await step.do('settle-thread', STEP_RETRY, () => this.env.THREADS.getByName(threadId).settle({ tenantId: job.tenantId, threadId }))
+      } catch (e) {
+        console.warn(`[jobs] thread did not settle job=${job.id}`, e)
+      }
+    }
+    await step.do('announce', async () => {
       const run: TenantRun = (fn) => withTenantConnection(this.env.DATABASE_URL, job.tenantId, fn)
-      const r = await notifyJobFinished(run, job.tenantId, notifyCtxOf(this.env), job.id)
+      const r = await notifyJobFinished(run, job.tenantId, notifyCtxOf(this.env), job.id, answer)
       if (!r.ok) console.warn(`[jobs] notification failed job=${job.id}: ${r.error}`)
       return true
     })
-    // Whether the thread owes an answer is the runner's call. It wakes after
-    // the status flips, so the answer reads the job as finished.
-    if (job.threadId) {
-      const threadId = job.threadId
-      await step.do('wake-thread', async () => {
-        await this.env.THREADS.getByName(threadId).wake({ tenantId: job.tenantId, threadId })
-        return true
-      })
-    }
   }
 }

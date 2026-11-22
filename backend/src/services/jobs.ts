@@ -2,10 +2,10 @@
 // Web UI, MCP). A row is the record; the Workflow instance with the same id
 // does the work (jobs/workflow.ts) and reports back through the row.
 import { z } from 'zod'
-import { and, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, desc, eq, gt, inArray, sql } from 'drizzle-orm'
 import type { Db } from '../db/connection'
 import type { TenantRun } from '../db/rls'
-import { jobs, outreachLogs, projects } from '../db/schema'
+import { chatThreads, jobs, outreachLogs, projects } from '../db/schema'
 import type { ProjectId, ProjectRef, TenantId } from '../domain/ids'
 import { asProjectId, asTenantId, projectRefSchema } from '../domain/ids'
 import {
@@ -27,7 +27,7 @@ import { ok, err, type ServiceResult } from './result'
 import { resolveProject } from './projects'
 import { getActiveStrategySlugs } from './discovery-strategies'
 import { notify, type NotifyCtx, type NotifyResult } from './notifications'
-import { categoryOfJob, projectLink } from '../domain/notifications'
+import { projectLink } from '../domain/notifications'
 
 // The Workflow binding, narrowed to what this service needs so it stays
 // testable and free of the Worker env type.
@@ -290,21 +290,37 @@ export async function loadJobForRun(db: Db, tenantId: TenantId, id: string): Pro
 }
 
 // Reads the row, not the run's outcome: a job cancelled while it ran ends
-// quietly, whatever the run returned.
-export async function notifyJobFinished(run: TenantRun, tenantId: TenantId, ctx: NotifyCtx, id: string): Promise<ServiceResult<NotifyResult>> {
-  const [row] = await run((db) => db
-    .select({ kind: jobs.kind, status: jobs.status, result: jobs.result, error: jobs.error, startedBy: jobs.startedBy, threadId: jobs.threadId, projectId: jobs.projectId, project: projects.name })
-    .from(jobs)
-    .innerJoin(projects, eq(projects.id, jobs.projectId))
-    .where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, id)))
-    .limit(1))
+// quietly, whatever the run returned. `answer` is what Ace said once the job's
+// thread had stopped, in place of the job's own summary. Where a job of the
+// thread started after this one ended, Ace has gone on, and that job's end is
+// the news.
+export async function notifyJobFinished(run: TenantRun, tenantId: TenantId, ctx: NotifyCtx, id: string, answer: string): Promise<ServiceResult<NotifyResult>> {
+  const found = await run(async (db) => {
+    const [row] = await db
+      .select({ kind: jobs.kind, status: jobs.status, result: jobs.result, error: jobs.error, finishedAt: jobs.finishedAt, threadId: jobs.threadId, projectId: jobs.projectId, project: projects.name, pendingCall: chatThreads.pendingCall })
+      .from(jobs)
+      .innerJoin(projects, eq(projects.id, jobs.projectId))
+      .leftJoin(chatThreads, eq(chatThreads.id, jobs.threadId))
+      .where(and(eq(jobs.tenantId, tenantId), eq(jobs.id, id)))
+      .limit(1)
+    if (!row?.threadId || !row.finishedAt) return { row, goesOn: false }
+    const [next] = await db
+      .select({ id: jobs.id })
+      .from(jobs)
+      .where(and(eq(jobs.tenantId, tenantId), eq(jobs.threadId, row.threadId), inArray(jobs.status, ['queued', 'running']), gt(jobs.createdAt, row.finishedAt)))
+      .limit(1)
+    return { row, goesOn: next !== undefined }
+  })
+  const { row } = found
   if (!row) return err('NOT_FOUND', `Job ${id} not found`)
-  if (row.status !== 'succeeded' && row.status !== 'failed') return ok({ recorded: false, emailedTo: null })
+  if ((row.status !== 'succeeded' && row.status !== 'failed') || found.goesOn) return ok({ recorded: false, emailedTo: null })
+  const said = answer || (row.status === 'succeeded' ? row.result?.summary : row.error) || row.status
+  const card = row.pendingCall?.summary?.title
   return notify(run, tenantId, ctx, {
-    category: categoryOfJob(row.startedBy),
+    category: row.threadId ? 'cron' : 'general',
     reference: `job:${id}`,
     subject: `${row.kind.replace('_', ' ')} ${row.status}: ${row.project}`,
-    body: (row.status === 'succeeded' ? row.result?.summary : row.error) ?? row.status,
+    body: card ? `${said}\n\nWaiting for your approval: ${card}` : said,
     link: projectLink(row.projectId, row.threadId ? `/chat?t=${row.threadId}` : '/chat'),
   })
 }

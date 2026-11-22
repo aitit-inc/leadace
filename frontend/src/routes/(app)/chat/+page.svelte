@@ -262,7 +262,7 @@
         if (!mounted || gen !== viewGen) return;
         jobs = { ...jobs, [id]: job };
         if (TERMINAL_JOB_STATUSES.includes(job.status)) {
-          await invalidate('app:chat');
+          await Promise.all([invalidate('app:chat'), invalidate('app:attention')]);
           return;
         }
       } catch {
@@ -307,7 +307,7 @@
       projectsChanged = false;
       await invalidate('app:projects');
     }
-    await invalidate('app:chat');
+    await Promise.all([invalidate('app:chat'), invalidate('app:attention')]);
   }
 
   // What this tab may have missed: a turn that ended before the feed opened, a

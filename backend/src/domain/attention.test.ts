@@ -111,8 +111,7 @@ describe('deriveAttentionItems', () => {
     hasProject: true,
     compliance: { ready: true, missing: [] },
     gmailConnected: true,
-    emailDraftsWaiting: false,
-    sendsWithoutReview: false,
+    projectMailboxListed: false,
     identities: [],
     refusedMailboxes: [],
     spamHeldMailboxes: [],
@@ -142,10 +141,8 @@ describe('deriveAttentionItems', () => {
   it('orders opportunity → send blockers → degradation → review queue', () => {
     const items = deriveAttentionItems({
       ...clean,
-      hasProject: false,
       compliance: { ready: false, missing: ['legalName'] },
       gmailConnected: false,
-      emailDraftsWaiting: true,
       identities: [
         gmail({
           fromEmail: 'dead@example.com',
@@ -164,7 +161,6 @@ describe('deriveAttentionItems', () => {
     })
     expect(items.map((i) => i.kind)).toEqual([
       'replies_waiting',
-      'no_project',
       'compliance_incomplete',
       'gmail_disconnected',
       'mailbox_send_refused',
@@ -191,11 +187,11 @@ describe('deriveAttentionItems', () => {
     ])
   })
 
-  it('asks for Gmail only once something waits to go out', () => {
+  it('asks for Gmail once there is a project', () => {
     const unconnected = { ...clean, gmailConnected: false }
-    expect(deriveAttentionItems(unconnected)).toEqual([])
-    expect(deriveAttentionItems({ ...unconnected, emailDraftsWaiting: true })).toEqual([{ kind: 'gmail_disconnected' }])
-    expect(deriveAttentionItems({ ...unconnected, sendsWithoutReview: true })).toEqual([{ kind: 'gmail_disconnected' }])
+    expect(deriveAttentionItems({ ...unconnected, hasProject: false })).toEqual([{ kind: 'no_project' }])
+    expect(deriveAttentionItems(unconnected)).toEqual([{ kind: 'gmail_disconnected' }])
+    expect(deriveAttentionItems({ ...unconnected, projectMailboxListed: true })).toEqual([])
   })
 
   it('places a revoked credential with the send blockers, not the degradation tail', () => {

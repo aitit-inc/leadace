@@ -1,9 +1,7 @@
-import type { JobOrigin } from './jobs'
-
-// 'cron' is what ran unattended (a schedule and the jobs it started); 'lead'
-// is a recipient a person should answer: a reply the ingest recorded, or a
-// conversation asked for on the inquiry page; 'insight' is the cycle digest;
-// the rest is 'general'.
+// 'cron' is work nobody watched to its end: a schedule's run, and Ace's answer
+// once the jobs of a chat thread are done; 'lead' is a recipient a person
+// should answer: a reply the ingest recorded, or a conversation asked for on
+// the inquiry page; 'insight' is the cycle digest; the rest is 'general'.
 export const NOTIFICATION_CATEGORIES = ['general', 'cron', 'lead', 'insight'] as const
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number]
 
@@ -17,8 +15,4 @@ export const NOTIFICATIONS_KEPT = 30
 // The app shows one project at a time, so a link into one names it.
 export function projectLink(projectId: string, path: string): string {
   return `${path}${path.includes('?') ? '&' : '?'}project=${encodeURIComponent(projectId)}`
-}
-
-export function categoryOfJob(startedBy: JobOrigin): NotificationCategory {
-  return startedBy === 'cron' ? 'cron' : 'general'
 }
