@@ -16,7 +16,7 @@ function attended(): { tools: ToolExecutor; ran: string[] } {
       // direction (setting do-not-contact, turning a schedule off).
       if (name === 'set_prospect_do_not_contact' && args['doNotContact'] === true) return null
       if (name === 'set_schedule' && args['enabled'] === false) return null
-      return { title: name, facts: [], confirmLabel: 'Go' }
+      return { title: name, facts: [], needsMailbox: false, confirmLabel: 'Go' }
     },
     isReadOnly: (name) => name.startsWith('list_'),
     isGated: (name) => GATED.has(name),

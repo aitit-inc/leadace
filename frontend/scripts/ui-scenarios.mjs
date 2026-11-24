@@ -798,6 +798,7 @@ const SCENARIOS = [
             { label: 'Subject', value: DRAFT_SUBJECT },
           ],
           body: outreachBody(dana, 0),
+          needsMailbox: false,
           confirmLabel: 'Save draft',
         },
       });
@@ -816,6 +817,7 @@ const SCENARIOS = [
             { label: 'What stays', value: 'Prospects and organizations — those belong to the workspace' },
           ],
           warning: 'This cannot be undone.',
+          needsMailbox: false,
           confirmLabel: 'Delete project',
         },
       });
@@ -834,6 +836,7 @@ const SCENARIOS = [
             { label: 'Still applies', value: "Your mailbox's daily cap and the do-not-contact list" },
             { label: 'To undo', value: 'Switch back any time in Project settings' },
           ],
+          needsMailbox: false,
           confirmLabel: 'Send without review',
         },
       });
@@ -876,6 +879,7 @@ const SCENARIOS = [
           ],
           body: FRAME_EDITS.map((e) => e.content).join('\n\n'),
           warning: 'Measuring restarts: results so far stop steering this project.',
+          needsMailbox: false,
           confirmLabel: 'Start the new frame',
         },
       });
@@ -896,7 +900,7 @@ const SCENARIOS = [
         projectId,
         title: 'Write to the next two',
         userText: 'Draft outreach for the next 2 reachable prospects.',
-        modelText: 'Both drafts are ready — read them on the card and send, or tell me what to change. Connect Gmail from the banner first.',
+        modelText: 'Both drafts are ready — read them on the card, or tell me what to change. Connect Gmail there and I ask again before anything is sent.',
         toolName: 'start_job',
         args: { projectId, params: { kind: 'send', draftIds } },
         summary: {
@@ -908,12 +912,13 @@ const SCENARIOS = [
             { label: 'New prospects', value: 'unlimited' },
           ],
           body: drafts.map((d) => `To: ${d.p.name} <${d.p.email}>\nSubject: ${d.subject}\n\n${d.body}`).join('\n\n— — —\n\n'),
-          warning: 'No mailbox can send for this project yet, so nothing goes out until one is connected. Sent email cannot be recalled.',
+          warning: 'No mailbox can send for this project yet. Connect one, and you are asked again before anything goes out. Sent email cannot be recalled.',
+          needsMailbox: true,
           confirmLabel: 'Send 2 emails',
         },
       });
       return [
-        { name: 'send-drafts', path: `/chat?t=${sendDrafts}`, expect: ['Send 2 emails', 'Connect Gmail: Ace sends the emails you approve'] },
+        { name: 'send-drafts', path: `/chat?t=${sendDrafts}`, expect: 'Connect Gmail: Ace sends the emails you approve', expectSelector: '.card button:text-is("Connect Gmail")' },
         { name: 'frame', path: `/chat?t=${frame}`, expect: 'Start the new frame' },
         { name: 'send-mode', path: `/chat?t=${sendMode}`, expect: 'Send without review' },
         { name: 'ordinary', path: `/chat?t=${ordinary}`, expect: 'Draft this email' },

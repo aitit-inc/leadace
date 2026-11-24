@@ -6,7 +6,14 @@
     pending,
     busy,
     onrespond,
-  }: { pending: PendingCall; busy: boolean; onrespond: (approve: boolean) => void } = $props();
+    onconnect,
+  }: {
+    pending: PendingCall;
+    busy: boolean;
+    onrespond: (approve: boolean) => void;
+    // Given while approving would send nothing: connecting Gmail takes the approval's place.
+    onconnect?: () => void;
+  } = $props();
 
   // The server marks an action that cannot be undone by writing a warning.
   let danger = $derived(pending.summary.warning !== undefined);
@@ -52,14 +59,18 @@
   {/if}
 
   <div class="mt-5 flex items-center gap-2">
-    <button
-      type="button"
-      disabled={busy}
-      onclick={() => onrespond(true)}
-      class="btn {danger ? 'btn-danger' : 'btn-primary'}"
-    >
-      {pending.summary.confirmLabel}
-    </button>
+    {#if onconnect}
+      <button type="button" disabled={busy} onclick={onconnect} class="btn btn-primary">Connect Gmail</button>
+    {:else}
+      <button
+        type="button"
+        disabled={busy}
+        onclick={() => onrespond(true)}
+        class="btn {danger ? 'btn-danger' : 'btn-primary'}"
+      >
+        {pending.summary.confirmLabel}
+      </button>
+    {/if}
     <button type="button" disabled={busy} onclick={() => onrespond(false)} class="btn btn-ghost">
       Cancel
     </button>

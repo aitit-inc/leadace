@@ -31,6 +31,7 @@ export type ConfirmSummary = {
   facts: Array<{ label: string; value: string }>;
   body?: string;
   warning?: string;
+  needsMailbox: boolean;
   confirmLabel: string;
 };
 

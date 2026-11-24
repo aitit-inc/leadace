@@ -115,7 +115,7 @@ export type OutboundPreview = {
   reachable: number
   quota: ProspectQuota | undefined
   // next = the address the first send uses; null when every listed mailbox is spent.
-  mailbox: { next: string | null; remaining: number } | null
+  mailbox: { kind: 'no_mailbox' } | { kind: 'active'; next: string | null; remaining: number } | null
   blocked: string | null
   dailyTarget: number | null
 }
@@ -135,16 +135,16 @@ async function outboundPreview(ctx: ToolCtx, projectRef: string): Promise<Outbou
     outboundBlocked: boolean
     message?: string
   }
-  const h = health as { kind: 'no_mailbox' } | { kind: 'active'; next: string | null; remaining: number } | null
+  const h = health as OutboundPreview['mailbox']
   const blocked = [
     r.outboundBlocked ? (r.message ?? 'Nothing can go out right now.') : null,
-    h?.kind === 'no_mailbox' ? 'No mailbox can send for this project yet, so nothing goes out until one is connected.' : null,
+    h?.kind === 'no_mailbox' ? 'No mailbox can send for this project yet. Connect one, and you are asked again before anything goes out.' : null,
   ].filter((b) => b !== null)
   return {
     outboundMode: r.outboundMode,
     reachable: r.total,
     quota: r.quota,
-    mailbox: h?.kind === 'active' ? { next: h.next, remaining: h.remaining } : null,
+    mailbox: h,
     blocked: blocked.length > 0 ? blocked.join(' ') : null,
     dailyTarget: daily ? (daily as DailyTarget).target : null,
   }
@@ -262,7 +262,7 @@ export function startJobConfirmSummary(
   if (preview && scope.noun !== 'draft') facts.push({ label: 'Reachable now', value: plural(preview.reachable, 'prospect') })
   if (preview) {
     const { mailbox, quota } = preview
-    if (mailbox) {
+    if (mailbox?.kind === 'active') {
       facts.push({ label: 'From', value: mailbox.next ?? 'no mailbox with sends left today' })
       facts.push({ label: 'Mailboxes today', value: `${plural(mailbox.remaining, 'email')} left` })
     }
@@ -280,6 +280,7 @@ export function startJobConfirmSummary(
     facts,
     ...(drafts.length > 0 ? { body: drafts.map(emailText).join('\n\n— — —\n\n') } : {}),
     ...(warning ? { warning } : {}),
+    needsMailbox: preview?.mailbox?.kind === 'no_mailbox',
     confirmLabel:
       mode === 'send'
         ? cycle ? `Send to ${counted(scope.noun)}` : `Send ${counted('email')}`
@@ -446,6 +447,7 @@ export function buildToolRegistry(): ToolDef[] {
           { label: 'What stays', value: 'Prospects and organizations — those belong to the workspace' },
         ],
         warning: 'This cannot be undone.',
+        needsMailbox: false,
         confirmLabel: 'Delete project',
       }),
     },
@@ -837,7 +839,7 @@ export function buildToolRegistry(): ToolDef[] {
           facts.push({ label: 'Pause', value: `${current ? pauseLabel(current.pausedUntil) : 'unknown'} → ${pauseLabel(pausedUntil)}` })
         }
         facts.push({ label: 'Applies to', value: 'Every project sending from this mailbox' })
-        return { title: 'Change mailbox sending', facts, confirmLabel: 'Apply' }
+        return { title: 'Change mailbox sending', facts, needsMailbox: false, confirmLabel: 'Apply' }
       },
     },
   )
@@ -882,6 +884,7 @@ export function buildToolRegistry(): ToolDef[] {
             { label: 'Project', value: projectId },
             { label: 'Mailboxes', value: `${current} → ${mailboxes.length === 0 ? 'sign-in Google account' : mailboxes.join(' → ')}` },
           ],
+          needsMailbox: false,
           confirmLabel: 'Apply',
         }
       },
@@ -1356,6 +1359,7 @@ export function buildToolRegistry(): ToolDef[] {
           ],
           body,
           ...(mode === 'draft' ? {} : { warning: 'Sent email cannot be recalled.' }),
+          needsMailbox: false,
           confirmLabel: mode === 'draft' ? 'Save draft' : 'Send email',
         }
       },
@@ -1405,6 +1409,7 @@ export function buildToolRegistry(): ToolDef[] {
         title: ids ? `Discard ${plural(ids.length, 'draft')}` : 'Discard every pending draft',
         facts: projectId ? [{ label: 'Project', value: await projectLabel(ctx, projectId) }] : [],
         warning: 'Discarded drafts cannot be recovered. Already-sent outreach is untouched.',
+        needsMailbox: false,
         confirmLabel: 'Discard',
       }),
     },
@@ -1524,6 +1529,7 @@ export function buildToolRegistry(): ToolDef[] {
             { label: 'What happens', value: 'They become a target for outreach again' },
           ],
           warning: 'They ended the conversation earlier. Contact them again only if something has changed.',
+          needsMailbox: false,
           confirmLabel: 'Put back on the list',
         }
       },
@@ -1586,6 +1592,7 @@ export function buildToolRegistry(): ToolDef[] {
                 { label: 'Prospects', value: `${prospectIds.length}` },
                 { label: 'What happens', value: 'They can be contacted, whatever Ace\'s Prerequisite check found' },
               ],
+              needsMailbox: false,
               confirmLabel: 'Make them targets',
             }
           : null,
@@ -1714,6 +1721,7 @@ export function buildToolRegistry(): ToolDef[] {
         title: `Delete ${plural(organizationIds.length, 'organization')}`,
         facts: [{ label: 'What stays', value: 'Any organization that still has prospects is kept' }],
         warning: 'This cannot be undone.',
+        needsMailbox: false,
         confirmLabel: 'Delete permanently',
       }),
     },
@@ -1759,6 +1767,7 @@ export function buildToolRegistry(): ToolDef[] {
           { label: 'What stays', value: 'Prospects with outreach history, do-not-contact prospects, and prospects on two or more projects are kept' },
         ],
         warning: 'This cannot be undone.',
+        needsMailbox: false,
         confirmLabel: 'Delete permanently',
       }),
     },
@@ -1829,6 +1838,7 @@ export function buildToolRegistry(): ToolDef[] {
                 { label: 'What happens', value: 'Outreach may write to it again' },
               ],
               warning: 'The notice was recorded from the page itself — clear it only if the page no longer refuses sales approaches.',
+              needsMailbox: false,
               confirmLabel: 'Clear notice',
             }
       },
@@ -1866,6 +1876,7 @@ export function buildToolRegistry(): ToolDef[] {
                 { label: 'What happens', value: 'They return to discovery and outbound targeting' },
               ],
               warning: 'They are on the do-not-contact list — clear it only if they did not ask to be left alone.',
+              needsMailbox: false,
               confirmLabel: 'Allow outreach',
             },
     },
@@ -2051,6 +2062,7 @@ export function buildToolRegistry(): ToolDef[] {
           ]
             .filter((w) => w !== null)
             .join(' '),
+          needsMailbox: false,
           confirmLabel: `Send ${plural(answers.length, 'answer')}`,
         }
       },
@@ -2535,6 +2547,7 @@ export function buildToolRegistry(): ToolDef[] {
         return {
           title: mode === 'send' ? 'Send without review' : mode === 'draft' ? 'Review before sending' : 'Change project settings',
           facts,
+          needsMailbox: false,
           confirmLabel: mode === 'send' ? 'Send without review' : mode === 'draft' ? 'Hold for review' : 'Save settings',
         }
       },
@@ -2790,6 +2803,7 @@ export function buildToolRegistry(): ToolDef[] {
             { label: 'What it may never do', value: 'Delete anything, set do-not-contact, or change a schedule' },
           ],
           body: prompt ?? existing?.prompt ?? '',
+          needsMailbox: false,
           confirmLabel: scheduleId ? 'Save schedule' : 'Schedule it',
         }
       },
@@ -2825,6 +2839,7 @@ export function buildToolRegistry(): ToolDef[] {
             { label: 'After this', value: 'Nothing runs on its own for this instruction' },
           ],
           body: existing?.prompt ?? '',
+          needsMailbox: false,
           confirmLabel: 'Remove schedule',
         }
       },
@@ -2868,7 +2883,7 @@ export function buildToolRegistry(): ToolDef[] {
 
   defineTool(
     'find_competitors',
-    'Web chat only. Search for up to 3 direct competitors of the product or service at a URL, for the person to confirm: each one\'s name, website and why a buyer would compare them. Answers "none found" when the search cited none.',
+    'Web chat only. Search for up to 3 direct competitors of the product or service at a URL: each one\'s name, website and why a buyer would compare them. Answers "none found" when the search cited none.',
     {
       url: competitorsInputSchema.shape.url.describe('The company\'s public https:// homepage URL.'),
     },
@@ -2935,6 +2950,7 @@ export function buildToolRegistry(): ToolDef[] {
             { label: 'Channels', value: draft.outboundChannels.map((c) => c.replace(/_/g, ' ')).join(', ') },
           ],
           warning: "This replaces the project's current strategy and messaging.",
+          needsMailbox: false,
           confirmLabel: 'Save setup',
         }
       },
@@ -2971,6 +2987,7 @@ export function buildToolRegistry(): ToolDef[] {
           ],
           body: frame.salesStrategyEdits.map((e) => e.content.trim() || `Removes the section "${e.heading}".`).join('\n\n'),
           warning: 'Measuring restarts: results so far stop steering this project.',
+          needsMailbox: false,
           confirmLabel: 'Start the new frame',
         }
       },

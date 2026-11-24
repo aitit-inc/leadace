@@ -112,7 +112,7 @@ const preview = (outboundMode: 'send' | 'draft'): OutboundPreview => ({
     contacted: { used: 13, limit: 100, remaining: 87 },
     found: { used: 4, limit: 100, remaining: 96 },
   },
-  mailbox: { next: 'me@example.com', remaining: 9 },
+  mailbox: { kind: 'active', next: 'me@example.com', remaining: 9 },
   blocked: null,
   dailyTarget: 14,
 })
@@ -155,5 +155,10 @@ describe('start_job approval card', () => {
     expect(summary.confirmLabel).toBe('Send 3 emails')
     expect(summary.body).toContain('To: Dana <dana@example.com>\nSubject: Hello\n\nFirst body')
     expect(summary.body).toContain('Second body')
+  })
+  it('offers the connection, not the send, while no mailbox can send', () => {
+    const none = { ...preview('draft'), mailbox: { kind: 'no_mailbox' as const } }
+    expect(startJobConfirmSummary({ kind: 'send', draftIds: [1] }, 'Acme', none, [])?.needsMailbox).toBe(true)
+    expect(startJobConfirmSummary({ kind: 'send', draftIds: [1] }, 'Acme', preview('draft'), [])?.needsMailbox).toBe(false)
   })
 })

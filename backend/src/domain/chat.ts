@@ -57,6 +57,9 @@ export type ConfirmSummary = {
   body?: string
   // Present when the action cannot be undone; the UI styles on it.
   warning?: string
+  // Approving sends nothing until a mailbox is connected, so the UI offers the
+  // connection in place of the approval.
+  needsMailbox: boolean
   confirmLabel: string
 }
 

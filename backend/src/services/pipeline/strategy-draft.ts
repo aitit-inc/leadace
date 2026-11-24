@@ -32,8 +32,8 @@ const competitorCandidateSchema = z.object({
 type CompetitorCandidate = z.infer<typeof competitorCandidateSchema>
 const competitorsSchema = z.object({ competitors: z.array(competitorCandidateSchema).max(3) })
 
-// A candidate is shown for the person to confirm, so one whose site the search
-// never cited is dropped rather than shown, as is the company itself.
+// A candidate reaches the business document unless the person removes it, so
+// one whose site the search never cited is dropped, as is the company itself.
 export function citedCompetitors(candidates: CompetitorCandidate[], citations: Citation[], ownUrl: string): CompetitorCandidate[] {
   const cited = new Set(citations.flatMap((c) => c.pages.map(apexDomainOf)))
   const own = apexDomainOf(ownUrl)
@@ -107,7 +107,7 @@ Write it from everything the person shared in this chat: the pages you read, the
 
 ## The draft (apply_strategy_draft)
 - targetLanguage: "ja" when the company's own material is mainly Japanese, else "en". Every document, brief and subject is written in that language.
-- business: a full markdown BUSINESS.md following this template exactly (write "Not available" where nothing says; its Competition section lists only the competitors the person named or confirmed, else "To be confirmed"; ~80 lines max):
+- business: a full markdown BUSINESS.md following this template exactly (write "Not available" where nothing says; ~80 lines max):
 ${tplBusiness}
 - salesStrategy: a full markdown SALES_STRATEGY.md following this template exactly (~180 lines max; Target names a need the product meets as organizations state it on their own pages, with Prerequisites and Not a fit inferred from the product's nature and price: Target states, as an inference, the size of organization where an email to a published address can reach someone who decides to buy, and Not a fit names those larger than that, unless the material shows it sells to them through such an address; Track Record "Add 1 trust foundation later" when absent; Pricing "TBD" when absent; ≥ 10 search keywords; a one-line "Outbound mode: managed in Project Settings" under Sales Channels; no Discovery Strategies section):
 ${tplStrategy}

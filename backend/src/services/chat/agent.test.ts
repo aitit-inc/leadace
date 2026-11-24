@@ -141,7 +141,7 @@ describe('inReadingOrder', () => {
 })
 
 describe('termsChanged', () => {
-  const card = { title: "Run today's cycle", facts: [], confirmLabel: 'Draft up to 10 messages' }
+  const card = { title: "Run today's cycle", facts: [], needsMailbox: false, confirmLabel: 'Draft up to 10 messages' }
   it('re-asks when the project started sending under a draft approval', () => {
     expect(termsChanged(card, { ...card, confirmLabel: 'Send up to 10 emails', warning: 'Sent email cannot be recalled.' })).toBe(true)
   })

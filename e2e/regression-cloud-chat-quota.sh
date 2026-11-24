@@ -83,7 +83,7 @@ MSG="$(psql_local "INSERT INTO chat_messages (tenant_id, thread_id, role, conten
 # instead of raising the card again with new terms.
 PENDING="$(jq -nc --argjson m "$MSG" --arg c "$CALL" --arg p "$PROJ" '{messageId:$m, callId:$c, name:"update_project_settings",
   args:{projectId:$p, outboundMode:"send"},
-  summary:{title:"Send without review", facts:[{label:"Project", value:"main-chat quota"}], confirmLabel:"Send without review"},
+  summary:{title:"Send without review", facts:[{label:"Project", value:"main-chat quota"}], needsMailbox:false, confirmLabel:"Send without review"},
   otherResponses:[], remaining:[]}')"
 psql_local "UPDATE chat_threads SET pending_call = '$PENDING'::jsonb WHERE id = '$CARD';" > /dev/null
 

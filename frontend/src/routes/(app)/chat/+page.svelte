@@ -16,6 +16,7 @@
     watchThread,
   } from '$lib/api/chat';
   import { cancelJob, getJob } from '$lib/api/jobs';
+  import { connectGoogleMailbox } from '$lib/gmail-oauth';
   import ThreadList from '$lib/components/chat/ThreadList.svelte';
   import AttachmentChip from '$lib/components/chat/AttachmentChip.svelte';
   import MessageItem from '$lib/components/chat/MessageItem.svelte';
@@ -445,6 +446,21 @@
     }
   }
 
+  // The card saw no mailbox when it was raised; the list says whether Gmail is still missing.
+  let gmailMissing = $derived(data.attention.some((a) => a.kind === 'gmail_disconnected'));
+  let connectingGmail = $state(false);
+
+  async function connectGmail() {
+    connectingGmail = true;
+    error = '';
+    // The browser leaves for Google; only a failure comes back here.
+    const failed = await connectGoogleMailbox(data.session, data.user?.email);
+    if (failed) {
+      error = failed;
+      connectingGmail = false;
+    }
+  }
+
   async function respond(approve: boolean) {
     const p = pending;
     const id = threadId;
@@ -702,7 +718,12 @@
             </p>
           {/if}
           {#if pending}
-            <ConfirmCard {pending} busy={running || stopping} onrespond={respond} />
+            <ConfirmCard
+              {pending}
+              busy={running || stopping || connectingGmail}
+              onrespond={respond}
+              onconnect={pending.summary.needsMailbox && gmailMissing ? connectGmail : undefined}
+            />
           {/if}
           {#if showIdentityCard}
             {#key `${proposal.callId}:${data.thread?.projectId ?? data.activeProjectId}`}
