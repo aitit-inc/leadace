@@ -13,6 +13,7 @@
   let status = $state<Status>('loading');
   let errorMessage = $state('');
   let clientName = $state<string | null>(null);
+  let readOnly = $state(false);
   let redirectUri = $state('');
   let sessionState = $state('');
   let finalRedirect = $state('');
@@ -48,6 +49,7 @@
     try {
       const data = await getMcpAuthorizeSession(sessionId, fetch);
       clientName = data.clientName;
+      readOnly = data.readOnly;
       redirectUri = data.redirectUri;
       sessionState = data.state;
       status = 'ready';
@@ -152,7 +154,7 @@
     {:else if status === 'success'}
       <p class="mt-8 font-display text-xl font-semibold text-text">Authorized</p>
       <p class="mt-2 mb-4 text-sm text-text">
-        {displayClient} has access to your LeadAce account.
+        {displayClient} has {readOnly ? 'read-only access' : 'access'} to your LeadAce account.
       </p>
       <p class="mb-3 text-sm leading-relaxed text-text-secondary">
         Returning you to {displayClient}. You can close this tab once your terminal resumes.
@@ -185,15 +187,21 @@
       </a>
     {:else}
       <p class="mt-8 mb-4 font-display text-xl font-semibold text-text-secondary">
-        Authorize <span class="text-text">{displayClient}</span> to access your LeadAce account
+        Authorize <span class="text-text">{displayClient}</span> to {readOnly ? 'read' : 'access'} your LeadAce account
       </p>
 
       <p class="mb-4 text-sm leading-relaxed text-text-secondary">
         Signed in as <span class="font-medium text-text">{user?.email ?? ''}</span>.
-        Approving lets {displayClient} call LeadAce on your behalf with the same access your
-        own browser session has — including reading, creating, updating, and deleting prospects,
-        projects, and outreach data, and sending email through your connected Gmail. Revoke
-        access at any time from
+        {#if readOnly}
+          Approving lets {displayClient} read your LeadAce account on your behalf: prospects,
+          projects, outreach, replies and settings. It cannot send email, and cannot create,
+          change or delete anything.
+        {:else}
+          Approving lets {displayClient} call LeadAce on your behalf with the same access your
+          own browser session has — including reading, creating, updating, and deleting prospects,
+          projects, and outreach data, and sending email through your connected Gmail.
+        {/if}
+        Revoke access at any time from
         <a href="/account-settings" class="text-accent-strong underline underline-offset-2">Account → Connected MCP clients</a>;
         signing out of {displayClient} itself does not revoke it.
       </p>

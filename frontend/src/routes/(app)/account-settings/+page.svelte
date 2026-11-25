@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invalidate } from '$app/navigation';
   import { page } from '$app/state';
+  import { MCP_BASE } from '$lib/api';
   import { revokeMcpSession } from '$lib/api/mcp';
   import Hint from '$lib/components/Hint.svelte';
   import MailboxList from '$lib/components/mailbox/MailboxList.svelte';
@@ -112,9 +113,11 @@
       <h3 class="font-display text-lg font-semibold text-text">Connected MCP clients</h3>
       <Hint label="About MCP clients">
         Tools you authorized to act on LeadAce for you, such as Claude Code's
-        <span class="font-mono">/leadace</span>. Each holds a token with full API access. Revoke any
-        you no longer use or trust; running <span class="font-mono">/leadace</span> again creates a
-        new one.
+        <span class="font-mono">/leadace</span>. Each holds a token with full API access, unless
+        it is marked read-only: a tool connected at
+        <span class="font-mono">{MCP_BASE}/mcp/read</span> reads your account and cannot send or
+        change anything. Revoke any you no longer use or trust; running
+        <span class="font-mono">/leadace</span> again creates a new one.
       </Hint>
     </div>
     <div class="-mx-5 mt-4 border-t border-border">
@@ -133,7 +136,8 @@
               <div class="min-w-0">
                 <p class="truncate text-sm font-semibold text-text">{label}</p>
                 <p class="mt-0.5 text-xs text-text-muted">
-                  Authorized {formatRelativeTime(session.createdAt)} · last used
+                  {session.readOnly ? 'Read-only · authorized' : 'Authorized'}
+                  {formatRelativeTime(session.createdAt)} · last used
                   {formatRelativeTime(session.lastSeenAt)}
                 </p>
               </div>

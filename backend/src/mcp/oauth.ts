@@ -4,7 +4,7 @@
  * Token model: the frontend's Supabase session is used only at
  * /authorize/finalize to verify the user's identity (extract `sub`).
  * From there on we mint our own HS256 JWT access tokens (signed with
- * SUPABASE_JWT_SECRET so the existing verifySupabaseJwt path still
+ * SUPABASE_JWT_SECRET so the existing verifyJwt path still
  * validates them) and opaque refresh tokens stored in KV. This keeps
  * MCP sessions independent of the browser's Supabase session, so
  * refresh-token rotation in one client cannot invalidate the other.
@@ -19,18 +19,28 @@
 
 import { SignJWT } from 'jose'
 import { z } from 'zod'
-import { MCP_AUDIENCE, verifyJwt } from '../auth/verify-jwt'
+import { MCP_AUDIENCE, READ_SCOPE, verifyJwt } from '../auth/verify-jwt'
 import { isFamilyRevoked, kvJson, mcpFamilies, mcpUserFamilies, revokeFamily } from '../services/mcp-sessions'
 
 // Supabase tokens carry `aud: 'authenticated'`; MCP-minted ones `aud: 'mcp'`
 // — lets /authorize/finalize and /sessions* refuse MCP-issued tokens.
 export const MCP_ACCESS_TOKEN_AUDIENCE = MCP_AUDIENCE
 
+export const READ_ENDPOINT_PATH = '/mcp/read'
+
+// `resource` is RFC 8707's, which MCP clients send on every authorization request.
+export function readOnlyRequested(scope: string | null, resource: string | null, baseUrl: string): boolean {
+  const scopes = (scope ?? '').split(' ')
+  if (scopes.includes(READ_SCOPE) && !scopes.includes('write')) return true
+  return resource?.replace(/\/+$/, '') === `${baseUrl}${READ_ENDPOINT_PATH}`
+}
+
 interface AuthSession {
   clientId: string
   codeChallenge: string
   redirectUri: string
   state: string
+  readOnly: boolean
   expiresAt: number
 }
 
@@ -39,6 +49,7 @@ interface AuthCode {
   codeChallenge: string
   redirectUri: string
   userId: string
+  readOnly: boolean
   expiresAt: number
 }
 
@@ -47,6 +58,7 @@ interface McpRefresh {
   // Optional only for backward-compat with refresh tokens minted before
   // family tracking landed; migrated to a fresh family on first refresh.
   familyId?: string
+  readOnly: boolean
   expiresAt: number
 }
 
@@ -128,12 +140,12 @@ export function handleMetadata(baseUrl: string): Response {
   })
 }
 
-export function handleResourceMetadata(baseUrl: string): Response {
+export function handleResourceMetadata(baseUrl: string, readEndpoint: boolean): Response {
   return Response.json({
-    resource: baseUrl,
+    resource: readEndpoint ? `${baseUrl}${READ_ENDPOINT_PATH}` : baseUrl,
     authorization_servers: [baseUrl],
     bearer_methods_supported: ['header'],
-    scopes_supported: ['read', 'write'],
+    scopes_supported: readEndpoint ? [READ_SCOPE] : [READ_SCOPE, 'write'],
   })
 }
 
@@ -239,7 +251,8 @@ export async function handleAuthorizeGet(
   kv: KVNamespace,
   frontendUrl: string,
 ): Promise<Response> {
-  const params = new URL(request.url).searchParams
+  const url = new URL(request.url)
+  const params = url.searchParams
 
   const clientId = params.get('client_id')
   const codeChallenge = params.get('code_challenge')
@@ -289,6 +302,7 @@ export async function handleAuthorizeGet(
     codeChallenge,
     redirectUri,
     state: stateParam,
+    readOnly: readOnlyRequested(params.get('scope'), params.get('resource'), url.origin),
     expiresAt: Date.now() + AUTH_SESSION_TTL_SECONDS * 1000,
   })
 
@@ -317,6 +331,7 @@ export async function handleAuthorizeSessionInfo(
     clientName: registered?.client_name ?? null,
     redirectUri: session.redirectUri,
     state: session.state,
+    readOnly: session.readOnly,
   })
 }
 
@@ -361,6 +376,7 @@ export async function handleAuthorizeFinalize(
     codeChallenge: session.codeChallenge,
     redirectUri: session.redirectUri,
     userId,
+    readOnly: session.readOnly,
     expiresAt: Date.now() + AUTH_CODE_TTL_SECONDS * 1000,
   })
 
@@ -440,7 +456,8 @@ async function handleAuthCodeGrant(
 
   await authCodes.del(kv, code)
 
-  const accessToken = await mintAccessJwt(stored.userId, jwtSecret)
+  const readOnly = stored.readOnly
+  const accessToken = await mintAccessJwt(stored.userId, jwtSecret, readOnly)
   const refreshToken = generateId()
   const familyId = generateId()
   const now = Date.now()
@@ -451,6 +468,7 @@ async function handleAuthCodeGrant(
     mcpRefreshes.put(kv, refreshToken, {
       userId: stored.userId,
       familyId,
+      readOnly,
       expiresAt: now + REFRESH_TOKEN_TTL_SECONDS * 1000,
     }),
     mcpFamilies.put(kv, familyId, {
@@ -459,19 +477,15 @@ async function handleAuthCodeGrant(
       clientName: client?.client_name ?? null,
       createdAt: now,
       lastSeenAt: now,
+      readOnly,
     }),
   ])
   await touchUserFamily(kv, stored.userId, familyId)
 
   const refreshFp = await fingerprint(refreshToken)
-  console.log('[oauth.code] exchanged', { userId: stored.userId, refreshFp, clientId: stored.clientId, familyId })
+  console.log('[oauth.code] exchanged', { userId: stored.userId, refreshFp, clientId: stored.clientId, familyId, readOnly })
 
-  return Response.json({
-    access_token: accessToken,
-    refresh_token: refreshToken,
-    token_type: 'Bearer',
-    expires_in: ACCESS_TOKEN_TTL_SECONDS,
-  })
+  return Response.json(tokenResponse(accessToken, refreshToken, readOnly))
 }
 
 // KV has no list-by-user query, so we maintain this index explicitly.
@@ -529,6 +543,7 @@ async function handleRefreshGrant(
       clientName: null,
       createdAt: Date.now(),
       lastSeenAt: Date.now(),
+      readOnly: false,
     })
     await touchUserFamily(kv, stored.userId, familyId)
     console.log('[oauth.refresh] legacy token migrated', { inFp, userId: stored.userId, familyId })
@@ -550,9 +565,14 @@ async function handleRefreshGrant(
   const newRefresh = generateId()
   const now = Date.now()
 
+  // Carried on the refresh token itself, never read back from the family: a
+  // family record that went missing must not turn a read-only grant into one
+  // that writes.
+  const readOnly = stored.readOnly
   await mcpRefreshes.put(kv, newRefresh, {
     userId: stored.userId,
     familyId,
+    readOnly,
     expiresAt: now + REFRESH_TOKEN_TTL_SECONDS * 1000,
   })
   await Promise.all([
@@ -564,16 +584,11 @@ async function handleRefreshGrant(
     touchUserFamily(kv, stored.userId, familyId),
   ])
 
-  const accessToken = await mintAccessJwt(stored.userId, jwtSecret)
+  const accessToken = await mintAccessJwt(stored.userId, jwtSecret, readOnly)
   const newFp = await fingerprint(newRefresh)
   console.log('[oauth.refresh] rotated', { inFp, newFp, userId: stored.userId, familyId })
 
-  return Response.json({
-    access_token: accessToken,
-    refresh_token: newRefresh,
-    token_type: 'Bearer',
-    expires_in: ACCESS_TOKEN_TTL_SECONDS,
-  })
+  return Response.json(tokenResponse(accessToken, newRefresh, readOnly))
 }
 
 // RFC 7009 token revocation. Public clients call this on sign-out so the
@@ -620,6 +635,7 @@ export interface McpSessionView {
   clientName: string | null
   createdAt: number
   lastSeenAt: number
+  readOnly: boolean
 }
 
 export async function handleListSessions(
@@ -651,6 +667,7 @@ export async function handleListSessions(
       clientName: family.clientName,
       createdAt: family.createdAt,
       lastSeenAt: family.lastSeenAt,
+      readOnly: family.readOnly,
     })
     liveIds.push(id)
   }
@@ -681,17 +698,29 @@ export async function handleRevokeSession(
   return new Response(null, { status: 204 })
 }
 
-// HS256-signed with SUPABASE_JWT_SECRET so the existing verifyJwt /
-// verifySupabaseJwt path validates these via the HS256 fallback.
-async function mintAccessJwt(userId: string, jwtSecret: string): Promise<string> {
+// HS256-signed with SUPABASE_JWT_SECRET so verifyJwt validates these via its
+// HS256 fallback.
+async function mintAccessJwt(userId: string, jwtSecret: string, readOnly: boolean): Promise<string> {
   const secret = new TextEncoder().encode(jwtSecret)
   const now = Math.floor(Date.now() / 1000)
-  return new SignJWT({ sub: userId })
+  return new SignJWT(readOnly ? { sub: userId, scope: READ_SCOPE } : { sub: userId })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt(now)
     .setExpirationTime(now + ACCESS_TOKEN_TTL_SECONDS)
     .setAudience(MCP_ACCESS_TOKEN_AUDIENCE)
     .sign(secret)
+}
+
+// RFC 6749 §5.1: the response names the scope when it is narrower than a
+// client may assume.
+function tokenResponse(accessToken: string, refreshToken: string, readOnly: boolean) {
+  return {
+    access_token: accessToken,
+    refresh_token: refreshToken,
+    token_type: 'Bearer',
+    expires_in: ACCESS_TOKEN_TTL_SECONDS,
+    ...(readOnly ? { scope: READ_SCOPE } : {}),
+  }
 }
 
 /** Short hash of a token for log correlation without leaking the secret. */

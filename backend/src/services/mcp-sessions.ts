@@ -28,6 +28,7 @@ export interface McpFamily {
   clientName: string | null
   createdAt: number
   lastSeenAt: number
+  readOnly: boolean
   revokedAt?: number
   revokedReason?: McpFamilyRevokedReason
 }

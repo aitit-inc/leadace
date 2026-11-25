@@ -54,6 +54,7 @@ SUITES=(
   regression-decision-maker-pointer
   regression-tenant-isolation
   regression-caller-gates
+  regression-read-only
   regression-schedules
 )
 

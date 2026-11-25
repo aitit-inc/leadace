@@ -10,6 +10,7 @@ export interface McpSession {
   clientName: string | null;
   createdAt: number;
   lastSeenAt: number;
+  readOnly: boolean;
 }
 
 export class McpRequestError extends Error {
@@ -84,6 +85,7 @@ export type McpAuthorizeSession = {
   clientName: string | null;
   redirectUri: string;
   state: string;
+  readOnly: boolean;
 };
 
 export async function getMcpAuthorizeSession(

@@ -145,6 +145,10 @@ on, need no Claude session, and run fast:
   playbook approval gate (MCP save pending → MCP read 412 → browser approve →
   MCP read 200; browser save approved on write; slug allowlist; add-means
   proposal applied on approval).
+- `regression-read-only.sh` — the read-only MCP connection: a token granted for
+  `/mcp/read` (or `scope=read`) reads the API and is refused every write (403),
+  is listed the read tools only, and stays read-only across a refresh; the
+  `/mcp/read` endpoint lists the read tools whatever the token.
 
 Run all of them in sequence with `./e2e/regression-all.sh`. See the sections
 below for what each asserts.

@@ -162,9 +162,9 @@ scenarios (e2e/README.md → UI scenarios).
 
 ## Branch Flow & Release
 
-Work on `develop` (default branch); merge to `main` to ship (CI deploys
-Workers + Pages + plugin marketplace). Release procedure and version bump
-rules: [.claude/rules/release.md](.claude/rules/release.md).
+Changes reach `develop` (default branch) by pull request; merging it to
+`main` ships (CI deploys Workers + Pages + plugin marketplace). Release
+procedure and version bump rules: [.claude/rules/release.md](.claude/rules/release.md).
 
 Shipping also mirrors an allowlisted subset to the public repo
 `aitit-inc/leadace` — the code trees, `.claude/`, the root docs and

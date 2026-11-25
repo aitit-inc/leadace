@@ -1,6 +1,8 @@
 import { jwtVerify, createRemoteJWKSet, type JWTPayload } from 'jose'
 
 export const MCP_AUDIENCE = 'mcp'
+// The `scope` claim of a read-only MCP grant. A grant that may write carries none.
+export const READ_SCOPE = 'read'
 
 export interface VerifiedJwt {
   sub: string
@@ -14,6 +16,7 @@ export interface VerifiedJwt {
   aud: string | undefined
   // Supabase-issued tokens carry the account's email; MCP-minted ones do not.
   email: string | null
+  readOnly: boolean
 }
 
 // jose caches keys per JWKS instance (10 min, 30 s cooldown); one instance
@@ -35,13 +38,19 @@ function decode(payload: JWTPayload): VerifiedJwt | null {
   const audRaw = payload['aud']
   const aud = typeof audRaw === 'string' ? audRaw : undefined
   const email = payload['email']
-  return { sub, aud, email: typeof email === 'string' && email !== '' ? email : null }
+  return {
+    sub,
+    aud,
+    email: typeof email === 'string' && email !== '' ? email : null,
+    readOnly: aud === MCP_AUDIENCE && payload['scope'] === READ_SCOPE,
+  }
 }
 
 /**
  * Accepts JWTs minted by Supabase or by the MCP worker (both signed with
  * SUPABASE_JWT_SECRET on the HS256 fallback path). Tries ES256 via JWKS
- * first (new Supabase CLI), falls back to HS256.
+ * first (new Supabase CLI), falls back to HS256. Surfaces that must refuse
+ * MCP-minted tokens check `aud` themselves.
  */
 export async function verifyJwt(
   token: string,
@@ -66,17 +75,4 @@ export async function verifyJwt(
   } catch {
     return null
   }
-}
-
-/**
- * Accepts tokens from either authority. Surfaces that must refuse
- * MCP-minted tokens use `verifyJwt` and check `aud` themselves.
- */
-export async function verifySupabaseJwt(
-  token: string,
-  jwtSecret: string,
-  supabaseUrl?: string,
-): Promise<string | null> {
-  const v = await verifyJwt(token, jwtSecret, supabaseUrl)
-  return v?.sub ?? null
 }

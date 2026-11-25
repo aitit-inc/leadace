@@ -3,7 +3,7 @@ import { sentryOptions } from '../sentry'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
 import { readRequestBody, requestBodyTooLargeMessage } from '@modelcontextprotocol/sdk/server/requestBody.js'
-import { verifyJwt, verifySupabaseJwt } from '../auth/verify-jwt'
+import { READ_SCOPE, verifyJwt, type VerifiedJwt } from '../auth/verify-jwt'
 import { SERVER_VERSION } from './version'
 import { buildToolRegistry, type ToolCtx, type ToolDef } from '../tools/registry'
 import {
@@ -19,6 +19,7 @@ import {
   handleRevokeSession,
   fingerprint,
   MCP_ACCESS_TOKEN_AUDIENCE,
+  READ_ENDPOINT_PATH,
 } from './oauth'
 
 type Env = {
@@ -34,25 +35,10 @@ type Env = {
   SENTRY_DSN?: string
 }
 
-async function extractUserId(request: Request, jwtSecret: string, supabaseUrl?: string): Promise<string | null> {
+async function verifyBearer(request: Request, jwtSecret: string, supabaseUrl?: string): Promise<VerifiedJwt | null> {
   const authHeader = request.headers.get('Authorization')
   if (!authHeader?.startsWith('Bearer ')) return null
-  const token = authHeader.slice(7)
-  return verifySupabaseJwt(token, jwtSecret, supabaseUrl)
-}
-
-// Variant that refuses MCP-minted access tokens. Used by Settings-facing
-// surfaces (/sessions*) so an authorized MCP client cannot enumerate or
-// revoke the user's other MCP sessions on their behalf — that management
-// surface is intended for the browser session only.
-async function extractSupabaseUserId(request: Request, jwtSecret: string, supabaseUrl?: string): Promise<string | null> {
-  const authHeader = request.headers.get('Authorization')
-  if (!authHeader?.startsWith('Bearer ')) return null
-  const token = authHeader.slice(7)
-  const verified = await verifyJwt(token, jwtSecret, supabaseUrl)
-  if (!verified) return null
-  if (verified.aud === MCP_ACCESS_TOKEN_AUDIENCE) return null
-  return verified.sub
+  return verifyJwt(authHeader.slice(7), jwtSecret, supabaseUrl)
 }
 
 async function callApi(
@@ -104,7 +90,7 @@ let toolRegistry: ToolDef[] | null = null
 const MAX_TOOL_INPUT_ELEMENTS = 10_000
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024
 
-function createMcpServer(ctx: ToolCtx): McpServer {
+function createMcpServer(ctx: ToolCtx, readOnly: boolean): McpServer {
   toolRegistry ??= buildToolRegistry()
   const server = new McpServer(
     { name: 'lead-ace', version: SERVER_VERSION },
@@ -112,6 +98,7 @@ function createMcpServer(ctx: ToolCtx): McpServer {
   )
   for (const tool of toolRegistry) {
     if (tool.surface === 'chat') continue
+    if (readOnly && !tool.readOnly) continue
     server.tool(tool.name, tool.description, tool.schema, async (args) => {
       const { effect: _, ...result } = await tool.handler(args, ctx)
       return result
@@ -154,7 +141,10 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 
   // /mcp reads its own body below to answer in JSON-RPC. A GET or HEAD body is
   // ignored as before: re-wrapping one throws.
-  if (path !== '/mcp' && request.body && request.method !== 'GET' && request.method !== 'HEAD') {
+  // A trailing slash is the same endpoint: left unmatched, it would fall
+  // through to the handler that lists every tool.
+  const readEndpoint = path.replace(/\/+$/, '') === READ_ENDPOINT_PATH
+  if (path !== '/mcp' && !readEndpoint && request.body && request.method !== 'GET' && request.method !== 'HEAD') {
     const read = await readRequestBody(request, MAX_REQUEST_BODY_BYTES)
     if (read.tooLarge) {
       return withCors(Response.json({ error: requestBodyTooLargeMessage(MAX_REQUEST_BODY_BYTES) }, { status: 413 }))
@@ -167,7 +157,13 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   }
 
   if (path === '/.well-known/oauth-protected-resource') {
-    return withCors(handleResourceMetadata(baseUrl))
+    return withCors(handleResourceMetadata(baseUrl, false))
+  }
+
+  // RFC 9728 §3.1: a resource with a path serves its metadata under the
+  // well-known prefix, path appended.
+  if (path === `/.well-known/oauth-protected-resource${READ_ENDPOINT_PATH}`) {
+    return withCors(handleResourceMetadata(baseUrl, true))
   }
 
   if (path === '/register' && request.method === 'POST') {
@@ -199,8 +195,8 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   }
 
   const authHeaderRaw = request.headers.get('Authorization')
-  const userId = await extractUserId(request, env.SUPABASE_JWT_SECRET, env.SUPABASE_URL)
-  if (!userId) {
+  const verified = await verifyBearer(request, env.SUPABASE_JWT_SECRET, env.SUPABASE_URL)
+  if (!verified) {
     const hasBearer = authHeaderRaw?.startsWith('Bearer ') ?? false
     let accessFp: string | null = null
     let exp: number | null = null
@@ -228,29 +224,28 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       status: 401,
       headers: {
         'Content-Type': 'application/json',
-        'WWW-Authenticate': `Bearer resource_metadata="${baseUrl}/.well-known/oauth-protected-resource"`,
+        'WWW-Authenticate': readEndpoint
+          ? `Bearer resource_metadata="${baseUrl}/.well-known/oauth-protected-resource${READ_ENDPOINT_PATH}", scope="${READ_SCOPE}"`
+          : `Bearer resource_metadata="${baseUrl}/.well-known/oauth-protected-resource"`,
       },
     }))
   }
 
-  // Session-management endpoints are Supabase-session-only — extractSupabaseUserId
-  // rejects MCP-minted tokens (aud=mcp) so an authorized MCP client cannot
-  // revoke its siblings or enumerate other sessions for the user it acts
-  // on behalf of.
+  // Session-management endpoints are Supabase-session-only: an authorized MCP
+  // client must not revoke its siblings or enumerate the user's other sessions.
+  const mcpToken = verified.aud === MCP_ACCESS_TOKEN_AUDIENCE
   if (path === '/sessions' && request.method === 'GET') {
-    const supabaseUserId = await extractSupabaseUserId(request, env.SUPABASE_JWT_SECRET, env.SUPABASE_URL)
-    if (!supabaseUserId) {
+    if (mcpToken) {
       return withCors(Response.json({ error: 'forbidden' }, { status: 403 }))
     }
-    return withCors(await handleListSessions(supabaseUserId, env.MCP_OAUTH_STORE))
+    return withCors(await handleListSessions(verified.sub, env.MCP_OAUTH_STORE))
   }
   const sessionRevokeMatch = path.match(/^\/sessions\/([^/]+)$/)
   if (sessionRevokeMatch && request.method === 'DELETE') {
-    const supabaseUserId = await extractSupabaseUserId(request, env.SUPABASE_JWT_SECRET, env.SUPABASE_URL)
-    if (!supabaseUserId) {
+    if (mcpToken) {
       return withCors(Response.json({ error: 'forbidden' }, { status: 403 }))
     }
-    return withCors(await handleRevokeSession(supabaseUserId, sessionRevokeMatch[1]!, env.MCP_OAUTH_STORE))
+    return withCors(await handleRevokeSession(verified.sub, sessionRevokeMatch[1]!, env.MCP_OAUTH_STORE))
   }
 
   // Stateless mode does not support SSE streams, and Workers cannot keep
@@ -279,9 +274,10 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   }
 
   const authHeader = request.headers.get('Authorization') ?? ''
-  const server = createMcpServer({
-    callApi: (method, path, body) => callApi(method, path, body, env.WEB_API_URL, authHeader),
-  })
+  const server = createMcpServer(
+    { callApi: (method, path, body) => callApi(method, path, body, env.WEB_API_URL, authHeader) },
+    readEndpoint || verified.readOnly,
+  )
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true, // Return JSON instead of SSE streams (Workers compat)

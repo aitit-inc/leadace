@@ -12,6 +12,7 @@
 #   ./e2e/mint-jwt.sh --email leo.uno@example.com # resolve via auth.users
 #   ./e2e/mint-jwt.sh                              # default: first row in auth.users
 #   ./e2e/mint-jwt.sh --aud mcp                    # MCP-shaped token (aud=mcp → caller 'mcp')
+#   ./e2e/mint-jwt.sh --aud mcp --scope read       # read-only MCP grant
 #
 # Output: the bearer token, single line on stdout. Wrap as needed:
 #   TOKEN="$(./e2e/mint-jwt.sh --email ...)"
@@ -26,6 +27,7 @@ EMAIL=""
 USER_ID=""
 TTL_SECONDS="${TTL_SECONDS:-3600}"
 AUD="authenticated"
+SCOPE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -33,8 +35,9 @@ while [[ $# -gt 0 ]]; do
     --user-id)  USER_ID="$2"; shift 2 ;;
     --ttl)      TTL_SECONDS="$2"; shift 2 ;;
     --aud)      AUD="$2"; shift 2 ;;
+    --scope)    SCOPE="$2"; shift 2 ;;
     -h|--help)
-      sed -n '2,18p' "$0"; exit 0 ;;
+      sed -n '2,19p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -73,7 +76,7 @@ if [[ -z "$USER_ID" ]]; then
   fi
 fi
 
-SECRET="$SECRET" USER_ID="$USER_ID" TTL_SECONDS="$TTL_SECONDS" AUD="$AUD" node -e '
+SECRET="$SECRET" USER_ID="$USER_ID" TTL_SECONDS="$TTL_SECONDS" AUD="$AUD" SCOPE="$SCOPE" node -e '
 const crypto = require("crypto");
 const b64 = (buf) =>
   Buffer.from(buf).toString("base64").replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_");
@@ -82,6 +85,7 @@ const header = { alg: "HS256", typ: "JWT" };
 const payload = {
   sub: process.env.USER_ID,
   aud: process.env.AUD,
+  ...(process.env.SCOPE ? { scope: process.env.SCOPE } : {}),
   role: "authenticated",
   iat: now,
   exp: now + Number(process.env.TTL_SECONDS),

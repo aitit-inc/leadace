@@ -32,6 +32,12 @@ export const authMiddleware = createMiddleware<{ Bindings: Env; Variables: Varia
       return c.json({ error: 'Invalid token' }, 401)
     }
 
+    // Enforced here, on the token, so a read-only grant stays read-only
+    // whichever tool or client presents it.
+    if (verified.readOnly && c.req.method !== 'GET' && c.req.method !== 'HEAD') {
+      return c.json({ error: 'This connection is read-only' }, 403)
+    }
+
     const userId = verified.sub
     const isMcp = verified.aud === MCP_AUDIENCE
     const internal = c.req.header(INTERNAL_DISPATCH_HEADER) === internalDispatchToken()

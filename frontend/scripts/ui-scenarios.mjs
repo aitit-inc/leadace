@@ -13,6 +13,7 @@
 // state it was seeded with.
 
 import { execFileSync, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -49,6 +50,7 @@ const PUBLIC_SUPABASE_URL = frontendEnv.PUBLIC_SUPABASE_URL || 'http://localhost
 const port = (name, fallback) => ports[name] || process.env[name] || fallback;
 const APP_URL = `http://localhost:${port('LEADACE_FRONTEND_PORT', 5273)}`;
 const API_URL = `http://localhost:${port('LEADACE_API_PORT', 8787)}`;
+const MCP_URL = `http://localhost:${port('LEADACE_MCP_PORT', 8788)}`;
 // Billing UI only exists in the cloud edition, which needs both a worker and a
 // frontend booted with the flag — a second pair beside the everyday stack.
 const CLOUD_API_URL = 'http://localhost:8789';
@@ -1453,6 +1455,63 @@ const SCENARIOS = [
           expect: ['Unblock it with the provider.', 'or set a daily cap below 12'],
         },
         { name: 'attention', path: '/dashboard', expect: ['unblock it with the provider', 'or set its daily cap below 12'] },
+      ];
+    },
+  },
+  {
+    name: 'mcp-read-only',
+    summary: 'An MCP client asking for the read-only connection: the consent page, and the connection in Account settings',
+    stack: 'self-host',
+    setup: async (ctx) => {
+      const post = async (path, body) => {
+        const res = await fetch(`${MCP_URL}${path}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) throw new Error(`POST ${path} → ${res.status} ${await res.text()}`);
+        return res.json();
+      };
+      const redirect = 'http://127.0.0.1:9/callback';
+      const verifier = randomId(64);
+      const { client_id: clientId } = await post('/register', { redirect_uris: [redirect], client_name: 'Example MCP client' });
+      const authorize = async () => {
+        const query = new URLSearchParams({
+          client_id: clientId,
+          redirect_uri: redirect,
+          code_challenge: createHash('sha256').update(verifier).digest('base64url'),
+          code_challenge_method: 'S256',
+          resource: `${MCP_URL}/mcp/read`,
+        });
+        const res = await fetch(`${MCP_URL}/authorize?${query}`, { redirect: 'manual' });
+        const session = new URL(res.headers.get('location') ?? '', APP_URL).searchParams.get('session');
+        if (!session) throw new Error(`/authorize did not send the browser to the consent page (${res.status})`);
+        return session;
+      };
+      // One authorization is approved, so the account lists a connection; a
+      // second one waits on the consent page.
+      const approved = await post('/authorize/finalize', {
+        session: await authorize(),
+        access_token: ctx.persona.session.access_token,
+      });
+      await post('/token', {
+        grant_type: 'authorization_code',
+        code: new URL(approved.redirect).searchParams.get('code'),
+        code_verifier: verifier,
+        redirect_uri: redirect,
+      });
+      return [
+        {
+          name: 'consent',
+          path: `/mcp-authorize?session=${await authorize()}`,
+          expect: ['to read your LeadAce account', 'It cannot send email'],
+        },
+        {
+          name: 'connection',
+          path: '/account-settings',
+          scrollTo: 'text=Connected MCP clients',
+          expect: ['Example MCP client', 'Read-only · authorized'],
+        },
       ];
     },
   },

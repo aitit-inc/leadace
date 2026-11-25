@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isAllowedRedirectUri, verifyPkce } from './oauth'
+import { isAllowedRedirectUri, readOnlyRequested, verifyPkce } from './oauth'
 
 // S256 challenge for the verifier below, precomputed so the expectation is a
 // fixed value rather than a re-run of the implementation.
@@ -54,5 +54,34 @@ describe('verifyPkce', () => {
 
   it('rejects an empty challenge', async () => {
     expect(await verifyPkce(VERIFIER, '')).toBe(false)
+  })
+})
+
+describe('readOnlyRequested', () => {
+  const BASE = 'https://mcp.example.com'
+
+  it('is read-only when the resource is the read endpoint', () => {
+    expect(readOnlyRequested(null, `${BASE}/mcp/read`, BASE)).toBe(true)
+    expect(readOnlyRequested(null, `${BASE}/mcp/read/`, BASE)).toBe(true)
+    expect(readOnlyRequested('read write', `${BASE}/mcp/read`, BASE)).toBe(true)
+  })
+
+  it('is read-only when the scope asks for read without write', () => {
+    expect(readOnlyRequested('read', null, BASE)).toBe(true)
+    expect(readOnlyRequested('read offline_access', `${BASE}/mcp`, BASE)).toBe(true)
+  })
+
+  it('may write when nothing asks for less', () => {
+    expect(readOnlyRequested(null, null, BASE)).toBe(false)
+    expect(readOnlyRequested('read write', BASE, BASE)).toBe(false)
+    expect(readOnlyRequested('write', `${BASE}/mcp`, BASE)).toBe(false)
+    expect(readOnlyRequested('', '', BASE)).toBe(false)
+  })
+
+  it('does not take a look-alike resource for the read endpoint', () => {
+    expect(readOnlyRequested(null, 'https://evil.example/mcp/read', BASE)).toBe(false)
+    expect(readOnlyRequested(null, `${BASE}/mcp/readonly`, BASE)).toBe(false)
+    // A scope that merely contains the word is not the read scope.
+    expect(readOnlyRequested('readwrite', null, BASE)).toBe(false)
   })
 })
